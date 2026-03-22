@@ -1,78 +1,78 @@
 # 配置指南
 
+## 迁移背景
+
+AxonHub 当前在同一个仓库中同时存在两套后端实现：
+
+- **旧 Go 后端**：仍然提供完整产品能力
+- **Rust 迁移切片**：保留第一批共享的配置契约，以及一小部分 CLI / 服务行为
+
+本文描述的是迁移两侧共享的配置契约。当前 Rust 实现已经支持配置加载、preview、validate、key lookup 与最小 HTTP 切片，但这**不代表**完整后端能力已经迁移完成。
+
 ## 概述
 
-AxonHub 使用灵活的配置系统，支持 YAML 配置文件和环境变量。本指南涵盖了所有可用的配置选项以及针对不同部署场景的最佳实践。
+AxonHub 支持 YAML 配置文件和环境变量覆盖。
 
-## 配置方法
+对于 Rust 迁移切片，配置文件会按以下发现顺序加载：
 
-### 配置优先级
+1. `./config.yml`
+2. `/etc/axonhub/config.yml`
+3. `$HOME/.config/axonhub/config.yml`
+4. `./conf/config.yml`
 
-AxonHub 使用 Viper 进行配置管理，它可以从多个配置源读取并将其合并为一组配置键值对。Viper 使用以下优先级进行合并（从高到低）：
+环境变量统一使用 `AXONHUB_` 前缀，并沿用现有的点号转下划线命名契约。
 
-1. **环境变量** - 系统环境变量
-2. **配置文件** - YAML 配置文件
-3. **外部键/值存储** - 外部配置存储
-4. **默认值** - 内置默认值
-
-这意味着环境变量将覆盖配置文件中的值，而命令行标志将覆盖环境变量。
-
-### 1. YAML 配置文件
-
-创建一个 `config.yml` 文件：
+## YAML 配置示例
 
 ```yaml
-# config.yml
 server:
   port: 8090
   name: "AxonHub"
 
 db:
   dialect: "sqlite3"
-  dsn: "file:axonhub.db?cache=shared&_fk=1"
+  dsn: "file:axonhub.db?cache=shared&_fk=1&_pragma=journal_mode(WAL)"
 
 log:
   level: "info"
   encoding: "json"
 ```
 
-### 2. 环境变量
-
-所有配置选项都可以通过环境变量设置：
+## 环境变量示例
 
 ```bash
 export AXONHUB_SERVER_PORT=8090
 export AXONHUB_DB_DIALECT="sqlite3"
-export AXONHUB_DB_DSN="file:axonhub.db?cache=shared&_fk=1"
+export AXONHUB_DB_DSN="file:axonhub.db?cache=shared&_fk=1&_pragma=journal_mode(WAL)"
 export AXONHUB_LOG_LEVEL="info"
 ```
 
-### 3. 混合配置
+## 共享配置参考
 
-环境变量会覆盖 YAML 配置值。
-
-## 配置参考
-
-### 服务器配置
+### Server
 
 ```yaml
 server:
-  port: 8090                    # 服务器端口
-  name: "AxonHub"               # 服务器名称
-  base_path: ""                 # API 路由的基础路径
-  request_timeout: "30s"        # 请求超时时间
-  llm_request_timeout: "600s"   # LLM 请求超时时间
+  host: "0.0.0.0"
+  port: 8090
+  name: "AxonHub"
+  base_path: ""
+  request_timeout: "30s"
+  llm_request_timeout: "600s"
   trace:
-    thread_header: "AH-Thread-Id" # 线程 ID 请求头名称
-    trace_header: "AH-Trace-Id" # 追踪 ID 请求头名称
-    extra_trace_headers: []     # 额外的追踪请求头
-    claude_code_trace_enabled: false # 启用 Claude Code 追踪提取
-    codex_trace_enabled: false # 启用 Codex 追踪提取
-  debug: false                  # 启用调试模式
-  disable_ssl_verify: false     # 禁用上游请求的 SSL 证书校验（自签名证书）
+    thread_header: "AH-Thread-Id"
+    trace_header: "AH-Trace-Id"
+    extra_trace_headers: []
+    extra_trace_body_fields: []
+    claude_code_trace_enabled: false
+    codex_trace_enabled: false
+  debug: false
+  disable_ssl_verify: false
 ```
 
-**环境变量：**
+常见环境变量：
+
+- `AXONHUB_SERVER_HOST`
 - `AXONHUB_SERVER_PORT`
 - `AXONHUB_SERVER_NAME`
 - `AXONHUB_SERVER_BASE_PATH`
@@ -81,336 +81,163 @@ server:
 - `AXONHUB_SERVER_TRACE_THREAD_HEADER`
 - `AXONHUB_SERVER_TRACE_TRACE_HEADER`
 - `AXONHUB_SERVER_TRACE_EXTRA_TRACE_HEADERS`
+- `AXONHUB_SERVER_TRACE_EXTRA_TRACE_BODY_FIELDS`
 - `AXONHUB_SERVER_TRACE_CLAUDE_CODE_TRACE_ENABLED`
 - `AXONHUB_SERVER_TRACE_CODEX_TRACE_ENABLED`
 - `AXONHUB_SERVER_DEBUG`
 - `AXONHUB_SERVER_DISABLE_SSL_VERIFY`
 
-### 数据库配置
+### CORS
+
+```yaml
+server:
+  cors:
+    enabled: false
+    debug: false
+    allowed_origins:
+      - "http://localhost:8090"
+    allowed_methods: ["GET", "POST", "DELETE", "PATCH", "PUT", "OPTIONS", "HEAD"]
+    allowed_headers: ["Content-Type", "Authorization", "X-API-Key", "X-Goog-Api-Key", "X-Project-ID", "X-Thread-ID", "X-Trace-ID"]
+    exposed_headers: []
+    allow_credentials: false
+    max_age: "30m"
+```
+
+### API Auth
+
+```yaml
+server:
+  api:
+    auth:
+      allow_no_auth: false
+```
+
+环境变量：
+
+- `AXONHUB_SERVER_API_AUTH_ALLOW_NO_AUTH`
+
+### Database
 
 ```yaml
 db:
-  dialect: "sqlite3"            # sqlite3, postgres, mysql, tidb
-  dsn: "file:axonhub.db?cache=shared&_fk=1"  # 连接字符串
-  debug: false                  # 启用数据库调试日志
+  dialect: "sqlite3"
+  dsn: "file:axonhub.db?cache=shared&_fk=1&_pragma=journal_mode(WAL)"
+  debug: false
 ```
 
-**支持的数据库：**
-- **SQLite**: `sqlite3` (开发环境)
-- **PostgreSQL**: `postgres` (生产环境)
-- **MySQL**: `mysql` (生产环境)
-- **TiDB**: `tidb` (生产环境/云端)
+环境变量：
 
-**环境变量：**
 - `AXONHUB_DB_DIALECT`
 - `AXONHUB_DB_DSN`
 - `AXONHUB_DB_DEBUG`
 
-### 缓存配置
-
-```yaml
-cache:
-  mode: "memory"                # memory, redis, two-level
-  
-  # 内存缓存配置
-  memory:
-    expiration: "5s"            # 内存缓存 TTL
-    cleanup_interval: "10m"     # 内存缓存清理间隔
-
-  # Redis 缓存配置
-  redis:
-    url: ""                     # Redis 连接 URL (redis:// 或 rediss://)
-    addr: ""                    # Redis 地址: 127.0.0.1:6379
-    username: ""                # 如果设置，将覆盖 URL 中的用户名
-    password: ""                # 如果设置，将覆盖 URL 中的密码
-    db: 0                       # 如果设置，将覆盖 URL 路径中的数据库编号 (/0)
-    tls: false                  # 启用 TLS (rediss:// 也会自动启用)
-    tls_insecure_skip_verify: false # 跳过 TLS 证书验证 (自签名证书)
-    expiration: "30m"           # Redis 缓存 TTL
-```
-
-**环境变量：**
-- `AXONHUB_CACHE_MODE`
-- `AXONHUB_CACHE_MEMORY_EXPIRATION`
-- `AXONHUB_CACHE_MEMORY_CLEANUP_INTERVAL`
-- `AXONHUB_CACHE_REDIS_URL`
-- `AXONHUB_CACHE_REDIS_ADDR`
-- `AXONHUB_CACHE_REDIS_USERNAME`
-- `AXONHUB_CACHE_REDIS_PASSWORD`
-- `AXONHUB_CACHE_REDIS_DB`
-- `AXONHUB_CACHE_REDIS_TLS`
-- `AXONHUB_CACHE_REDIS_TLS_INSECURE_SKIP_VERIFY`
-- `AXONHUB_CACHE_REDIS_EXPIRATION`
-
-### 日志配置
+### Log
 
 ```yaml
 log:
-  name: "axonhub"               # 日志器名称
-  debug: false                  # 启用调试日志
-  level: "info"                 # debug, info, warn, error, panic, fatal
-  level_key: "level"            # 日志级别字段的键名
-  time_key: "time"              # 时间戳字段的键名
-  caller_key: "label"           # 调用者信息字段的键名
-  function_key: ""              # 函数名字段的键名
-  name_key: "logger"            # 日志器名称字段的键名
-  encoding: "json"              # json, console, console_json
-  includes: []                  # 包含的日志器名称
-  excludes: []                  # 排除的日志器名称
-  output: "stdio"               # file 或 stdio
-  file:                         # 基于文件的日志配置
-    path: "logs/axonhub.log"   # 日志文件路径
-    max_size: 100               # 轮转前的最大大小 (MB)
-    max_age: 30                 # 保留的最大天数
-    max_backups: 10             # 旧日志文件的最大数量
-    local_time: true            # 轮转文件使用本地时间
+  name: "axonhub"
+  debug: false
+  skip_level: 1
+  level: "info"
+  level_key: "level"
+  time_key: "time"
+  caller_key: "label"
+  function_key: ""
+  name_key: "logger"
+  encoding: "json"
+  includes: []
+  excludes: []
+  output: "stdio"
+  file:
+    path: "logs/axonhub.log"
+    max_size: 100
+    max_age: 30
+    max_backups: 10
+    local_time: true
 ```
 
-**环境变量：**
-- `AXONHUB_LOG_NAME`
-- `AXONHUB_LOG_DEBUG`
-- `AXONHUB_LOG_LEVEL`
-- `AXONHUB_LOG_LEVEL_KEY`
-- `AXONHUB_LOG_TIME_KEY`
-- `AXONHUB_LOG_CALLER_KEY`
-- `AXONHUB_LOG_FUNCTION_KEY`
-- `AXONHUB_LOG_NAME_KEY`
-- `AXONHUB_LOG_ENCODING`
-- `AXONHUB_LOG_INCLUDES`
-- `AXONHUB_LOG_EXCLUDES`
-- `AXONHUB_LOG_OUTPUT`
-- `AXONHUB_LOG_FILE_PATH`
-- `AXONHUB_LOG_FILE_MAX_SIZE`
-- `AXONHUB_LOG_FILE_MAX_AGE`
-- `AXONHUB_LOG_FILE_MAX_BACKUPS`
-- `AXONHUB_LOG_FILE_LOCAL_TIME`
-
-### 指标配置
+### Metrics
 
 ```yaml
 metrics:
-  enabled: false                 # 启用指标收集
+  enabled: false
   exporter:
-    type: "oltphttp"            # prometheus, console
-    endpoint: "localhost:8080"  # 指标导出器端点
-    insecure: true              # 启用不安全连接
+    type: ""
+    endpoint: ""
+    insecure: false
 ```
 
-**环境变量：**
-- `AXONHUB_METRICS_ENABLED`
-- `AXONHUB_METRICS_EXPORTER_TYPE`
-- `AXONHUB_METRICS_EXPORTER_ENDPOINT`
-- `AXONHUB_METRICS_EXPORTER_INSECURE`
-
-### 垃圾回收配置
+### GC
 
 ```yaml
 gc:
-  cron: "0 2 * * *"              # GC 执行的 Cron 表达式
+  cron: "0 2 * * *"
+  vacuum_enabled: false
+  vacuum_full: false
 ```
 
-**环境变量：**
-- `AXONHUB_GC_CRON`
-
-### GitHub Copilot OAuth 配置
+### Cache
 
 ```yaml
-copilot:
-  client_id: ""                   # 自定义 GitHub OAuth 客户端 ID（可选）
-```
-
-**描述：**
-配置用于 GitHub Copilot 设备流程认证的 OAuth 客户端 ID。默认情况下，AxonHub 使用 VS Code 的公共客户端 ID。对于生产部署或为了遵守 GitHub 的服务条款，您应该注册自己的 OAuth 应用程序并配置自定义客户端 ID。
-
-**环境变量：**
-- `GITHUB_COPILOT_CLIENT_ID`
-
-**默认值：** VS Code 公共客户端 ID（用于向后兼容）
-
-**何时自定义：**
-- **生产部署：** 注册您自己的 GitHub OAuth 应用程序以完全控制 OAuth 设置
-- **合规性：** 使用您自己的客户端 ID 确保遵守 GitHub 的服务条款
-- **速率限制：** 拥有自己的 OAuth 应用程序可以获得专用的速率限制
-
-**如何注册您自己的 OAuth 应用程序：**
-1. 前往 GitHub 设置 → 开发者设置 → OAuth 应用程序
-2. 点击"新建 OAuth 应用程序"
-3. 填写应用程序详细信息：
-   - 应用程序名称：`您的 AxonHub 实例`
-   - 主页 URL：`https://your-axonhub-domain.com`
-   - 授权回调 URL：`https://your-axonhub-domain.com/api/copilot/oauth/callback`
-4. 点击"注册应用程序"
-5. 复制客户端 ID 并设置为环境变量
-
-**示例：**
-```yaml
-copilot:
-  client_id: "Iv1.your-custom-client-id"
-```
-
-```bash
-export GITHUB_COPILOT_CLIENT_ID="Iv1.your-custom-client-id"
-```
-
-## 配置示例
-
-### 开发环境配置
-
-```yaml
-server:
-  port: 8090
-  name: "AxonHub Dev"
-  debug: true
-
-db:
-  dialect: "sqlite3"
-  dsn: "file:axonhub.db?cache=shared&_fk=1"
-  debug: true
-
-log:
-  level: "debug"
-  encoding: "console"
-  output: "stdio"
-```
-
-### 生产环境配置
-
-```yaml
-server:
-  port: 8090
-  name: "AxonHub Production"
-  debug: false
-  request_timeout: "30s"
-  llm_request_timeout: "600s"
-
-db:
-  dialect: "postgres"
-  dsn: "postgres://axonhub:password@localhost:5432/axonhub?sslmode=disable"
-  debug: false
-
 cache:
-  mode: "redis"
+  mode: "memory"
+  memory:
+    expiration: "5m"
+    cleanup_interval: "10m"
   redis:
-    addr: "redis:6379"
-    password: "redis-password"
-    expiration: "30m"
-
-log:
-  level: "warn"
-  encoding: "json"
-  output: "file"
-  file:
-    path: "/var/log/axonhub/axonhub.log"
-    max_size: 200
-    max_age: 14
-    max_backups: 7
+    addr: ""
+    url: ""
+    username: ""
+    password: ""
+    db: null
+    tls: false
+    tls_insecure_skip_verify: false
+    expiration: ""
 ```
 
-## 数据库连接字符串
+Rust 迁移切片也会兼容旧缓存字段：
 
-### SQLite
+- `cache.default_expiration` → `cache.memory.expiration`
+- `cache.cleanup_interval` → `cache.memory.cleanup_interval`
 
-```
-file:axonhub.db?cache=shared&_fk=1
-```
+### Provider Quota
 
-### PostgreSQL
-
-```
-postgres://username:password@host:5432/database?sslmode=disable
+```yaml
+provider_quota:
+  check_interval: "20m"
 ```
 
-### MySQL
+环境变量：
 
-```
-username:password@tcp(host:3306)/database?parseTime=True&multiStatements=true&charset=utf8mb4
-```
-
-### TiDB
-
-```
-username.root:password@tcp(host:4000)/database?tls=true&parseTime=true&multiStatements=true&charset=utf8mb4
-```
-
-## 最佳实践
-
-### 安全
-
-1. **对敏感信息使用环境变量**
-   ```bash
-   export AXONHUB_DB_DSN="postgres://axonhub:$(cat /run/secrets/db-password)@localhost:5432/axonhub"
-   ```
-
-2. **为数据库连接启用 TLS**
-   ```yaml
-   dsn: "postgres://user:pass@host:5432/axonhub?sslmode=verify-full"
-   ```
-
-3. **在生产环境中使用基于文件的日志**
-   ```yaml
-   log:
-     output: "file"
-     file:
-       path: "/var/log/axonhub/axonhub.log"
-   ```
-
-### 性能
-
-1. **在生产环境中使用 Redis 进行缓存**
-   ```yaml
-   cache:
-     mode: "redis"
-     redis:
-       addr: "redis:6379"
-       expiration: "30m"
-   ```
-
-2. **配置适当的超时时间**
-   ```yaml
-   server:
-     request_timeout: "30s"
-     llm_request_timeout: "600s"
-   ```
-
-3. **启用指标进行监控**
-   ```yaml
-   metrics:
-     enabled: true
-     exporter:
-       type: "prometheus"
-   ```
-
-### 故障排除
-
-1. **在开发环境中启用调试模式**
-   ```yaml
-   server:
-     debug: true
-   log:
-     level: "debug"
-   ```
-
-2. **启用数据转储进行错误分析**
-   ```yaml
-   dumper:
-     enabled: true
-     dump_path: "./dumps"
-   ```
+- `AXONHUB_PROVIDER_QUOTA_CHECK_INTERVAL`
 
 ## 验证
 
-验证您的配置：
+Rust CLI 保留了 Go CLI 的顶层配置命令形状：
 
 ```bash
-./axonhub config check
+cargo run -p axonhub-server -- config preview
+cargo run -p axonhub-server -- config preview --format json
+cargo run -p axonhub-server -- config validate
+cargo run -p axonhub-server -- config get server.port
 ```
 
-此命令将验证您的配置文件并报告任何错误。
+当前验证切片覆盖了与旧 Go 命令相同的最小运维规则：
+
+- `server.port` 必须在 `1` 到 `65535` 之间
+- `db.dsn` 不能为空
+- `log.name` 不能为空
+- 当启用 CORS 时，`server.cors.allowed_origins` 不能为空
+- 配置中的日志级别和 duration 字符串必须可解析
+
+## 关于能力对等的说明
+
+- 当前迁移顺序是先迁移配置契约，再迁移完整运行时行为。
+- Rust 配置校验通过，**并不表示** Go 后端的全部能力已经在 Rust 中可用。
+- 对于未迁移的运行时接口，Rust 后端会显式返回 `501 Not Implemented`，而不是提供不完整的假实现。
 
 ## 相关文档
 
 - [Docker 部署](docker.md)
 - [快速入门](../getting-started/quick-start.md)
-- [OpenAI API](../api-reference/openai-api.md)
-- [Anthropic API](../api-reference/anthropic-api.md)
-- [Gemini API](../api-reference/gemini-api.md)
+- [开发指南](../development/development.md)

@@ -10,7 +10,28 @@ permissions:
   packages: write
 
 jobs:
+  validate_rust_workspace:
+    name: Validate Rust workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Rust workspace tests
+        run: cargo test --workspace --locked
+
   goreleaser:
+    needs: validate_rust_workspace
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -39,6 +60,14 @@ jobs:
         with:
           go-version: stable
           cache: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
 
       - name: Update VERSION file
         if: ${{ !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') }}

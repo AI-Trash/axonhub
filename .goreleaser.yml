@@ -7,6 +7,7 @@ dist: .builds
 before:
   hooks:
     - /bin/sh -c 'cd deploy && chmod +x *.sh'
+    - cargo check --workspace --locked
     - make build-frontend
     - go mod tidy
 

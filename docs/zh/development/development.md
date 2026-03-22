@@ -1,82 +1,89 @@
 # 开发指南
 
----
+## 迁移状态
 
-## 架构设计
+AxonHub 当前处于增量式的 Go → Rust 后端迁移阶段。
 
-AxonHub 实现了一个双向数据转换管道，确保客户端与 AI 提供商之间的无缝通信。
+- **当前完整后端：** `cmd/axonhub/main.go`、`conf/conf.go`、`internal/server/` 下的 Go 实现
+- **Rust 迁移切片：** 以 `Cargo.toml` 为根的 Cargo workspace
+- **Rust 当前已实现：** 配置加载、CLI 兼容、`/health`、`GET /admin/system/status`，以及未迁移 HTTP 路由族的显式 `501 Not Implemented` 返回
+- **尚未迁移：** GraphQL、Ent 数据访问、认证流程、provider 编排，以及完整 API 对等能力
+
+如果你需要完整产品能力，请继续使用 Go 后端或当前发布的 Docker / 二进制版本。如果你在做迁移工作，请使用 Rust workspace。
+
+## 架构概览
+
+AxonHub 仍然是一个统一的 AI 网关，核心仍是客户端 SDK 与上游模型提供商之间的双向请求/响应转换链路。
 
 <div align="center">
   <img src="../../transformation-flow.svg" alt="AxonHub Transformation Flow" width="900"/>
 </div>
 
-### 管道组件
+这次迁移改变的是实现路径，不是产品目标：
 
-| 组件 | 用途 | 关键特性 |
-| --- | --- | --- |
-| **客户端** | 应用层 | Web 应用、移动应用、API 客户端 |
-| **入站转换器** | 请求预处理 | 解析、验证、规范化输入 |
-| **统一请求** | 核心处理 | 路由选择、负载均衡、故障转移 |
-| **出站转换器** | 提供商适配 | 格式转换、协议映射 |
-| **提供商** | AI 服务 | OpenAI、Anthropic、DeepSeek 等 |
-
-该架构确保：
-
-- ⚡ **低延迟**：优化的处理管道
-- 🔄 **自动故障转移**：无缝提供商切换
-- 📊 **实时监控**：完整的请求追踪
-- 🛡️ **安全与验证**：输入清理与输出校验
+- 先保留现有对外契约，
+- 再按功能切片逐步迁移，
+- 对未迁移能力明确返回，而不是伪装成已完成。
 
 ## 技术栈
 
-### 后端技术栈
+### 后端
 
-- **Go 1.24+**
-- **Gin**
-- **Ent ORM**
-- **gqlgen**
-- **JWT**
+- **稳定实现：** Go 1.26+、Gin、Ent、gqlgen、FX
+- **迁移切片：** Rust 1.78+、Tokio、Axum、Serde、Cargo workspace + workspace 依赖
 
-### 前端技术栈
+### 前端
 
-- **React 19**
-- **TypeScript**
-- **Tailwind CSS**
-- **TanStack Router**
-- **Zustand**
+- React 19
+- TypeScript
+- Tailwind CSS
+- TanStack Router
+- Zustand
 
-## 开发环境搭建
+## 前置要求
 
-### 前置要求
-
-- Go 1.24 或更高版本
+- Rust 1.78+
+- 如果需要修改旧后端代码，则需要 Go 1.26+
 - Node.js 18+ 与 pnpm
 - Git
 
-### 克隆项目
+## 仓库结构
+
+### Rust Workspace
+
+- `Cargo.toml` — workspace 根与共享依赖版本
+- `apps/axonhub-server` — Rust `axonhub` 二进制入口
+- `crates/axonhub-config` — 配置契约、默认值、环境变量覆盖、preview/get 帮助函数
+- `crates/axonhub-http` — 提供 `/health`、`GET /admin/system/status` 与显式 `501` 路由桩的 Axum Router
+
+### 旧 Go 后端
+
+- `cmd/axonhub/main.go` — 当前 CLI / 服务契约
+- `conf/conf.go` — 配置默认值与兼容契约
+- `internal/server/` — 当前完整 HTTP 能力
+- `internal/server/gql/` — GraphQL schema 与 resolver
+- `internal/ent/` — Ent 模型、schema 与迁移
+
+## Rust 迁移切片开发方式
+
+在仓库根目录运行 Rust CLI：
 
 ```bash
-git clone https://github.com/looplj/axonhub.git
-cd axonhub
+cargo run -p axonhub-server -- help
+cargo run -p axonhub-server -- config preview
+cargo run -p axonhub-server -- config validate
+cargo run -p axonhub-server -- config get server.port
+cargo run -p axonhub-server --
 ```
 
-### 启动后端
+当前 Rust 行为是刻意受限且真实的：
 
-```bash
-# 方式 1：直接构建并运行
-make build-backend
-./axonhub
+- `/health` 返回真实健康状态
+- `/admin/system/status` 在受支持的 SQLite 路径下可通过 Rust 切片返回旧后端的初始化布尔值
+- `/admin/*`、`/v1/*`、`/anthropic/v1/*`、`/gemini/*`、`/openapi/*` 等未迁移路由族会返回结构化 `501 Not Implemented` JSON
+- 配置文件路径与 `AXONHUB_*` 环境变量命名对齐 `conf/conf.go` 的首个共享契约
 
-# 方式 2：使用 air 热重载（推荐）
-go install github.com/air-verse/air@latest
-air
-```
-
-后端服务默认启动在 `http://localhost:8090`。
-
-### 启动前端
-
-在新的终端窗口中：
+## 前端开发
 
 ```bash
 cd frontend
@@ -84,121 +91,72 @@ pnpm install
 pnpm dev
 ```
 
-前端开发服务器默认启动在 `http://localhost:5173`。
+前端开发服务器运行在 `http://localhost:5173`，并代理到你当前使用的本地后端。
 
-## 项目构建
+## 旧 Go 工作流
 
-### 构建完整项目
+如果你需要当前生产能力，请继续在旧 Go 后端上开发。
+
+典型场景包括：
+
+- GraphQL 与管理后台流程
+- Ent schema 与数据库服务
+- JWT / API Key 认证与中间件
+- provider 编排与 outbound transformer
+
+只有在修改这些旧区域时，下面的 Go 命令才仍然适用：
 
 ```bash
-make build
+go test ./...
+make generate
 ```
 
-该命令会构建后端与前端，并将前端产物嵌入到后端二进制文件中。
+当你修改 Ent 或 GraphQL schema 输入时，需要使用 `make generate` 维护旧代码生成产物。
 
-### 仅构建后端
+## 验证
+
+推荐的验证命令取决于你修改的是哪一套后端：
+
+### Rust 切片
 
 ```bash
-make build-backend
+cargo check --workspace
+cargo test --workspace
 ```
 
-### 仅构建前端
+### 旧 Go 后端
+
+```bash
+go test ./...
+```
+
+### 前端
 
 ```bash
 cd frontend
 pnpm build
 ```
 
-## 代码生成
-
-当修改 Ent schema 或 GraphQL schema 后，需要重新生成代码：
-
-```bash
-make generate
-```
-
-## 测试
-
-### 运行后端测试
-
-```bash
-go test ./...
-```
-
-### 运行 E2E 测试
-
-```bash
-bash ./scripts/e2e/e2e-test.sh
-```
-
-## 代码质量
-
-### 运行 Go Linter
-
-```bash
-golangci-lint run -v
-```
-
-### 运行前端 Lint/格式化检查
-
-```bash
-cd frontend
-pnpm lint
-pnpm format:check
-```
-
-## 事务处理（Ent）
-
-### 何时使用事务
-
-- 多次写入需要保证“要么全部成功，要么全部失败”。
-- 需要在同一个逻辑操作中保证读写一致性。
-
-### 推荐：使用 `AbstractService.RunInTransaction`
-
-`RunInTransaction` 会：
-- 如果 `ctx` 已经携带事务，则复用当前事务。
-- 否则开启新事务，将 tx 绑定的 `*ent.Client` 放入 `ctx`，并自动 commit/rollback。
-
-```go
-func (s *SomeService) doWork(ctx context.Context) error {
-    return s.RunInTransaction(ctx, func(ctx context.Context) error {
-        // ctx 现在同时携带：
-        // - ent.TxFromContext(ctx)（当前 tx）
-        // - ent.FromContext(ctx)（绑定到 tx 的 *ent.Client）
-        //
-        // 可以继续调用其它 service，它们会通过 ctx 复用同一个事务。
-        return nil
-    })
-}
-```
-
-### 注意事项
-
-- 事务 client 不适合在多个 goroutine 间共享。
-- 事务作用域尽量保持小，并避免在事务内执行耗时 I/O。
-
 ## 添加新的 Channel
 
-新增渠道时需要同时关注后端与前端的改动：
+在 provider 路由迁移完成之前，新渠道仍然需要通过旧 Go 后端和前端配置共同完成。
 
-1. **在 Ent Schema 中扩展枚举**
-   - 在 [internal/ent/schema/channel.go](../../../internal/ent/schema/channel.go) 的 `field.Enum("type")` 列表里添加新的渠道标识
-   - 执行 `make generate` 以生成代码与迁移
+1. **在 Ent Schema 中扩展渠道枚举**
+   - 在 [internal/ent/schema/channel.go](../../../internal/ent/schema/channel.go) 的 `field.Enum("type")` 中增加 provider 标识
+   - 在需要时重新生成旧产物
 
-2. **在业务层构造 Transformer**
-   - 在 `ChannelService.buildChannel` 的 switch 中为新枚举返回合适的 outbound transformer
-   - 必要时在 `internal/llm/transformer` 下实现新的 transformer
+2. **在 Go 中接入 outbound transformer**
+   - 更新 `ChannelService.buildChannel`
+   - 在旧后端内补充对应 transformer 实现
 
-3. **注册 Provider 元数据**
-   - 在 [frontend/src/features/channels/data/config_providers.ts](../../../frontend/src/features/channels/data/config_providers.ts) 添加或扩展 Provider 配置
-   - 确保 `channelTypes` 中引用的渠道都已经在 `CHANNEL_CONFIGS` 中存在
+3. **在前端注册 Provider 元数据**
+   - 更新 [frontend/src/features/channels/data/config_providers.ts](../../../frontend/src/features/channels/data/config_providers.ts)
+   - 保持 `CHANNEL_CONFIGS` 与相关 helper 一致
 
-4. **同步前端的 schema 与展示**
-   - 将枚举值加入 [frontend/src/features/channels/data/schema.ts](../../../frontend/src/features/channels/data/schema.ts) 的 Zod schema
-   - 在 [frontend/src/features/channels/data/constants.ts](../../../frontend/src/features/channels/data/constants.ts) 中添加渠道配置
+4. **同步前端 schema 与展示**
+   - 更新 [frontend/src/features/channels/data/schema.ts](../../../frontend/src/features/channels/data/schema.ts)
+   - 更新 [frontend/src/features/channels/data/constants.ts](../../../frontend/src/features/channels/data/constants.ts)
 
-5. **添加国际化**
-   - 在两个 locale 文件中补充翻译：
-     - [frontend/src/locales/en.json](../../../frontend/src/locales/en.json)
-     - [frontend/src/locales/zh.json](../../../frontend/src/locales/zh.json)
+5. **补充国际化文案**
+   - 更新 [frontend/src/locales/en.json](../../../frontend/src/locales/en.json)
+   - 更新 [frontend/src/locales/zh.json](../../../frontend/src/locales/zh.json)

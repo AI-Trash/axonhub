@@ -10,11 +10,35 @@ on:
     branches:
       - 'unstable'
       - 'release/**'
-env:
-  GO111MODULE: on
 jobs:
-  lint:
+  rust_workspace:
+    name: Rust workspace lint
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+
+      - name: Run Rust clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  legacy_go_backend:
+    name: Legacy Go backend lint
+    runs-on: ubuntu-latest
+    env:
+      GO111MODULE: on
     steps:
       - uses: actions/checkout@v4
         with:

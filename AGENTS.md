@@ -13,13 +13,14 @@ This file provides guidance to AI coding assistants when working with code in th
 ## Configuration
 
 - Uses SQLite database (axonhub.db) by default.
-- Configuration loaded from `conf/conf.go` with YAML and env var support.
+- The legacy Go config contract lives in `conf/conf.go`; the Rust migration slice mirrors the first shared subset in `crates/axonhub-config`.
 - Backend API: port 8090, Frontend dev server: port 5173 (proxies to backend).
 - Go version: 1.26.0+.
+- Rust workspace is rooted at `Cargo.toml`.
 
 ## Project Overview
 
-AxonHub is an all-in-one AI development platform that serves as a unified API gateway for multiple AI providers. It provides OpenAI and Anthropic-compatible API interfaces with automatic request transformation, enabling seamless communication between clients and various AI providers through a sophisticated bidirectional data transformation pipeline.
+AxonHub is an all-in-one AI development platform that serves as a unified API gateway for multiple AI providers. The repository is currently in an additive Go-to-Rust backend migration: the existing Go backend still provides the full product surface, while the Rust workspace contains the first truthful migration slice with compatible config/CLI behavior, `/health`, `GET /admin/system/status`, and explicit `501 Not Implemented` stubs for unported HTTP families.
 
 ### Core Architecture
 
@@ -32,14 +33,25 @@ AxonHub is an all-in-one AI development platform that serves as a unified API ga
 
 ## Technology Stack
 
-- **Backend**: Go 1.26.0+ with Gin HTTP framework, Ent ORM, gqlgen GraphQL, FX dependency injection
+- **Backend (current full implementation)**: Go 1.26.0+ with Gin HTTP framework, Ent ORM, gqlgen GraphQL, FX dependency injection
+- **Backend (migration slice)**: Rust workspace with Tokio, Axum, Serde, and shared workspace dependencies
 - **Frontend**: React 19 with TypeScript, TanStack Router, TanStack Query, Zustand, Tailwind CSS
 - **Database**: SQLite (development), PostgreSQL/MySQL/TiDB (production)
 - **Authentication**: JWT with role-based access control
 
 ## Backend Structure
 
-- `cmd/axonhub/main.go` — Application entry point
+### Rust Migration Workspace
+
+- `Cargo.toml` — Root Cargo workspace with shared dependencies
+- `apps/axonhub-server` — Rust `axonhub` binary preserving the operator-facing CLI shape
+- `crates/axonhub-config` — Rust config loading, defaults, env override, preview/get helpers
+- `crates/axonhub-http` — Axum router with `/health` and truthful unported route stubs
+
+### Legacy Go Backend
+
+- `cmd/axonhub/main.go` — Existing Go application entry point and CLI contract source
+- `conf/conf.go` — Existing Go configuration loading/defaults contract
 - `internal/server/` — HTTP server and route handling with Gin
 - `internal/server/biz/` — Core business logic and services
 - `internal/server/api/` — REST and GraphQL API handlers
@@ -52,7 +64,6 @@ AxonHub is an all-in-one AI development platform that serves as a unified API ga
 - `llm/` — LLM utilities, transformers, and pipeline processing (separate Go module)
 - `llm/pipeline/` — Pipeline processing architecture
 - `axon/` — Agent framework with LLM providers, tools, memory (separate Go module)
-- `conf/conf.go` — Configuration loading and validation
 
 ## Frontend Structure
 
@@ -74,7 +85,7 @@ All detailed rules are in `.agent/rules/`:
 
 | File | Scope | Description |
 |------|-------|-------------|
-| [backend.md](.agent/rules/backend.md) | `**/*.go` | Go, Ent, GraphQL, Biz service, error handling, dev commands |
+| [backend.md](.agent/rules/backend.md) | `**/*.{go,rs}` | Rust migration workspace, legacy Go backend, compatibility rules |
 | [frontend.md](.agent/rules/frontend.md) | `frontend/**/*.ts,tsx` | React, i18n, UI components, dev commands |
 | [e2e.md](.agent/rules/e2e.md) | `frontend/tests/**/*.ts` | E2E testing rules |
 | [docs.md](.agent/rules/docs.md) | `docs/**/*.md` | Documentation rules |

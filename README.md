@@ -11,12 +11,23 @@
 
 [![Test Status](https://github.com/looplj/axonhub/actions/workflows/test.yml/badge.svg)](https://github.com/looplj/axonhub/actions/workflows/test.yml)
 [![Lint Status](https://github.com/looplj/axonhub/actions/workflows/lint.yml/badge.svg)](https://github.com/looplj/axonhub/actions/workflows/lint.yml)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/looplj/axonhub?logo=go&logoColor=white)](https://golang.org/)
+[![Rust Workspace](https://img.shields.io/badge/rust-workspace-d19132?logo=rust&logoColor=white)](Cargo.toml)
+[![Legacy Go Backend](https://img.shields.io/badge/legacy-go%20backend-00ADD8?logo=go&logoColor=white)](cmd/axonhub/main.go)
 [![Docker Ready](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](https://docker.com)
 
 [English](README.md) | [中文](README.zh-CN.md)
 
 </div>
+
+---
+
+## 🚧 Backend Migration Status
+
+This repository is in an **additive Go-to-Rust backend migration**.
+
+- **Current full product backend:** the legacy Go service still powers the complete API, auth, GraphQL, and provider orchestration surface.
+- **Current Rust backend slice:** the new Cargo workspace provides compatible config loading, the same top-level CLI verbs, `/health`, `GET /admin/system/status`, and explicit `501 Not Implemented` responses for unported route families.
+- **What this means in practice:** released binaries and the current Docker deployment flow still target the full backend experience, while in-repo Rust development is focused on incremental migration slices.
 
 ---
 
@@ -374,7 +385,7 @@ export AXONHUB_DB_DSN="<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.t
 sudo ./install.sh
 
 # Configuration file check
-axonhub config check
+axonhub config validate
 
 # Start service
 #  For simplicity, we recommend managing AxonHub with the helper scripts:
@@ -469,10 +480,11 @@ For detailed development instructions, architecture design, and contribution gui
 
 - 🙏 [musistudio/llms](https://github.com/musistudio/llms) - LLM transformation framework, source of inspiration
 - 🎨 [satnaing/shadcn-admin](https://github.com/satnaing/shadcn-admin) - Admin interface template
-- 🔧 [99designs/gqlgen](https://github.com/99designs/gqlgen) - GraphQL code generation
-- 🌐 [gin-gonic/gin](https://github.com/gin-gonic/gin) - HTTP framework
-- 🗄️ [ent/ent](https://github.com/ent/ent) - ORM framework
-- 🔧 [air-verse/air](https://github.com/air-verse/air) - Auto reload Go service
+- 🔧 [99designs/gqlgen](https://github.com/99designs/gqlgen) - GraphQL code generation for the legacy backend
+- 🌐 [gin-gonic/gin](https://github.com/gin-gonic/gin) - HTTP framework for the legacy backend
+- 🗄️ [ent/ent](https://github.com/ent/ent) - ORM framework for the legacy backend
+- 🦀 [tokio-rs/axum](https://github.com/tokio-rs/axum) - HTTP framework for the Rust migration slice
+- ⚙️ [tokio-rs/tokio](https://github.com/tokio-rs/tokio) - Async runtime for the Rust migration slice
 - ☁️ [Render](https://render.com) - Free cloud deployment platform for hosting our demo
 - 🗃️ [TiDB Cloud](https://www.pingcap.com/tidb-cloud/) - Serverless database platform for demo deployment
 

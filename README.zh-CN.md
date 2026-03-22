@@ -11,12 +11,23 @@
 
 [![测试状态](https://github.com/looplj/axonhub/actions/workflows/test.yml/badge.svg)](https://github.com/looplj/axonhub/actions/workflows/test.yml)
 [![Lint 状态](https://github.com/looplj/axonhub/actions/workflows/lint.yml/badge.svg)](https://github.com/looplj/axonhub/actions/workflows/lint.yml)
-[![Go 版本](https://img.shields.io/github/go-mod/go-version/looplj/axonhub?logo=go&logoColor=white)](https://golang.org/)
+[![Rust Workspace](https://img.shields.io/badge/rust-workspace-d19132?logo=rust&logoColor=white)](Cargo.toml)
+[![旧 Go 后端](https://img.shields.io/badge/legacy-go%20backend-00ADD8?logo=go&logoColor=white)](cmd/axonhub/main.go)
 [![Docker Ready](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](https://docker.com)
 
 [English](README.md) | [中文](README.zh-CN.md)
 
 </div>
+
+---
+
+## 🚧 后端迁移状态
+
+当前仓库正处于 **增量式 Go → Rust 后端迁移** 阶段。
+
+- **当前完整产品后端：** 仍然是旧 Go 服务，负责完整的 API、认证、GraphQL 与 provider 编排能力。
+- **当前 Rust 后端切片：** 新的 Cargo workspace 已提供兼容配置加载、相同的顶层 CLI 命令、`/health`、`GET /admin/system/status`，以及对未迁移路由族返回显式 `501 Not Implemented`。
+- **实际含义：** 当前发布的二进制与 Docker 部署流程仍然对应完整后端能力，而仓库内的 Rust 开发重点是按功能切片逐步迁移。
 
 ---
 
@@ -362,7 +373,7 @@ export AXONHUB_DB_DSN="<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.t
 sudo ./install.sh
 
 # 配置文件检查
-axonhub config check
+axonhub config validate
 
 # 使用管理脚本管理 AxonHub
 
@@ -447,10 +458,11 @@ AxonHub 提供灵活的模型管理系统，支持通过模型关联将抽象模
 
 - 🙏 [musistudio/llms](https://github.com/musistudio/llms) - LLM 转换框架，灵感来源
 - 🎨 [satnaing/shadcn-admin](https://github.com/satnaing/shadcn-admin) - 管理界面模板
-- 🔧 [99designs/gqlgen](https://github.com/99designs/gqlgen) - GraphQL 代码生成
-- 🌐 [gin-gonic/gin](https://github.com/gin-gonic/gin) - HTTP 框架
-- 🗄️ [ent/ent](https://github.com/ent/ent) - ORM 框架
-- 🔧 [air-verse/air](https://github.com/air-verse/air) - 自动重载 Go 服务
+- 🔧 [99designs/gqlgen](https://github.com/99designs/gqlgen) - 旧后端使用的 GraphQL 代码生成
+- 🌐 [gin-gonic/gin](https://github.com/gin-gonic/gin) - 旧后端使用的 HTTP 框架
+- 🗄️ [ent/ent](https://github.com/ent/ent) - 旧后端使用的 ORM 框架
+- 🦀 [tokio-rs/axum](https://github.com/tokio-rs/axum) - Rust 迁移切片使用的 HTTP 框架
+- ⚙️ [tokio-rs/tokio](https://github.com/tokio-rs/tokio) - Rust 迁移切片使用的异步运行时
 - ☁️ [render](https://render.com) - 免费云部署平台，用于部署 demo
 - 🗄️ [tidbcloud](https://www.pingcap.com/tidb-cloud/) - Serverless 数据库平台，用于部署 demo
 

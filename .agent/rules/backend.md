@@ -1,70 +1,48 @@
 ---
 alwaysApply: false
-globs: "**/*.go"
+globs: "**/*.{go,rs}"
 ---
 
 # Backend Rules
 
-## Server & Build
+## Migration Status
 
-1. The server in development is managed by air — it will rebuild and start when code changes, so DO NOT restart manually.
-2. Use `make build-backend` to verify your changes build successfully before committing.
-3. During active development, rely on `air` for automatic rebuilding and avoid running `go build` or `make build-backend` manually.
-4. DO NOT run `golangci-lint run` — user will run manually.
+- The repository is in an additive Go-to-Rust backend migration.
+- `apps/axonhub-server`, `crates/axonhub-config`, and `crates/axonhub-http` are the first Rust migration slice.
+- `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/` remain the source of truth for the current full-featured backend.
+- Do not claim GraphQL, auth, provider orchestration, or full API parity are already migrated unless you actually port them.
 
-## Development Commands
+## Execution Rules
 
-```bash
-go run cmd/axonhub/main.go       # Run the main server
-air                               # Hot reload (development)
-```
+1. Do NOT run build, lint, or test commands unless the user explicitly requests them.
+2. Do NOT restart the development server — it is already managed.
+3. Do NOT delete legacy Go backend code as part of migration slices unless the user explicitly requests replacement work.
 
-### Make Commands
+## Rust Slice Rules
 
-```bash
-make generate                     # Generate GraphQL and Ent code
-make build                        # Build both frontend and backend
-make build-backend                # Build backend only
-make build-frontend               # Build frontend only
-make cleanup-db                   # Cleanup test database
-make e2e-test                     # Run full E2E test suite
-make migration-test TAG=v0.1.0    # Test migration from specific tag
-make sync-faq                     # Sync FAQ from GitHub issues
-make sync-models                  # Sync model developers data
-```
+1. Preserve the current operator-facing CLI contract from `cmd/axonhub/main.go`: default server startup, `config preview`, `config validate`, `config get <key>`, `version`, `help`, and `build-info`.
+2. Preserve config search paths and `AXONHUB_*` env key names from `conf/conf.go` when working in Rust config code.
+3. For unported HTTP surfaces in Rust, return structured `501 Not Implemented` responses. Be explicit; do not fake partial support.
+4. Keep the Rust migration slice additive. The Go backend still handles the full platform while migration proceeds.
 
-## Multi-Module Structure
+## Legacy Go Notes
 
-This project uses Go workspace with multiple modules:
+1. Existing Go code still owns current production behavior, GraphQL, Ent, auth, and provider orchestration.
+2. If you change Go schemas or generated-code inputs, keep generated artifacts in sync only when the user explicitly asks for that workflow.
+3. Follow existing Go patterns for FX wiring, structured logging, and context propagation when touching legacy backend code.
 
-| Module | Path | Description |
-|--------|------|-------------|
-| Main | `/` | Main server with ent, graphql, api handlers |
-| Axon | `/axon` | Agent framework with LLM providers, tools, memory |
-| LLM | `/llm` | LLM related utilities (replaced by main module) |
-| CLI | `/cmd/axoncli` | Terminal UI CLI tool |
-| Axonclaw | `/cmd/axonclaw` | CLI tool |
+## Compatibility Expectations
 
-### Running Tests
-
-```bash
-# Main Module (Root)
-go test ./...                    # Run all tests
-go test ./internal/... -v        # Run internal package tests with verbose
-go test -run TestName ./...      # Run specific test
-
-# Axon Module
-cd axon && go test ./...         # Run all axon tests
-cd axon && go test ./provider/anthropic/... -v  # Run anthropic provider tests
-
-# CLI Module
-cd cmd/axoncli && go test ./...  # Run CLI tests
-```
+1. Keep operator-visible behavior truthful during migration.
+2. If a route family is not migrated, say so in code and docs.
+3. Update English and Chinese docs together when backend behavior changes.
+4. Prefer small, honest migration slices over broad placeholders that imply parity.
 
 ## Error Handling
 
-1. Always handle errors using the unified error response format from `internal/pkg/xerrors`.
-2. Implement proper error wrapping with context.
+1. In legacy Go backend code, keep using the unified error response format from `internal/pkg/xerrors`.
+2. In Rust migration code, return explicit structured responses and do not imply unsupported features work.
+3. Implement proper error wrapping with context.
 
 ## Golang Rules
 
@@ -76,7 +54,7 @@ cd cmd/axoncli && go test ./...  # Run CLI tests
 
 ## Ent Rules
 
-1. Change any ent schema or graphql schema → run `make generate` to regenerate models and resolvers.
+1. Change any Ent schema or GraphQL schema only with awareness that generated artifacts must stay consistent.
 2. Add or update struct in the objects → update the mapping in `gqlgen.yml`.
 3. Use `enttest.NewEntClient(t, "sqlite3", "file:ent?mode=memory&_fk=0")` to create a new client for test.
 4. DO NOT EDIT `ent.graphql` directly — add graphql in other graphql file.
@@ -95,7 +73,7 @@ cd cmd/axoncli && go test ./...  # Run CLI tests
 1. Add the type/input definition in the appropriate `.graphql` file in `internal/server/gql/`.
 2. Add type mapping in `gqlgen.yml` under `models:` section.
 3. For enums, map the GraphQL enum directly to the Go enum type in `gqlgen.yml`.
-4. Run `make generate` to regenerate the code.
+4. Regenerate code only when explicitly requested.
 5. Implement the resolver in the appropriate `internal/server/gql/*_resolvers.go` file.
 
 ## Biz Service Rules
