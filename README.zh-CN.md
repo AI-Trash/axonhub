@@ -204,7 +204,7 @@ cd axonhub_*
 打标签发布时，现在还会额外发布专门的 Rust 迁移切片交付路径：
 
 - 形如 `axonhub-rust_<tag>_<platform>.(tar.gz|zip)` 的发布资产
-- Docker 镜像 `looplj/axonhub:rust-latest` 与 `looplj/axonhub:rust-<tag>`
+- Docker 镜像 `ghcr.io/looplj/axonhub:rust-latest` 与 `ghcr.io/looplj/axonhub:rust-<tag>`
 - `docker-compose.rust.yml` 中的 Compose 示例
 
 这些交付物会如实暴露 Rust CLI / 配置契约，并提供当前实用迁移切片（`/health`、SQLite 范围内的 bootstrap/system 路由，以及已迁移的 OpenAI 兼容 `/v1` 子集），但不会夸大为完整运行时能力。所有未迁移路由族仍会返回显式 `501 Not Implemented`，因此它们仍然只是诚实的迁移切片交付物，而不是完整产品的替代品。

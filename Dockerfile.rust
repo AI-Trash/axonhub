@@ -1,12 +1,12 @@
-ARG RUST_VERSION=1.78
-
-FROM --platform=$TARGETPLATFORM rust:${RUST_VERSION} AS builder
+FROM rust:stable-alpine AS builder
 
 ARG AXONHUB_BUILD_COMMIT=""
 ARG AXONHUB_BUILD_TIME=""
 ARG AXONHUB_BUILD_RUST_VERSION=""
 
 WORKDIR /build
+
+RUN apk add --no-cache build-base pkgconfig
 
 COPY Cargo.toml Cargo.lock ./
 COPY apps ./apps
@@ -18,11 +18,9 @@ RUN export AXONHUB_BUILD_COMMIT="${AXONHUB_BUILD_COMMIT}" \
     && export AXONHUB_BUILD_RUST_VERSION="${AXONHUB_BUILD_RUST_VERSION:-$(rustc --version)}" \
     && cargo build --locked --release -p axonhub-server
 
-FROM debian:bookworm-slim
+FROM alpine:latest
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates libgcc tzdata wget
 
 WORKDIR /app
 

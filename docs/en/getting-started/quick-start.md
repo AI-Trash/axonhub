@@ -54,7 +54,7 @@ cargo run -p axonhub-server -- build-info
 You can also pull the published Rust migration-slice image directly:
 
 ```bash
-docker run --rm -p 8090:8090 looplj/axonhub:rust-latest
+docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 ```
 
 That image is best for quickly validating the Rust slice. `/health` is the immediate readiness check; the bootstrap/system routes plus the migrated OpenAI-compatible practical `/v1` subset remain limited to the compatible SQLite-backed migration path rather than a fresh full-product setup.

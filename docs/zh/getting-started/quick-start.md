@@ -54,7 +54,7 @@ cargo run -p axonhub-server -- build-info
 你也可以直接拉取已经发布的 Rust 迁移切片镜像：
 
 ```bash
-docker run --rm -p 8090:8090 looplj/axonhub:rust-latest
+docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 ```
 
 这个镜像更适合快速验证 Rust 切片。立即可用的就绪检查是 `/health`；bootstrap/system 路由与已迁移的 OpenAI 兼容实用 `/v1` 子集仍然只面向兼容的 SQLite 迁移数据路径，并不代表一个全新完整产品初始化场景。

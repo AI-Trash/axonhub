@@ -1,6 +1,6 @@
 services:
   axonhub:
-    image: looplj/axonhub:rust-latest
+    image: ghcr.io/looplj/axonhub:rust-latest
     container_name: axonhub-rust-app
     ports:
       - "8090:8090"

@@ -8,9 +8,9 @@
 
 - **旧 Go 后端** 仍然承担完整的 AxonHub 运行时能力；
 - **Rust 后端** 只是仓库内的迁移切片，当前重点是配置、CLI 兼容、`/health`、SQLite 范围内的 bootstrap/system 路由、已迁移的 OpenAI 兼容实用 `/v1` 子集，以及未迁移 API 路由族的显式 `501` 返回。
-- 默认的 `looplj/axonhub:latest` 镜像仍然对应完整产品路径，而 `looplj/axonhub:rust-latest` 会单独发布当前 Rust 迁移切片。
+- 默认的 `looplj/axonhub:latest` 镜像仍然对应完整产品路径，而 `ghcr.io/looplj/axonhub:rust-latest` 会单独发布当前 Rust 迁移切片。
 
-如果你需要完整的 AxonHub 部署体验，请继续使用 `looplj/axonhub:latest`。若你在做迁移开发，请使用 Rust workspace 或 `looplj/axonhub:rust-latest`。
+如果你需要完整的 AxonHub 部署体验，请继续使用 `looplj/axonhub:latest`。若你在做迁移开发，请使用 Rust workspace 或 `ghcr.io/looplj/axonhub:rust-latest`。
 
 ## 概述
 
@@ -20,13 +20,13 @@
 
 仓库现在还会额外发布专门的 Rust 迁移切片镜像：
 
-- 镜像标签：`looplj/axonhub:rust-latest` 与 `looplj/axonhub:rust-<tag>`
+- 镜像标签：`ghcr.io/looplj/axonhub:rust-latest` 与 `ghcr.io/looplj/axonhub:rust-<tag>`
 - Compose 示例：`docker compose -f docker-compose.rust.yml up -d`
 
 示例：
 
 ```bash
-docker run --rm -p 8090:8090 looplj/axonhub:rust-latest
+docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 ```
 
 Compose 示例会把 Rust 切片默认的 SQLite 数据以及其他相对路径运行时文件保存在一个具名 Docker volume 中。一次性的 `docker run --rm` 容器则是刻意保持临时性的，除非你自行挂载持久化卷。
@@ -121,7 +121,7 @@ healthcheck:
 在迁移过程中，请明确区分下面几件事：
 
 - Docker 部署仍然对应**当前完整后端能力**；
-- Rust workspace 与 `looplj/axonhub:rust-*` 镜像目前只是**开发中的迁移切片**，不是生产可完全替代的后端；
+- Rust workspace 与 `ghcr.io/looplj/axonhub:rust-*` 镜像目前只是**开发中的迁移切片**，不是生产可完全替代的后端；
 - 如果你直接运行 Rust backend，目前可用的是 `/health`、SQLite 范围内的 bootstrap/system 路由、已迁移的 OpenAI 兼容实用 `/v1` 子集，以及其余路由族的显式 `501` 路由桩。
 
 ## 故障排查

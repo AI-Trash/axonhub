@@ -8,9 +8,9 @@ Today:
 
 - the **legacy Go backend** remains the complete runtime used for full AxonHub behavior,
 - the **Rust backend** is an in-repo migration slice focused on config, CLI compatibility, `/health`, SQLite-scoped bootstrap/system routes, the migrated OpenAI-compatible practical `/v1` subset, and explicit `501` responses for unported API families.
-- the default `looplj/axonhub:latest` image still follows the full-product path, while `looplj/axonhub:rust-latest` publishes the current Rust migration slice separately.
+- the default `looplj/axonhub:latest` image still follows the full-product path, while `ghcr.io/looplj/axonhub:rust-latest` publishes the current Rust migration slice separately.
 
-Use `looplj/axonhub:latest` when you want the current full AxonHub deployment experience. Use the Rust workspace or `looplj/axonhub:rust-latest` when working with the migration slice.
+Use `looplj/axonhub:latest` when you want the current full AxonHub deployment experience. Use the Rust workspace or `ghcr.io/looplj/axonhub:rust-latest` when working with the migration slice.
 
 ## Overview
 
@@ -20,13 +20,13 @@ This guide covers Docker and Docker Compose deployment for the current full Axon
 
 The repository now also publishes a dedicated Rust migration-slice image:
 
-- image tags: `looplj/axonhub:rust-latest` and `looplj/axonhub:rust-<tag>`
+- image tags: `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
 - compose example: `docker compose -f docker-compose.rust.yml up -d`
 
 Example:
 
 ```bash
-docker run --rm -p 8090:8090 looplj/axonhub:rust-latest
+docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 ```
 
 The compose example keeps the Rust slice's default SQLite data and other relative runtime files on a named Docker volume. A one-off `docker run --rm` container is intentionally ephemeral unless you add your own volume mounts.
@@ -121,7 +121,7 @@ healthcheck:
 Keep these distinctions clear while the migration is in progress:
 
 - Docker deployment is still about the **current full backend experience**.
-- The Rust workspace and `looplj/axonhub:rust-*` images are currently a **developer migration slice**, not the production-complete replacement.
+- The Rust workspace and `ghcr.io/looplj/axonhub:rust-*` images are currently a **developer migration slice**, not the production-complete replacement.
 - If you run the Rust backend directly from the workspace, `/health`, the SQLite-scoped bootstrap/system routes, and the migrated OpenAI-compatible practical `/v1` subset are available alongside explicit `501` route stubs for every remaining family.
 
 ## Troubleshooting

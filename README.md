@@ -201,7 +201,7 @@ That's it! Now configure your first AI channel and start calling models through 
 Tagged releases also publish dedicated Rust migration-slice delivery paths:
 
 - release assets named like `axonhub-rust_<tag>_<platform>.(tar.gz|zip)`
-- Docker images `looplj/axonhub:rust-latest` and `looplj/axonhub:rust-<tag>`
+- Docker images `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
 - Compose example at `docker-compose.rust.yml`
 
 These artifacts preserve the Rust CLI/config contract, expose the practical migration slice (`/health`, SQLite-scoped bootstrap/system routes, and the migrated OpenAI-compatible `/v1` subset) without claiming full runtime parity, and keep every unported family on explicit `501 Not Implemented` responses. They remain truthful migration-slice artifacts rather than full-product replacements.
