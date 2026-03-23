@@ -1,0 +1,33 @@
+ARG RUST_VERSION=1.78
+
+FROM --platform=$TARGETPLATFORM rust:${RUST_VERSION} AS builder
+
+ARG AXONHUB_BUILD_COMMIT=""
+ARG AXONHUB_BUILD_TIME=""
+ARG AXONHUB_BUILD_RUST_VERSION=""
+
+WORKDIR /build
+
+COPY Cargo.toml Cargo.lock ./
+COPY apps ./apps
+COPY crates ./crates
+COPY internal/build/VERSION ./internal/build/VERSION
+
+RUN export AXONHUB_BUILD_COMMIT="${AXONHUB_BUILD_COMMIT}" \
+    && export AXONHUB_BUILD_TIME="${AXONHUB_BUILD_TIME}" \
+    && export AXONHUB_BUILD_RUST_VERSION="${AXONHUB_BUILD_RUST_VERSION:-$(rustc --version)}" \
+    && cargo build --locked --release -p axonhub-server
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /build/target/release/axonhub /usr/local/bin/axonhub
+
+EXPOSE 8090
+
+ENTRYPOINT ["axonhub"]

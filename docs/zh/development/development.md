@@ -6,8 +6,8 @@ AxonHub 当前处于增量式的 Go → Rust 后端迁移阶段。
 
 - **当前完整后端：** `cmd/axonhub/main.go`、`conf/conf.go`、`internal/server/` 下的 Go 实现
 - **Rust 迁移切片：** 以 `Cargo.toml` 为根的 Cargo workspace
-- **Rust 当前已实现：** 配置加载、CLI 兼容、`/health`、`GET /admin/system/status`，以及未迁移 HTTP 路由族的显式 `501 Not Implemented` 返回
-- **尚未迁移：** GraphQL、Ent 数据访问、认证流程、provider 编排，以及完整 API 对等能力
+- **Rust 当前已实现：** 配置加载、CLI 兼容、`/health`、SQLite 范围内的 `GET /admin/system/status` 与 `POST /admin/system/initialize`、已迁移的 OpenAI 兼容 `/v1` 实用子集（`/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings`，含 auth/context、路由与 SQLite 持久化路径），以及未迁移 HTTP 路由族的显式 `501 Not Implemented` 返回
+- **尚未迁移：** GraphQL、更广泛的管理后台能力、非目标 provider wrapper / 路由族、SQLite 之外的多方言对等能力，以及完整 API 对等能力
 
 如果你需要完整产品能力，请继续使用 Go 后端或当前发布的 Docker / 二进制版本。如果你在做迁移工作，请使用 Rust workspace。
 
@@ -54,7 +54,7 @@ AxonHub 仍然是一个统一的 AI 网关，核心仍是客户端 SDK 与上游
 - `Cargo.toml` — workspace 根与共享依赖版本
 - `apps/axonhub-server` — Rust `axonhub` 二进制入口
 - `crates/axonhub-config` — 配置契约、默认值、环境变量覆盖、preview/get 帮助函数
-- `crates/axonhub-http` — 提供 `/health`、`GET /admin/system/status` 与显式 `501` 路由桩的 Axum Router
+- `crates/axonhub-http` — 提供 `/health`、SQLite 范围内的 bootstrap/system 路由、已迁移的 OpenAI 兼容 `/v1` 路由，以及面向未迁移路由族的显式 `501` 路由桩的 Axum Router
 
 ### 旧 Go 后端
 
@@ -79,8 +79,9 @@ cargo run -p axonhub-server --
 当前 Rust 行为是刻意受限且真实的：
 
 - `/health` 返回真实健康状态
-- `/admin/system/status` 在受支持的 SQLite 路径下可通过 Rust 切片返回旧后端的初始化布尔值
-- `/admin/*`、`/v1/*`、`/anthropic/v1/*`、`/gemini/*`、`/openapi/*` 等未迁移路由族会返回结构化 `501 Not Implemented` JSON
+- `/admin/system/status` 与 `/admin/system/initialize` 在受支持的 SQLite 迁移路径下可用
+- `/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings` 通过已迁移的 Rust 实用切片执行，并带有 auth/context、路由语义与 SQLite 持久化副作用
+- `/admin/*`、未纳入目标的 `/v1/*`、`/anthropic/v1/*`、`/jina/v1/*`、`/doubao/v3/*`、`/gemini/*`、`/v1beta/*`、`/openapi/*` 等未迁移路由族会返回结构化 `501 Not Implemented` JSON
 - 配置文件路径与 `AXONHUB_*` 环境变量命名对齐 `conf/conf.go` 的首个共享契约
 
 ## 前端开发

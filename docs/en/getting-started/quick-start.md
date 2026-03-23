@@ -5,9 +5,9 @@
 AxonHub is currently in an additive Go-to-Rust backend migration.
 
 - If you want the **full product experience**, use Docker or released binaries.
-- If you want to work on the **Rust migration slice**, use the Cargo workspace in this repository.
+- If you want to work on the **Rust migration slice**, use the Cargo workspace in this repository or the dedicated Rust-tagged release assets and Docker image.
 
-The Rust slice already preserves config loading, CLI shape, `/health`, `GET /admin/system/status`, and explicit `501` responses for unported route families, but it does **not** yet provide full API parity.
+The Rust slice already preserves config loading, CLI shape, `/health`, SQLite-scoped bootstrap/system routes, the migrated OpenAI-compatible practical `/v1` subset, and explicit `501` responses for unported route families, but it does **not** yet provide full API parity.
 
 ## Prerequisites
 
@@ -48,13 +48,22 @@ If you are working on the new Rust backend slice:
 cargo run -p axonhub-server -- help
 cargo run -p axonhub-server -- config preview
 cargo run -p axonhub-server -- config validate
-cargo run -p axonhub-server --
+cargo run -p axonhub-server -- build-info
 ```
+
+You can also pull the published Rust migration-slice image directly:
+
+```bash
+docker run --rm -p 8090:8090 looplj/axonhub:rust-latest
+```
+
+That image is best for quickly validating the Rust slice. `/health` is the immediate readiness check; the bootstrap/system routes plus the migrated OpenAI-compatible practical `/v1` subset remain limited to the compatible SQLite-backed migration path rather than a fresh full-product setup.
 
 What to expect from the Rust slice right now:
 
 - `/health` works
-- `GET /admin/system/status` works for the supported SQLite-backed migration path
+- `GET /admin/system/status` and `POST /admin/system/initialize` work for the supported SQLite-backed migration path
+- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` work on the migrated practical SQLite path
 - config search paths and `AXONHUB_*` env keys are supported
 - unported route families return structured `501 Not Implemented` JSON
 

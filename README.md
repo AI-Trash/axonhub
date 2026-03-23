@@ -26,8 +26,8 @@
 This repository is in an **additive Go-to-Rust backend migration**.
 
 - **Current full product backend:** the legacy Go service still powers the complete API, auth, GraphQL, and provider orchestration surface.
-- **Current Rust backend slice:** the new Cargo workspace provides compatible config loading, the same top-level CLI verbs, `/health`, `GET /admin/system/status`, and explicit `501 Not Implemented` responses for unported route families.
-- **What this means in practice:** released binaries and the current Docker deployment flow still target the full backend experience, while in-repo Rust development is focused on incremental migration slices.
+- **Current Rust backend slice:** the new Cargo workspace provides compatible config loading, the same top-level CLI verbs, `/health`, SQLite-scoped `/admin/system/status` and `/admin/system/initialize`, the practical OpenAI-compatible `/v1` subset (`/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`) with auth/context, routing, and SQLite persistence for the migrated path, plus explicit `501 Not Implemented` responses for every unported route family.
+- **What this means in practice:** the default released binaries and `looplj/axonhub:latest` Docker flow still target the full backend experience, while the Rust migration slice is now shipped separately through dedicated Rust-tagged release assets and Docker images.
 
 ---
 
@@ -195,6 +195,16 @@ cd axonhub_*
 ```
 
 That's it! Now configure your first AI channel and start calling models through AxonHub.
+
+### Rust Migration Slice Artifacts
+
+Tagged releases also publish dedicated Rust migration-slice delivery paths:
+
+- release assets named like `axonhub-rust_<tag>_<platform>.(tar.gz|zip)`
+- Docker images `looplj/axonhub:rust-latest` and `looplj/axonhub:rust-<tag>`
+- Compose example at `docker-compose.rust.yml`
+
+These artifacts preserve the Rust CLI/config contract, expose the practical migration slice (`/health`, SQLite-scoped bootstrap/system routes, and the migrated OpenAI-compatible `/v1` subset) without claiming full runtime parity, and keep every unported family on explicit `501 Not Implemented` responses. They remain truthful migration-slice artifacts rather than full-product replacements.
 
 ### Zero-Code Migration Example
 

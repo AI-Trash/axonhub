@@ -119,7 +119,7 @@ function Get-AssetUrl([string]$version,[string]$platform){
   Write-Info "Resolving asset for $version ($platform) ..."
   try {
     $json = Invoke-GHApi "$Api/releases/tags/$version"
-    $asset = $json.assets | Where-Object { $_.browser_download_url -match $platform -and $_.browser_download_url -like '*.zip' } | Select-Object -First 1
+    $asset = $json.assets | Where-Object { $_.name -like 'axonhub_*' -and $_.browser_download_url -match $platform -and $_.browser_download_url -like '*.zip' } | Select-Object -First 1
     if($asset){ return $asset.browser_download_url }
   } catch {}
   $clean = $version.TrimStart('v')

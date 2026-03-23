@@ -6,8 +6,8 @@ AxonHub is in an additive Go-to-Rust backend migration.
 
 - **Current full backend:** legacy Go service under `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/`
 - **Rust migration slice:** Cargo workspace rooted at `Cargo.toml`
-- **What the Rust slice implements today:** config loading, CLI compatibility, `/health`, `GET /admin/system/status`, and explicit `501 Not Implemented` stubs for unported HTTP families
-- **What is not migrated yet:** GraphQL, Ent-backed data access, auth flows, provider orchestration, and full API parity
+- **What the Rust slice implements today:** config loading, CLI compatibility, `/health`, SQLite-scoped `GET /admin/system/status` and `POST /admin/system/initialize`, the practical OpenAI-compatible `/v1` subset (`/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`) with auth/context, routing, and SQLite persistence for the migrated path, plus explicit `501 Not Implemented` stubs for unported HTTP families
+- **What is not migrated yet:** GraphQL, the broader admin plane, non-target provider wrappers/families, multi-dialect parity beyond SQLite, and full API parity
 
 Use the Go backend or the released Docker/binary artifacts when you need the full product surface. Use the Rust workspace when working on the migration itself.
 
@@ -54,7 +54,7 @@ The migration does **not** change the product goal. It changes the implementatio
 - `Cargo.toml` — workspace root and shared dependency versions
 - `apps/axonhub-server` — Rust `axonhub` binary
 - `crates/axonhub-config` — shared config contract, defaults, env overrides, preview/get helpers
-- `crates/axonhub-http` — Axum router with `/health`, `GET /admin/system/status`, and truthful `501` route stubs
+- `crates/axonhub-http` — Axum router with `/health`, SQLite-scoped bootstrap/system routes, migrated OpenAI-compatible `/v1` routes, and truthful `501` route stubs for unported families
 
 ### Legacy Go Backend
 
@@ -79,8 +79,9 @@ cargo run -p axonhub-server --
 Current Rust behavior is intentionally limited:
 
 - `/health` returns a truthful health payload
-- `/admin/system/status` returns the legacy initialization boolean through the Rust slice when using the supported SQLite path
-- `/admin/*`, `/v1/*`, `/anthropic/v1/*`, `/gemini/*`, `/openapi/*`, and other unported families return structured `501 Not Implemented` JSON
+- `/admin/system/status` and `/admin/system/initialize` work on the supported SQLite migration path
+- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` run through the practical migrated Rust slice with auth/context, routing, and SQLite-backed persistence side effects
+- `/admin/*`, non-target `/v1/*`, `/anthropic/v1/*`, `/jina/v1/*`, `/doubao/v3/*`, `/gemini/*`, `/v1beta/*`, `/openapi/*`, and other unported families return structured `501 Not Implemented` JSON
 - config file paths and `AXONHUB_*` env keys mirror the first shared contract from `conf/conf.go`
 
 ## Frontend Development

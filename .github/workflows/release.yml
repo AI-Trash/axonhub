@@ -31,6 +31,7 @@ jobs:
         run: cargo test --workspace --locked
 
   goreleaser:
+    name: Publish legacy full-product release assets
     needs: validate_rust_workspace
     runs-on: ubuntu-latest
     steps:
@@ -85,11 +86,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Check if VERSION files have changes
-          if git diff --cached --quiet VERSION internal/build/VERSION; then
-            echo "No changes to VERSION files"
+          # Check if internal/build/VERSION has changes
+          if git diff --cached --quiet -- internal/build/VERSION; then
+            echo "No changes to internal/build/VERSION"
           else
-            # Commit VERSION files with [skip ci] to avoid triggering other workflows
+            # Commit VERSION file with [skip ci] to avoid triggering other workflows
             git commit -m "chore: update VERSION to ${GITHUB_REF#refs/tags/} [skip ci]"
             git push origin HEAD:${{ github.event.repository.default_branch }}
           fi
@@ -103,3 +104,68 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+
+  rust_migration_slice_assets:
+    name: Publish Rust migration-slice asset (${{ matrix.asset_platform }})
+    needs: [validate_rust_workspace, goreleaser]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_platform: linux_amd64
+          - runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            asset_platform: linux_arm64
+          - runner: macos-13
+            target: x86_64-apple-darwin
+            asset_platform: darwin_amd64
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            asset_platform: darwin_arm64
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_platform: windows_amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag & write VERSION
+        shell: bash
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "$TAG" > internal/build/VERSION
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set Rust build metadata
+        shell: bash
+        run: |
+          echo "AXONHUB_BUILD_COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "AXONHUB_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          echo "AXONHUB_BUILD_RUST_VERSION=$(rustc --version)" >> "$GITHUB_ENV"
+
+      - name: Upload Rust migration-slice asset
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: axonhub
+          manifest-path: apps/axonhub-server/Cargo.toml
+          target: ${{ matrix.target }}
+          archive: axonhub-rust_${{ github.ref_name }}_${{ matrix.asset_platform }}
+          locked: true
+          tar: unix
+          zip: windows
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}

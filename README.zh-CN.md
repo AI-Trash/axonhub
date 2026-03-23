@@ -26,8 +26,8 @@
 当前仓库正处于 **增量式 Go → Rust 后端迁移** 阶段。
 
 - **当前完整产品后端：** 仍然是旧 Go 服务，负责完整的 API、认证、GraphQL 与 provider 编排能力。
-- **当前 Rust 后端切片：** 新的 Cargo workspace 已提供兼容配置加载、相同的顶层 CLI 命令、`/health`、`GET /admin/system/status`，以及对未迁移路由族返回显式 `501 Not Implemented`。
-- **实际含义：** 当前发布的二进制与 Docker 部署流程仍然对应完整后端能力，而仓库内的 Rust 开发重点是按功能切片逐步迁移。
+- **当前 Rust 后端切片：** 新的 Cargo workspace 已提供兼容配置加载、相同的顶层 CLI 命令、`/health`、SQLite 范围内的 `/admin/system/status` 与 `/admin/system/initialize`、已迁移的 OpenAI 兼容 `/v1` 实用子集（`/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings`，含 auth/context、路由语义与 SQLite 持久化路径），以及对其余未迁移路由族返回显式 `501 Not Implemented`。
+- **实际含义：** 默认发布的二进制与 `looplj/axonhub:latest` Docker 流程仍然对应完整后端能力，同时 Rust 迁移切片现在也会通过带有 Rust 标记的独立发布资产与 Docker 镜像对外提供。
 
 ---
 
@@ -198,6 +198,16 @@ cd axonhub_*
 ```
 
 就这样！现在配置你的第一个 AI 渠道，开始通过 AxonHub 调用模型。
+
+### Rust 迁移切片交付物
+
+打标签发布时，现在还会额外发布专门的 Rust 迁移切片交付路径：
+
+- 形如 `axonhub-rust_<tag>_<platform>.(tar.gz|zip)` 的发布资产
+- Docker 镜像 `looplj/axonhub:rust-latest` 与 `looplj/axonhub:rust-<tag>`
+- `docker-compose.rust.yml` 中的 Compose 示例
+
+这些交付物会如实暴露 Rust CLI / 配置契约，并提供当前实用迁移切片（`/health`、SQLite 范围内的 bootstrap/system 路由，以及已迁移的 OpenAI 兼容 `/v1` 子集），但不会夸大为完整运行时能力。所有未迁移路由族仍会返回显式 `501 Not Implemented`，因此它们仍然只是诚实的迁移切片交付物，而不是完整产品的替代品。
 
 ### 零代码迁移示例 | Zero-Code Migration Example
 

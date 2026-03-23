@@ -229,12 +229,13 @@ get_asset_download_url() {
     if json=$(curl_gh "${GITHUB_API}/releases/tags/${version}" 2>/dev/null); then
         if command -v jq >/dev/null 2>&1; then
             debug "Assets on tag (names): $(echo "$json" | jq -r '.assets[]?.name' | tr '\n' ' ')"
-            url=$(echo "$json" | jq -r --arg platform "$platform" '.assets[]?.browser_download_url | select(test($platform)) | select(endswith(".zip"))' | head -n1)
+            url=$(echo "$json" | jq -r --arg platform "$platform" '.assets[]? | select(.name | startswith("axonhub_")) | select(.name | test($platform)) | select(.name | endswith(".zip")) | .browser_download_url' | head -n1)
         else
             url=$(echo "$json" \
                 | tr -d '\n\r\t' \
                 | sed -nE 's/.*("browser_download_url"[[[:space:]]]*:[[:space:]]*"[^"]+").*/\1/p' \
                 | sed -nE 's/.*"browser_download_url"[[[:space:]]]*:[[:space:]]*"([^"]+)".*/\1/p' \
+                | grep 'axonhub_' \
                 | grep "$platform" \
                 | grep '\.zip$' -m 1)
         fi
@@ -245,7 +246,7 @@ get_asset_download_url() {
         print_warning "API failed or no asset matched; trying list endpoint..."
         if json2=$(curl_gh "${GITHUB_API}/releases?per_page=100" 2>/dev/null); then
             if command -v jq >/dev/null 2>&1; then
-                url=$(echo "$json2" | jq -r --arg tag "$version" --arg platform "$platform" '.[] | select(.tag_name==$tag) | .assets[]?.browser_download_url | select(test($platform)) | select(endswith(".zip"))' | head -n1)
+                url=$(echo "$json2" | jq -r --arg tag "$version" --arg platform "$platform" '.[] | select(.tag_name==$tag) | .assets[]? | select(.name | startswith("axonhub_")) | select(.name | test($platform)) | select(.name | endswith(".zip")) | .browser_download_url' | head -n1)
             else
                 url=$(echo "$json2" \
                     | tr -d '\n\r\t' \
@@ -253,6 +254,7 @@ get_asset_download_url() {
                     | grep -E '"tag_name"[[:space:]]*:[[:space:]]*"'"$version"'"' \
                     | sed -nE 's/.*("browser_download_url"[[[:space:]]]*:[[:space:]]*"[^"]+").*/\1/p' \
                     | sed -nE 's/.*"browser_download_url"[[[:space:]]]*:[[:space:]]*"([^"]+)".*/\1/p' \
+                    | grep 'axonhub_' \
                     | grep "$platform" \
                     | grep '\.zip$' -m 1)
             fi

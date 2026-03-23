@@ -1,4 +1,5 @@
 .PHONY: generate build backend frontend cleanup-db \
+	build-rust-backend docker-build-rust \
 	test-backend-all \
 	e2e-test e2e-backend-start e2e-backend-stop e2e-backend-status e2e-backend-restart e2e-backend-clean \
 	migration-test migration-test-all migration-test-all-dbs \
@@ -22,6 +23,13 @@ build-backend:
 	go build -ldflags "-s -w" -tags=nomsgpack -o axonhub ./cmd/axonhub
 	@echo "Backend build completed!"
 
+# Build the Rust migration-slice backend application
+build-rust-backend:
+	@echo "Building axonhub Rust migration slice..."
+	cargo build --locked --release -p axonhub-server
+	cp target/release/axonhub ./axonhub-rust
+	@echo "Rust backend build completed!"
+
 # Build the frontend application
 build-frontend:
 	@echo "Building axonhub frontend..."
@@ -35,6 +43,12 @@ build-frontend:
 # Build both frontend and backend
 build: build-frontend build-backend
 	@echo "Full build completed!"
+
+# Build the Rust migration-slice Docker image
+docker-build-rust:
+	@echo "Building axonhub Rust migration-slice Docker image..."
+	docker build -f Dockerfile.rust -t axonhub:rust-local .
+	@echo "Rust Docker build completed!"
 
 # Cleanup test database - remove all playwright test data
 cleanup-db:
