@@ -23,11 +23,11 @@
 
 ## 🚧 后端迁移状态
 
-当前仓库正处于 **增量式 Go → Rust 后端迁移** 阶段。
+当前仓库正处于 **Go → Rust 后端最终切换阶段**。
 
-- **当前完整产品后端：** 仍然是旧 Go 服务，负责完整的 API、认证、GraphQL 与 provider 编排能力。
-- **当前 Rust 后端切片：** 新的 Cargo workspace 已提供兼容配置加载、相同的顶层 CLI 命令、`/health`、SQLite 范围内的 `/admin/system/status` 与 `/admin/system/initialize`、已迁移的 OpenAI 兼容 `/v1` 实用子集（`/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings`，含 auth/context、路由语义与 SQLite 持久化路径），以及对其余未迁移路由族返回显式 `501 Not Implemented`。
-- **实际含义：** 默认发布的二进制与 `looplj/axonhub:latest` Docker 流程仍然对应完整后端能力，同时 Rust 迁移切片现在也会通过带有 Rust 标记的独立发布资产与 Docker 镜像对外提供。
+- **当前受支持后端：** Rust workspace 与带 Rust 标记的发布交付物，已经是仓库内已验证 SQLite 和 PostgreSQL 能力面的真实替代后端：CLI/config、`/health`、admin bootstrap/status、identity/request-context、admin read 路由（`/admin/requests/:request_id/content`）、admin GraphQL、OpenAPI GraphQL，以及 OpenAI 兼容的 `/v1` 推理端点（`/models`、`/chat/completions`、`/responses`、`/embeddings`、`/messages`、`/rerank`）。
+- **当前未支持边界：** 超出该已验证范围的路由族，仍然会由 Rust 侧返回显式 `501 Not Implemented`，而不是再指引用户回退到旧 Go 后端。值得注意的是，`/v1` 图像生成（`/images/generations`、`/images/edits`）和视频生成端点尚未在 Rust 中实现。
+- **实际含义：** 对于本仓库当前受支持的产品能力，请优先使用 Rust 二进制、`ghcr.io/looplj/axonhub:rust-latest` 或 `docker-compose.rust.yml`。`looplj/axonhub:latest` 仅在 Go 退役闸门完成前作为回滚目标保留。
 
 ---
 
@@ -199,15 +199,15 @@ cd axonhub_*
 
 就这样！现在配置你的第一个 AI 渠道，开始通过 AxonHub 调用模型。
 
-### Rust 迁移切片交付物
+### Rust 切换交付物
 
-打标签发布时，现在还会额外发布专门的 Rust 迁移切片交付路径：
+打标签发布时，会提供面向当前受支持替代范围的 Rust 交付路径：
 
 - 形如 `axonhub-rust_<tag>_<platform>.(tar.gz|zip)` 的发布资产
 - Docker 镜像 `ghcr.io/looplj/axonhub:rust-latest` 与 `ghcr.io/looplj/axonhub:rust-<tag>`
 - `docker-compose.rust.yml` 中的 Compose 示例
 
-这些交付物会如实暴露 Rust CLI / 配置契约，并提供当前实用迁移切片（`/health`、SQLite 范围内的 bootstrap/system 路由，以及已迁移的 OpenAI 兼容 `/v1` 子集），但不会夸大为完整运行时能力。所有未迁移路由族仍会返回显式 `501 Not Implemented`，因此它们仍然只是诚实的迁移切片交付物，而不是完整产品的替代品。
+这些交付物会保留 Rust CLI / 配置契约，并交付 Tasks 1-9 已验证的 SQLite 替代能力面：`/health`、admin bootstrap/status/auth/read 流程、admin GraphQL、OpenAPI GraphQL、request-context/auth 基础能力，以及已迁移的 inference 路由族。任何超出该受支持范围的路由族，仍会由 Rust 返回显式 `501 Not Implemented`，直到后续单独迁移并验证完成。
 
 ### 零代码迁移示例 | Zero-Code Migration Example
 
@@ -276,21 +276,30 @@ response = client.chat.completions.create(
 
 #### 数据库支持 | Database Support
 
-AxonHub 支持多种数据库，满足不同规模的部署需求：
+> **重要：** 当前 Rust 切换支持 **SQLite 和 PostgreSQL**（针对已验证的特定能力面）。多 dialect 部署（TiDB、MySQL、Neon DB）仅适用于旧版 Go 后端。详见 [后端迁移状态](#后端迁移状态--backend-migration-status) 部分。
+
+**Rust 切换（当前受支持范围）：**
 
 | 数据库 | 支持版本 | 推荐场景 | 自动迁移 | 链接 |
 |--------|----------|----------|----------|------|
-| **SQLite** | 3.0+ | 开发环境、小型部署 | ✅ 支持 | [SQLite](https://www.sqlite.org/index.html) |
+| **SQLite** | 3.0+ | 开发环境、小型部署、Rust 切换范围 | ✅ 支持 | [SQLite](https://www.sqlite.org/index.html) |
+| **PostgreSQL** | 15+ | 生产环境、中大型部署、Rust 切换范围 | ✅ 支持 | [PostgreSQL](https://www.postgresql.org/) |
+
+**旧版 Go 后端（Rust 切换尚未支持）：**
+
+| 数据库 | 支持版本 | 推荐场景 | 自动迁移 | 链接 |
+|--------|----------|----------|----------|------|
 | **TiDB Cloud** | Starter | Serverless, Free tier, Auto Scale | ✅ 支持 | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-starter/) |
 | **TiDB Cloud** | Dedicated | 分布式部署、大规模 | ✅ 支持 | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-dedicated/) |
 | **TiDB** | V8.0+ | 分布式部署、大规模 | ✅ 支持 | [TiDB](https://tidb.io/) |
 | **Neon DB** | - | Serverless, Free tier, Auto Scale | ✅ 支持 | [Neon DB](https://neon.com/) |
-| **PostgreSQL** | 15+ | 生产环境、中大型部署 | ✅ 支持 | [PostgreSQL](https://www.postgresql.org/) |
 | **MySQL** | 8.0+ | 生产环境、中大型部署 | ✅ 支持 | [MySQL](https://www.mysql.com/) |
 
 #### 配置文件 | Configuration
 
-AxonHub 使用 YAML 配置文件，支持环境变量覆盖：
+**Rust 切换（SQLite）：**
+
+AxonHub 使用 YAML 配置文件，支持环境变量覆盖。Rust 切换默认使用 SQLite，无需额外配置。
 
 ```yaml
 # config.yml
@@ -299,59 +308,58 @@ server:
   name: "AxonHub"
   debug: false
 
-db:
-  dialect: "tidb"
-  dsn: "<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.tidbcloud.com:4000)/axonhub?tls=true&parseTime=true&multiStatements=true&charset=utf8mb4"
-
-log:
-  level: "info"
-  encoding: "json"
+# SQLite 是默认且唯一支持的 Rust 切换数据库。
+# 无需额外 db 配置 - 数据存储在 ./axonhub.db
 ```
 
-环境变量：
+环境变量（可选）：
+
 ```bash
 AXONHUB_SERVER_PORT=8090
-AXONHUB_DB_DIALECT="tidb"
-AXONHUB_DB_DSN="<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.tidbcloud.com:4000)/axonhub?tls=true&parseTime=true&multiStatements=true&charset=utf8mb4"
 AXONHUB_LOG_LEVEL=info
+# SQLite 无需数据库配置 - 它是默认值
 ```
 
-详细配置说明请参考 [配置文档](config.example.yml)。
+**旧版 Go 后端（多 Dialect）：**
+
+对于 TiDB/PostgreSQL/MySQL/Neon DB 部署，必须使用旧版 Go 后端。配置示例请参阅 [配置文档](docs/zh/deployment/configuration.md)。
 
 #### Docker Compose 部署
 
+**Rust 切换（SQLite）：**
+
+使用提供的 `docker-compose.rust.yml` 文件部署 Rust 后端（SQLite）：
+
 ```bash
-# 克隆项目
-git clone https://github.com/looplj/axonhub.git
-cd axonhub
-
-# 设置环境变量
-export AXONHUB_DB_DIALECT="tidb"
-export AXONHUB_DB_DSN="<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.tidbcloud.com:4000)/axonhub?tls=true&parseTime=true&multiStatements=true&charset=utf8mb4"
-
-# 启动服务
-docker-compose up -d
+# 启动 Rust 后端（SQLite）
+docker-compose -f docker-compose.rust.yml up -d
 
 # 查看状态
-docker-compose ps
+docker-compose -f docker-compose.rust.yml ps
 ```
+
+**旧版 Go 后端（多 Dialect）：**
+
+对于 TiDB/PostgreSQL/MySQL 部署，请使用旧版 Go 后端。配置示例请参阅 [部署文档](docs/zh/deployment/configuration.md)。
 
 #### Helm Kubernetes 部署 | Helm Kubernetes Deployment
 
-使用官方 Helm Chart 在 Kubernetes 上部署 AxonHub：
+**仅限旧版 Go 后端（Rust 切换尚未支持）：**
+
+使用官方 Helm Chart 在 Kubernetes 上部署 AxonHub。此部署路径使用旧版 Go 后端并支持多 dialect 数据库。
 
 ```bash
-# Quick installation
+# 快速安装
 git clone https://github.com/looplj/axonhub.git
 cd axonhub
 helm install axonhub ./deploy/helm
 
-# Production deployment
+# 生产部署
 helm install axonhub ./deploy/helm -f ./deploy/helm/values-production.yaml
 
-# Access AxonHub
+# 访问 AxonHub
 kubectl port-forward svc/axonhub 8090:8090
-# Visit http://localhost:8090
+# 访问 http://localhost:8090
 ```
 
 **关键配置选项：**
@@ -360,29 +368,27 @@ kubectl port-forward svc/axonhub 8090:8090
 |-----------|-------------|---------|
 | `axonhub.replicaCount` | 副本数 | `1` |
 | `axonhub.dbPassword` | 数据库密码 | `axonhub_password` |
-| `postgresql.enabled` | 是否启用内嵌 PostgreSQL | `true` |
+| `postgresql.enabled` | 是否启用内嵌 PostgreSQL（仅 Go 后端） | `true` |
 | `ingress.enabled` | 是否启用 Ingress | `false` |
 | `persistence.enabled` | 是否启用持久化存储 | `false` |
 
-有关详细配置和故障排查，请参阅 [Helm Chart 文档](deploy/helm/README.md)。
+有关详细配置和故障排查，请参阅 [Helm Chart 文档](deploy/helm/README.md)。注意：Helm 部署暂不支持 Rust 切换。
 
 #### 虚拟机部署 | Virtual Machine Deployment
 
-下载最新版本从 [GitHub Releases](https://github.com/looplj/axonhub/releases)
+**Rust 切换（SQLite）：**
+
+从 [GitHub Releases](https://github.com/looplj/axonhub/releases) 下载 Rust 专用版本（查找 `axonhub-rust_*` 资产）。
 
 ```bash
-# 克隆项目
-git clone https://github.com/looplj/axonhub.git
-cd axonhub
-
-# 设置环境变量
-export AXONHUB_DB_DIALECT="tidb"
-export AXONHUB_DB_DSN="<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.tidbcloud.com:4000)/axonhub?tls=true&parseTime=true&multiStatements=true&charset=utf8mb4"
+# 提取并运行
+unzip axonhub-rust_*.zip
+cd axonhub-rust_*
 
 # 安装
 sudo ./install.sh
 
-# 配置文件检查
+# 配置文件检查（可选）
 axonhub config validate
 
 # 使用管理脚本管理 AxonHub
@@ -393,6 +399,10 @@ axonhub config validate
 # 停止
 ./stop.sh
 ```
+
+**旧版 Go 后端（多 Dialect）：**
+
+对于 TiDB/PostgreSQL/MySQL 部署，请使用标准 `axonhub_*` 版本并按 [配置文档](docs/zh/deployment/configuration.md) 配置数据库连接。
 
 ---
 

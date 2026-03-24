@@ -34,9 +34,9 @@ pub(crate) async fn health(State(state): State<HttpState>) -> Json<HealthRespons
         service: state.service_name,
         version: state.version,
         backend: "rust",
-        migration_status: "first migration slice",
-        api_parity: "partial",
-        legacy_go_backend_present: true,
+        migration_status: "progressive cutover",
+        api_parity: "supported_scope",
+        legacy_go_backend_present: false,
         config_source: state.config_source,
     })
 }
@@ -58,6 +58,27 @@ pub(crate) async fn execute_openai_request(
     original_uri: Uri,
     route: OpenAiV1Route,
 ) -> Response {
+    if let OpenAiV1Capability::Unsupported { message } = &state.openai_v1 {
+        return not_implemented_response("/v1/*", Method::POST, original_uri, None)
+            .with_message(message);
+    }
+
+    let body = match parse_json_body(&mut request).await {
+        Ok(body) => body,
+        Err(response) => return response,
+    };
+
+    execute_openai_request_with_body(state, request, original_uri, route, body, None).await
+}
+
+pub(crate) async fn execute_openai_request_with_body(
+    state: HttpState,
+    request: axum::extract::Request,
+    original_uri: Uri,
+    route: OpenAiV1Route,
+    body: Value,
+    channel_hint_id: Option<i64>,
+) -> Response {
     let openai = match &state.openai_v1 {
         OpenAiV1Capability::Unsupported { message } => {
             return not_implemented_response("/v1/*", Method::POST, original_uri, None)
@@ -66,12 +87,12 @@ pub(crate) async fn execute_openai_request(
         OpenAiV1Capability::Available { openai } => openai,
     };
 
-    let body = match parse_json_body(&mut request).await {
-        Ok(body) => body,
-        Err(response) => return response,
-    };
-
-    let execution_request = match build_openai_execution_request(request, body, HashMap::new()) {
+    let execution_request = match build_openai_execution_request(
+        request,
+        body,
+        HashMap::new(),
+        channel_hint_id,
+    ) {
         Ok(payload) => payload,
         Err(response) => return response,
     };
@@ -132,7 +153,7 @@ pub(crate) async fn execute_compatibility_request(
         CompatibilityRoute::DoubaoGetTask | CompatibilityRoute::DoubaoDeleteTask => Value::Null,
     };
 
-    let execution_request = match build_openai_execution_request(request, body, path_params) {
+    let execution_request = match build_openai_execution_request(request, body, path_params, None) {
         Ok(payload) => payload,
         Err(response) => return response,
     };
@@ -200,19 +221,18 @@ pub(crate) fn graphql_playground_html(endpoint: &str) -> String {
 
 pub(crate) fn provider_edge_admin_port(
     state: &HttpState,
-) -> Result<&Arc<dyn crate::ports::ProviderEdgeAdminPort>, Response> {
+) -> Result<&Arc<dyn crate::ports::ProviderEdgeAdminPort>, String> {
     match &state.provider_edge_admin {
-        crate::state::ProviderEdgeAdminCapability::Unsupported { message } => {
-            Err(crate::errors::auth_unsupported_response(message))
-        }
+        crate::state::ProviderEdgeAdminCapability::Unsupported { message } => Err(message.clone()),
         crate::state::ProviderEdgeAdminCapability::Available { provider_edge } => Ok(provider_edge),
     }
 }
 
-fn build_openai_execution_request(
+pub(crate) fn build_openai_execution_request(
     mut request: axum::extract::Request,
     body: Value,
     path_params: HashMap<String, String>,
+    channel_hint_id: Option<i64>,
 ) -> Result<OpenAiV1ExecutionRequest, Response> {
     let path = request.uri().path().to_owned();
     let query = request
@@ -262,10 +282,11 @@ fn build_openai_execution_request(
         trace: context.trace,
         api_key_id,
         client_ip,
+        channel_hint_id,
     })
 }
 
-async fn parse_json_body(request: &mut axum::extract::Request) -> Result<Value, Response> {
+pub(crate) async fn parse_json_body(request: &mut axum::extract::Request) -> Result<Value, Response> {
     let body = body::to_bytes(std::mem::take(request.body_mut()), usize::MAX)
         .await
         .map_err(|_| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid request format"))?;

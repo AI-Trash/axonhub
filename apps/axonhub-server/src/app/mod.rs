@@ -1,6 +1,7 @@
 mod build_info;
 mod capabilities;
 mod cli;
+mod metrics;
 mod server;
 
 use anyhow::Result;

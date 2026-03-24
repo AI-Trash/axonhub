@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use axonhub_config::load;
-use axonhub_http::{router, HttpState, TraceConfig};
+use axonhub_http::{router, router_with_metrics, HttpMetricsCapability, HttpState, TraceConfig};
 use axum::Router;
+use std::net::SocketAddr;
+use std::process;
 
 use super::build_info::version;
 use super::capabilities::{
@@ -10,9 +12,13 @@ use super::capabilities::{
     build_provider_edge_admin_capability, build_system_bootstrap_capability,
     build_request_context_capability,
 };
+use super::metrics::MetricsRuntime;
 
 pub(crate) async fn start_server() -> Result<()> {
-    let loaded = load().context("Failed to load config")?;
+    let loaded = load().unwrap_or_else(|error| {
+        eprintln!("Failed to load config: {error}");
+        process::exit(1);
+    });
     let port: u16 = loaded
         .config
         .server
@@ -66,20 +72,41 @@ pub(crate) async fn start_server() -> Result<()> {
         },
     };
 
-    let app = mount_base_path(router(state), &loaded.config.server.base_path);
+    let metrics_runtime = MetricsRuntime::new(&loaded.config.metrics, &loaded.config.server.name)?;
+    let app = if let Some(metrics_runtime) = metrics_runtime.as_ref() {
+        mount_base_path(
+            router_with_metrics(
+                state,
+                HttpMetricsCapability::Available {
+                    recorder: metrics_runtime.recorder(),
+                },
+            ),
+            &loaded.config.server.base_path,
+        )
+    } else {
+        mount_base_path(router(state), &loaded.config.server.base_path)
+    };
     let listener = tokio::net::TcpListener::bind(&address)
         .await
         .with_context(|| format!("Failed to bind {address}"))?;
 
-    println!(
-        "AxonHub Rust migration slice listening on http://{}",
-        listener.local_addr()?
-    );
+    let listener_address = listener.local_addr()?;
+    let service_name = loaded.config.server.name.clone();
 
-    axum::serve(listener, app)
+    for line in startup_messages(&service_name, listener_address, loaded.config.metrics.enabled) {
+        println!("{line}");
+    }
+
+    let server_result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("HTTP server exited unexpectedly")
+        .context("HTTP server exited unexpectedly");
+
+    if let Some(metrics_runtime) = metrics_runtime {
+        metrics_runtime.shutdown()?;
+    }
+
+    server_result
 }
 
 pub(crate) fn mount_base_path(app: Router, base_path: &str) -> Router {
@@ -94,4 +121,22 @@ pub(crate) fn mount_base_path(app: Router, base_path: &str) -> Router {
 
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+pub(crate) fn startup_messages(
+    service_name: &str,
+    listener_address: SocketAddr,
+    metrics_enabled: bool,
+) -> Vec<String> {
+    let mut messages = Vec::new();
+
+    if metrics_enabled {
+        messages.push("Metrics exporter initialized for Rust server runtime.".to_owned());
+    }
+
+    messages.push(format!(
+        "{service_name} listening on http://{listener_address}"
+    ));
+
+    messages
 }

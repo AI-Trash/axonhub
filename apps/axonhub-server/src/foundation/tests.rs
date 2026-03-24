@@ -1,8 +1,10 @@
 use super::{
-    admin::SqliteAdminService,
+    admin::{SqliteAdminService, SqliteOperationalService},
     authz::{
         scope_strings, serialize_scope_slugs, ScopeLevel, ScopeSlug, ROLE_LEVEL_PROJECT,
-        SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_READ_SETTINGS, SCOPE_WRITE_API_KEYS,
+        ROLE_LEVEL_SYSTEM, SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS,
+        SCOPE_READ_USERS, SCOPE_READ_SETTINGS, SCOPE_WRITE_API_KEYS, SCOPE_WRITE_SETTINGS,
+        SCOPE_WRITE_USERS,
     },
     graphql::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
     identity_service::SqliteIdentityService,
@@ -13,21 +15,22 @@ use super::{
     request_context_service::SqliteRequestContextService,
     shared::{
         SqliteFoundation, DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE,
-        PRIMARY_DATA_STORAGE_NAME,
+        PRIMARY_DATA_STORAGE_NAME, graphql_gid,
     },
     system::{ensure_identity_tables, hash_password, SqliteBootstrapService},
 };
 use axonhub_http::{
     router, AdminCapability, AdminError, AdminGraphqlCapability, AdminPort,
     AuthUserContext, HttpState, IdentityCapability, IdentityPort, InitializeSystemRequest,
-    OpenAiV1Capability, OpenApiGraphqlCapability, ProviderEdgeAdminCapability,
-    RequestContextCapability, SignInRequest, SystemBootstrapCapability, SystemBootstrapPort,
-    TraceConfig,
+    OpenAiV1Capability, OpenAiV1ExecutionRequest, OpenAiV1Route, OpenApiGraphqlCapability,
+    OpenAiV1Port, ProjectContext, ProviderEdgeAdminCapability, RequestContextCapability, SignInRequest,
+    SystemBootstrapCapability, SystemBootstrapPort, TraceConfig,
 };
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use rusqlite::{params, Connection};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -405,9 +408,9 @@ use tower::util::ServiceExt;
         std::fs::remove_file(db_path).ok();
     }
 
-    #[test]
-    fn foundational_admin_read_primitives_expose_catalog_request_and_trace_rows() {
-        let db_path = temp_sqlite_path("task13-admin-primitives");
+    #[tokio::test]
+    async fn admin_graphql_allows_update_user_status_mutation() {
+        let db_path = temp_sqlite_path("task9-update-user-status");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
         let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
 
@@ -421,88 +424,1232 @@ use tower::util::ServiceExt;
             })
             .unwrap();
 
-        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
-        let trace = foundation
-            .trace_contexts()
-            .get_or_create_trace(project_id, "trace-task13", None)
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        // Create an admin user with write_users scope
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_USERS],
+        );
+
+        // Create a target user with default activated status
+        let target_user_id = insert_test_user(
+            &connection,
+            "target@example.com",
+            "password123",
+            &[],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+
+        // Sign in as admin
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        // Get the target user's GraphQL ID
+        let target_gid = graphql_gid("user", target_user_id);
+
+        // Mutation: update status to deactivated
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"query": "mutation UpdateUserStatus($id: ID!, $status: UserStatus!) {{ updateUserStatus(id: $id, status: $status) {{ id createdAt updatedAt email status firstName lastName isOwner preferLanguage scopes roles {{ edges {{ node {{ id name }} }} }} }} }}", "variables": {{ "id": "{}", "status": "deactivated" }} }}"#,
+                        target_gid
+                    )))
+                    .unwrap(),
+            )
+            .await
             .unwrap();
 
-        let channel_id = foundation
+        let json = read_json_response(response).await;
+
+        assert!(json["data"]["updateUserStatus"].is_object());
+        let updated_user = &json["data"]["updateUserStatus"];
+
+        // Verify returned user fields
+        assert!(updated_user["id"].is_string());
+        assert_eq!(updated_user["id"].as_str().unwrap(), target_gid);
+        assert!(updated_user["email"].as_str().unwrap() == "target@example.com");
+        assert!(updated_user["status"].as_str().unwrap() == "deactivated");
+        assert!(updated_user["firstName"].as_str().unwrap() == "Test");
+        assert!(updated_user["lastName"].as_str().unwrap() == "User");
+        assert!(!updated_user["isOwner"].as_bool().unwrap());
+        assert!(updated_user["preferLanguage"].as_str().unwrap() == "en");
+        assert!(updated_user["scopes"].is_array());
+        assert!(updated_user["roles"].is_object());
+        let roles_conn = &updated_user["roles"];
+        assert!(roles_conn["edges"].is_array());
+
+        // Verify persisted status change in database
+        let db_connection = foundation.open_connection(true).unwrap();
+        let status_row: String = db_connection.query_row(
+            "SELECT status FROM users WHERE id = ?1 AND deleted_at = 0",
+            [target_user_id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(status_row, "deactivated");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_create_user_mutation() {
+        let db_path = temp_sqlite_path("task9-create-user");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        // Create an admin user with write_users scope
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_USERS],
+        );
+
+        // Create a role to assign to the new user
+        let _project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let role_id = insert_role(&connection, "Test Role", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_SETTINGS]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+
+        // Sign in as admin
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        // Prepare role GID
+        let role_gid = graphql_gid("role", role_id);
+
+        // Mutation: create a new user with scopes and role
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"query": "mutation CreateUser($input: CreateUserInput!) {{ createUser(input: $input) {{ id createdAt updatedAt email status firstName lastName isOwner preferLanguage scopes roles {{ edges {{ node {{ id name }} }} }} }} }}", "variables": {{ "input": {{ "email": "newuser@example.com", "password": "newpass123", "firstName": "New", "lastName": "User", "scopes": ["read_settings"], "roleIDs": ["{}"] }} }}}}"#,
+                        role_gid
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+
+        assert!(json["data"]["createUser"].is_object());
+        let created_user = &json["data"]["createUser"];
+
+        // Verify returned user fields
+        assert!(created_user["id"].is_string());
+        assert!(created_user["email"].as_str().unwrap() == "newuser@example.com");
+        assert!(created_user["status"].as_str().unwrap() == "activated");
+        assert!(created_user["firstName"].as_str().unwrap() == "New");
+        assert!(created_user["lastName"].as_str().unwrap() == "User");
+        assert!(!created_user["isOwner"].as_bool().unwrap());
+        assert!(created_user["preferLanguage"].as_str().unwrap() == "en");
+        assert!(created_user["scopes"].is_array());
+        let scopes: Vec<&str> = created_user["scopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(scopes.contains(&"read_settings"));
+        assert!(created_user["roles"].is_object());
+        let roles_conn = &created_user["roles"];
+        assert!(roles_conn["edges"].is_array());
+        let role_edges = roles_conn["edges"].as_array().unwrap();
+        assert!(!role_edges.is_empty());
+        for role_edge in role_edges {
+            assert!(role_edge["node"].is_object());
+            let role_node = &role_edge["node"];
+            assert!(role_node["id"].is_string());
+            assert!(role_node["name"].is_string());
+        }
+
+        // Verify persisted user in database
+        let db_connection = foundation.open_connection(true).unwrap();
+        let user_row: (i64, String, String, String, i64, String, String, String, String, String) = db_connection.query_row(
+            "SELECT id, email, first_name, last_name, is_owner, prefer_language, status, created_at, updated_at, scopes FROM users WHERE email = ?1 AND deleted_at = 0",
+            ["newuser@example.com"],
+            |row| Ok((
+                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+                row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?
+            )),
+        ).unwrap();
+
+        let (user_id, email, first_name, last_name, is_owner_i64, prefer_language, status, _created_at, _updated_at, scopes_json) = user_row;
+        assert_eq!(email, "newuser@example.com");
+        assert_eq!(first_name, "New");
+        assert_eq!(last_name, "User");
+        assert_eq!(is_owner_i64, 0);
+        assert_eq!(prefer_language, "en");
+        assert_eq!(status, "activated");
+        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap();
+        assert_eq!(scopes, vec!["read_settings"]);
+
+        // Verify password is hashed (not plaintext)
+        let password_hash: String = db_connection.query_row(
+            "SELECT password FROM users WHERE id = ?1",
+            [user_id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_ne!(password_hash, "newpass123"); // Should be hashed, not plaintext
+
+        // Verify role assignment
+        let role_count: i64 = db_connection.query_row(
+            "SELECT COUNT(*) FROM user_roles WHERE user_id = ?1 AND role_id = ?2",
+            [user_id, role_id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(role_count, 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_update_user_mutation() {
+        let db_path = temp_sqlite_path("task9-update-user");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        // Create an admin user with write_users scope
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_USERS],
+        );
+
+        // Create a target user with initial data
+        let target_user_id = insert_test_user(
+            &connection,
+            "target@example.com",
+            "password123",
+            &[],
+        );
+
+        // Create two roles: one to replace, one to assign
+        let old_role_id = insert_role(&connection, "Old Role", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_SETTINGS]);
+        let new_role_id = insert_role(&connection, "New Role", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_CHANNELS]);
+
+        // Assign old role to target user
+        connection.execute(
+            "INSERT INTO user_roles (user_id, role_id) VALUES (?1, ?2)",
+            params![target_user_id, old_role_id],
+        ).unwrap();
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+
+        // Sign in as admin
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let target_gid = graphql_gid("user", target_user_id);
+        let new_role_gid = graphql_gid("role", new_role_id);
+
+        // Mutation: update user fields, scopes, and replace role
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"query": "mutation UpdateUser($id: ID!, $input: UpdateUserInput!) {{ updateUser(id: $id, input: $input) {{ id createdAt updatedAt email status firstName lastName isOwner preferLanguage scopes roles {{ edges {{ node {{ id name }} }} }} }} }}", "variables": {{ "id": "{}", "input": {{ "firstName": "Updated", "lastName": "Name", "preferLanguage": "fr", "avatar": "https://example.com/avatar.jpg", "scopes": ["read_channels", "write_settings"], "roleIDs": ["{}"] }} }}}}"#,
+                        target_gid, new_role_gid
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+
+        assert!(json["data"]["updateUser"].is_object());
+        let updated_user = &json["data"]["updateUser"];
+
+        // Verify returned user fields
+        assert!(updated_user["id"].is_string());
+        assert_eq!(updated_user["id"].as_str().unwrap(), target_gid);
+        assert!(updated_user["email"].as_str().unwrap() == "target@example.com");
+        assert!(updated_user["status"].as_str().unwrap() == "activated");
+        assert!(updated_user["firstName"].as_str().unwrap() == "Updated");
+        assert!(updated_user["lastName"].as_str().unwrap() == "Name");
+        assert!(!updated_user["isOwner"].as_bool().unwrap());
+        assert!(updated_user["preferLanguage"].as_str().unwrap() == "fr");
+        assert!(updated_user["scopes"].is_array());
+        let scopes: Vec<&str> = updated_user["scopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(scopes.contains(&"read_channels"));
+        assert!(scopes.contains(&"write_settings"));
+        assert!(updated_user["roles"].is_object());
+        let roles_conn = &updated_user["roles"];
+        assert!(roles_conn["edges"].is_array());
+        let role_edges = roles_conn["edges"].as_array().unwrap();
+        assert_eq!(role_edges.len(), 1);
+        assert_eq!(role_edges[0]["node"]["id"].as_str().unwrap(), new_role_gid);
+        assert_eq!(role_edges[0]["node"]["name"].as_str().unwrap(), "New Role");
+
+        // Verify persisted changes in database
+        let db_connection = foundation.open_connection(true).unwrap();
+        let user_row: (String, String, String, i64, String, String, String, String, String) = db_connection.query_row(
+            "SELECT email, first_name, last_name, is_owner, prefer_language, status, created_at, updated_at, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
+            [target_user_id],
+            |row| Ok((
+                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+                row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?
+            )),
+        ).unwrap();
+
+        let (email, first_name, last_name, is_owner_i64, prefer_language, status, _created_at, _updated_at, scopes_json) = user_row;
+        assert_eq!(email, "target@example.com");
+        assert_eq!(first_name, "Updated");
+        assert_eq!(last_name, "Name");
+        assert_eq!(is_owner_i64, 0);
+        assert_eq!(prefer_language, "fr");
+        assert_eq!(status, "activated");
+        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap();
+        assert_eq!(scopes, vec!["read_channels", "write_settings"]);
+
+        // Verify role replacement: old role removed, new role present
+        let role_count_old: i64 = db_connection.query_row(
+            "SELECT COUNT(*) FROM user_roles WHERE user_id = ?1 AND role_id = ?2",
+            [target_user_id, old_role_id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(role_count_old, 0);
+
+        let role_count_new: i64 = db_connection.query_row(
+            "SELECT COUNT(*) FROM user_roles WHERE user_id = ?1 AND role_id = ?2",
+            [target_user_id, new_role_id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(role_count_new, 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_update_me_mutation() {
+        let db_path = temp_sqlite_path("task9-update-me");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let user_id = insert_test_user(
+            &connection,
+            "testuser@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        insert_project_membership(&connection, user_id, project_id, false, &[SCOPE_READ_REQUESTS]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "testuser@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation UpdateMe($input: UpdateMeInput!) { updateMe(input: $input) { id email firstName lastName isOwner preferLanguage avatar scopes projects { projectID } } }",
+                            "variables": {
+                                "input": {
+                                    "firstName": "Updated",
+                                    "lastName": "Profile",
+                                    "preferLanguage": "fr",
+                                    "avatar": "https://example.com/avatar.png"
+                                }
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let updated = &json["data"]["updateMe"];
+        assert_eq!(updated["email"], "testuser@example.com");
+        assert_eq!(updated["firstName"], "Updated");
+        assert_eq!(updated["lastName"], "Profile");
+        assert_eq!(updated["preferLanguage"], "fr");
+        assert_eq!(updated["avatar"], "https://example.com/avatar.png");
+        assert_eq!(updated["projects"][0]["projectID"], graphql_gid("project", project_id));
+
+        let row: (String, String, String, String) = foundation
+            .open_connection(true)
+            .unwrap()
+            .query_row(
+                "SELECT first_name, last_name, prefer_language, avatar FROM users WHERE id = ?1",
+                [user_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(row.0, "Updated");
+        assert_eq!(row.1, "Profile");
+        assert_eq!(row.2, "fr");
+        assert_eq!(row.3, "https://example.com/avatar.png");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_update_storage_policy_mutation() {
+        let db_path = temp_sqlite_path("task9-update-storage-policy");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation UpdateStoragePolicy($input: UpdateStoragePolicyInput!) { updateStoragePolicy(input: $input) }",
+                            "variables": {
+                                "input": {
+                                    "storeChunks": true,
+                                    "storeRequestBody": false,
+                                    "cleanupOptions": [
+                                        {"resourceType": "requests", "enabled": true, "cleanupDays": 7},
+                                        {"resourceType": "usage_logs", "enabled": true, "cleanupDays": 14}
+                                    ]
+                                }
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["updateStoragePolicy"], true);
+
+        let policy = SqliteOperationalService::new(foundation.clone())
+            .storage_policy()
+            .unwrap();
+        assert!(policy.store_chunks);
+        assert!(!policy.store_request_body);
+        assert!(policy.store_response_body);
+        assert_eq!(policy.cleanup_options.len(), 2);
+        assert_eq!(policy.cleanup_options[0].resource_type, "requests");
+        assert!(policy.cleanup_options[0].enabled);
+        assert_eq!(policy.cleanup_options[0].cleanup_days, 7);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_update_system_channel_settings_mutation() {
+        let db_path = temp_sqlite_path("task9-update-system-channel-settings");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }",
+                            "variables": {
+                                "input": {
+                                    "probe": {
+                                        "enabled": false,
+                                        "frequency": "ONE_HOUR"
+                                    }
+                                }
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["updateSystemChannelSettings"], true);
+
+        let settings = SqliteOperationalService::new(foundation.clone())
+            .system_channel_settings()
+            .unwrap();
+        assert!(!settings.probe.enabled);
+        assert_eq!(settings.probe.frequency, super::admin::ProbeFrequencySetting::OneHour);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_check_provider_quotas_mutation() {
+        let db_path = temp_sqlite_path("task9-check-provider-quotas");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS],
+        );
+
+        foundation
             .channel_models()
             .upsert_channel(&NewChannelRecord {
-                name: "Task13 Channel",
+                name: "Codex OAuth",
+                channel_type: "codex",
+                base_url: "https://example.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[]",
+                auto_sync_supported_models: false,
+                default_test_model: "",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "quota test",
+            })
+            .unwrap();
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"mutation { checkProviderQuotas }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["checkProviderQuotas"], true);
+
+        let quota_status = SqliteOperationalService::new(foundation.clone())
+            .provider_quota_statuses()
+            .unwrap();
+        assert_eq!(quota_status.len(), 1);
+        assert_eq!(quota_status[0].provider_type, "codex");
+        assert_eq!(quota_status[0].status, "unknown");
+        assert!(!quota_status[0].ready);
+        assert!(quota_status[0]
+            .quota_data_json
+            .contains("remain unsupported in the Rust slice"));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_trigger_gc_cleanup_mutation() {
+        let db_path = temp_sqlite_path("task9-trigger-gc-cleanup");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"mutation { triggerGcCleanup }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["triggerGcCleanup"], true);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_update_auto_backup_settings_and_trigger_auto_backup_mutations() {
+        let db_path = temp_sqlite_path("task9-auto-backup-mutations");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let owner_id = insert_test_user(
+            &connection,
+            "owner2@example.com",
+            "password123",
+            &[],
+        );
+        connection
+            .execute("UPDATE users SET is_owner = 1 WHERE id = ?1", [owner_id])
+            .unwrap();
+        let _non_owner_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS],
+        );
+
+        let backup_root = std::env::temp_dir().join(format!(
+            "axonhub-task9-auto-backup-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&backup_root).unwrap();
+
+        let storage_id = foundation
+            .data_storages()
+            .find_primary_active_storage()
+            .unwrap()
+            .unwrap()
+            .id
+            + 100;
+        connection
+            .execute(
+                "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at)
+                 VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+                params![
+                    storage_id,
+                    "Task9 Backup FS",
+                    "task9 backup",
+                    serde_json::json!({"directory": backup_root.to_string_lossy()}).to_string(),
+                ],
+            )
+            .unwrap();
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Backup Channel",
                 channel_type: "openai",
                 base_url: "https://example.com/v1",
                 status: "enabled",
-                credentials_json: r#"{"apiKey":"key"}"#,
-                supported_models_json: r#"["gpt-4o"]"#,
+                credentials_json: "{}",
+                supported_models_json: "[]",
                 auto_sync_supported_models: false,
-                default_test_model: "gpt-4o",
+                default_test_model: "",
                 settings_json: "{}",
-                tags_json: r#"["primary"]"#,
+                tags_json: "[]",
                 ordering_weight: 100,
                 error_message: "",
-                remark: "Task 13 channel",
-            })
-            .unwrap();
-        foundation
-            .channel_models()
-            .upsert_model(&NewModelRecord {
-                developer: "openai",
-                model_id: "gpt-4o",
-                model_type: "chat",
-                name: "GPT-4o",
-                icon: "OpenAI",
-                group: "openai",
-                model_card_json: "{}",
-                settings_json: "{}",
-                status: "enabled",
-                remark: "Task 13 model",
+                remark: "task9 backup",
             })
             .unwrap();
 
-        let request_id = foundation
-            .requests()
-            .create_request(&NewRequestRecord {
-                api_key_id: Some(1),
-                project_id,
-                trace_id: Some(trace.id),
-                data_storage_id: None,
-                source: "playground",
-                model_id: "gpt-4o",
-                format: "openai/chat_completions",
-                request_headers_json: "{}",
-                request_body_json: r#"{"messages":[]}"#,
-                response_body_json: Some(r#"{"id":"resp-task13"}"#),
-                response_chunks_json: None,
-                channel_id: Some(channel_id),
-                external_id: Some("resp-task13"),
-                status: "completed",
-                stream: false,
-                client_ip: "127.0.0.1",
-                metrics_latency_ms: None,
-                metrics_first_token_latency_ms: None,
-                content_saved: false,
-                content_storage_id: None,
-                content_storage_key: None,
-                content_saved_at: None,
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let owner_token = signin_token(foundation.clone(), "owner2@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {owner_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{
+                            "query": "mutation UpdateAutoBackupSettings($input: UpdateAutoBackupSettingsInput!) {{ updateAutoBackupSettings(input: $input) }}",
+                            "variables": {{
+                                "input": {{
+                                    "enabled": true,
+                                    "frequency": "daily",
+                                    "dataStorageID": {},
+                                    "includeChannels": true,
+                                    "includeModels": false,
+                                    "includeAPIKeys": false,
+                                    "includeModelPrices": false,
+                                    "retentionDays": 2
+                                }}
+                            }}
+                        }}"#,
+                        storage_id
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["updateAutoBackupSettings"], true);
+
+        let settings = SqliteOperationalService::new(foundation.clone())
+            .auto_backup_settings()
+            .unwrap();
+        assert!(settings.enabled);
+        assert_eq!(settings.data_storage_id, storage_id);
+        assert_eq!(settings.retention_days, 2);
+
+        let trigger_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {owner_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"mutation { triggerAutoBackup { success message } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let trigger_json = read_json_response(trigger_response).await;
+        assert_eq!(trigger_json["data"]["triggerAutoBackup"]["success"], true);
+        assert_eq!(
+            trigger_json["data"]["triggerAutoBackup"]["message"],
+            "Backup completed successfully"
+        );
+
+        let files = std::fs::read_dir(&backup_root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        assert!(!files.is_empty());
+
+        fs::remove_dir_all(backup_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_invalid_or_unauthorized_task9_mutations_without_side_effects() {
+        let db_path = temp_sqlite_path("task9-mutation-errors");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
             })
             .unwrap();
 
-        let channels = foundation.channel_models().list_channels().unwrap();
-        assert_eq!(channels.len(), 1);
-        assert_eq!(channels[0].id, channel_id);
-        assert_eq!(channels[0].supported_models, vec!["gpt-4o".to_owned()]);
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _scoped_user_id = insert_test_user(
+            &connection,
+            "scoped@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS],
+        );
+        let _no_scope_user_id = insert_test_user(
+            &connection,
+            "viewer@example.com",
+            "password123",
+            &[],
+        );
+        let owner_id = insert_test_user(
+            &connection,
+            "owner2@example.com",
+            "password123",
+            &[],
+        );
+        connection
+            .execute("UPDATE users SET is_owner = 1 WHERE id = ?1", [owner_id])
+            .unwrap();
 
-        let requests = foundation.requests().list_requests_by_project(project_id).unwrap();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].id, request_id);
-        assert_eq!(requests[0].trace_id, Some(trace.id));
-        assert_eq!(requests[0].source, "playground");
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let scoped_token = signin_token(foundation.clone(), "scoped@example.com", "password123");
+        let no_scope_token = signin_token(foundation.clone(), "viewer@example.com", "password123");
+        let owner_token = signin_token(foundation.clone(), "owner2@example.com", "password123");
 
-        let traces = foundation.trace_contexts().list_traces_by_project(project_id).unwrap();
-        assert_eq!(traces.len(), 1);
-        assert_eq!(traces[0].trace_id, "trace-task13");
+        let denied_backup_update = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {scoped_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation UpdateAutoBackupSettings($input: UpdateAutoBackupSettingsInput!) { updateAutoBackupSettings(input: $input) }",
+                            "variables": { "input": { "enabled": true, "dataStorageID": 1 } }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let denied_backup_json = read_json_response(denied_backup_update).await;
+        assert_eq!(denied_backup_json["data"]["updateAutoBackupSettings"], Value::Null);
+        assert_eq!(
+            denied_backup_json["errors"][0]["message"],
+            "permission denied: owner access required"
+        );
+
+        let default_settings = SqliteOperationalService::new(foundation.clone())
+            .auto_backup_settings()
+            .unwrap();
+        assert!(!default_settings.enabled);
+        assert_eq!(default_settings.data_storage_id, 0);
+
+        let invalid_backup_update = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {owner_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation UpdateAutoBackupSettings($input: UpdateAutoBackupSettingsInput!) { updateAutoBackupSettings(input: $input) }",
+                            "variables": { "input": { "enabled": true, "dataStorageID": 0 } }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let invalid_backup_json = read_json_response(invalid_backup_update).await;
+        assert_eq!(invalid_backup_json["data"]["updateAutoBackupSettings"], Value::Null);
+        assert_eq!(
+            invalid_backup_json["errors"][0]["message"],
+            "dataStorageID is required when auto backup is enabled"
+        );
+
+        let denied_trigger_backup = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {scoped_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"mutation { triggerAutoBackup { success message } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let denied_trigger_backup_json = read_json_response(denied_trigger_backup).await;
+        assert_eq!(denied_trigger_backup_json["data"]["triggerAutoBackup"], Value::Null);
+        assert_eq!(
+            denied_trigger_backup_json["errors"][0]["message"],
+            "permission denied: owner access required"
+        );
+
+        let denied_gc = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {no_scope_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"mutation { triggerGcCleanup }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let denied_gc_json = read_json_response(denied_gc).await;
+        assert_eq!(denied_gc_json["data"]["triggerGcCleanup"], Value::Null);
+        assert_eq!(
+            denied_gc_json["errors"][0]["message"],
+            "permission denied: requires write:settings scope"
+        );
+
+        let denied_update_me = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {owner_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation UpdateMe($input: UpdateMeInput!) { updateMe(input: $input) { id } }",
+                            "variables": { "input": {} }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let denied_update_me_json = read_json_response(denied_update_me).await;
+        assert_eq!(denied_update_me_json["data"]["updateMe"], Value::Null);
+        assert_eq!(denied_update_me_json["errors"][0]["message"], "no fields to update");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rolls_back_create_user_when_role_assignment_fails() {
+        let db_path = temp_sqlite_path("task9-create-user-rollback");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_USERS],
+        );
+        let valid_role_id = insert_role(&connection, "Rollback Role", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_SETTINGS]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+        let valid_role_gid = graphql_gid("role", valid_role_id);
+        let invalid_role_gid = graphql_gid("role", valid_role_id);
+
+        let baseline_user_count: i64 = foundation
+            .open_connection(true)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM users WHERE deleted_at = 0", [], |row| row.get(0))
+            .unwrap();
+        let baseline_user_role_count: i64 = foundation
+            .open_connection(true)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM user_roles", [], |row| row.get(0))
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{
+                            "query": "mutation CreateUser($input: CreateUserInput!) {{ createUser(input: $input) {{ id }} }}",
+                            "variables": {{
+                                "input": {{
+                                    "email": "rollback-create@example.com",
+                                    "password": "newpass123",
+                                    "firstName": "Rollback",
+                                    "lastName": "Create",
+                                    "roleIDs": ["{}", "{}"]
+                                }}
+                            }}
+                        }}"#,
+                        valid_role_gid, invalid_role_gid
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["createUser"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "failed to assign user role: UNIQUE constraint failed: user_roles.user_id, user_roles.role_id"
+        );
+
+        let verification_connection = foundation.open_connection(true).unwrap();
+        let post_user_count: i64 = verification_connection
+            .query_row("SELECT COUNT(*) FROM users WHERE deleted_at = 0", [], |row| row.get(0))
+            .unwrap();
+        let post_user_role_count: i64 = verification_connection
+            .query_row("SELECT COUNT(*) FROM user_roles", [], |row| row.get(0))
+            .unwrap();
+        let created_user_count: i64 = verification_connection
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE email = ?1 AND deleted_at = 0",
+                ["rollback-create@example.com"],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(post_user_count, baseline_user_count);
+        assert_eq!(post_user_role_count, baseline_user_role_count);
+        assert_eq!(created_user_count, 0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rolls_back_update_user_when_role_replacement_fails() {
+        let db_path = temp_sqlite_path("task9-update-user-rollback");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_USERS],
+        );
+        let target_user_id = insert_test_user(
+            &connection,
+            "rollback-target@example.com",
+            "password123",
+            &[],
+        );
+        let old_role_id = insert_role(&connection, "Old Rollback Role", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_SETTINGS]);
+        let new_role_id = insert_role(&connection, "New Rollback Role", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_CHANNELS]);
+        attach_role(&connection, target_user_id, old_role_id);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+        let target_gid = graphql_gid("user", target_user_id);
+        let new_role_gid = graphql_gid("role", new_role_id);
+
+        let baseline_row: (String, String, String) = foundation
+            .open_connection(true)
+            .unwrap()
+            .query_row(
+                "SELECT first_name, prefer_language, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
+                [target_user_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let baseline_role_pairs: Vec<(i64, i64)> = {
+            let verification_connection = foundation.open_connection(true).unwrap();
+            let mut statement = verification_connection
+                .prepare("SELECT user_id, role_id FROM user_roles WHERE user_id = ?1 ORDER BY role_id ASC")
+                .unwrap();
+            statement
+                .query_map([target_user_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{
+                            "query": "mutation UpdateUser($id: ID!, $input: UpdateUserInput!) {{ updateUser(id: $id, input: $input) {{ id }} }}",
+                            "variables": {{
+                                "id": "{}",
+                                "input": {{
+                                    "firstName": "ShouldRollback",
+                                    "preferLanguage": "fr",
+                                    "scopes": ["read_channels"],
+                                    "roleIDs": ["{}", "{}"]
+                                }}
+                            }}
+                        }}"#,
+                        target_gid, new_role_gid, new_role_gid
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["updateUser"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "failed to replace user role assignments: UNIQUE constraint failed: user_roles.user_id, user_roles.role_id"
+        );
+
+        let verification_connection = foundation.open_connection(true).unwrap();
+        let post_row: (String, String, String) = verification_connection
+            .query_row(
+                "SELECT first_name, prefer_language, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
+                [target_user_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let post_role_pairs: Vec<(i64, i64)> = {
+            let mut statement = verification_connection
+                .prepare("SELECT user_id, role_id FROM user_roles WHERE user_id = ?1 ORDER BY role_id ASC")
+                .unwrap();
+            statement
+                .query_map([target_user_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+
+        assert_eq!(post_row, baseline_row);
+        assert_eq!(post_role_pairs, baseline_role_pairs);
 
         std::fs::remove_file(db_path).ok();
     }
@@ -1361,6 +2508,118 @@ use tower::util::ServiceExt;
         std::fs::remove_file(db_path).ok();
     }
 
+    #[test]
+    fn openai_v1_prefers_requested_channel_hint_over_higher_priority_channel() {
+        let db_path = temp_sqlite_path("task16-openai-channel-hint");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Priority Default",
+                channel_type: "openai",
+                base_url: format!("{}/affinity-a", mock_openai_server_url()).as_str(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 200,
+                error_message: "",
+                remark: "Task 16 higher-priority default channel",
+            })
+            .unwrap();
+        let requested_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Priority Requested",
+                channel_type: "openai",
+                base_url: format!("{}/compressed", mock_openai_server_url()).as_str(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 16 requested channel override",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 16 requested model",
+            })
+            .unwrap();
+
+        let project = foundation.identities().find_project_by_id(1).unwrap();
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let response = service
+            .execute(
+                OpenAiV1Route::ChatCompletions,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: serde_json::json!({
+                        "model": "gpt-4o",
+                        "messages": [{"role": "user", "content": "hello"}]
+                    }),
+                    path: "/admin/playground/chat".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: ProjectContext {
+                        id: project.id,
+                        name: project.name,
+                        status: project.status,
+                    },
+                    trace: None,
+                    api_key_id: None,
+                    client_ip: None,
+                    channel_hint_id: Some(requested_channel_id),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(response.status, StatusCode::OK.as_u16());
+        assert_eq!(response.body["id"], "chatcmpl_compressed");
+
+        let persisted_channel_id: i64 = foundation
+            .open_connection(false)
+            .unwrap()
+            .query_row(
+                "SELECT channel_id FROM requests ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted_channel_id, requested_channel_id);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
     #[tokio::test]
     async fn openai_v1_does_not_pin_later_healthy_non_affinity_requests_to_prior_failover_backup() {
         let db_path = temp_sqlite_path("task8-openai-failover-selection-repair");
@@ -1875,6 +3134,7 @@ use tower::util::ServiceExt;
                             Err(_) => continue,
                         };
                         let request = String::from_utf8_lossy(&buffer[..size]);
+                        let request_lower = request.to_ascii_lowercase();
                         let request_line = request.lines().next().unwrap_or_default().to_owned();
                         let method = request_line
                             .split_whitespace()
@@ -1887,6 +3147,12 @@ use tower::util::ServiceExt;
                             .unwrap_or("/");
                         let body = if path.contains("/primary-fail/") && path.ends_with("/chat/completions") {
                             r#"{"error":{"message":"primary unavailable"}}"#
+                        } else if path.contains("/compressed/") && path.ends_with("/chat/completions") {
+                            if request_lower.contains("accept-encoding: identity") {
+                                r#"{"id":"chatcmpl_compressed","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"compressed"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#
+                            } else {
+                                r#"{"error":{"message":"identity encoding required"}}"#
+                            }
                         } else if method == "GET" && path.ends_with("/videos/video_mock_task") {
                             r#"{"id":"video_mock_task","model":"seedance-1.0","status":"succeeded","content":{"video_url":"https://example.com/generated.mp4"},"created_at":1,"completed_at":2}"#
                         } else if method == "DELETE" && path.ends_with("/videos/video_mock_task") {
@@ -1908,6 +3174,11 @@ use tower::util::ServiceExt;
                         };
                         let status_line = if path.contains("/primary-fail/") && path.ends_with("/chat/completions") {
                             "HTTP/1.1 503 Service Unavailable"
+                        } else if path.contains("/compressed/")
+                            && path.ends_with("/chat/completions")
+                            && !request_lower.contains("accept-encoding: identity")
+                        {
+                            "HTTP/1.1 500 Internal Server Error"
                         } else if (method == "POST" && path.ends_with("/videos/video_mock_task"))
                             || ((method == "GET" || method == "DELETE") && path.ends_with("/videos"))
                         {
@@ -2192,6 +3463,420 @@ use tower::util::ServiceExt;
             .await
             .unwrap();
         assert_eq!(invalid_user_key.status(), StatusCode::UNAUTHORIZED);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_users_query() {
+        let db_path = temp_sqlite_path("task8-users-query");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        // Create a user with read_users scope to authorize the query
+        let _user_id = insert_test_user(&connection, "admin@example.com", "password123", &[SCOPE_READ_USERS]);
+
+        // Create some additional users
+        let user1_id = insert_test_user(&connection, "user1@example.com", "password123", &[SCOPE_READ_SETTINGS]);
+        let user2_id = insert_test_user(&connection, "user2@example.com", "password123", &[SCOPE_READ_CHANNELS]);
+
+        // Create roles and assign to users
+        let role1_id = insert_role(&connection, "Role1", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_SETTINGS]);
+        let role2_id = insert_role(&connection, "Role2", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_CHANNELS]);
+        attach_role(&connection, user1_id, role1_id);
+        attach_role(&connection, user2_id, role2_id);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ users { edges { node { id createdAt updatedAt email status firstName lastName isOwner preferLanguage scopes roles { edges { node { id name } } } } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+
+        assert!(json["data"]["users"].is_object());
+        let users_conn = &json["data"]["users"];
+
+        // Verify pageInfo
+        assert!(users_conn["pageInfo"].is_object());
+        let page_info = &users_conn["pageInfo"];
+        assert!(page_info["hasNextPage"].is_boolean());
+        assert!(page_info["hasPreviousPage"].is_boolean());
+        assert!(page_info["startCursor"].is_null() || page_info["startCursor"].is_string());
+        assert!(page_info["endCursor"].is_null() || page_info["endCursor"].is_string());
+
+        // Verify edges
+        assert!(users_conn["edges"].is_array());
+        let edges = users_conn["edges"].as_array().unwrap();
+        for edge in edges {
+            assert!(edge["node"].is_object());
+            let node = &edge["node"];
+            assert!(node["id"].is_string());
+            assert!(node["createdAt"].is_string());
+            assert!(node["updatedAt"].is_string());
+            assert!(node["email"].is_string());
+            assert!(node["status"].is_string());
+            assert!(node["firstName"].is_string());
+            assert!(node["lastName"].is_string());
+            assert!(node["isOwner"].is_boolean());
+            assert!(node["preferLanguage"].is_string());
+            assert!(node["scopes"].is_array());
+            assert!(node["roles"].is_object());
+            let roles_conn = &node["roles"];
+            assert!(roles_conn["edges"].is_array());
+            let role_edges = roles_conn["edges"].as_array().unwrap();
+            for role_edge in role_edges {
+                assert!(role_edge["node"].is_object());
+                let role_node = &role_edge["node"];
+                assert!(role_node["id"].is_string());
+                assert!(role_node["name"].is_string());
+            }
+        }
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_me_query() {
+        let db_path = temp_sqlite_path("task8-me-query");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+
+        // Create a test user with scopes and project membership
+        let user_id = insert_test_user(
+            &connection,
+            "testuser@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS, SCOPE_READ_CHANNELS],
+        );
+        insert_project_membership(&connection, user_id, project_id, false, &[SCOPE_READ_REQUESTS]);
+
+        // Create a role for the user at project level
+        let project_role_id = insert_role(&connection, "Project Reader", ROLE_LEVEL_PROJECT, project_id, &[SCOPE_READ_REQUESTS]);
+        attach_role(&connection, user_id, project_role_id);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+
+        let token = signin_token(foundation.clone(), "testuser@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ me { id email firstName lastName isOwner preferLanguage avatar scopes roles { name } projects { projectID isOwner scopes roles { name } } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+
+        assert!(json["data"]["me"].is_object());
+        let me = &json["data"]["me"];
+
+        // Verify basic fields
+        assert!(me["id"].is_string());
+        assert!(me["email"].as_str().unwrap() == "testuser@example.com");
+        assert!(me["firstName"].as_str().unwrap() == "Test");
+        assert!(me["lastName"].as_str().unwrap() == "User");
+        assert!(!me["isOwner"].as_bool().unwrap());
+        assert!(me["preferLanguage"].as_str().unwrap() == "en");
+        assert!(me["avatar"].is_null() || me["avatar"].is_string());
+
+        // Verify scopes
+        assert!(me["scopes"].is_array());
+        let scopes: Vec<&str> = me["scopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(scopes.contains(&"read_settings"));
+        assert!(scopes.contains(&"read_channels"));
+
+        // Verify roles
+        assert!(me["roles"].is_array());
+        let roles = me["roles"].as_array().unwrap();
+        assert!(!roles.is_empty());
+        for role in roles {
+            assert!(role["name"].is_string());
+        }
+
+        // Verify projects
+        assert!(me["projects"].is_array());
+        let projects = me["projects"].as_array().unwrap();
+        assert!(!projects.is_empty());
+        for project in projects {
+            assert!(project["projectID"].is_string());
+            assert!(project["isOwner"].is_boolean());
+            assert!(project["scopes"].is_array());
+            assert!(project["roles"].is_array());
+        }
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_all_scopes_query() {
+        let db_path = temp_sqlite_path("task8-all-scopes");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        // Create a user with read_settings scope to authorize the query
+        let _user_id = insert_test_user(&connection, "admin@example.com", "password123", &[SCOPE_READ_SETTINGS]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        // Query 1: allScopes without filter
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ allScopes { scope description levels } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert!(json["data"]["allScopes"].is_array());
+        let all_scopes = json["data"]["allScopes"].as_array().unwrap();
+        assert!(!all_scopes.is_empty());
+
+        for scope in all_scopes {
+            assert!(scope["scope"].is_string());
+            assert!(scope["description"].is_string());
+            assert!(scope["levels"].is_array());
+        }
+
+        // Query 2: allScopes(level: "system")
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ allScopes(level: \"system\") { scope description levels } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert!(json["data"]["allScopes"].is_array());
+        let system_scopes = json["data"]["allScopes"].as_array().unwrap();
+        assert!(!system_scopes.is_empty());
+
+        for scope in system_scopes {
+            assert!(scope["scope"].is_string());
+            assert!(scope["description"].is_string());
+            assert!(scope["levels"].is_array());
+            // Verify each returned scope has "system" in its levels
+            let levels = scope["levels"].as_array().unwrap();
+            assert!(levels.iter().any(|l| l.as_str().unwrap() == "system"));
+        }
+
+        // Query 3: allScopes(level: "project")
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ allScopes(level: \"project\") { scope description levels } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert!(json["data"]["allScopes"].is_array());
+        let project_scopes = json["data"]["allScopes"].as_array().unwrap();
+        assert!(!project_scopes.is_empty());
+
+        for scope in project_scopes {
+            assert!(scope["scope"].is_string());
+            assert!(scope["description"].is_string());
+            assert!(scope["levels"].is_array());
+            // Verify each returned scope has "project" in its levels
+            let levels = scope["levels"].as_array().unwrap();
+            assert!(levels.iter().any(|l| l.as_str().unwrap() == "project"));
+        }
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_query_models_query() {
+        let db_path = temp_sqlite_path("task8-query-models");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        // Create a user with read_channels scope to authorize the query
+        let _user_id = insert_test_user(&connection, "admin@example.com", "password123", &[SCOPE_READ_CHANNELS]);
+
+        // Insert some test models
+        connection.execute(
+            "INSERT INTO models (developer, model_id, type, name, icon, remark, model_card, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                "openai",
+                "gpt-4",
+                "chat",
+                "GPT-4",
+                "icon",
+                "Test model",
+                "{}",
+                "enabled"
+            ],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO models (developer, model_id, type, name, icon, remark, model_card, status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                "anthropic",
+                "claude-3",
+                "chat",
+                "Claude 3",
+                "icon",
+                "Test model 2",
+                "{}",
+                "disabled"
+            ],
+        ).unwrap();
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "query Models($input: QueryModelsInput!) { queryModels(input: $input) { id status } }",
+                            "variables": { "input": {} }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+
+        assert!(json["data"]["queryModels"].is_array());
+        let models = json["data"]["queryModels"].as_array().unwrap();
+
+        // Should have at least the two models we inserted
+        assert!(models.len() >= 2);
+
+        for model in models {
+            assert!(model["id"].is_string());
+            assert!(model["status"].is_string());
+        }
 
         std::fs::remove_file(db_path).ok();
     }

@@ -8,6 +8,7 @@ pub(crate) mod request_context_service;
 pub(crate) mod openai_v1;
 pub(crate) mod admin;
 pub(crate) mod graphql;
+#[allow(dead_code)]
 pub(crate) mod provider_edge;
 
 #[cfg(test)]

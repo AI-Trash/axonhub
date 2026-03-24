@@ -4,6 +4,7 @@ use std::time::SystemTime;
 
 use async_graphql::Enum;
 use axonhub_http::{AdminContentDownload, AdminError, AdminPort, AuthUserContext};
+use postgres::Client as PostgresClient;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -18,12 +19,16 @@ use super::{
         AdminGraphqlUpdateAutoBackupSettingsInput, AdminGraphqlUpdateStoragePolicyInput,
         AdminGraphqlUpdateSystemChannelSettingsInput,
     },
+    openai_v1::StoredRequestContentRecord,
     shared::{
         bool_to_sql, current_rfc3339_timestamp, current_unix_timestamp, SqliteConnectionFactory,
         SqliteFoundation, AUTO_BACKUP_PREFIX, AUTO_BACKUP_SUFFIX, BACKUP_VERSION,
         SYSTEM_KEY_AUTO_BACKUP_SETTINGS, SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_STORAGE_POLICY,
     },
-    system::{ensure_all_foundation_tables, ensure_operational_tables, SystemSettingsStore},
+    system::{
+        ensure_all_foundation_tables, ensure_data_storages_table_postgres,
+        ensure_operational_tables, ensure_request_tables_postgres, SystemSettingsStore,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -170,6 +175,10 @@ pub struct SqliteAdminService {
     pub(crate) foundation: Arc<SqliteFoundation>,
 }
 
+pub struct PostgresAdminService {
+    dsn: String,
+}
+
 #[derive(Clone)]
 pub struct SqliteOperationalService {
     pub(crate) foundation: Arc<SqliteFoundation>,
@@ -308,6 +317,12 @@ pub(crate) struct StoredGcCleanupSummary {
     pub(crate) usage_logs_deleted: i64,
     pub(crate) channel_probes_deleted: i64,
     pub(crate) vacuum_ran: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PostgresDataStorageRecord {
+    storage_type: String,
+    settings_json: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -781,6 +796,28 @@ impl SqliteAdminService {
     }
 }
 
+impl PostgresAdminService {
+    pub fn new(dsn: impl Into<String>) -> Self {
+        Self { dsn: dsn.into() }
+    }
+
+    fn run_blocking<T, F>(&self, operation: F) -> Result<T, AdminError>
+    where
+        T: Send + 'static,
+        F: FnOnce(String) -> Result<T, AdminError> + Send + 'static,
+    {
+        let dsn = self.dsn.clone();
+
+        if tokio::runtime::Handle::try_current().is_ok() {
+            std::thread::spawn(move || operation(dsn))
+                .join()
+                .unwrap_or_else(|_| panic!("postgres admin worker thread panicked"))
+        } else {
+            operation(dsn)
+        }
+    }
+}
+
 impl AdminPort for SqliteAdminService {
     fn download_request_content(
         &self,
@@ -900,6 +937,176 @@ impl AdminPort for SqliteAdminService {
             bytes,
         })
     }
+}
+
+impl AdminPort for PostgresAdminService {
+    fn download_request_content(
+        &self,
+        project_id: i64,
+        request_id: i64,
+        user: AuthUserContext,
+    ) -> Result<AdminContentDownload, AdminError> {
+        if !user_has_system_scope(&user, SCOPE_READ_REQUESTS)
+            && !user_has_project_scope(&user, project_id, SCOPE_READ_REQUESTS)
+        {
+            return Err(AdminError::NotFound {
+                message: "Request not found".to_owned(),
+            });
+        }
+
+        self.run_blocking(move |dsn| {
+            let mut client = PostgresClient::connect(&dsn, postgres::NoTls).map_err(|error| {
+                AdminError::Internal {
+                    message: format!("Failed to connect to postgres: {error}"),
+                }
+            })?;
+            ensure_request_tables_postgres(&mut client).map_err(|error| AdminError::Internal {
+                message: format!("Failed to ensure request schema: {error}"),
+            })?;
+            ensure_data_storages_table_postgres(&mut client).map_err(|error| {
+                AdminError::Internal {
+                    message: format!("Failed to ensure content storage schema: {error}"),
+                }
+            })?;
+
+            let request = query_request_content_record_postgres(&mut client, request_id)?
+                .ok_or_else(|| AdminError::NotFound {
+                    message: "Request not found".to_owned(),
+                })?;
+
+            if request.project_id != project_id {
+                return Err(AdminError::NotFound {
+                    message: "Request not found".to_owned(),
+                });
+            }
+
+            if !request.content_saved {
+                return Err(AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                });
+            }
+
+            let content_storage_id =
+                request
+                    .content_storage_id
+                    .ok_or_else(|| AdminError::NotFound {
+                        message: "Content not found".to_owned(),
+                    })?;
+            let key = request
+                .content_storage_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                })?;
+
+            let expected_prefix = format!("/{}/requests/{}/", request.project_id, request.id);
+            let normalized_key = if key.starts_with('/') {
+                key.to_owned()
+            } else {
+                format!("/{key}")
+            };
+            if !normalized_key.starts_with(expected_prefix.as_str()) {
+                return Err(AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                });
+            }
+
+            let data_storage = query_data_storage_postgres(&mut client, content_storage_id)?
+                .ok_or_else(|| AdminError::NotFound {
+                    message: "Content storage not found".to_owned(),
+                })?;
+
+            if data_storage.storage_type == "database" {
+                return Err(AdminError::BadRequest {
+                    message: "Content storage is not file-based".to_owned(),
+                });
+            }
+
+            if data_storage.storage_type != "fs" {
+                return Err(AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                });
+            }
+
+            let settings: Value =
+                serde_json::from_str(data_storage.settings_json.as_str()).unwrap_or(Value::Null);
+            let base_directory = settings
+                .get("directory")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                })?;
+            let relative = safe_relative_key_path(normalized_key.as_str()).ok_or_else(|| {
+                AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                }
+            })?;
+
+            let full_path = Path::new(base_directory).join(relative.as_path());
+            let bytes = fs::read(&full_path).map_err(|error| match error.kind() {
+                std::io::ErrorKind::NotFound => AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                },
+                _ => AdminError::Internal {
+                    message: format!("Failed to read content: {error}"),
+                },
+            })?;
+
+            Ok(AdminContentDownload {
+                filename: filename_from_key(normalized_key.as_str(), request.id),
+                bytes,
+            })
+        })
+    }
+}
+
+fn query_request_content_record_postgres(
+    client: &mut PostgresClient,
+    request_id: i64,
+) -> Result<Option<StoredRequestContentRecord>, AdminError> {
+    client
+        .query_opt(
+            "SELECT id, project_id, content_saved, content_storage_id, content_storage_key
+             FROM requests WHERE id = $1 LIMIT 1",
+            &[&request_id],
+        )
+        .map_err(|error| AdminError::Internal {
+            message: format!("Failed to load request: {error}"),
+        })
+        .map(|row| {
+            row.map(|row| StoredRequestContentRecord {
+                id: row.get(0),
+                project_id: row.get(1),
+                content_saved: row.get(2),
+                content_storage_id: row.get(3),
+                content_storage_key: row.get(4),
+            })
+        })
+}
+
+fn query_data_storage_postgres(
+    client: &mut PostgresClient,
+    storage_id: i64,
+) -> Result<Option<PostgresDataStorageRecord>, AdminError> {
+    client
+        .query_opt(
+            "SELECT id, name, description, type, status, settings
+             FROM data_storages WHERE id = $1 AND deleted_at = 0 LIMIT 1",
+            &[&storage_id],
+        )
+        .map_err(|error| AdminError::Internal {
+            message: format!("Failed to load content storage: {error}"),
+        })
+        .map(|row| {
+            row.map(|row| PostgresDataStorageRecord {
+                storage_type: row.get(3),
+                settings_json: row.get(5),
+            })
+        })
 }
 
 pub(crate) fn default_storage_policy() -> StoredStoragePolicy {

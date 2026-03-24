@@ -20,9 +20,9 @@ pub(crate) fn not_implemented_response(
             route_family,
             method: method.to_string(),
             path: uri.path().to_owned(),
-            message: "This surface has not been migrated to the Rust backend yet. Use the legacy Go backend for full AxonHub API coverage.".to_owned(),
-            migration_status: "first migration slice",
-            legacy_go_backend_present: true,
+            message: "This surface is not supported by the Rust backend yet. Supported AxonHub replacement scope remains SQLite-backed admin, GraphQL, CLI/config, and inference routes only.".to_owned(),
+            migration_status: "progressive cutover",
+            legacy_go_backend_present: false,
             gemini_api_version,
         },
     }
@@ -38,8 +38,8 @@ pub(crate) fn auth_unsupported_response(message: &str) -> Response {
             method: "UNKNOWN".to_owned(),
             path: "/".to_owned(),
             message: message.to_owned(),
-            migration_status: "first migration slice",
-            legacy_go_backend_present: true,
+            migration_status: "progressive cutover",
+            legacy_go_backend_present: false,
             gemini_api_version: None,
         }),
     )

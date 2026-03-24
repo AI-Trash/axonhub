@@ -124,11 +124,8 @@ pub struct RequestContextSnapshot {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AuthSnapshot {
     pub mode: &'static str,
-    #[serde(rename = "userId")]
     pub user_id: Option<i64>,
-    #[serde(rename = "apiKeyId")]
     pub api_key_id: Option<i64>,
-    #[serde(rename = "apiKeyType")]
     pub api_key_type: Option<&'static str>,
 }
 
@@ -187,6 +184,7 @@ pub struct OpenAiV1ExecutionRequest {
     pub trace: Option<TraceContext>,
     pub api_key_id: Option<i64>,
     pub client_ip: Option<String>,
+    pub channel_hint_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]

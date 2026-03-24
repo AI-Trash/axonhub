@@ -1,6 +1,6 @@
 use std::process;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use axonhub_config::{load, PreviewFormat};
 
 use super::build_info::{show_build_info, show_version};
@@ -14,12 +14,12 @@ pub(crate) const HELP_TEXT: &str = concat!(
     "  axonhub config preview     Preview configuration\n",
     "  axonhub config validate    Validate configuration\n",
     "  axonhub config get <key>   Get a specific config value\n",
+    "  axonhub build-info         Show detailed build information\n",
     "  axonhub version            Show version\n",
-    "  axonhub build-info         Show build information\n",
     "  axonhub help               Show this help message\n",
     "\n",
     "Options:\n",
-    "  -f, --format FORMAT        Output format for config preview (yml, json)\n",
+    "  -f, --format FORMAT       Output format for config preview (yml, json)\n",
 );
 
 pub(crate) const CONFIG_USAGE_TEXT: &str = "Usage: axonhub config <preview|validate|get>\n";
@@ -28,12 +28,12 @@ pub(crate) const CONFIG_GET_USAGE_TEXT: &str = concat!(
     "Usage: axonhub config get <key>\n",
     "\n",
     "Available keys:\n",
-    "  server.port       Server port number\n",
-    "  server.name       Server name\n",
+    "  server.port    Server port number\n",
+    "  server.name    Server name\n",
     "  server.base_path  Server base path\n",
     "  server.debug      Server debug mode\n",
-    "  db.dialect        Database dialect\n",
-    "  db.dsn            Database DSN\n",
+    "  db.dialect     Database dialect\n",
+    "  db.dsn         Database DSN\n",
 );
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +94,7 @@ fn config_preview(args: &[String]) -> Result<()> {
         if matches!(args[index].as_str(), "--format" | "-f") {
             let value = args.get(index + 1).map(String::as_str).unwrap_or_default();
             format = PreviewFormat::parse(value).unwrap_or_else(|| {
-                eprintln!("Unsupported format: {value}");
+                println!("Unsupported format: {value}");
                 process::exit(1);
             });
             index += 2;
@@ -104,14 +104,24 @@ fn config_preview(args: &[String]) -> Result<()> {
         index += 1;
     }
 
-    let loaded = load().context("Failed to load config")?;
-    println!("{}", loaded.preview(format)?);
+    let loaded = load().unwrap_or_else(|error| {
+        println!("Failed to load config: {error}");
+        process::exit(1);
+    });
+    let preview = loaded.preview(format).unwrap_or_else(|error| {
+        println!("Failed to preview config: {error}");
+        process::exit(1);
+    });
+    println!("{preview}");
 
     Ok(())
 }
 
 fn config_validate() -> Result<()> {
-    let loaded = load().context("Failed to load config")?;
+    let loaded = load().unwrap_or_else(|error| {
+        println!("Failed to load config: {error}");
+        process::exit(1);
+    });
     let errors = loaded.config.validation_errors();
 
     if errors.is_empty() {
@@ -134,7 +144,10 @@ fn config_get(args: &[String]) -> Result<()> {
     }
 
     let key = &args[3];
-    let loaded = load().context("Failed to load config")?;
+    let loaded = load().unwrap_or_else(|error| {
+        eprintln!("Failed to load config: {error}");
+        process::exit(1);
+    });
 
     if let Some(value) = loaded.get(key) {
         println!("{}", format_json_value(&value)?);

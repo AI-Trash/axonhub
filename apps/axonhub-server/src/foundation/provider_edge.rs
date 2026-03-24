@@ -8,6 +8,7 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYP
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::env;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
@@ -22,6 +23,34 @@ pub struct SqliteProviderEdgeAdminService {
     config: ProviderEdgeAdminConfig,
     sessions: Arc<Mutex<HashMap<String, ProviderEdgeSession>>>,
 }
+
+pub(crate) const PROVIDER_EDGE_REQUIRED_ENV_VARS: &[&str] = &[
+    "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
+    "AXONHUB_PROVIDER_EDGE_CODEX_TOKEN_URL",
+    "AXONHUB_PROVIDER_EDGE_CODEX_CLIENT_ID",
+    "AXONHUB_PROVIDER_EDGE_CODEX_REDIRECT_URI",
+    "AXONHUB_PROVIDER_EDGE_CODEX_SCOPES",
+    "AXONHUB_PROVIDER_EDGE_CODEX_USER_AGENT",
+    "AXONHUB_PROVIDER_EDGE_CLAUDECODE_AUTHORIZE_URL",
+    "AXONHUB_PROVIDER_EDGE_CLAUDECODE_TOKEN_URL",
+    "AXONHUB_PROVIDER_EDGE_CLAUDECODE_CLIENT_ID",
+    "AXONHUB_PROVIDER_EDGE_CLAUDECODE_REDIRECT_URI",
+    "AXONHUB_PROVIDER_EDGE_CLAUDECODE_SCOPES",
+    "AXONHUB_PROVIDER_EDGE_CLAUDECODE_USER_AGENT",
+    "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_AUTHORIZE_URL",
+    "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_TOKEN_URL",
+    "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_ID",
+    "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_SECRET",
+    "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_REDIRECT_URI",
+    "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_SCOPES",
+    "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_LOAD_ENDPOINTS",
+    "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_USER_AGENT",
+    "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_METADATA",
+    "AXONHUB_PROVIDER_EDGE_COPILOT_DEVICE_CODE_URL",
+    "AXONHUB_PROVIDER_EDGE_COPILOT_ACCESS_TOKEN_URL",
+    "AXONHUB_PROVIDER_EDGE_COPILOT_CLIENT_ID",
+    "AXONHUB_PROVIDER_EDGE_COPILOT_SCOPE",
+];
 
 #[derive(Debug, Clone)]
 pub struct ProviderEdgeAdminConfig {
@@ -96,51 +125,61 @@ pub(crate) struct CopilotDeviceCodeResponse {
 }
 
 impl ProviderEdgeAdminConfig {
-    fn default() -> Self {
-        Self {
-            codex_authorize_url: "https://auth.openai.com/oauth/authorize".to_owned(),
-            codex_token_url: "https://auth.openai.com/oauth/token".to_owned(),
-            codex_client_id: "app_EMoamEEZ73f0CkXaXp7hrann".to_owned(),
-            codex_redirect_uri: "http://localhost:1455/auth/callback".to_owned(),
-            codex_scopes: "openid profile email offline_access".to_owned(),
-            codex_user_agent: "codex_cli_rs/0.98.0 (Mac OS 15.6.1; arm64) iTerm.app/3.6.6".to_owned(),
-            claudecode_authorize_url: "https://claude.ai/oauth/authorize".to_owned(),
-            claudecode_token_url: "https://console.anthropic.com/v1/oauth/token".to_owned(),
-            claudecode_client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e".to_owned(),
-            claudecode_redirect_uri: "http://localhost:54545/callback".to_owned(),
-            claudecode_scopes: "org:create_api_key user:profile user:inference".to_owned(),
-            claudecode_user_agent: "claude-cli/2.1.78 (external, cli)".to_owned(),
-            antigravity_authorize_url: "https://accounts.google.com/o/oauth2/v2/auth".to_owned(),
-            antigravity_token_url: "https://oauth2.googleapis.com/token".to_owned(),
-            antigravity_client_id:
-                "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-                    .to_owned(),
-            antigravity_client_secret: "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".to_owned(),
-            antigravity_redirect_uri: "http://localhost:51121/oauth-callback".to_owned(),
-            antigravity_scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs".to_owned(),
-            antigravity_load_endpoints: vec![
-                "https://cloudcode-pa.googleapis.com".to_owned(),
-                "https://daily-cloudcode-pa.sandbox.googleapis.com".to_owned(),
-                "https://autopush-cloudcode-pa.sandbox.googleapis.com".to_owned(),
-            ],
-            antigravity_user_agent: "antigravity/1.20.4 windows/amd64".to_owned(),
-            antigravity_client_metadata:
-                r#"{"ideType":"ANTIGRAVITY","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}"#
-                    .to_owned(),
-            copilot_device_code_url: "https://github.com/login/device/code".to_owned(),
-            copilot_access_token_url: "https://github.com/login/oauth/access_token".to_owned(),
-            copilot_client_id: "Iv1.b507a08c87ecfe98".to_owned(),
-            copilot_scope: "read:user".to_owned(),
-        }
+    fn from_env() -> Option<Self> {
+        Some(Self {
+            codex_authorize_url: required_env("AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL")?,
+            codex_token_url: required_env("AXONHUB_PROVIDER_EDGE_CODEX_TOKEN_URL")?,
+            codex_client_id: required_env("AXONHUB_PROVIDER_EDGE_CODEX_CLIENT_ID")?,
+            codex_redirect_uri: required_env("AXONHUB_PROVIDER_EDGE_CODEX_REDIRECT_URI")?,
+            codex_scopes: required_env("AXONHUB_PROVIDER_EDGE_CODEX_SCOPES")?,
+            codex_user_agent: required_env("AXONHUB_PROVIDER_EDGE_CODEX_USER_AGENT")?,
+            claudecode_authorize_url: required_env(
+                "AXONHUB_PROVIDER_EDGE_CLAUDECODE_AUTHORIZE_URL",
+            )?,
+            claudecode_token_url: required_env("AXONHUB_PROVIDER_EDGE_CLAUDECODE_TOKEN_URL")?,
+            claudecode_client_id: required_env("AXONHUB_PROVIDER_EDGE_CLAUDECODE_CLIENT_ID")?,
+            claudecode_redirect_uri: required_env("AXONHUB_PROVIDER_EDGE_CLAUDECODE_REDIRECT_URI")?,
+            claudecode_scopes: required_env("AXONHUB_PROVIDER_EDGE_CLAUDECODE_SCOPES")?,
+            claudecode_user_agent: required_env("AXONHUB_PROVIDER_EDGE_CLAUDECODE_USER_AGENT")?,
+            antigravity_authorize_url: required_env(
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_AUTHORIZE_URL",
+            )?,
+            antigravity_token_url: required_env("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_TOKEN_URL")?,
+            antigravity_client_id: required_env("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_ID")?,
+            antigravity_client_secret: required_env(
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_SECRET",
+            )?,
+            antigravity_redirect_uri: required_env(
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_REDIRECT_URI",
+            )?,
+            antigravity_scopes: required_env("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_SCOPES")?,
+            antigravity_load_endpoints: required_env_list(
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_LOAD_ENDPOINTS",
+            )?,
+            antigravity_user_agent: required_env("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_USER_AGENT")?,
+            antigravity_client_metadata: required_env(
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_METADATA",
+            )?,
+            copilot_device_code_url: required_env("AXONHUB_PROVIDER_EDGE_COPILOT_DEVICE_CODE_URL")?,
+            copilot_access_token_url: required_env(
+                "AXONHUB_PROVIDER_EDGE_COPILOT_ACCESS_TOKEN_URL",
+            )?,
+            copilot_client_id: required_env("AXONHUB_PROVIDER_EDGE_COPILOT_CLIENT_ID")?,
+            copilot_scope: required_env("AXONHUB_PROVIDER_EDGE_COPILOT_SCOPE")?,
+        })
     }
 }
 
 impl SqliteProviderEdgeAdminService {
-    pub fn new() -> Self {
+    pub fn new(config: ProviderEdgeAdminConfig) -> Self {
         Self {
-            config: ProviderEdgeAdminConfig::default(),
+            config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn from_env() -> Option<Self> {
+        ProviderEdgeAdminConfig::from_env().map(Self::new)
     }
 
     fn http_client(&self) -> &reqwest::blocking::Client {
@@ -1097,6 +1136,31 @@ pub(crate) fn provider_edge_default_http_client() -> &'static reqwest::blocking:
     })
 }
 
+fn required_env(key: &str) -> Option<String> {
+    let value = env::var(key).ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn required_env_list(key: &str) -> Option<Vec<String>> {
+    let values = required_env(key)?
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
 pub(crate) fn sha256_digest(input: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
@@ -1222,4 +1286,181 @@ pub(crate) fn base64_url_no_padding(input: &[u8]) -> String {
     }
 
     encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct ProviderEdgeEnvFixture {
+        previous: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl ProviderEdgeEnvFixture {
+        fn new() -> Self {
+            let previous = PROVIDER_EDGE_REQUIRED_ENV_VARS
+                .iter()
+                .map(|key| (*key, env::var(key).ok()))
+                .collect::<Vec<_>>();
+
+            for key in PROVIDER_EDGE_REQUIRED_ENV_VARS {
+                env::remove_var(key);
+            }
+
+            Self { previous }
+        }
+
+        fn set_all(&self) {
+            for (key, value) in provider_edge_env_values() {
+                env::set_var(key, value);
+            }
+        }
+    }
+
+    impl Drop for ProviderEdgeEnvFixture {
+        fn drop(&mut self) {
+            for (key, value) in &self.previous {
+                match value {
+                    Some(value) => env::set_var(key, value),
+                    None => env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    fn provider_edge_env_values() -> Vec<(&'static str, &'static str)> {
+        vec![
+            (
+                "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
+                "https://example.test/codex/authorize",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_CODEX_TOKEN_URL",
+                "https://example.test/codex/token",
+            ),
+            ("AXONHUB_PROVIDER_EDGE_CODEX_CLIENT_ID", "codex-client-id"),
+            (
+                "AXONHUB_PROVIDER_EDGE_CODEX_REDIRECT_URI",
+                "http://localhost:1455/auth/callback",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_CODEX_SCOPES",
+                "openid profile email offline_access",
+            ),
+            ("AXONHUB_PROVIDER_EDGE_CODEX_USER_AGENT", "codex-test-agent"),
+            (
+                "AXONHUB_PROVIDER_EDGE_CLAUDECODE_AUTHORIZE_URL",
+                "https://example.test/claudecode/authorize",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_CLAUDECODE_TOKEN_URL",
+                "https://example.test/claudecode/token",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_CLAUDECODE_CLIENT_ID",
+                "claudecode-client-id",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_CLAUDECODE_REDIRECT_URI",
+                "http://localhost:54545/callback",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_CLAUDECODE_SCOPES",
+                "org:create_api_key user:profile user:inference",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_CLAUDECODE_USER_AGENT",
+                "claudecode-test-agent",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_AUTHORIZE_URL",
+                "https://example.test/antigravity/authorize",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_TOKEN_URL",
+                "https://example.test/antigravity/token",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_ID",
+                "antigravity-client-id",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_SECRET",
+                "antigravity-client-secret",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_REDIRECT_URI",
+                "http://localhost:51121/oauth-callback",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_SCOPES",
+                "scope-a scope-b",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_LOAD_ENDPOINTS",
+                "https://example.test/load-a,https://example.test/load-b",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_USER_AGENT",
+                "antigravity-test-agent",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_METADATA",
+                r#"{"ideType":"ANTIGRAVITY"}"#,
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_COPILOT_DEVICE_CODE_URL",
+                "https://example.test/copilot/device/code",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_COPILOT_ACCESS_TOKEN_URL",
+                "https://example.test/copilot/access/token",
+            ),
+            (
+                "AXONHUB_PROVIDER_EDGE_COPILOT_CLIENT_ID",
+                "copilot-client-id",
+            ),
+            ("AXONHUB_PROVIDER_EDGE_COPILOT_SCOPE", "read:user"),
+        ]
+    }
+
+    #[test]
+    fn provider_edge_config_requires_secure_runtime_env() {
+        let _lock = env_lock().lock().unwrap();
+        let fixture = ProviderEdgeEnvFixture::new();
+
+        assert!(ProviderEdgeAdminConfig::from_env().is_none());
+
+        fixture.set_all();
+
+        let config =
+            ProviderEdgeAdminConfig::from_env().expect("expected provider-edge env config");
+        assert_eq!(config.codex_client_id, "codex-client-id");
+        assert_eq!(
+            config.antigravity_load_endpoints,
+            vec![
+                "https://example.test/load-a".to_owned(),
+                "https://example.test/load-b".to_owned(),
+            ]
+        );
+        assert_eq!(config.copilot_scope, "read:user");
+    }
+
+    #[test]
+    fn sqlite_provider_edge_service_is_env_gated() {
+        let _lock = env_lock().lock().unwrap();
+        let fixture = ProviderEdgeEnvFixture::new();
+
+        assert!(SqliteProviderEdgeAdminService::from_env().is_none());
+
+        fixture.set_all();
+
+        assert!(SqliteProviderEdgeAdminService::from_env().is_some());
+    }
 }

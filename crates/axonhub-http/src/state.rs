@@ -7,6 +7,7 @@ use crate::ports::{
     ProviderEdgeAdminPort, RequestContextPort, SystemBootstrapPort,
 };
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub enum SystemBootstrapCapability {
@@ -69,6 +70,18 @@ pub enum ProviderEdgeAdminCapability {
     },
     Available {
         provider_edge: Arc<dyn ProviderEdgeAdminPort>,
+    },
+}
+
+pub trait HttpMetricsRecorder: Send + Sync {
+    fn record_http_request(&self, method: &str, path: &str, status_code: u16, duration: Duration);
+}
+
+#[derive(Clone)]
+pub enum HttpMetricsCapability {
+    Disabled,
+    Available {
+        recorder: Arc<dyn HttpMetricsRecorder>,
     },
 }
 

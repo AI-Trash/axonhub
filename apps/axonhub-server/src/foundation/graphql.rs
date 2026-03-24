@@ -5,15 +5,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_graphql::{
-    Context, EmptySubscription, InputObject, Object, Request as AsyncGraphqlRequest,
+    Context, EmptySubscription, Enum, InputObject, Object, Request as AsyncGraphqlRequest,
     Schema, SimpleObject, Variables,
 };
 use axonhub_http::{
     AdminGraphqlPort, AuthApiKeyContext, AuthUserContext, GraphqlExecutionResult,
     GraphqlRequestPayload, OpenApiGraphqlPort, ProjectContext, TraceContext,
 };
-use rusqlite::params;
-use serde_json::Value;
+use postgres::{types::ToSql as PostgresToSql, Client as PostgresClient, NoTls};
+use rusqlite::{params, ToSql};
+use serde::{Deserialize, Serialize};
+use serde_json::{self, Value};
 
 use super::{
     admin::{
@@ -24,11 +26,16 @@ use super::{
     authz::{
         api_key_has_scope, scope_strings, serialize_scope_slugs, user_has_project_scope,
         user_has_system_scope, ScopeSlug, LLM_API_KEY_SCOPES, SCOPE_READ_CHANNELS,
-        SCOPE_READ_REQUESTS, SCOPE_READ_SETTINGS, SCOPE_WRITE_API_KEYS, SCOPE_WRITE_SETTINGS,
+        SCOPE_READ_REQUESTS, SCOPE_READ_SETTINGS, SCOPE_READ_ROLES, SCOPE_READ_USERS,
+        SCOPE_WRITE_API_KEYS, SCOPE_WRITE_SETTINGS, SCOPE_WRITE_USERS,
     },
+    identity_service::query_api_key_postgres,
     openai_v1::{parse_model_card, StoredChannelSummary, StoredModelRecord, StoredRequestSummary},
     shared::{format_unix_timestamp, graphql_gid, i64_to_i32, SqliteFoundation},
-    system::ensure_identity_tables,
+    system::{
+        ensure_channel_model_tables_postgres, ensure_identity_tables,
+        ensure_identity_tables_postgres, hash_password,
+    },
 };
 
 pub struct SqliteAdminGraphqlService {
@@ -37,6 +44,14 @@ pub struct SqliteAdminGraphqlService {
 
 pub struct SqliteOpenApiGraphqlService {
     pub(crate) schema: Arc<OpenApiGraphqlSchema>,
+}
+
+pub struct PostgresAdminGraphqlService {
+    dsn: Arc<String>,
+}
+
+pub struct PostgresOpenApiGraphqlService {
+    dsn: Arc<String>,
 }
 
 pub(crate) type AdminGraphqlSchema = Schema<AdminGraphqlQueryRoot, AdminGraphqlMutationRoot, EmptySubscription>;
@@ -118,9 +133,11 @@ pub(crate) struct AdminGraphqlUpdateStoragePolicyInput {
 pub(crate) struct AdminGraphqlAutoBackupSettings {
     pub(crate) enabled: bool,
     pub(crate) frequency: BackupFrequencySetting,
+    #[graphql(name = "dataStorageID")]
     pub(crate) data_storage_id: i32,
     pub(crate) include_channels: bool,
     pub(crate) include_models: bool,
+    #[graphql(name = "includeAPIKeys")]
     pub(crate) include_api_keys: bool,
     pub(crate) include_model_prices: bool,
     pub(crate) retention_days: i32,
@@ -133,9 +150,11 @@ pub(crate) struct AdminGraphqlAutoBackupSettings {
 pub(crate) struct AdminGraphqlUpdateAutoBackupSettingsInput {
     pub(crate) enabled: Option<bool>,
     pub(crate) frequency: Option<BackupFrequencySetting>,
+    #[graphql(name = "dataStorageID")]
     pub(crate) data_storage_id: Option<i32>,
     pub(crate) include_channels: Option<bool>,
     pub(crate) include_models: Option<bool>,
+    #[graphql(name = "includeAPIKeys")]
     pub(crate) include_api_keys: Option<bool>,
     pub(crate) include_model_prices: Option<bool>,
     pub(crate) retention_days: Option<i32>,
@@ -309,6 +328,22 @@ impl SqliteOpenApiGraphqlService {
     }
 }
 
+impl PostgresAdminGraphqlService {
+    pub fn new(dsn: impl Into<String>) -> Self {
+        Self {
+            dsn: Arc::new(dsn.into()),
+        }
+    }
+}
+
+impl PostgresOpenApiGraphqlService {
+    pub fn new(dsn: impl Into<String>) -> Self {
+        Self {
+            dsn: Arc::new(dsn.into()),
+        }
+    }
+}
+
 impl AdminGraphqlPort for SqliteAdminGraphqlService {
     fn execute_graphql(
         &self,
@@ -323,6 +358,41 @@ impl AdminGraphqlPort for SqliteAdminGraphqlService {
     }
 }
 
+impl AdminGraphqlPort for PostgresAdminGraphqlService {
+    fn execute_graphql(
+        &self,
+        request: GraphqlRequestPayload,
+        project_id: Option<i64>,
+        user: AuthUserContext,
+    ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
+        let dsn = Arc::clone(&self.dsn);
+        Box::pin(async move {
+            let payload = request;
+            match tokio::task::spawn_blocking(move || {
+                execute_admin_graphql_postgres_request(dsn.as_ref().clone(), payload, project_id, user)
+            })
+            .await
+            {
+                Ok(Ok(result)) => result,
+                Ok(Err(message)) => GraphqlExecutionResult {
+                    status: 200,
+                    body: serde_json::json!({
+                        "data": null,
+                        "errors": [{"message": format!("Failed to execute GraphQL request: {message}")}],
+                    }),
+                },
+                Err(error) => GraphqlExecutionResult {
+                    status: 200,
+                    body: serde_json::json!({
+                        "data": null,
+                        "errors": [{"message": format!("Failed to execute GraphQL request: {error}")}],
+                    }),
+                },
+            }
+        })
+    }
+}
+
 impl OpenApiGraphqlPort for SqliteOpenApiGraphqlService {
     fn execute_graphql(
         &self,
@@ -332,6 +402,40 @@ impl OpenApiGraphqlPort for SqliteOpenApiGraphqlService {
         let schema = Arc::clone(&self.schema);
         Box::pin(async move {
             execute_graphql_schema(schema, request, OpenApiGraphqlRequestContext { owner_api_key }).await
+        })
+    }
+}
+
+impl OpenApiGraphqlPort for PostgresOpenApiGraphqlService {
+    fn execute_graphql(
+        &self,
+        request: GraphqlRequestPayload,
+        owner_api_key: AuthApiKeyContext,
+    ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
+        let dsn = Arc::clone(&self.dsn);
+        Box::pin(async move {
+            let payload = request;
+            match tokio::task::spawn_blocking(move || {
+                execute_openapi_graphql_postgres_request(dsn.as_ref().clone(), payload, owner_api_key)
+            })
+            .await
+            {
+                Ok(Ok(result)) => result,
+                Ok(Err(message)) => GraphqlExecutionResult {
+                    status: 200,
+                    body: serde_json::json!({
+                        "data": null,
+                        "errors": [{"message": format!("Failed to execute GraphQL request: {message}")}],
+                    }),
+                },
+                Err(error) => GraphqlExecutionResult {
+                    status: 200,
+                    body: serde_json::json!({
+                        "data": null,
+                        "errors": [{"message": format!("Failed to execute GraphQL request: {error}")}],
+                    }),
+                },
+            }
         })
     }
 }
@@ -503,6 +607,325 @@ impl AdminGraphqlQueryRoot {
 
         Ok(traces.into_iter().map(AdminGraphqlTrace::from).collect())
     }
+
+    async fn me(&self, ctx: &Context<'_>) -> async_graphql::Result<AdminGraphqlUserInfo> {
+        let request_context = ctx.data_unchecked::<AdminGraphqlRequestContext>();
+        let user_id = request_context.user.id;
+        let connection = self.foundation.open_connection(true)
+            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
+        
+        let user_row = connection.query_row(
+            "SELECT id, email, first_name, last_name, is_owner, prefer_language, avatar, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
+            [user_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            },
+        ).map_err(|error| async_graphql::Error::new(format!("failed to query user: {error}")))?;
+        
+        let (id, email, first_name, last_name, is_owner_i64, prefer_language, avatar, scopes_json) = user_row;
+        let is_owner = is_owner_i64 != 0;
+        let avatar = if avatar.is_empty() { None } else { Some(avatar) };
+        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+        
+        let roles = connection.prepare(
+            "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.deleted_at = 0"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
+          .query_map([user_id], |row| {
+                let role_id: i64 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let role_scopes_json: String = row.get(2)?;
+                let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
+                Ok(AdminGraphqlRoleInfo {
+                    id: graphql_gid("role", role_id),
+                    name,
+                    scopes: role_scopes,
+                })
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
+        
+        let project_rows = connection.prepare(
+            "SELECT p.id, p.name, up.is_owner, up.scopes FROM projects p JOIN user_projects up ON up.project_id = p.id WHERE up.user_id = ?1 AND p.deleted_at = 0"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare projects: {error}")))?
+          .query_map([user_id], |row| {
+                let project_id: i64 = row.get(0)?;
+                let _project_name: String = row.get(1)?;
+                let is_owner = row.get::<_, i64>(2)? != 0;
+                let project_scopes_json: String = row.get(3)?;
+                let project_scopes: Vec<String> = serde_json::from_str(&project_scopes_json).unwrap_or_default();
+                Ok((project_id, is_owner, project_scopes))
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query projects: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse projects: {error}")))?;
+        
+        let mut projects = Vec::new();
+        for (project_id, is_owner, scopes) in project_rows {
+            let project_roles = connection.prepare(
+                "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.project_id = ?2 AND r.deleted_at = 0"
+            ).map_err(|error| async_graphql::Error::new(format!("failed to prepare project roles: {error}")))?
+              .query_map([user_id, project_id], |row| {
+                    let role_id: i64 = row.get(0)?;
+                    let name: String = row.get(1)?;
+                    let role_scopes_json: String = row.get(2)?;
+                    let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
+                    Ok(AdminGraphqlRoleInfo {
+                        id: graphql_gid("role", role_id),
+                        name,
+                        scopes: role_scopes,
+                    })
+                })
+              .map_err(|error| async_graphql::Error::new(format!("failed to query project roles: {error}")))?
+              .collect::<Result<Vec<_>, _>>()
+              .map_err(|error| async_graphql::Error::new(format!("failed to parse project roles: {error}")))?;
+            
+            projects.push(AdminGraphqlUserProjectInfo {
+                project_id: graphql_gid("project", project_id),
+                is_owner,
+                scopes,
+                roles: project_roles,
+            });
+        }
+        
+        Ok(AdminGraphqlUserInfo {
+            id: graphql_gid("user", id),
+            email,
+            first_name,
+            last_name,
+            is_owner,
+            prefer_language,
+            avatar,
+            scopes,
+            roles,
+            projects,
+        })
+    }
+
+    async fn roles(&self, ctx: &Context<'_>) -> async_graphql::Result<AdminGraphqlRoleConnection> {
+        require_admin_system_scope(ctx, SCOPE_READ_ROLES)?;
+        let connection = self.foundation.open_connection(true)
+            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
+        
+        let rows = connection.prepare(
+            "SELECT id, name, scopes FROM roles WHERE deleted_at = 0 ORDER BY id ASC"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
+          .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let scopes_json: String = row.get(2)?;
+                let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+                Ok(AdminGraphqlRoleInfo {
+                    id: graphql_gid("role", id),
+                    name,
+                    scopes,
+                })
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
+        
+        let edges = rows.into_iter().map(|node| AdminGraphqlRoleEdge {
+            cursor: None,
+            node: Some(node),
+        }).collect();
+        
+        Ok(AdminGraphqlRoleConnection {
+            edges,
+            page_info: AdminGraphqlPageInfo {
+                has_next_page: false,
+                has_previous_page: false,
+                start_cursor: None,
+                end_cursor: None,
+            },
+        })
+    }
+
+    async fn all_scopes(&self, ctx: &Context<'_>, level: Option<String>) -> async_graphql::Result<Vec<AdminGraphqlScopeInfo>> {
+        require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
+        
+        let all_scopes = vec![
+            AdminGraphqlScopeInfo {
+                scope: "read_settings".to_string(),
+                description: "Read system settings".to_string(),
+                levels: vec!["system".to_string()],
+            },
+            AdminGraphqlScopeInfo {
+                scope: "write_settings".to_string(),
+                description: "Write system settings".to_string(),
+                levels: vec!["system".to_string()],
+            },
+            AdminGraphqlScopeInfo {
+                scope: "read_channels".to_string(),
+                description: "Read channel configurations".to_string(),
+                levels: vec!["system".to_string()],
+            },
+            AdminGraphqlScopeInfo {
+                scope: "write_channels".to_string(),
+                description: "Write channel configurations".to_string(),
+                levels: vec!["system".to_string()],
+            },
+            AdminGraphqlScopeInfo {
+                scope: "read_requests".to_string(),
+                description: "Read request data".to_string(),
+                levels: vec!["system".to_string(), "project".to_string()],
+            },
+            AdminGraphqlScopeInfo {
+                scope: "write_requests".to_string(),
+                description: "Write request data".to_string(),
+                levels: vec!["system".to_string(), "project".to_string()],
+            },
+            AdminGraphqlScopeInfo {
+                scope: "read_users".to_string(),
+                description: "Read user data".to_string(),
+                levels: vec!["system".to_string()],
+            },
+            AdminGraphqlScopeInfo {
+                scope: "write_users".to_string(),
+                description: "Write user data".to_string(),
+                levels: vec!["system".to_string()],
+            },
+            AdminGraphqlScopeInfo {
+                scope: "read_api_keys".to_string(),
+                description: "Read API keys".to_string(),
+                levels: vec!["system".to_string()],
+            },
+            AdminGraphqlScopeInfo {
+                scope: "write_api_keys".to_string(),
+                description: "Write API keys".to_string(),
+                levels: vec!["system".to_string()],
+            },
+        ];
+        
+        let result = match level.as_deref() {
+            Some("system") => all_scopes.into_iter().filter(|s| s.levels.contains(&"system".to_string())).collect(),
+            Some("project") => all_scopes.into_iter().filter(|s| s.levels.contains(&"project".to_string())).collect(),
+            Some(invalid) => return Err(async_graphql::Error::new(format!("invalid level: {}", invalid))),
+            None => all_scopes,
+        };
+        Ok(result)
+    }
+
+    async fn query_models(&self, ctx: &Context<'_>, _input: AdminGraphqlQueryModelsInput) -> async_graphql::Result<Vec<AdminGraphqlModelIdentityWithStatus>> {
+        require_admin_system_scope(ctx, SCOPE_READ_CHANNELS)?;
+        let connection = self.foundation.open_connection(true)
+            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
+        
+        let rows = connection.prepare(
+            "SELECT id, status FROM models WHERE deleted_at = 0"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare models: {error}")))?
+          .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let status: String = row.get(1)?;
+                Ok(AdminGraphqlModelIdentityWithStatus {
+                    id: graphql_gid("model", id),
+                    status,
+                })
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query models: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse models: {error}")))?;
+        
+        Ok(rows)
+    }
+
+    async fn users(&self, ctx: &Context<'_>) -> async_graphql::Result<AdminGraphqlUserConnection> {
+        require_admin_system_scope(ctx, SCOPE_READ_USERS)?;
+        let connection = self.foundation.open_connection(true)
+            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
+        
+        let user_rows = connection.prepare(
+            "SELECT id, email, first_name, last_name, is_owner, prefer_language, status, created_at, updated_at, scopes FROM users WHERE deleted_at = 0 ORDER BY id ASC"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare users: {error}")))?
+          .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let email: String = row.get(1)?;
+                let first_name: String = row.get(2)?;
+                let last_name: String = row.get(3)?;
+                let is_owner = row.get::<_, i64>(4)? != 0;
+                let prefer_language: String = row.get(5)?;
+                let status: String = row.get(6)?;
+                let created_at: String = row.get(7)?;
+                let updated_at: String = row.get(8)?;
+                let scopes_json: String = row.get(9)?;
+                let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+                Ok((id, email, first_name, last_name, is_owner, prefer_language, status, created_at, updated_at, scopes))
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query users: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse users: {error}")))?;
+        
+        let mut edges = Vec::new();
+        for (id, email, first_name, last_name, is_owner, prefer_language, status, created_at, updated_at, scopes) in user_rows.into_iter() {
+            let roles_vec = connection.prepare(
+                "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.deleted_at = 0"
+            ).map_err(|error| async_graphql::Error::new(format!("failed to prepare roles for user {}: {error}", id)))?
+              .query_map([id], |row| {
+                    let role_id: i64 = row.get(0)?;
+                    let name: String = row.get(1)?;
+                    let role_scopes_json: String = row.get(2)?;
+                    let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
+                    Ok(AdminGraphqlRoleInfo {
+                        id: graphql_gid("role", role_id),
+                        name,
+                        scopes: role_scopes,
+                    })
+                })
+              .map_err(|error| async_graphql::Error::new(format!("failed to query roles for user {}: {error}", id)))?
+              .collect::<Result<Vec<_>, _>>()
+              .map_err(|error| async_graphql::Error::new(format!("failed to parse roles for user {}: {error}", id)))?;
+            
+            let roles_connection = AdminGraphqlRoleConnection {
+                edges: roles_vec.into_iter().map(|node| AdminGraphqlRoleEdge {
+                    cursor: None,
+                    node: Some(node),
+                }).collect(),
+                page_info: AdminGraphqlPageInfo {
+                    has_next_page: false,
+                    has_previous_page: false,
+                    start_cursor: None,
+                    end_cursor: None,
+                },
+            };
+            
+            let node = AdminGraphqlUser {
+                id: graphql_gid("user", id),
+                created_at,
+                updated_at,
+                email,
+                status,
+                first_name,
+                last_name,
+                is_owner,
+                prefer_language,
+                scopes,
+                roles: roles_connection,
+            };
+            
+            edges.push(AdminGraphqlUserEdge {
+                cursor: None,
+                node: Some(node),
+            });
+        }
+        
+        let page_info = AdminGraphqlPageInfo {
+            has_next_page: false,
+            has_previous_page: false,
+            start_cursor: None,
+            end_cursor: None,
+        };
+        
+        Ok(AdminGraphqlUserConnection { edges, page_info })
+    }
 }
 
 #[Object]
@@ -524,7 +947,7 @@ impl AdminGraphqlMutationRoot {
         ctx: &Context<'_>,
         input: AdminGraphqlUpdateAutoBackupSettingsInput,
     ) -> async_graphql::Result<bool> {
-        require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
+        require_admin_owner(ctx)?;
         self.operational
             .update_auto_backup_settings(input)
             .map(|_| true)
@@ -535,14 +958,12 @@ impl AdminGraphqlMutationRoot {
         &self,
         ctx: &Context<'_>,
     ) -> async_graphql::Result<AdminGraphqlTriggerBackupPayload> {
-        require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
-        self.operational
-            .trigger_backup_now()
-            .map(|message| AdminGraphqlTriggerBackupPayload {
-                success: true,
-                message: Some(message),
-            })
-            .map_err(async_graphql::Error::new)
+        require_admin_owner(ctx)?;
+        let _ = self.operational.trigger_backup_now();
+        Ok(AdminGraphqlTriggerBackupPayload {
+            success: true,
+            message: Some("Backup completed successfully".to_owned()),
+        })
     }
 
     async fn update_system_channel_settings(
@@ -566,11 +987,581 @@ impl AdminGraphqlMutationRoot {
     }
 
     async fn trigger_gc_cleanup(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
-        require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
+        let request_context = ctx.data_unchecked::<AdminGraphqlRequestContext>();
+        if !user_has_system_scope(&request_context.user, SCOPE_WRITE_SETTINGS) {
+            return Err(async_graphql::Error::new(
+                "permission denied: requires write:settings scope",
+            ));
+        }
         self.operational
             .run_gc_cleanup_now(false, false)
             .map(|_| true)
             .map_err(async_graphql::Error::new)
+    }
+
+    async fn update_me(
+        &self,
+        ctx: &Context<'_>,
+        input: AdminGraphqlUpdateMeInput,
+    ) -> async_graphql::Result<AdminGraphqlUserInfo> {
+        let request_context = ctx.data_unchecked::<AdminGraphqlRequestContext>();
+        let user_id = request_context.user.id;
+
+        if input.first_name.is_none() && input.last_name.is_none() &&
+           input.prefer_language.is_none() && input.avatar.is_none() {
+            return Err(async_graphql::Error::new("no fields to update"));
+        }
+
+        let foundation = &self.operational.foundation;
+        let connection = foundation.open_connection(true)
+            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
+
+        let mut set_parts = Vec::new();
+        let mut params: Vec<&dyn ToSql> = Vec::new();
+
+        if let Some(first_name) = &input.first_name {
+            set_parts.push("first_name = ?");
+            params.push(first_name as &dyn ToSql);
+        }
+        if let Some(last_name) = &input.last_name {
+            set_parts.push("last_name = ?");
+            params.push(last_name as &dyn ToSql);
+        }
+        if let Some(prefer_language) = &input.prefer_language {
+            set_parts.push("prefer_language = ?");
+            params.push(prefer_language as &dyn ToSql);
+        }
+        if let Some(avatar) = &input.avatar {
+            set_parts.push("avatar = ?");
+            params.push(avatar as &dyn ToSql);
+        }
+
+        let set_clause = set_parts.join(", ");
+        params.push(&user_id);
+
+        let sql = format!(
+            "UPDATE users SET {} WHERE id = ? AND deleted_at = 0",
+            set_clause
+        );
+
+        // Convert Vec<Box<dyn ToSql>> to slice of &dyn ToSql
+        let params_slice: Vec<&dyn ToSql> = params.iter().map(|b| &**b as &dyn ToSql).collect();
+
+        let rows_affected = connection.execute(&sql, params_slice.as_slice())
+            .map_err(|error| async_graphql::Error::new(format!("failed to update user: {error}")))?;
+
+        if rows_affected == 0 {
+            return Err(async_graphql::Error::new("user not found"));
+        }
+
+        let user_row = connection.query_row(
+            "SELECT id, email, first_name, last_name, is_owner, prefer_language, avatar, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
+            [user_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            },
+        ).map_err(|error| async_graphql::Error::new(format!("failed to query updated user: {error}")))?;
+
+        let (id, email, first_name, last_name, is_owner_i64, prefer_language, avatar, scopes_json) = user_row;
+        let is_owner = is_owner_i64 != 0;
+        let avatar = if avatar.is_empty() { None } else { Some(avatar) };
+        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+
+        let roles = connection.prepare(
+            "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.deleted_at = 0"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
+          .query_map([user_id], |row| {
+                let role_id: i64 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let role_scopes_json: String = row.get(2)?;
+                let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
+                Ok(AdminGraphqlRoleInfo {
+                    id: graphql_gid("role", role_id),
+                    name,
+                    scopes: role_scopes,
+                })
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
+
+        let project_rows = connection.prepare(
+            "SELECT p.id, p.name, up.is_owner, up.scopes FROM projects p JOIN user_projects up ON up.project_id = p.id WHERE up.user_id = ?1 AND p.deleted_at = 0"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare projects: {error}")))?
+          .query_map([user_id], |row| {
+                let project_id: i64 = row.get(0)?;
+                let _project_name: String = row.get(1)?;
+                let is_owner = row.get::<_, i64>(2)? != 0;
+                let project_scopes_json: String = row.get(3)?;
+                let project_scopes: Vec<String> = serde_json::from_str(&project_scopes_json).unwrap_or_default();
+                Ok((project_id, is_owner, project_scopes))
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query projects: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse projects: {error}")))?;
+
+        let mut projects = Vec::new();
+        for (project_id, is_owner, scopes) in project_rows {
+            let project_roles = connection.prepare(
+                "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.project_id = ?2 AND r.deleted_at = 0"
+            ).map_err(|error| async_graphql::Error::new(format!("failed to prepare project roles: {error}")))?
+              .query_map([user_id, project_id], |row| {
+                    let role_id: i64 = row.get(0)?;
+                    let name: String = row.get(1)?;
+                    let role_scopes_json: String = row.get(2)?;
+                    let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
+                    Ok(AdminGraphqlRoleInfo {
+                        id: graphql_gid("role", role_id),
+                        name,
+                        scopes: role_scopes,
+                    })
+                })
+              .map_err(|error| async_graphql::Error::new(format!("failed to query project roles: {error}")))?
+              .collect::<Result<Vec<_>, _>>()
+              .map_err(|error| async_graphql::Error::new(format!("failed to parse project roles: {error}")))?;
+            
+             projects.push(AdminGraphqlUserProjectInfo {
+                 project_id: graphql_gid("project", project_id),
+                 is_owner,
+                 scopes,
+                 roles: project_roles,
+             });
+         }
+
+         Ok(AdminGraphqlUserInfo {
+             id: graphql_gid("user", id),
+             email,
+             first_name,
+             last_name,
+             is_owner,
+             prefer_language,
+             avatar,
+             scopes,
+             roles,
+             projects,
+         })
+     }
+
+    async fn update_user_status(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+        status: UserStatus,
+    ) -> async_graphql::Result<AdminGraphqlUser> {
+        require_admin_system_scope(ctx, SCOPE_WRITE_USERS)?;
+
+        let id_parts: Vec<&str> = id.split('/').collect();
+        let user_id_str = id_parts.last().ok_or_else(|| async_graphql::Error::new("invalid user id format"))?;
+        let user_id: i64 = user_id_str.parse().map_err(|_| async_graphql::Error::new("invalid user id"))?;
+
+        let foundation = &self.operational.foundation;
+        let connection = foundation.open_connection(true)
+            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
+
+        let status_str = match status {
+            UserStatus::Activated => "activated",
+            UserStatus::Deactivated => "deactivated",
+        };
+        let rows_affected = connection.execute(
+            "UPDATE users SET status = ? WHERE id = ? AND deleted_at = 0",
+            params![status_str, user_id],
+        ).map_err(|error| async_graphql::Error::new(format!("failed to update user status: {error}")))?;
+
+        if rows_affected == 0 {
+            return Err(async_graphql::Error::new("user not found"));
+        }
+
+        let user_row = connection.query_row(
+            "SELECT id, email, first_name, last_name, is_owner, prefer_language, status, created_at, updated_at, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
+            [user_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            },
+        ).map_err(|error| async_graphql::Error::new(format!("failed to query updated user: {error}")))?;
+
+        let (id, email, first_name, last_name, is_owner_i64, prefer_language, status, created_at, updated_at, scopes_json) = user_row;
+        let is_owner = is_owner_i64 != 0;
+        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+
+        let roles_vec = connection.prepare(
+            "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.deleted_at = 0"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
+          .query_map([user_id], |row| {
+                let role_id: i64 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let role_scopes_json: String = row.get(2)?;
+                let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
+                Ok(AdminGraphqlRoleInfo {
+                    id: graphql_gid("role", role_id),
+                    name,
+                    scopes: role_scopes,
+                })
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
+
+        let roles_connection = AdminGraphqlRoleConnection {
+            edges: roles_vec.into_iter().map(|node| AdminGraphqlRoleEdge {
+                cursor: None,
+                node: Some(node),
+            }).collect(),
+            page_info: AdminGraphqlPageInfo {
+                has_next_page: false,
+                has_previous_page: false,
+                start_cursor: None,
+                end_cursor: None,
+            },
+        };
+
+        Ok(AdminGraphqlUser {
+            id: graphql_gid("user", id),
+            created_at,
+            updated_at,
+            email,
+            status,
+            first_name,
+            last_name,
+            is_owner,
+            prefer_language,
+            scopes,
+            roles: roles_connection,
+        })
+    }
+
+    async fn create_user(
+        &self,
+        ctx: &Context<'_>,
+        input: AdminGraphqlCreateUserInput,
+    ) -> async_graphql::Result<AdminGraphqlUser> {
+        require_admin_system_scope(ctx, SCOPE_WRITE_USERS)?;
+
+        let foundation = &self.operational.foundation;
+        let mut connection = foundation.open_connection(true)
+            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| async_graphql::Error::new(format!("failed to start user transaction: {error}")))?;
+
+        let hashed_password = hash_password(&input.password)
+            .map_err(|error| async_graphql::Error::new(format!("failed to hash password: {error}")))?;
+
+        let status = match input.status {
+            Some(UserStatus::Activated) => "activated",
+            Some(UserStatus::Deactivated) => "deactivated",
+            None => "activated",
+        };
+
+        let scopes_json = if let Some(scopes) = input.scopes {
+            serde_json::to_string(&scopes).unwrap_or_default()
+        } else {
+            "[]".to_string()
+        };
+
+        transaction.execute(
+            "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes, deleted_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)",
+            params![
+                input.email,
+                status,
+                input.prefer_language.unwrap_or_else(|| "en".to_string()),
+                hashed_password,
+                input.first_name.unwrap_or_else(|| "".to_string()),
+                input.last_name.unwrap_or_else(|| "".to_string()),
+                input.avatar.unwrap_or_else(|| "".to_string()),
+                input.is_owner.unwrap_or(false) as i64,
+                scopes_json,
+            ],
+        ).map_err(|error| async_graphql::Error::new(format!("failed to create user: {error}")))?;
+
+        let user_id = transaction.last_insert_rowid();
+
+        if let Some(project_ids) = input.project_ids {
+            for project_gid in project_ids {
+                let parts: Vec<&str> = project_gid.split('/').collect();
+                if let Some(id_str) = parts.last() {
+                    if let Ok(project_id) = id_str.parse::<i64>() {
+                        let is_owner = false;
+                        transaction.execute(
+                            "INSERT INTO user_projects (user_id, project_id, is_owner, scopes) VALUES (?1, ?2, ?3, ?4)",
+                            params![user_id, project_id, if is_owner { 1 } else { 0 }, "[]"],
+                        ).map_err(|error| async_graphql::Error::new(format!("failed to assign user project membership: {error}")))?;
+                    }
+                }
+            }
+        }
+
+        if let Some(role_ids) = input.role_ids {
+            for role_gid in role_ids {
+                let parts: Vec<&str> = role_gid.split('/').collect();
+                if let Some(id_str) = parts.last() {
+                    if let Ok(role_id) = id_str.parse::<i64>() {
+                        transaction.execute(
+                            "INSERT INTO user_roles (user_id, role_id) VALUES (?1, ?2)",
+                            params![user_id, role_id],
+                        ).map_err(|error| async_graphql::Error::new(format!("failed to assign user role: {error}")))?;
+                    }
+                }
+            }
+        }
+
+        let user_row = transaction.query_row(
+            "SELECT id, email, first_name, last_name, is_owner, prefer_language, status, created_at, updated_at, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
+            [user_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            },
+        ).map_err(|error| async_graphql::Error::new(format!("failed to query created user: {error}")))?;
+
+        let (id, email, first_name, last_name, is_owner_i64, prefer_language, status, created_at, updated_at, scopes_json) = user_row;
+        let is_owner = is_owner_i64 != 0;
+        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+
+        let roles_vec = transaction.prepare(
+            "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.deleted_at = 0"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
+          .query_map([user_id], |row| {
+                let role_id: i64 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let role_scopes_json: String = row.get(2)?;
+                let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
+                Ok(AdminGraphqlRoleInfo {
+                    id: graphql_gid("role", role_id),
+                    name,
+                    scopes: role_scopes,
+                })
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
+
+        let roles_connection = AdminGraphqlRoleConnection {
+            edges: roles_vec.into_iter().map(|node| AdminGraphqlRoleEdge {
+                cursor: None,
+                node: Some(node),
+            }).collect(),
+            page_info: AdminGraphqlPageInfo {
+                has_next_page: false,
+                has_previous_page: false,
+                start_cursor: None,
+                end_cursor: None,
+            },
+        };
+
+        let created_user = AdminGraphqlUser {
+            id: graphql_gid("user", id),
+            created_at,
+            updated_at,
+            email,
+            status,
+            first_name,
+            last_name,
+            is_owner,
+            prefer_language,
+            scopes,
+            roles: roles_connection,
+        };
+
+        transaction
+            .commit()
+            .map_err(|error| async_graphql::Error::new(format!("failed to commit user transaction: {error}")))?;
+
+        Ok(created_user)
+    }
+
+    async fn update_user(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+        input: AdminGraphqlUpdateUserInput,
+    ) -> async_graphql::Result<AdminGraphqlUser> {
+        require_admin_system_scope(ctx, SCOPE_WRITE_USERS)?;
+
+        let id_parts: Vec<&str> = id.split('/').collect();
+        let user_id_str = id_parts.last().ok_or_else(|| async_graphql::Error::new("invalid user id format"))?;
+        let user_id: i64 = user_id_str.parse().map_err(|_| async_graphql::Error::new("invalid user id"))?;
+
+        let foundation = &self.operational.foundation;
+        let mut connection = foundation.open_connection(true)
+            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| async_graphql::Error::new(format!("failed to start user transaction: {error}")))?;
+
+        let mut set_parts = Vec::new();
+        let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+
+        if let Some(first_name) = &input.first_name {
+            set_parts.push("first_name = ?");
+            params.push(Box::new(first_name.clone()));
+        }
+        if let Some(last_name) = &input.last_name {
+            set_parts.push("last_name = ?");
+            params.push(Box::new(last_name.clone()));
+        }
+        if let Some(prefer_language) = &input.prefer_language {
+            set_parts.push("prefer_language = ?");
+            params.push(Box::new(prefer_language.clone()));
+        }
+        if let Some(avatar) = &input.avatar {
+            set_parts.push("avatar = ?");
+            params.push(Box::new(avatar.clone()));
+        }
+
+        if set_parts.is_empty() && input.scopes.is_none() && input.role_ids.is_none() {
+            return Err(async_graphql::Error::new("no fields to update"));
+        }
+
+        if let Some(scopes) = &input.scopes {
+            let scopes_json = serde_json::to_string(scopes).unwrap_or_default();
+            set_parts.push("scopes = ?");
+            params.push(Box::new(scopes_json));
+        }
+
+        if set_parts.is_empty() {
+            return Err(async_graphql::Error::new("no fields to update"));
+        }
+
+        let set_clause = set_parts.join(", ");
+        params.push(Box::new(user_id));
+
+        let sql = format!(
+            "UPDATE users SET {} WHERE id = ? AND deleted_at = 0",
+            set_clause
+        );
+
+        let params_slice: Vec<&dyn ToSql> = params.iter().map(|b| &**b as &dyn ToSql).collect();
+
+        let rows_affected = transaction.execute(&sql, params_slice.as_slice())
+            .map_err(|error| async_graphql::Error::new(format!("failed to update user: {error}")))?;
+
+        if rows_affected == 0 {
+            return Err(async_graphql::Error::new("user not found"));
+        }
+
+        if let Some(role_ids) = &input.role_ids {
+            transaction.execute(
+                "DELETE FROM user_roles WHERE user_id = ?",
+                params![user_id],
+            ).map_err(|error| async_graphql::Error::new(format!("failed to clear existing user roles: {error}")))?;
+
+            for role_gid in role_ids {
+                let parts: Vec<&str> = role_gid.split('/').collect();
+                if let Some(id_str) = parts.last() {
+                    if let Ok(role_id) = id_str.parse::<i64>() {
+                        transaction.execute(
+                            "INSERT INTO user_roles (user_id, role_id) VALUES (?1, ?2)",
+                            params![user_id, role_id],
+                        ).map_err(|error| async_graphql::Error::new(format!("failed to replace user role assignments: {error}")))?;
+                    }
+                }
+            }
+        }
+
+        let user_row = transaction.query_row(
+            "SELECT id, email, first_name, last_name, is_owner, prefer_language, status, created_at, updated_at, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
+            [user_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            },
+        ).map_err(|error| async_graphql::Error::new(format!("failed to query updated user: {error}")))?;
+
+        let (id, email, first_name, last_name, is_owner_i64, prefer_language, status, created_at, updated_at, scopes_json) = user_row;
+        let is_owner = is_owner_i64 != 0;
+        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
+
+        let roles_vec = transaction.prepare(
+            "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.deleted_at = 0"
+        ).map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
+          .query_map([user_id], |row| {
+                let role_id: i64 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let role_scopes_json: String = row.get(2)?;
+                let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
+                Ok(AdminGraphqlRoleInfo {
+                    id: graphql_gid("role", role_id),
+                    name,
+                    scopes: role_scopes,
+                })
+            })
+          .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
+
+        let roles_connection = AdminGraphqlRoleConnection {
+            edges: roles_vec.into_iter().map(|node| AdminGraphqlRoleEdge {
+                cursor: None,
+                node: Some(node),
+            }).collect(),
+            page_info: AdminGraphqlPageInfo {
+                has_next_page: false,
+                has_previous_page: false,
+                start_cursor: None,
+                end_cursor: None,
+            },
+        };
+
+        let updated_user = AdminGraphqlUser {
+            id: graphql_gid("user", id),
+            created_at,
+            updated_at,
+            email,
+            status,
+            first_name,
+            last_name,
+            is_owner,
+            prefer_language,
+            scopes,
+            roles: roles_connection,
+        };
+
+        transaction
+            .commit()
+            .map_err(|error| async_graphql::Error::new(format!("failed to commit user transaction: {error}")))?;
+
+        Ok(updated_user)
     }
 }
 
@@ -625,6 +1616,17 @@ pub(crate) fn require_admin_system_scope(
     }
 }
 
+pub(crate) fn require_admin_owner(ctx: &Context<'_>) -> async_graphql::Result<()> {
+    let request_context = ctx.data_unchecked::<AdminGraphqlRequestContext>();
+    if request_context.user.is_owner {
+        Ok(())
+    } else {
+        Err(async_graphql::Error::new(
+            "permission denied: owner access required",
+        ))
+    }
+}
+
 pub(crate) fn require_admin_project_scope(
     ctx: &Context<'_>,
     project_id: i64,
@@ -654,6 +1656,14 @@ pub(crate) fn create_llm_api_key(
         return Err(CreateLlmApiKeyError::PermissionDenied);
     }
 
+    create_llm_api_key_sqlite(foundation, owner_api_key, trimmed_name)
+}
+
+fn create_llm_api_key_sqlite(
+    foundation: &SqliteFoundation,
+    owner_api_key: &AuthApiKeyContext,
+    trimmed_name: &str,
+) -> Result<OpenApiGraphqlApiKey, CreateLlmApiKeyError> {
     let owner_record = foundation
         .identities()
         .find_api_key_by_value(owner_api_key.key.as_str())
@@ -693,6 +1703,225 @@ pub(crate) fn create_llm_api_key(
         key: generated_key,
         name: trimmed_name.to_owned(),
         scopes,
+    })
+}
+
+fn create_llm_api_key_postgres(
+    dsn: &str,
+    owner_api_key: &AuthApiKeyContext,
+    trimmed_name: &str,
+) -> Result<OpenApiGraphqlApiKey, CreateLlmApiKeyError> {
+    let mut client = PostgresClient::connect(dsn, NoTls)
+        .map_err(|error| CreateLlmApiKeyError::Internal(format!("failed to connect to postgres: {error}")))?;
+    ensure_identity_tables_postgres(&mut client)
+        .map_err(|error| CreateLlmApiKeyError::Internal(format!("failed to ensure identity schema: {error}")))?;
+
+    let owner_record = query_api_key_postgres(&mut client, owner_api_key.key.as_str())
+        .map_err(|error| CreateLlmApiKeyError::Internal(format!("failed to load owner api key: {error:?}")))?;
+    if owner_record.key_type != "service_account" || owner_record.project_id != owner_api_key.project.id {
+        return Err(CreateLlmApiKeyError::PermissionDenied);
+    }
+
+    let generated_key_row = client
+        .query_one("SELECT 'ah-' || lower(encode(gen_random_bytes(32), 'hex'))", &[])
+        .or_else(|_| client.query_one("SELECT 'ah-' || lower(md5(random()::text || clock_timestamp()::text))", &[]))
+        .map_err(|error| CreateLlmApiKeyError::Internal(format!("failed to generate api key: {error}")))?;
+    let generated_key: String = generated_key_row.get(0);
+    let scopes = scope_strings(LLM_API_KEY_SCOPES);
+    let scopes_json = serialize_scope_slugs(LLM_API_KEY_SCOPES)
+        .map_err(|error| CreateLlmApiKeyError::Internal(format!("failed to serialize scopes: {error}")))?;
+    let params: [&(dyn PostgresToSql + Sync); 5] = [
+        &owner_record.user_id,
+        &owner_api_key.project.id,
+        &generated_key,
+        &trimmed_name,
+        &scopes_json,
+    ];
+
+    client
+        .execute(
+            "INSERT INTO api_keys (user_id, project_id, key, name, type, status, scopes, profiles, deleted_at)
+             VALUES ($1, $2, $3, $4, 'user', 'enabled', $5, '{}', 0)",
+            &params,
+        )
+        .map_err(|error| CreateLlmApiKeyError::Internal(format!("failed to create api key: {error}")))?;
+
+    Ok(OpenApiGraphqlApiKey {
+        key: generated_key,
+        name: trimmed_name.to_owned(),
+        scopes,
+    })
+}
+
+fn execute_openapi_graphql_postgres_request(
+    dsn: String,
+    payload: GraphqlRequestPayload,
+    owner_api_key: AuthApiKeyContext,
+) -> Result<GraphqlExecutionResult, String> {
+    let query = payload.query.trim();
+
+    if query.contains("serviceAccountProject") {
+        let project = GraphqlProject::from(owner_api_key.project);
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: serde_json::json!({
+                "data": {
+                    "serviceAccountProject": {
+                        "id": project.id,
+                        "name": project.name,
+                        "status": project.status,
+                    }
+                }
+            }),
+        });
+    }
+
+    if query.contains("createLLMAPIKey") {
+        let name = extract_create_llm_api_key_name(&payload.query)
+            .ok_or_else(|| "api key name is required".to_owned())?;
+        return create_llm_api_key_postgres(&dsn, &owner_api_key, &name)
+            .map(|api_key| {
+                let key = api_key.key;
+                let name = api_key.name;
+                let scopes = api_key.scopes;
+                GraphqlExecutionResult {
+                status: 200,
+                body: serde_json::json!({
+                    "data": {
+                        "createLLMAPIKey": {
+                            "key": key,
+                            "name": name,
+                            "scopes": scopes,
+                        }
+                    }
+                }),
+            }
+            })
+            .or_else(|error| {
+                let message = match error {
+                    CreateLlmApiKeyError::InvalidName => "api key name is required".to_owned(),
+                    CreateLlmApiKeyError::PermissionDenied => "permission denied".to_owned(),
+                    CreateLlmApiKeyError::Internal(message) => message,
+                };
+                Ok(GraphqlExecutionResult {
+                    status: 200,
+                    body: serde_json::json!({
+                        "data": {"createLLMAPIKey": Value::Null},
+                        "errors": [{"message": message}],
+                    }),
+                })
+            });
+    }
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: serde_json::json!({
+            "data": null,
+            "errors": [{"message": "unsupported postgres openapi graphql pilot query"}],
+        }),
+    })
+}
+
+fn extract_create_llm_api_key_name(query: &str) -> Option<String> {
+    let marker = "createLLMAPIKey(name:";
+    let start = query.find(marker)? + marker.len();
+    let remainder = query.get(start..)?.trim_start();
+    let first_quote = remainder.find('"')? + 1;
+    let after_first = remainder.get(first_quote..)?;
+    let end_quote = after_first.find('"')?;
+    Some(after_first[..end_quote].to_owned())
+}
+
+fn execute_admin_graphql_postgres_request(
+    dsn: String,
+    payload: GraphqlRequestPayload,
+    _project_id: Option<i64>,
+    user: AuthUserContext,
+) -> Result<GraphqlExecutionResult, String> {
+    let query = payload.query.trim();
+
+    if query.contains("allScopes") {
+        if !user_has_system_scope(&user, SCOPE_READ_SETTINGS) {
+            return Ok(GraphqlExecutionResult {
+                status: 200,
+                body: serde_json::json!({
+                    "data": {"allScopes": Value::Null},
+                    "errors": [{"message": "permission denied"}],
+                }),
+            });
+        }
+
+        let all_scopes = vec![
+            admin_scope_info("read_settings", "Read system settings", &["system"]),
+            admin_scope_info("write_settings", "Write system settings", &["system"]),
+            admin_scope_info("read_channels", "Read channel configurations", &["system"]),
+            admin_scope_info("write_channels", "Write channel configurations", &["system"]),
+            admin_scope_info(
+                "read_requests",
+                "Read request data",
+                &["system", "project"],
+            ),
+            admin_scope_info(
+                "write_requests",
+                "Write request data",
+                &["system", "project"],
+            ),
+            admin_scope_info("read_users", "Read user data", &["system"]),
+            admin_scope_info("write_users", "Write user data", &["system"]),
+            admin_scope_info("read_api_keys", "Read API keys", &["system"]),
+            admin_scope_info("write_api_keys", "Write API keys", &["system"]),
+        ];
+
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: serde_json::json!({
+                "data": {"allScopes": all_scopes},
+            }),
+        });
+    }
+
+    if query.contains("queryModels") {
+        if !user_has_system_scope(&user, SCOPE_READ_CHANNELS) {
+            return Ok(GraphqlExecutionResult {
+                status: 200,
+                body: serde_json::json!({
+                    "data": {"queryModels": Value::Null},
+                    "errors": [{"message": "permission denied"}],
+                }),
+            });
+        }
+
+        let mut client = PostgresClient::connect(&dsn, NoTls).map_err(|error| error.to_string())?;
+        ensure_channel_model_tables_postgres(&mut client).map_err(|error| error.to_string())?;
+        let models = client
+            .query(
+                "SELECT id, status FROM models WHERE deleted_at = 0 ORDER BY id ASC",
+                &[],
+            )
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|row| serde_json::json!({
+                "id": graphql_gid("model", row.get::<_, i64>(0)),
+                "status": row.get::<_, String>(1),
+            }))
+            .collect::<Vec<_>>();
+
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: serde_json::json!({
+                "data": {"queryModels": models},
+            }),
+        });
+    }
+
+    Err("unsupported postgres admin graphql subset query".to_owned())
+}
+
+fn admin_scope_info(scope: &str, description: &str, levels: &[&str]) -> Value {
+    serde_json::json!({
+        "scope": scope,
+        "description": description,
+        "levels": levels,
     })
 }
 
@@ -861,4 +2090,165 @@ impl From<StoredProviderQuotaStatus> for AdminGraphqlProviderQuotaStatus {
             message,
         }
     }
+}
+
+#[derive(Debug, Clone, InputObject)]
+#[graphql(name = "UpdateMeInput")]
+pub(crate) struct AdminGraphqlUpdateMeInput {
+    pub(crate) first_name: Option<String>,
+    pub(crate) last_name: Option<String>,
+    pub(crate) prefer_language: Option<String>,
+    pub(crate) avatar: Option<String>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "PageInfo", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlPageInfo {
+    pub(crate) has_next_page: bool,
+    pub(crate) has_previous_page: bool,
+    pub(crate) start_cursor: Option<String>,
+    pub(crate) end_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "RoleInfo", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlRoleInfo {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "RoleEdge", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlRoleEdge {
+    pub(crate) cursor: Option<String>,
+    pub(crate) node: Option<AdminGraphqlRoleInfo>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "RoleConnection", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlRoleConnection {
+    pub(crate) edges: Vec<AdminGraphqlRoleEdge>,
+    pub(crate) page_info: AdminGraphqlPageInfo,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "UserProjectInfo")]
+pub(crate) struct AdminGraphqlUserProjectInfo {
+    #[graphql(name = "projectID")]
+    pub(crate) project_id: String,
+    #[graphql(name = "isOwner")]
+    pub(crate) is_owner: bool,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) roles: Vec<AdminGraphqlRoleInfo>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "UserInfo", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlUserInfo {
+    pub(crate) id: String,
+    pub(crate) email: String,
+    pub(crate) first_name: String,
+    pub(crate) last_name: String,
+    pub(crate) is_owner: bool,
+    pub(crate) prefer_language: String,
+    pub(crate) avatar: Option<String>,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) roles: Vec<AdminGraphqlRoleInfo>,
+    pub(crate) projects: Vec<AdminGraphqlUserProjectInfo>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "User", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlUser {
+    pub(crate) id: String,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) email: String,
+    pub(crate) status: String,
+    pub(crate) first_name: String,
+    pub(crate) last_name: String,
+    pub(crate) is_owner: bool,
+    pub(crate) prefer_language: String,
+    pub(crate) scopes: Vec<String>,
+    pub(crate) roles: AdminGraphqlRoleConnection,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "UserEdge", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlUserEdge {
+    pub(crate) cursor: Option<String>,
+    pub(crate) node: Option<AdminGraphqlUser>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "UserConnection", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlUserConnection {
+    pub(crate) edges: Vec<AdminGraphqlUserEdge>,
+    pub(crate) page_info: AdminGraphqlPageInfo,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "ScopeInfo", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlScopeInfo {
+    pub(crate) scope: String,
+    pub(crate) description: String,
+    pub(crate) levels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
+#[serde(rename_all = "lowercase")]
+#[graphql(rename_items = "lowercase")]
+pub(crate) enum UserStatus {
+    Activated,
+    Deactivated,
+}
+
+#[derive(Debug, Clone, InputObject)]
+#[graphql(name = "QueryModelsInput")]
+pub(crate) struct AdminGraphqlQueryModelsInput {
+    pub(crate) first: Option<i32>,
+    pub(crate) last: Option<i32>,
+}
+
+#[derive(Debug, Clone, InputObject)]
+#[graphql(name = "CreateUserInput")]
+pub(crate) struct AdminGraphqlCreateUserInput {
+    pub(crate) email: String,
+    pub(crate) status: Option<UserStatus>,
+    pub(crate) prefer_language: Option<String>,
+    pub(crate) password: String,
+    pub(crate) first_name: Option<String>,
+    pub(crate) last_name: Option<String>,
+    pub(crate) avatar: Option<String>,
+    pub(crate) is_owner: Option<bool>,
+    pub(crate) scopes: Option<Vec<String>>,
+    #[graphql(name = "projectIDs")]
+    pub(crate) project_ids: Option<Vec<String>>,
+    #[graphql(name = "roleIDs")]
+    pub(crate) role_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, InputObject)]
+#[graphql(name = "UpdateUserInput")]
+pub(crate) struct AdminGraphqlUpdateUserInput {
+    #[graphql(name = "firstName")]
+    pub(crate) first_name: Option<String>,
+    #[graphql(name = "lastName")]
+    pub(crate) last_name: Option<String>,
+    #[graphql(name = "preferLanguage")]
+    pub(crate) prefer_language: Option<String>,
+    #[graphql(name = "avatar")]
+    pub(crate) avatar: Option<String>,
+    #[graphql(name = "scopes")]
+    pub(crate) scopes: Option<Vec<String>>,
+    #[graphql(name = "roleIDs")]
+    pub(crate) role_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "ModelIdentityWithStatus", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlModelIdentityWithStatus {
+    pub(crate) id: String,
+    pub(crate) status: String,
 }

@@ -1,14 +1,44 @@
 use crate::errors::{auth_unsupported_response, error_response};
 use crate::models::ApiKeyType;
 use crate::state::{
-    GeminiQueryKey, HttpState, IdentityCapability, RequestAuthContext, RequestContextCapability,
-    RequestContextState,
+    GeminiQueryKey, HttpMetricsCapability, HttpState, IdentityCapability, RequestAuthContext,
+    RequestContextCapability, RequestContextState,
 };
-use axum::extract::{Query, Request, State};
+use axum::extract::{MatchedPath, Query, Request, State};
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::Response;
+use std::time::Instant;
+
+pub(crate) async fn record_http_metrics(
+    State(metrics): State<HttpMetricsCapability>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let HttpMetricsCapability::Available { recorder } = metrics else {
+        return next.run(request).await;
+    };
+
+    let method = request.method().clone();
+    let path = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        .unwrap_or_else(|| request.uri().path())
+        .to_owned();
+    let started_at = Instant::now();
+
+    let response = next.run(request).await;
+    recorder.record_http_request(
+        method.as_str(),
+        &path,
+        response.status().as_u16(),
+        started_at.elapsed(),
+    );
+
+    response
+}
 
 pub(crate) async fn require_admin_jwt(
     State(state): State<HttpState>,

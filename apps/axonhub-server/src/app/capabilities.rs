@@ -7,18 +7,27 @@ use axonhub_http::{
 };
 
 use crate::foundation::{
-    admin::SqliteAdminService,
-    graphql::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
-    identity_service::SqliteIdentityService,
-    openai_v1::SqliteOpenAiV1Service,
+    admin::{PostgresAdminService, SqliteAdminService},
+    graphql::{
+        PostgresAdminGraphqlService, PostgresOpenApiGraphqlService, SqliteAdminGraphqlService,
+        SqliteOpenApiGraphqlService,
+    },
+    identity_service::{PostgresIdentityService, SqliteIdentityService},
+    openai_v1::{PostgresOpenAiV1Service, SqliteOpenAiV1Service},
     provider_edge::SqliteProviderEdgeAdminService,
-    request_context_service::SqliteRequestContextService,
+    request_context_service::{PostgresRequestContextService, SqliteRequestContextService},
     shared::SqliteFoundation,
-    system::SqliteBootstrapService,
+    system::{PostgresBootstrapService, SqliteBootstrapService},
 };
 
-const SYSTEM_BOOTSTRAP_UNSUPPORTED_MESSAGE: &str =
-    "DB-backed admin system status/bootstrap is not available for the configured dialect yet. Use the legacy Go backend for this route.";
+const SQLITE_AND_POSTGRES_DIALECT_HINT: &str =
+    "Rust replacement for this surface is currently supported only on sqlite3 and postgres.";
+
+fn sqlite_and_postgres_message(surface: &str) -> String {
+    format!(
+        "{surface} is not available for the configured dialect yet. {SQLITE_AND_POSTGRES_DIALECT_HINT}"
+    )
+}
 
 pub(crate) fn build_system_bootstrap_capability(
     dialect: &str,
@@ -32,8 +41,17 @@ pub(crate) fn build_system_bootstrap_capability(
         };
     }
 
+    if dialect.eq_ignore_ascii_case("postgres") || dialect.eq_ignore_ascii_case("postgresql") {
+        return SystemBootstrapCapability::Available {
+            system: Arc::new(PostgresBootstrapService::new(
+                dsn.to_owned(),
+                version.to_owned(),
+            )),
+        };
+    }
+
     SystemBootstrapCapability::Unsupported {
-        message: SYSTEM_BOOTSTRAP_UNSUPPORTED_MESSAGE.to_owned(),
+        message: sqlite_and_postgres_message("DB-backed admin system status/bootstrap"),
     }
 }
 
@@ -49,8 +67,14 @@ pub(crate) fn build_identity_capability(
         };
     }
 
+    if dialect.eq_ignore_ascii_case("postgres") || dialect.eq_ignore_ascii_case("postgresql") {
+        return IdentityCapability::Available {
+            identity: Arc::new(PostgresIdentityService::new(dsn.to_owned(), allow_no_auth)),
+        };
+    }
+
     IdentityCapability::Unsupported {
-        message: "DB-backed identity auth is not available for the configured dialect yet. Use the legacy Go backend for this route.".to_owned(),
+        message: sqlite_and_postgres_message("DB-backed identity auth"),
     }
 }
 
@@ -66,8 +90,15 @@ pub(crate) fn build_request_context_capability(
         };
     }
 
+    if dialect.eq_ignore_ascii_case("postgres") || dialect.eq_ignore_ascii_case("postgresql") {
+        let _ = allow_no_auth;
+        return RequestContextCapability::Available {
+            request_context: Arc::new(PostgresRequestContextService::new(dsn.to_owned())),
+        };
+    }
+
     RequestContextCapability::Unsupported {
-        message: "DB-backed request context resolution is not available for the configured dialect yet. Use the legacy Go backend for this route.".to_owned(),
+        message: sqlite_and_postgres_message("DB-backed request context resolution"),
     }
 }
 
@@ -79,8 +110,14 @@ pub(crate) fn build_openai_v1_capability(dialect: &str, dsn: &str) -> OpenAiV1Ca
         };
     }
 
+    if dialect.eq_ignore_ascii_case("postgres") || dialect.eq_ignore_ascii_case("postgresql") {
+        return OpenAiV1Capability::Available {
+            openai: Arc::new(PostgresOpenAiV1Service::new(dsn.to_owned())),
+        };
+    }
+
     OpenAiV1Capability::Unsupported {
-        message: "OpenAI `/v1` inference is not available for the configured dialect yet. Use the legacy Go backend for this route.".to_owned(),
+        message: sqlite_and_postgres_message("OpenAI `/v1` inference"),
     }
 }
 
@@ -92,8 +129,14 @@ pub(crate) fn build_admin_capability(dialect: &str, dsn: &str) -> AdminCapabilit
         };
     }
 
+    if dialect.eq_ignore_ascii_case("postgres") || dialect.eq_ignore_ascii_case("postgresql") {
+        return AdminCapability::Available {
+            admin: Arc::new(PostgresAdminService::new(dsn.to_owned())),
+        };
+    }
+
     AdminCapability::Unsupported {
-        message: "DB-backed admin read routes are not available for the configured dialect yet. Use the legacy Go backend for this route.".to_owned(),
+        message: sqlite_and_postgres_message("DB-backed admin read routes"),
     }
 }
 
@@ -105,8 +148,14 @@ pub(crate) fn build_admin_graphql_capability(dialect: &str, dsn: &str) -> AdminG
         };
     }
 
+    if dialect.eq_ignore_ascii_case("postgres") || dialect.eq_ignore_ascii_case("postgresql") {
+        return AdminGraphqlCapability::Available {
+            graphql: Arc::new(PostgresAdminGraphqlService::new(dsn.to_owned())),
+        };
+    }
+
     AdminGraphqlCapability::Unsupported {
-        message: "DB-backed admin GraphQL is not available for the configured dialect yet. Use the legacy Go backend for this route.".to_owned(),
+        message: sqlite_and_postgres_message("DB-backed admin GraphQL"),
     }
 }
 
@@ -121,22 +170,29 @@ pub(crate) fn build_openapi_graphql_capability(
         };
     }
 
+    if dialect.eq_ignore_ascii_case("postgres") || dialect.eq_ignore_ascii_case("postgresql") {
+        return OpenApiGraphqlCapability::Available {
+            graphql: Arc::new(PostgresOpenApiGraphqlService::new(dsn.to_owned())),
+        };
+    }
+
     OpenApiGraphqlCapability::Unsupported {
-        message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Use the legacy Go backend for this route.".to_owned(),
+        message: sqlite_and_postgres_message("DB-backed OpenAPI GraphQL"),
     }
 }
 
 pub(crate) fn build_provider_edge_admin_capability(
-    dialect: &str,
+    _dialect: &str,
     _dsn: &str,
 ) -> ProviderEdgeAdminCapability {
-    if dialect.eq_ignore_ascii_case("sqlite3") {
+    if let Some(provider_edge) = SqliteProviderEdgeAdminService::from_env() {
         return ProviderEdgeAdminCapability::Available {
-            provider_edge: Arc::new(SqliteProviderEdgeAdminService::new()),
+            provider_edge: Arc::new(provider_edge),
         };
     }
 
     ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Use the legacy Go backend for these routes.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
+            .to_owned(),
     }
 }

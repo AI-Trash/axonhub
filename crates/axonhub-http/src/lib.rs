@@ -25,10 +25,11 @@ pub use ports::{
     SystemBootstrapPort, SystemInitializeError, SystemQueryError,
 };
 pub use routes::router;
+pub use routes::router_with_metrics;
 pub use state::{
-    AdminCapability, AdminGraphqlCapability, HttpState, IdentityCapability, OpenAiV1Capability,
-    OpenApiGraphqlCapability, ProviderEdgeAdminCapability, RequestContextCapability,
-    SystemBootstrapCapability,
+    AdminCapability, AdminGraphqlCapability, HttpMetricsCapability, HttpMetricsRecorder,
+    HttpState, IdentityCapability, OpenAiV1Capability, OpenApiGraphqlCapability,
+    ProviderEdgeAdminCapability, RequestContextCapability, SystemBootstrapCapability,
 };
 
 #[cfg(test)]

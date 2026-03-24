@@ -1,9 +1,9 @@
 use crate::handlers;
 use crate::middleware::{
-    apply_request_context, require_admin_jwt, require_api_key_or_no_auth, require_gemini_key,
-    require_service_api_key,
+    apply_request_context, record_http_metrics, require_admin_jwt, require_api_key_or_no_auth,
+    require_gemini_key, require_service_api_key,
 };
-use crate::state::HttpState;
+use crate::state::{HttpMetricsCapability, HttpState};
 use axum::middleware::from_fn_with_state;
 use axum::routing::{any, delete, get, post};
 use axum::Router;
@@ -25,6 +25,7 @@ pub(crate) fn admin_protected_routes(state: &HttpState) -> Router<HttpState> {
             "/playground",
             get(handlers::graphql::admin_graphql_playground),
         )
+        .route("/playground/chat", post(handlers::admin::playground_chat))
         .route("/graphql", post(handlers::graphql::admin_graphql))
         .route(
             "/codex/oauth/start",
@@ -62,8 +63,6 @@ pub(crate) fn admin_protected_routes(state: &HttpState) -> Router<HttpState> {
             "/requests/:request_id/content",
             get(handlers::admin::download_request_content),
         )
-        .route("/", any(handlers::unported::unported_admin))
-        .fallback(handlers::unported::unported_admin)
         .layer(from_fn_with_state(state.clone(), apply_request_context))
         .layer(from_fn_with_state(state.clone(), require_admin_jwt))
 }
@@ -78,6 +77,14 @@ pub(crate) fn openai_v1_routes(state: &HttpState) -> Router<HttpState> {
         )
         .route("/responses", post(handlers::openai_v1::openai_responses))
         .route("/embeddings", post(handlers::openai_v1::openai_embeddings))
+        .route("/videos", post(handlers::openai_v1::openai_videos_create))
+        .route("/videos/:id", get(handlers::openai_v1::openai_videos_get))
+        .route(
+            "/videos/:id",
+            delete(handlers::openai_v1::openai_videos_delete),
+        )
+        .route("/rerank", post(handlers::jina::jina_rerank))
+        .route("/messages", post(handlers::anthropic::anthropic_messages))
         .route("/", any(handlers::unported::unported_v1))
         .fallback(handlers::unported::unported_v1)
         .layer(from_fn_with_state(state.clone(), apply_request_context))
@@ -92,8 +99,6 @@ pub(crate) fn jina_routes(state: &HttpState) -> Router<HttpState> {
         .route("/debug/context", any(handlers::debug_context))
         .route("/embeddings", post(handlers::jina::jina_embeddings))
         .route("/rerank", post(handlers::jina::jina_rerank))
-        .route("/", any(handlers::unported::unported_jina_v1))
-        .fallback(handlers::unported::unported_jina_v1)
         .layer(from_fn_with_state(state.clone(), apply_request_context))
         .layer(from_fn_with_state(
             state.clone(),
@@ -106,8 +111,6 @@ pub(crate) fn anthropic_routes(state: &HttpState) -> Router<HttpState> {
         .route("/debug/context", any(handlers::debug_context))
         .route("/messages", post(handlers::anthropic::anthropic_messages))
         .route("/models", get(handlers::anthropic::list_anthropic_models))
-        .route("/", any(handlers::unported::unported_anthropic_v1))
-        .fallback(handlers::unported::unported_anthropic_v1)
         .layer(from_fn_with_state(state.clone(), apply_request_context))
         .layer(from_fn_with_state(
             state.clone(),
@@ -117,14 +120,11 @@ pub(crate) fn anthropic_routes(state: &HttpState) -> Router<HttpState> {
 
 pub(crate) fn v1beta_routes(state: &HttpState) -> Router<HttpState> {
     Router::new()
-        .route("/debug/context", any(handlers::debug_context))
         .route("/models", get(handlers::gemini::list_gemini_models))
         .route(
             "/models/*action",
             post(handlers::gemini::gemini_generate_content),
         )
-        .route("/", any(handlers::unported::unported_v1beta))
-        .fallback(handlers::unported::unported_v1beta)
         .layer(from_fn_with_state(state.clone(), apply_request_context))
         .layer(from_fn_with_state(state.clone(), require_gemini_key))
 }
@@ -137,8 +137,6 @@ pub(crate) fn openapi_routes(state: &HttpState) -> Router<HttpState> {
             get(handlers::graphql::openapi_graphql_playground),
         )
         .route("/v1/graphql", post(handlers::graphql::openapi_graphql))
-        .route("/", any(handlers::unported::unported_openapi))
-        .fallback(handlers::unported::unported_openapi)
         .layer(from_fn_with_state(state.clone(), apply_request_context))
         .layer(from_fn_with_state(state.clone(), require_service_api_key))
 }
@@ -181,91 +179,35 @@ pub(crate) fn doubao_routes(state: &HttpState) -> Router<HttpState> {
                     require_api_key_or_no_auth,
                 )),
         )
-        .route(
-            "/doubao/v3/",
-            any(handlers::unported::unported_doubao_v3)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(
-                    state.clone(),
-                    require_api_key_or_no_auth,
-                )),
-        )
-        .route(
-            "/doubao/v3/*rest",
-            any(handlers::unported::unported_doubao_v3)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(
-                    state.clone(),
-                    require_api_key_or_no_auth,
-                )),
-        )
 }
 
 pub(crate) fn gemini_routes(state: &HttpState) -> Router<HttpState> {
     Router::new()
         .route(
-            "/gemini/v1/debug/context",
+            "/gemini/:gemini_api_version/debug/context",
             any(handlers::debug_context)
                 .layer(from_fn_with_state(state.clone(), apply_request_context))
                 .layer(from_fn_with_state(state.clone(), require_gemini_key)),
         )
         .route(
-            "/gemini/v1/models",
+            "/gemini/:gemini_api_version/models",
             get(handlers::gemini::list_gemini_models)
                 .layer(from_fn_with_state(state.clone(), apply_request_context))
                 .layer(from_fn_with_state(state.clone(), require_gemini_key)),
         )
         .route(
-            "/gemini/v1/models/*action",
+            "/gemini/:gemini_api_version/models/*action",
             post(handlers::gemini::gemini_generate_content)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
-        .route(
-            "/gemini/{gemini_api_version}/debug/context",
-            any(handlers::debug_context)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
-        .route(
-            "/gemini/{gemini_api_version}/models",
-            get(handlers::gemini::list_gemini_models)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
-        .route(
-            "/gemini/{gemini_api_version}/models/*action",
-            post(handlers::gemini::gemini_generate_content)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
-        .route(
-            "/gemini/{gemini_api_version}/",
-            any(handlers::unported::unported_gemini)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
-        .route(
-            "/gemini/{gemini_api_version}/*rest",
-            any(handlers::unported::unported_gemini)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
-        .route(
-            "/gemini/v1/",
-            any(handlers::unported::unported_gemini)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
-        .route(
-            "/gemini/v1/*rest",
-            any(handlers::unported::unported_gemini)
                 .layer(from_fn_with_state(state.clone(), apply_request_context))
                 .layer(from_fn_with_state(state.clone(), require_gemini_key)),
         )
 }
 
 pub fn router(state: HttpState) -> Router {
+    router_with_metrics(state, HttpMetricsCapability::Disabled)
+}
+
+pub fn router_with_metrics(state: HttpState, http_metrics: HttpMetricsCapability) -> Router {
     Router::new()
         .route("/health", get(handlers::health))
         .nest(
@@ -279,5 +221,6 @@ pub fn router(state: HttpState) -> Router {
         .merge(gemini_routes(&state))
         .nest("/v1beta", v1beta_routes(&state))
         .nest("/openapi", openapi_routes(&state))
+        .layer(from_fn_with_state(http_metrics, record_http_metrics))
         .with_state(state)
 }

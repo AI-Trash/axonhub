@@ -2,23 +2,23 @@
 
 ## Important Migration Note
 
-The repository now contains a Rust backend workspace, but the Docker deployment path should still be understood as the **full product deployment path**, not as proof that the Rust backend already has full feature parity.
+The repository is now in the final Rust cutover stage for the supported SQLite-backed AxonHub surface.
 
 Today:
 
-- the **legacy Go backend** remains the complete runtime used for full AxonHub behavior,
-- the **Rust backend** is an in-repo migration slice focused on config, CLI compatibility, `/health`, SQLite-scoped bootstrap/system routes, the migrated OpenAI-compatible practical `/v1` subset, and explicit `501` responses for unported API families.
-- the default `looplj/axonhub:latest` image still follows the full-product path, while `ghcr.io/looplj/axonhub:rust-latest` publishes the current Rust migration slice separately.
+- the **Rust backend** is the supported runtime for the verified SQLite-backed replacement scope in this repository: CLI/config, `/health`, admin bootstrap/status/auth/read routes, admin GraphQL, OpenAPI GraphQL, request-context/auth foundations, and the migrated inference families already covered by repo evidence,
+- route families outside that verified scope still return explicit Rust `501 Not Implemented` payloads,
+- `looplj/axonhub:latest` remains available only as the rollback target while the Go retirement gates are being closed.
 
-Use `looplj/axonhub:latest` when you want the current full AxonHub deployment experience. Use the Rust workspace or `ghcr.io/looplj/axonhub:rust-latest` when working with the migration slice.
+Use the Rust workspace, `ghcr.io/looplj/axonhub:rust-latest`, or `docker-compose.rust.yml` for the supported runtime. Keep `looplj/axonhub:latest` only for rollback rehearsal or recovery validation.
 
 ## Overview
 
-This guide covers Docker and Docker Compose deployment for the current full AxonHub runtime.
+This guide covers Docker and Docker Compose deployment for the supported Rust runtime in this repository.
 
-## Rust Migration-Slice Docker Path
+## Rust Cutover Docker Path
 
-The repository now also publishes a dedicated Rust migration-slice image:
+The repository publishes a dedicated Rust image for the supported replacement scope:
 
 - image tags: `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
 - compose example: `docker compose -f docker-compose.rust.yml up -d`
@@ -29,15 +29,15 @@ Example:
 docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 ```
 
-The compose example keeps the Rust slice's default SQLite data and other relative runtime files on a named Docker volume. A one-off `docker run --rm` container is intentionally ephemeral unless you add your own volume mounts.
+The compose example keeps the Rust runtime's default SQLite data and other relative runtime files on a named Docker volume. A one-off `docker run --rm` container is intentionally ephemeral unless you add your own volume mounts.
 
 What to expect from that image today:
 
 - `/health` is available
-- `GET /admin/system/status` and `POST /admin/system/initialize` are only intended for the compatible SQLite-backed migration path
-- the migrated OpenAI-compatible practical `/v1` subset (`/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`) is available when the compatible SQLite migration data path is configured
-- unported route families return explicit `501 Not Implemented` JSON
-- it is not a full-product replacement yet
+- `GET /admin/system/status` and `POST /admin/system/initialize` are supported on the verified SQLite-backed runtime path
+- the verified Rust replacement scope also covers admin auth/read flows, admin GraphQL, OpenAPI GraphQL, request-context/auth foundations, and the migrated inference families when the compatible SQLite data path is configured
+- route families outside that verified scope return explicit `501 Not Implemented` JSON instead of redirecting operators to the legacy Go backend
+- multi-dialect replacement beyond SQLite is still out of scope for this cutover gate
 
 ## Quick Start
 
@@ -73,13 +73,13 @@ log:
 ### 3. Start Services
 
 ```bash
-docker-compose up -d
+docker compose -f docker-compose.rust.yml up -d
 ```
 
 ### 4. Verify Deployment
 
 ```bash
-docker-compose ps
+docker compose -f docker-compose.rust.yml ps
 ```
 
 Access the application at `http://localhost:8090`.
@@ -91,16 +91,20 @@ version: '3.8'
 
 services:
   axonhub:
-    image: looplj/axonhub:latest
+    image: ghcr.io/looplj/axonhub:rust-latest
     ports:
       - "8090:8090"
     volumes:
       - ./config.yml:/app/config.yml:ro
+      - axonhub-rust-data:/app
     environment:
       - AXONHUB_SERVER_PORT=8090
       - AXONHUB_DB_DIALECT=sqlite3
       - AXONHUB_DB_DSN=file:axonhub.db?cache=shared&_fk=1&_pragma=journal_mode(WAL)
     restart: unless-stopped
+
+volumes:
+  axonhub-rust-data:
 ```
 
 ## Health Checks
@@ -116,13 +120,13 @@ healthcheck:
   start_period: 40s
 ```
 
-## Runtime Expectations During Migration
+## Runtime Expectations During Cutover
 
-Keep these distinctions clear while the migration is in progress:
+Keep these distinctions clear while the Go retirement gates are still in progress:
 
-- Docker deployment is still about the **current full backend experience**.
-- The Rust workspace and `ghcr.io/looplj/axonhub:rust-*` images are currently a **developer migration slice**, not the production-complete replacement.
-- If you run the Rust backend directly from the workspace, `/health`, the SQLite-scoped bootstrap/system routes, and the migrated OpenAI-compatible practical `/v1` subset are available alongside explicit `501` route stubs for every remaining family.
+- Docker deployment for the supported scope now centers on the Rust runtime.
+- The verified replacement scope is still **SQLite-backed only**; unsupported dialects and unported route families remain explicit exclusions.
+- If you run the Rust backend directly from the workspace, `/health`, the SQLite-backed admin/bootstrap/auth/GraphQL surface, and the migrated inference families are available alongside explicit `501` route stubs for every remaining unsupported family.
 
 ## Troubleshooting
 

@@ -23,11 +23,11 @@
 
 ## 🚧 Backend Migration Status
 
-This repository is in an **additive Go-to-Rust backend migration**.
+This repository is in the **final Go-to-Rust backend cutover stage**.
 
-- **Current full product backend:** the legacy Go service still powers the complete API, auth, GraphQL, and provider orchestration surface.
-- **Current Rust backend slice:** the new Cargo workspace provides compatible config loading, the same top-level CLI verbs, `/health`, SQLite-scoped `/admin/system/status` and `/admin/system/initialize`, the practical OpenAI-compatible `/v1` subset (`/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`) with auth/context, routing, and SQLite persistence for the migrated path, plus explicit `501 Not Implemented` responses for every unported route family.
-- **What this means in practice:** the default released binaries and `looplj/axonhub:latest` Docker flow still target the full backend experience, while the Rust migration slice is now shipped separately through dedicated Rust-tagged release assets and Docker images.
+- **Current supported backend:** the Rust workspace and Rust-tagged release artifacts are the truthful replacement for the verified SQLite and PostgreSQL-backed AxonHub surface: CLI/config, `/health`, admin bootstrap/status, identity/request-context, admin read routes (`/admin/requests/:request_id/content`), admin GraphQL, OpenAPI GraphQL, and the OpenAI-compatible `/v1` inference endpoints (`/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`).
+- **Current unsupported boundary:** route families outside that verified scope still return explicit Rust-side `501 Not Implemented` payloads instead of instructing users to fall back to the legacy Go backend. Notably, `/v1` image generation (`/images/generations`, `/images/edits`) and video generation endpoints remain unimplemented in Rust.
+- **What this means in practice:** use the Rust binary, `ghcr.io/looplj/axonhub:rust-latest`, or `docker-compose.rust.yml` for the supported product surface in this repository. `looplj/axonhub:latest` remains the rollback target only while Go retirement gates are being completed.
 
 ---
 
@@ -196,15 +196,15 @@ cd axonhub_*
 
 That's it! Now configure your first AI channel and start calling models through AxonHub.
 
-### Rust Migration Slice Artifacts
+### Rust Cutover Artifacts
 
-Tagged releases also publish dedicated Rust migration-slice delivery paths:
+Tagged releases publish dedicated Rust delivery paths for the supported replacement scope:
 
 - release assets named like `axonhub-rust_<tag>_<platform>.(tar.gz|zip)`
 - Docker images `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
 - Compose example at `docker-compose.rust.yml`
 
-These artifacts preserve the Rust CLI/config contract, expose the practical migration slice (`/health`, SQLite-scoped bootstrap/system routes, and the migrated OpenAI-compatible `/v1` subset) without claiming full runtime parity, and keep every unported family on explicit `501 Not Implemented` responses. They remain truthful migration-slice artifacts rather than full-product replacements.
+These artifacts preserve the Rust CLI/config contract and ship the verified SQLite and PostgreSQL-backed replacement surface already covered by Tasks 1-9: `/health`, admin bootstrap/status, identity/request-context, admin read routes, admin GraphQL, OpenAPI GraphQL, and the migrated inference families. Any route family outside that supported scope stays on explicit Rust `501 Not Implemented` responses until separately migrated and verified.
 
 ### Zero-Code Migration Example
 
@@ -286,23 +286,32 @@ Perfect for individual developers and small teams. No complex configuration requ
 
 For production environments, high availability, and enterprise deployments.
 
+> **Important:** The current Rust cutover supports **SQLite and PostgreSQL** (for accepted slices). Multi-dialect deployment (TiDB, MySQL, Neon DB) is available only with the legacy Go backend. See the [Backend Migration Status](#-backend-migration-status) section for details.
+
 #### Database Support
 
-AxonHub supports multiple databases to meet different scale deployment needs:
+**Rust Cutover (Current Supported Scope):**
 
-| Database       | Supported Versions | Recommended Scenario                             | Auto Migration | Links                                                       |
-| -------------- | ------------------ | ------------------------------------------------ | -------------- | ----------------------------------------------------------- |
-| **TiDB Cloud** | Starter            | Serverless, Free tier, Auto Scale                | ✅ Supported   | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-starter/)   |
-| **TiDB Cloud** | Dedicated          | Distributed deployment, large scale              | ✅ Supported   | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-dedicated/) |
-| **TiDB**       | V8.0+              | Distributed deployment, large scale              | ✅ Supported   | [TiDB](https://tidb.io/)                                    |
-| **Neon DB**    | -                  | Serverless, Free tier, Auto Scale                | ✅ Supported   | [Neon DB](https://neon.com/)                                |
-| **PostgreSQL** | 15+                | Production environment, medium-large deployments | ✅ Supported   | [PostgreSQL](https://www.postgresql.org/)                   |
-| **MySQL**      | 8.0+               | Production environment, medium-large deployments | ✅ Supported   | [MySQL](https://www.mysql.com/)                             |
-| **SQLite**     | 3.0+               | Development environment, small deployments       | ✅ Supported   | [SQLite](https://www.sqlite.org/index.html)                 |
+| Database | Supported Versions | Recommended Scenario | Auto Migration | Links |
+| -------- | ------------------ | -------------------- | -------------- | ------ |
+| **SQLite** | 3.0+ | Development, small deployments, Rust cutover scope | ✅ Supported | [SQLite](https://www.sqlite.org/index.html) |
+| **PostgreSQL** | 15+ | Production environment, medium-large deployments, Rust cutover scope | ✅ Supported | [PostgreSQL](https://www.postgresql.org/) |
+
+**Legacy Go Backend (Not Yet Supported in Rust Cutover):**
+
+| Database | Supported Versions | Recommended Scenario | Auto Migration | Links |
+| -------- | ------------------ | -------------------- | -------------- | ------ |
+| **TiDB Cloud** | Starter | Serverless, Free tier, Auto Scale | ✅ Supported | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-starter/) |
+| **TiDB Cloud** | Dedicated | Distributed deployment, large scale | ✅ Supported | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-dedicated/) |
+| **TiDB** | V8.0+ | Distributed deployment, large scale | ✅ Supported | [TiDB](https://tidb.io/) |
+| **Neon DB** | - | Serverless, Free tier, Auto Scale | ✅ Supported | [Neon DB](https://neon.com/) |
+| **MySQL** | 8.0+ | Production environment, medium-large deployments | ✅ Supported | [MySQL](https://www.mysql.com/) |
 
 #### Configuration
 
-AxonHub uses YAML configuration files with environment variable override support:
+**Rust Cutover (SQLite):**
+
+AxonHub uses YAML configuration files with environment variable override support. The Rust cutover uses SQLite by default with no additional configuration needed.
 
 ```yaml
 # config.yml
@@ -311,47 +320,46 @@ server:
   name: "AxonHub"
   debug: false
 
-db:
-  dialect: "tidb"
-  dsn: "<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.tidbcloud.com:4000)/axonhub?tls=true&parseTime=true&multiStatements=true&charset=utf8mb4"
-
-log:
-  level: "info"
-  encoding: "json"
+# SQLite is the default and only supported database for the current Rust cutover.
+# No additional db configuration needed - data is stored in ./axonhub.db
 ```
 
-Environment variables:
+Environment variables (optional):
 
 ```bash
 AXONHUB_SERVER_PORT=8090
-AXONHUB_DB_DIALECT="tidb"
-AXONHUB_DB_DSN="<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.tidbcloud.com:4000)/axonhub?tls=true&parseTime=true&multiStatements=true&charset=utf8mb4"
 AXONHUB_LOG_LEVEL=info
+# No database configuration needed for SQLite - it's the default
 ```
 
-For detailed configuration instructions, please refer to [configuration documentation](docs/en/deployment/configuration.md).
+**Legacy Go Backend (Multi-Dialect):**
+
+For TiDB, PostgreSQL, MySQL, or Neon DB deployments, you must use the legacy Go backend. Configuration examples are available in the [configuration documentation](docs/en/deployment/configuration.md).
+
 
 #### Docker Compose Deployment
 
+**Rust Cutover (SQLite):**
+
+Use the provided `docker-compose.rust.yml` file for the Rust backend with SQLite:
+
 ```bash
-# Clone project
-git clone https://github.com/looplj/axonhub.git
-cd axonhub
-
-# Set environment variables
-export AXONHUB_DB_DIALECT="tidb"
-export AXONHUB_DB_DSN="<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.tidbcloud.com:4000)/axonhub?tls=true&parseTime=true&multiStatements=true&charset=utf8mb4"
-
-# Start services
-docker-compose up -d
+# Start Rust backend with SQLite
+docker-compose -f docker-compose.rust.yml up -d
 
 # Check status
-docker-compose ps
+docker-compose -f docker-compose.rust.yml ps
 ```
+
+**Legacy Go Backend (Multi-Dialect):**
+
+For TiDB/PostgreSQL/MySQL deployments with the legacy Go backend, refer to the full [deployment documentation](docs/en/deployment/configuration.md).
 
 #### Helm Kubernetes Deployment
 
-Deploy AxonHub on Kubernetes using the official Helm chart:
+**Legacy Go Backend Only (Not Yet Supported in Rust Cutover):**
+
+Deploy AxonHub on Kubernetes using the official Helm chart. This deployment path uses the legacy Go backend and supports multi-dialect databases.
 
 ```bash
 # Quick installation
@@ -373,39 +381,39 @@ kubectl port-forward svc/axonhub 8090:8090
 |-----------|-------------|---------|
 | `axonhub.replicaCount` | Replicas | `1` |
 | `axonhub.dbPassword` | DB password | `axonhub_password` |
-| `postgresql.enabled` | Embedded PostgreSQL | `true` |
+| `postgresql.enabled` | Embedded PostgreSQL (Go backend only) | `true` |
 | `ingress.enabled` | Enable ingress | `false` |
 | `persistence.enabled` | Data persistence | `false` |
 
-For detailed configuration and troubleshooting, see [Helm Chart Documentation](deploy/helm/README.md).
+For detailed configuration and troubleshooting, see [Helm Chart Documentation](deploy/helm/README.md). Note: Helm deployment is not yet available for the Rust cutover.
 
 #### Virtual Machine Deployment
 
-Download the latest release from [GitHub Releases](https://github.com/looplj/axonhub/releases)
+**Rust Cutover (SQLite):**
+
+Download the Rust-specific release from [GitHub Releases](https://github.com/looplj/axonhub/releases) (look for `axonhub-rust_*` assets).
 
 ```bash
 # Extract and run
-unzip axonhub_*.zip
-cd axonhub_*
+unzip axonhub-rust_*.zip
+cd axonhub-rust_*
 
-# Set environment variables
-export AXONHUB_DB_DIALECT="tidb"
-export AXONHUB_DB_DSN="<USER>.root:<PASSWORD>@tcp(gateway01.us-west-2.prod.aws.tidbcloud.com:4000)/axonhub?tls=true&parseTime=true&multiStatements=true&charset=utf8mb4"
-
+# Install
 sudo ./install.sh
 
-# Configuration file check
+# Configuration file check (optional)
 axonhub config validate
 
 # Start service
-#  For simplicity, we recommend managing AxonHub with the helper scripts:
-
-# Start
 ./start.sh
 
-# Stop
+# Stop service
 ./stop.sh
 ```
+
+**Legacy Go Backend (Multi-Dialect):**
+
+For TiDB/PostgreSQL/MySQL deployments, use the standard `axonhub_*` releases and configure the database connection as described in the [configuration documentation](docs/en/deployment/configuration.md).
 
 ---
 
@@ -493,8 +501,8 @@ For detailed development instructions, architecture design, and contribution gui
 - 🔧 [99designs/gqlgen](https://github.com/99designs/gqlgen) - GraphQL code generation for the legacy backend
 - 🌐 [gin-gonic/gin](https://github.com/gin-gonic/gin) - HTTP framework for the legacy backend
 - 🗄️ [ent/ent](https://github.com/ent/ent) - ORM framework for the legacy backend
-- 🦀 [tokio-rs/axum](https://github.com/tokio-rs/axum) - HTTP framework for the Rust migration slice
-- ⚙️ [tokio-rs/tokio](https://github.com/tokio-rs/tokio) - Async runtime for the Rust migration slice
+- 🦀 [tokio-rs/axum](https://github.com/tokio-rs/axum) - HTTP framework for the Rust backend cutover
+- ⚙️ [tokio-rs/tokio](https://github.com/tokio-rs/tokio) - Async runtime for the Rust backend cutover
 - ☁️ [Render](https://render.com) - Free cloud deployment platform for hosting our demo
 - 🗃️ [TiDB Cloud](https://www.pingcap.com/tidb-cloud/) - Serverless database platform for demo deployment
 

@@ -14,9 +14,15 @@ anyhow.workspace = true
 async-graphql = "7.0.17"
 axum.workspace = true
 bcrypt.workspace = true
+getrandom = "0.2.17"
 hex.workspace = true
 humantime.workspace = true
 jsonwebtoken.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry-stdout.workspace = true
+opentelemetry_sdk.workspace = true
+postgres = "0.19.12"
 reqwest.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
@@ -27,4 +33,5 @@ axonhub-config.workspace = true
 axonhub-http.workspace = true
 
 [dev-dependencies]
+pg-embed = { version = "1.0.0", default-features = false, features = ["rt_tokio"] }
 tower.workspace = true
