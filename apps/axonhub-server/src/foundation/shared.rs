@@ -1,7 +1,7 @@
-use rusqlite::{Connection, OpenFlags};
-use std::sync::Arc;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+pub(crate) use super::sqlite_support::{SqliteConnectionFactory, SqliteFoundation};
 
 pub(crate) const SYSTEM_KEY_INITIALIZED: &str = "system_initialized";
 pub(crate) const SYSTEM_KEY_VERSION: &str = "system_version";
@@ -329,110 +329,6 @@ CREATE TABLE IF NOT EXISTS provider_quota_statuses (
     next_check_at INTEGER NOT NULL DEFAULT 0
 );
 ";
-
-#[derive(Debug, Clone)]
-pub struct SqliteFoundation {
-    connection_factory: SqliteConnectionFactory,
-}
-
-impl SqliteFoundation {
-    pub fn new(dsn: impl Into<String>) -> Self {
-        Self {
-            connection_factory: SqliteConnectionFactory::new(dsn.into()),
-        }
-    }
-
-    pub fn open_connection(&self, create_if_missing: bool) -> rusqlite::Result<Connection> {
-        self.connection_factory.open(create_if_missing)
-    }
-
-    pub fn system_settings(&self) -> super::system::SystemSettingsStore {
-        super::system::SystemSettingsStore::new(self.connection_factory.clone())
-    }
-
-    pub fn data_storages(&self) -> super::system::DataStorageStore {
-        super::system::DataStorageStore::new(self.connection_factory.clone())
-    }
-
-    pub fn identities(&self) -> super::identity::IdentityStore {
-        super::identity::IdentityStore::new(self.connection_factory.clone())
-    }
-
-    pub fn identity_auth(
-        &self,
-        allow_no_auth: bool,
-    ) -> super::identity_service::IdentityAuthService {
-        super::identity_service::IdentityAuthService::new(
-            self.identities(),
-            self.system_settings(),
-            allow_no_auth,
-        )
-    }
-
-    pub fn trace_contexts(&self) -> super::request_context::TraceContextStore {
-        super::request_context::TraceContextStore::new(self.connection_factory.clone())
-    }
-
-    pub fn request_context_service(
-        &self,
-        allow_no_auth: bool,
-    ) -> super::request_context_service::RequestContextService {
-        super::request_context_service::RequestContextService::new(
-            self.identity_auth(allow_no_auth),
-            self.trace_contexts(),
-        )
-    }
-
-    pub fn channel_models(&self) -> super::openai_v1::ChannelModelStore {
-        super::openai_v1::ChannelModelStore::new(self.connection_factory.clone())
-    }
-
-    pub fn requests(&self) -> super::openai_v1::RequestStore {
-        super::openai_v1::RequestStore::new(self.connection_factory.clone())
-    }
-
-    pub fn usage_costs(&self) -> super::openai_v1::UsageCostStore {
-        super::openai_v1::UsageCostStore::new(self.connection_factory.clone())
-    }
-
-    pub fn operational(&self) -> super::admin::OperationalStore {
-        super::admin::OperationalStore::new(self.connection_factory.clone())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct SqliteConnectionFactory {
-    dsn: Arc<String>,
-}
-
-impl SqliteConnectionFactory {
-    pub(crate) fn new(dsn: String) -> Self {
-        Self { dsn: Arc::new(dsn) }
-    }
-
-    pub(crate) fn open(&self, create_if_missing: bool) -> rusqlite::Result<Connection> {
-        open_sqlite_connection(self.dsn.as_str(), create_if_missing)
-    }
-}
-
-pub(crate) fn open_sqlite_connection(
-    dsn: &str,
-    create_if_missing: bool,
-) -> rusqlite::Result<Connection> {
-    Connection::open_with_flags(dsn, sqlite_open_flags(dsn, create_if_missing))
-}
-
-pub(crate) fn sqlite_open_flags(dsn: &str, create_if_missing: bool) -> OpenFlags {
-    let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE;
-    if create_if_missing {
-        flags |= OpenFlags::SQLITE_OPEN_CREATE;
-    }
-    if dsn.starts_with("file:") {
-        flags |= OpenFlags::SQLITE_OPEN_URI;
-    }
-
-    flags
-}
 
 pub(crate) fn current_unix_timestamp() -> i64 {
     SystemTime::now()

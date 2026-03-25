@@ -25,9 +25,73 @@
 
 当前仓库正处于 **Go → Rust 后端最终切换阶段**。
 
-- **当前受支持后端：** Rust workspace 与带 Rust 标记的发布交付物，已经是仓库内已验证 SQLite 和 PostgreSQL 能力面的真实替代后端：CLI/config、`/health`、admin bootstrap/status、identity/request-context、admin read 路由（`/admin/requests/:request_id/content`）、admin GraphQL、OpenAPI GraphQL，以及 OpenAI 兼容的 `/v1` 推理端点（`/models`、`/chat/completions`、`/responses`、`/embeddings`、`/messages`、`/rerank`）。
-- **当前未支持边界：** 超出该已验证范围的路由族，仍然会由 Rust 侧返回显式 `501 Not Implemented`，而不是再指引用户回退到旧 Go 后端。值得注意的是，`/v1` 图像生成（`/images/generations`、`/images/edits`）和视频生成端点尚未在 Rust 中实现。
-- **实际含义：** 对于本仓库当前受支持的产品能力，请优先使用 Rust 二进制、`ghcr.io/looplj/axonhub:rust-latest` 或 `docker-compose.rust.yml`。`looplj/axonhub:latest` 仅在 Go 退役闸门完成前作为回滚目标保留。
+### 当前 Rust 支持切片（已验证）
+
+Rust workspace 与带 Rust 标记的发布交付物，已经是仓库内已验证 SQLite 和 PostgreSQL 能力面的真实替代后端，包括：
+
+- **CLI/config**: 命令行接口和配置加载
+- **健康与系统**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
+- **身份与上下文**: 认证、请求上下文、JWT 处理
+- **管理只读路由**: `GET /admin/requests/:request_id/content`
+- **管理 GraphQL**: `POST /admin/graphql` 含 playground
+- **OpenAPI GraphQL**: `POST /openapi/v1/graphql` 含 playground
+- **OpenAI 兼容 `/v1` 推理**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`
+- **视频生成**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
+- **OAuth 流程**: Codex、Claude Code、Antigravity、Copilot OAuth 端点
+- **其他提供商 API**: Jina、Anthropic、Gemini、Doubao 等路由（见 routes 文件）
+- **数据库支持**: SQLite 和 PostgreSQL 完全验证；MySQL 通过共享 SeaORM 接缝已布线但完整集成验证待完成
+
+同一 SeaORM 支持切片已为 MySQL 布线，但 Rust 测试套件中尚未包含完整的 MySQL 自动化集成验证。
+
+### 当前未支持边界
+
+超出上述已验证范围的路由族，仍然会由 Rust 侧返回显式 `501 Not Implemented`，而不是再指引用户回退到旧 Go 后端。具体包括：
+
+- **图像生成**: `POST /v1/images/generations`, `POST /v1/images/edits` 尚未在 Rust 中实现
+- **实时 API**: 基于 WebSocket 的实时对话功能
+- **完整管理后台**: 写操作、用户/项目/角色管理、配额配置
+- **完整 RBAC/权限系统**: 超越基础管理员认证的细粒度访问控制
+- **核心业务逻辑表面**: 渠道/模型关联与获取、用量/成本追踪、追踪/线程管理、系统初始化完整性
+- **Transformer/Pipeline 表面**: 提供商编排、出站转换器、中间件管道
+- **AiSDK 兼容性**: 完整 Vercel AI SDK 协议覆盖
+- **高级/企业级功能**: 提示词保护、提供商配额管理、熔断器、渠道自动禁用
+- **配置对齐**: 与旧 Go 后端配置选项的完全对等
+- **测试对等**: 覆盖范围匹配 Go 套件的更广泛集成测试
+
+### 迁移路线图（明确分桶）
+
+**Next（高优先级、近期）:**
+
+- 图像生成端点（`/v1/images/generations`, `/v1/images/edits`）
+- RBAC/权限系统迁移（internal/scopes）
+- 核心业务逻辑表面（internal/server/biz）：渠道/模型管理、请求生命周期、用量/成本、追踪/线程
+- Transformer/Pipeline 迁移（llm/transformer, llm/pipeline）：提供商编排、出站适配器
+- 模型关联/获取对等
+- 系统初始化完整性（引导流程、默认数据）
+- OAuth 对等验证（完整 OAuth 流程实现）
+- MySQL 集成验证完成
+
+**Later（中优先级、中期）:**
+
+- AiSDK 兼容性（完整 Vercel AI SDK 协议）
+- 完整管理 GraphQL 写操作和高级查询
+- 高级/企业级功能：提示词保护、提供商配额管理、熔断器、渠道自动禁用
+- 配置对齐：与旧 Go 后端配置选项的完全对等
+- 更广泛的测试对等：匹配 Go 套件的集成测试覆盖
+- 更多提供商特定功能（Gemini 工具、Anthropic 扩展）
+
+**Deferred with 501（明确边界）:**
+
+- 仍为 Go 独有的运营/后台项目，直到单独迁移闸门
+- 遗留独有数据库方言（TiDB、Neon DB）— 保持在 Go 后端
+- Helm Kubernetes 部署路径（仅 Go 后端）
+- 不属于目标 Rust 切片的完整旧 Go API 表面
+
+### 实际含义
+
+对于上述**受支持产品能力面**，请使用 Rust 二进制、`ghcr.io/looplj/axonhub:rust-latest` 或 `docker-compose.rust.yml`。`looplj/axonhub:latest` 仅在 Go 退役闸门完成前作为回滚目标保留。
+
+对于**未支持功能**或尚未验证的数据库方言（TiDB、Neon DB），请继续使用 `cmd/axonhub/main.go` 中的旧 Go 后端或标准 `axonhub` 发布交付物。
 
 ---
 
@@ -153,7 +217,7 @@
 | API 类型 | 状态 | 描述 | 文档 |
 |---------|--------|-------------|--------|
 | **文本生成（Text Generation）** | ✅ Done | 对话交互接口 | [OpenAI API](docs/zh/api-reference/openai-api.md)、[Anthropic API](docs/zh/api-reference/anthropic-api.md)、[Gemini API](docs/zh/api-reference/gemini-api.md) |
-| **图片生成（Image Generation）** | ✅ Done | 图片生成 | [Image Generation](docs/zh/api-reference/image-generation.md) |
+| **图片生成（Image Generation）** | 📝 Todo | 图片生成 | [Image Generation](docs/zh/api-reference/image-generation.md) |
 | **重排序（Rerank）** | ✅ Done | 结果排序 | [Rerank API](docs/zh/api-reference/rerank-api.md) |
 | **嵌入（Embedding）** | ✅ Done | 向量嵌入生成 | [Embedding API](docs/zh/api-reference/embedding-api.md) |
 | **实时对话（Realtime）** | 📝 Todo | 实时对话功能 | - |
@@ -207,7 +271,9 @@ cd axonhub_*
 - Docker 镜像 `ghcr.io/looplj/axonhub:rust-latest` 与 `ghcr.io/looplj/axonhub:rust-<tag>`
 - `docker-compose.rust.yml` 中的 Compose 示例
 
-这些交付物会保留 Rust CLI / 配置契约，并交付 Tasks 1-9 已验证的 SQLite 替代能力面：`/health`、admin bootstrap/status/auth/read 流程、admin GraphQL、OpenAPI GraphQL、request-context/auth 基础能力，以及已迁移的 inference 路由族。任何超出该受支持范围的路由族，仍会由 Rust 返回显式 `501 Not Implemented`，直到后续单独迁移并验证完成。
+这些交付物会保留 Rust CLI / 配置契约，并交付 Tasks 1-9 已验证的 SQLite 与 PostgreSQL 替代能力面：`/health`、admin bootstrap/status/auth/read 流程、admin GraphQL、OpenAPI GraphQL、request-context/auth 基础能力，以及已迁移的 inference 路由族。同一 SeaORM 支持切片也已经为 MySQL 布线，但 Rust 测试套件中完整的 MySQL 自动化集成验证仍待完成。任何超出该受支持范围的路由族，仍会由 Rust 返回显式 `501 Not Implemented`，直到后续单独迁移并验证完成。
+
+这些 Rust 交付物对应的二元 PASS/FAIL 切换、HOLD 与 ROLLBACK 条件，统一定义在 `.sisyphus/artifacts/rust-backend-seaorm-actix-migration-plan/final-cutover-gates.md`。
 
 ### 零代码迁移示例 | Zero-Code Migration Example
 
@@ -276,24 +342,29 @@ response = client.chat.completions.create(
 
 #### 数据库支持 | Database Support
 
-> **重要：** 当前 Rust 切换支持 **SQLite 和 PostgreSQL**（针对已验证的特定能力面）。多 dialect 部署（TiDB、MySQL、Neon DB）仅适用于旧版 Go 后端。详见 [后端迁移状态](#后端迁移状态--backend-migration-status) 部分。
+> **重要：** 当前 Rust 切换已验证 **SQLite 和 PostgreSQL** 在接受的切片中。MySQL 通过相同的 SeaORM 支持切片已布线，但完整的 Rust 端自动化集成验证仍在进行中。TiDB 和 Neon DB 保持为旧版 Go 专属，直到在 Rust 中单独验证。详见 [后端迁移状态](#后端迁移状态--backend-migration-status) 部分。
 
 **Rust 切换（当前受支持范围）：**
 
 | 数据库 | 支持版本 | 推荐场景 | 自动迁移 | 链接 |
-|--------|----------|----------|----------|------|
+| -------- | ------------------ | -------------------- | -------------- | ------ |
 | **SQLite** | 3.0+ | 开发环境、小型部署、Rust 切换范围 | ✅ 支持 | [SQLite](https://www.sqlite.org/index.html) |
 | **PostgreSQL** | 15+ | 生产环境、中大型部署、Rust 切换范围 | ✅ 支持 | [PostgreSQL](https://www.postgresql.org/) |
+
+**Rust 切换（通过共享 SeaORM 接缝已实现，尚未完全集成验证）：**
+
+| 数据库 | 支持版本 | 推荐场景 | 自动迁移 | 链接 |
+| -------- | ------------------ | -------------------- | -------------- | ------ |
+| **MySQL** | 8.0+ | 与 SQLite/PostgreSQL 相同的 SeaORM 支持切片；在生产使用前请在您的环境中验证 | ⚠️ 已实现，仓库级集成验证待完成 | [MySQL](https://www.mysql.com/) |
 
 **旧版 Go 后端（Rust 切换尚未支持）：**
 
 | 数据库 | 支持版本 | 推荐场景 | 自动迁移 | 链接 |
-|--------|----------|----------|----------|------|
+| -------- | ------------------ | -------------------- | -------------- | ------ |
 | **TiDB Cloud** | Starter | Serverless, Free tier, Auto Scale | ✅ 支持 | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-starter/) |
 | **TiDB Cloud** | Dedicated | 分布式部署、大规模 | ✅ 支持 | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-dedicated/) |
 | **TiDB** | V8.0+ | 分布式部署、大规模 | ✅ 支持 | [TiDB](https://tidb.io/) |
 | **Neon DB** | - | Serverless, Free tier, Auto Scale | ✅ 支持 | [Neon DB](https://neon.com/) |
-| **MySQL** | 8.0+ | 生产环境、中大型部署 | ✅ 支持 | [MySQL](https://www.mysql.com/) |
 
 #### 配置文件 | Configuration
 
@@ -308,8 +379,10 @@ server:
   name: "AxonHub"
   debug: false
 
-# SQLite 是默认且唯一支持的 Rust 切换数据库。
-# 无需额外 db 配置 - 数据存储在 ./axonhub.db
+# SQLite 是 Rust 切换的默认数据库。
+# PostgreSQL 也经过验证，使用相同的 db.dialect/db.dsn 契约。
+# MySQL 已通过同一契约布线，但尚未完全集成验证。
+# 无需额外 db 配置 - 数据存储在 ./axonhub.db（SQLite 默认）
 ```
 
 环境变量（可选）：
@@ -322,7 +395,7 @@ AXONHUB_LOG_LEVEL=info
 
 **旧版 Go 后端（多 Dialect）：**
 
-对于 TiDB/PostgreSQL/MySQL/Neon DB 部署，必须使用旧版 Go 后端。配置示例请参阅 [配置文档](docs/zh/deployment/configuration.md)。
+对于 TiDB 和 Neon DB 部署，必须使用旧版 Go 后端。配置示例请参阅 [配置文档](docs/zh/deployment/configuration.md)。
 
 #### Docker Compose 部署
 
@@ -340,7 +413,7 @@ docker-compose -f docker-compose.rust.yml ps
 
 **旧版 Go 后端（多 Dialect）：**
 
-对于 TiDB/PostgreSQL/MySQL 部署，请使用旧版 Go 后端。配置示例请参阅 [部署文档](docs/zh/deployment/configuration.md)。
+对于 TiDB 和 Neon DB 部署，请使用旧版 Go 后端。配置示例请参阅 [部署文档](docs/zh/deployment/configuration.md)。
 
 #### Helm Kubernetes 部署 | Helm Kubernetes Deployment
 
@@ -402,7 +475,7 @@ axonhub config validate
 
 **旧版 Go 后端（多 Dialect）：**
 
-对于 TiDB/PostgreSQL/MySQL 部署，请使用标准 `axonhub_*` 版本并按 [配置文档](docs/zh/deployment/configuration.md) 配置数据库连接。
+对于 TiDB 和 Neon DB 部署，请使用标准 `axonhub_*` 版本并按 [配置文档](docs/zh/deployment/configuration.md) 配置数据库连接。
 
 ---
 
@@ -481,7 +554,8 @@ AxonHub 提供灵活的模型管理系统，支持通过模型关联将抽象模
 - 🔧 [99designs/gqlgen](https://github.com/99designs/gqlgen) - 旧后端使用的 GraphQL 代码生成
 - 🌐 [gin-gonic/gin](https://github.com/gin-gonic/gin) - 旧后端使用的 HTTP 框架
 - 🗄️ [ent/ent](https://github.com/ent/ent) - 旧后端使用的 ORM 框架
-- 🦀 [tokio-rs/axum](https://github.com/tokio-rs/axum) - Rust 迁移切片使用的 HTTP 框架
+- 🦀 [tokio-rs/axum](https://github.com/tokio-rs/axum) - Rust 迁移切片早期阶段使用的 HTTP 框架
+- ⚙️ [actix-rs/actix-web](https://github.com/actix/actix-web) - Rust 后端切换生产环境使用的 HTTP 框架
 - ⚙️ [tokio-rs/tokio](https://github.com/tokio-rs/tokio) - Rust 迁移切片使用的异步运行时
 - ☁️ [render](https://render.com) - 免费云部署平台，用于部署 demo
 - 🗄️ [tidbcloud](https://www.pingcap.com/tidb-cloud/) - Serverless 数据库平台，用于部署 demo

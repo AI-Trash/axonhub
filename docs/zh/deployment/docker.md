@@ -2,11 +2,11 @@
 
 ## 重要迁移说明
 
-当前仓库已经进入受支持 SQLite AxonHub 能力面的 Rust 最终切换阶段。
+当前仓库已经进入受支持 SQLite 与 PostgreSQL AxonHub 能力面的 Rust 最终切换阶段。
 
 当前状态是：
 
-- **Rust 后端** 已经是仓库内已验证 SQLite 替代范围的受支持运行时：CLI/config、`/health`、admin bootstrap/status/auth/read 路由、admin GraphQL、OpenAPI GraphQL、request-context/auth 基础能力，以及仓库证据已覆盖的 inference 路由族；
+- **Rust 后端** 已经是仓库内已验证 SQLite 与 PostgreSQL 替代范围的受支持运行时：CLI/config、`/health`、admin bootstrap/status/auth/read 路由、admin GraphQL、OpenAPI GraphQL、request-context/auth 基础能力，以及仓库证据已覆盖的 inference 路由族；
 - 超出该已验证范围的路由族，仍然会由 Rust 返回显式 `501 Not Implemented`；
 - `looplj/axonhub:latest` 只在 Go 退役闸门关闭前作为回滚目标保留。
 
@@ -31,13 +31,16 @@ docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 
 Compose 示例会把 Rust 运行时默认的 SQLite 数据以及其他相对路径运行时文件保存在一个具名 Docker volume 中。一次性的 `docker run --rm` 容器则是刻意保持临时性的，除非你自行挂载持久化卷。
 
+这些 Rust 标记交付路径对应的二元 PASS/FAIL 切换、HOLD 与 ROLLBACK 条件，统一定义在 `.sisyphus/artifacts/rust-backend-seaorm-actix-migration-plan/final-cutover-gates.md`。
+
 当前这个镜像的行为预期是：
 
 - `/health` 可用
-- `GET /admin/system/status` 与 `POST /admin/system/initialize` 在已验证的 SQLite 运行时路径上受支持
-- 当兼容的 SQLite 数据路径准备好后，已验证的 Rust 替代范围还包括 admin auth/read 流程、admin GraphQL、OpenAPI GraphQL、request-context/auth 基础能力，以及已迁移的 inference 路由族
+- `GET /admin/system/status` 与 `POST /admin/system/initialize` 在已验证的 SQLite 与 PostgreSQL 运行时路径上受支持
+- 已验证的 Rust 替代范围还包括 admin auth/read 流程、admin GraphQL、OpenAPI GraphQL、request-context/auth 基础能力，以及已迁移的 inference 路由族，并适用于已接受的 SQLite 与 PostgreSQL 路径
 - 超出该已验证范围的路由族，会返回显式 `501 Not Implemented` JSON，而不是再引导到旧 Go 后端
-- SQLite 之外的多方言替代能力仍不属于当前切换闸门范围
+- MySQL 已通过同一套 SeaORM repository seam 完成布线，但 Rust 测试套件中尚未完成完整集成验证
+- SQLite 与 PostgreSQL 之外的多方言替代能力仍不属于当前切换闸门范围
 
 ## 快速开始
 
@@ -125,8 +128,8 @@ healthcheck:
 在 Go 退役闸门仍在收尾期间，请明确区分下面几件事：
 
 - 对于当前受支持范围，Docker 部署现在以 Rust 运行时为中心；
-- 已验证的替代范围仍然**只支持 SQLite**；未支持方言与未迁移路由族仍然是明确排除项；
-- 如果你直接运行 Rust backend，目前可用的是 `/health`、SQLite-backed admin/bootstrap/auth/GraphQL 能力面、已迁移的 inference 路由族，以及其余未支持路由族的显式 `501` 路由桩。
+- 已验证的替代范围当前覆盖 **SQLite 与 PostgreSQL**；MySQL 已布线但尚未完成完整集成验证，未支持方言与未迁移路由族仍然是明确排除项；
+- 如果你直接运行 Rust backend，目前可用的是 `/health`、基于 SQLite/PostgreSQL 的 admin/bootstrap/auth/GraphQL 能力面、已迁移的 inference 路由族，以及其余未支持路由族的显式 `501` 路由桩。
 
 ## 故障排查
 

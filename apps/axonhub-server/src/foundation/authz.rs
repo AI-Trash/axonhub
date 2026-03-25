@@ -1,5 +1,4 @@
 use axonhub_http::{AuthApiKeyContext, AuthUserContext};
-
 pub(crate) const SYSTEM_ROLE_PROJECT_ID: i64 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,9 +192,12 @@ pub(crate) fn scope_strings(scopes: &[ScopeSlug]) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn serialize_scope_slugs(scopes: &[ScopeSlug]) -> rusqlite::Result<String> {
+/// Serializes scope slugs to a JSON string for database storage.
+///
+/// Returns a neutral error type that callers can map to their specific
+/// database error types (rusqlite, sea_orm, postgres, etc.).
+pub(crate) fn serialize_scope_slugs(scopes: &[ScopeSlug]) -> Result<String, serde_json::Error> {
     serde_json::to_string(&scope_strings(scopes))
-        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
 }
 
 pub(crate) fn contains_scope(scopes: &[String], scope: ScopeSlug) -> bool {

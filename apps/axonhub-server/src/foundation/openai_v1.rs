@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axonhub_http::{
@@ -8,1290 +7,49 @@ use axonhub_http::{
     OpenAiV1Error, OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port,
     OpenAiV1Route,
 };
-use postgres::{types::ToSql as PostgresToSql, Client as PostgresClient, NoTls, Row};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use rusqlite::{params, Connection, OptionalExtension};
+use sea_orm::{ConnectionTrait, DatabaseBackend, ExecResult, Statement};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{
-    identity::parse_json_string_vec,
-    shared::{bool_to_sql, SqliteConnectionFactory, SqliteFoundation, USAGE_LOGS_TABLE_SQL},
-    system::{
-        ensure_channel_model_tables, ensure_channel_model_tables_postgres, ensure_request_tables,
-        ensure_request_tables_postgres, ensure_usage_logs_table_postgres,
-        query_system_value_postgres,
-    },
-};
+use super::{ports::OpenAiV1Repository, seaorm::SeaOrmConnectionFactory};
 
-#[derive(Debug, Clone)]
-pub struct ChannelModelStore {
-    pub(crate) connection_factory: SqliteConnectionFactory,
+pub(crate) use super::openai_v1_sqlite_support::*;
+
+pub struct SeaOrmOpenAiV1Service {
+    db: SeaOrmConnectionFactory,
 }
 
-impl ChannelModelStore {
-    pub(crate) fn new(connection_factory: SqliteConnectionFactory) -> Self {
-        Self { connection_factory }
-    }
-
-    #[cfg(test)]
-    pub fn ensure_schema(&self) -> rusqlite::Result<()> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_channel_model_tables(&connection)
-    }
-
-    #[cfg(test)]
-    pub fn upsert_channel(&self, record: &NewChannelRecord<'_>) -> rusqlite::Result<i64> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_channel_model_tables(&connection)?;
-        connection.execute(
-            "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0)
-             ON CONFLICT(name) DO UPDATE SET
-                 type = excluded.type,
-                 base_url = excluded.base_url,
-                 status = excluded.status,
-                 credentials = excluded.credentials,
-                 supported_models = excluded.supported_models,
-                 auto_sync_supported_models = excluded.auto_sync_supported_models,
-                 default_test_model = excluded.default_test_model,
-                 settings = excluded.settings,
-                 tags = excluded.tags,
-                 ordering_weight = excluded.ordering_weight,
-                 error_message = excluded.error_message,
-                 remark = excluded.remark,
-                 deleted_at = 0,
-                 updated_at = CURRENT_TIMESTAMP",
-            params![
-                record.channel_type,
-                record.base_url,
-                record.name,
-                record.status,
-                record.credentials_json,
-                record.supported_models_json,
-                bool_to_sql(record.auto_sync_supported_models),
-                record.default_test_model,
-                record.settings_json,
-                record.tags_json,
-                record.ordering_weight,
-                record.error_message,
-                record.remark,
-            ],
-        )?;
-
-        query_channel_id(&connection, record.name)
-    }
-
-    #[cfg(test)]
-    pub fn upsert_model(&self, record: &NewModelRecord<'_>) -> rusqlite::Result<i64> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_channel_model_tables(&connection)?;
-        connection.execute(
-            "INSERT INTO models (developer, model_id, type, name, icon, \"group\", model_card, settings, status, remark, deleted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0)
-             ON CONFLICT(developer, model_id, type) DO UPDATE SET
-                 name = excluded.name,
-                 icon = excluded.icon,
-                 \"group\" = excluded.\"group\",
-                 model_card = excluded.model_card,
-                 settings = excluded.settings,
-                 status = excluded.status,
-                 remark = excluded.remark,
-                 deleted_at = 0,
-                 updated_at = CURRENT_TIMESTAMP",
-            params![
-                record.developer,
-                record.model_id,
-                record.model_type,
-                record.name,
-                record.icon,
-                record.group,
-                record.model_card_json,
-                record.settings_json,
-                record.status,
-                record.remark,
-            ],
-        )?;
-
-        query_model_id(
-            &connection,
-            record.developer,
-            record.model_id,
-            record.model_type,
-        )
-    }
-
-    pub fn list_enabled_models(&self, include: Option<&str>) -> rusqlite::Result<Vec<OpenAiModel>> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_channel_model_tables(&connection)?;
-
-        let include = ModelInclude::parse(include);
-        list_enabled_model_records(&connection)?
-            .into_iter()
-            .map(|record| Ok(record.into_openai_model(&include)))
-            .collect()
-    }
-
-    pub fn list_enabled_model_records(&self) -> rusqlite::Result<Vec<StoredModelRecord>> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_channel_model_tables(&connection)?;
-        list_enabled_model_records(&connection)
-    }
-
-    pub fn list_channels(&self) -> rusqlite::Result<Vec<StoredChannelSummary>> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_channel_model_tables(&connection)?;
-        let mut statement = connection.prepare(
-            "SELECT id, name, type, base_url, status, supported_models, ordering_weight
-             FROM channels
-             WHERE deleted_at = 0
-             ORDER BY ordering_weight DESC, id ASC",
-        )?;
-        let rows = statement.query_map([], |row| {
-            Ok(StoredChannelSummary {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                channel_type: row.get(2)?,
-                base_url: row.get(3)?,
-                status: row.get(4)?,
-                supported_models: parse_json_string_vec(row.get::<_, String>(5)?),
-                ordering_weight: row.get(6)?,
-            })
-        })?;
-        rows.collect()
-    }
-
-    pub fn select_inference_targets(
-        &self,
-        request_model_id: &str,
-        trace_id: Option<i64>,
-        max_channel_retries: usize,
-        channel_type: &str,
-        model_type: &str,
-        preferred_channel_id: Option<i64>,
-    ) -> rusqlite::Result<Vec<SelectedOpenAiTarget>> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_channel_model_tables(&connection)?;
-        ensure_request_tables(&connection)?;
-
-        let mut statement = connection.prepare(
-            "SELECT c.id, c.base_url, c.credentials, c.supported_models, c.ordering_weight,
-                    m.created_at, m.developer, m.model_id, m.type, m.name, m.icon, m.remark, m.model_card
-              FROM channels c
-              JOIN models m ON m.model_id = ?1
-              WHERE c.deleted_at = 0
-                AND c.status = 'enabled'
-                AND m.deleted_at = 0
-                AND m.status = 'enabled'
-                AND c.type = ?3
-                AND (?2 = '' OR m.type = ?2)
-              ORDER BY c.ordering_weight DESC, c.id ASC",
-        )?;
-        let mut rows = statement.query(params![request_model_id, model_type, channel_type])?;
-        let preferred_trace_channel_id = trace_id
-            .map(|trace_id| {
-                query_preferred_trace_channel_id(&connection, trace_id, request_model_id)
-            })
-            .transpose()?
-            .flatten();
-        let mut candidates = Vec::new();
-
-        while let Some(row) = rows.next()? {
-            let supported_models_json: String = row.get(3)?;
-            if !model_supported_by_channel(&supported_models_json, request_model_id) {
-                continue;
-            }
-
-            let credentials_json: String = row.get(2)?;
-            let api_key = extract_channel_api_key(&credentials_json);
-            if api_key.is_empty() {
-                continue;
-            }
-
-            let channel_id: i64 = row.get(0)?;
-            let ordering_weight: i64 = row.get(4)?;
-            let routing_stats = query_channel_routing_stats(&connection, channel_id)?;
-
-            let model = StoredModelRecord {
-                id: 0,
-                created_at: row.get(5)?,
-                developer: row.get(6)?,
-                model_id: row.get(7)?,
-                model_type: row.get(8)?,
-                name: row.get(9)?,
-                icon: row.get(10)?,
-                remark: row.get(11)?,
-                model_card_json: row.get(12)?,
-            };
-
-            candidates.push(SelectedOpenAiTarget {
-                channel_id,
-                base_url: row.get(1)?,
-                api_key,
-                actual_model_id: request_model_id.to_owned(),
-                ordering_weight,
-                trace_affinity: preferred_trace_channel_id == Some(channel_id),
-                routing_stats,
-                model,
-            });
-        }
-
-        candidates.sort_by(compare_openai_target_priority);
-
-        if let Some(preferred_channel_id) = preferred_channel_id {
-            if let Some(index) = candidates
-                .iter()
-                .position(|target| target.channel_id == preferred_channel_id)
-            {
-                let preferred = candidates.remove(index);
-                candidates.insert(0, preferred);
-            }
-        }
-
-        let top_k = calculate_top_k(candidates.len(), max_channel_retries);
-        candidates.truncate(top_k);
-        Ok(candidates)
+impl SeaOrmOpenAiV1Service {
+    pub fn new(db: SeaOrmConnectionFactory) -> Self {
+        Self { db }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct RequestStore {
-    pub(crate) connection_factory: SqliteConnectionFactory,
-}
-
-#[derive(Debug, Clone)]
-pub struct StoredRequestRouteHint {
-    pub channel_id: i64,
-    pub model_id: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct StoredRequestContentRecord {
-    pub id: i64,
-    pub project_id: i64,
-    pub content_saved: bool,
-    pub content_storage_id: Option<i64>,
-    pub content_storage_key: Option<String>,
-}
-
-impl RequestStore {
-    pub(crate) fn new(connection_factory: SqliteConnectionFactory) -> Self {
-        Self { connection_factory }
-    }
-
-    #[cfg(test)]
-    pub fn ensure_schema(&self) -> rusqlite::Result<()> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_request_tables(&connection)
-    }
-
-    pub fn create_request(&self, record: &NewRequestRecord<'_>) -> rusqlite::Result<i64> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_request_tables(&connection)?;
-        connection.execute(
-            "INSERT INTO requests (
-                api_key_id, project_id, trace_id, data_storage_id, source, model_id, format,
-                request_headers, request_body, response_body, response_chunks, channel_id,
-                external_id, status, stream, client_ip, metrics_latency_ms,
-                metrics_first_token_latency_ms, content_saved, content_storage_id,
-                content_storage_key, content_saved_at
-            ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-                ?8, ?9, ?10, ?11, ?12,
-                ?13, ?14, ?15, ?16, ?17,
-                ?18, ?19, ?20,
-                ?21, ?22
-            )",
-            params![
-                record.api_key_id,
-                record.project_id,
-                record.trace_id,
-                record.data_storage_id,
-                record.source,
-                record.model_id,
-                record.format,
-                record.request_headers_json,
-                record.request_body_json,
-                record.response_body_json,
-                record.response_chunks_json,
-                record.channel_id,
-                record.external_id,
-                record.status,
-                bool_to_sql(record.stream),
-                record.client_ip,
-                record.metrics_latency_ms,
-                record.metrics_first_token_latency_ms,
-                bool_to_sql(record.content_saved),
-                record.content_storage_id,
-                record.content_storage_key,
-                record.content_saved_at,
-            ],
-        )?;
-
-        Ok(connection.last_insert_rowid())
-    }
-
-    pub fn create_request_execution(
-        &self,
-        record: &NewRequestExecutionRecord<'_>,
-    ) -> rusqlite::Result<i64> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_request_tables(&connection)?;
-        connection.execute(
-            "INSERT INTO request_executions (
-                project_id, request_id, channel_id, data_storage_id, external_id, model_id,
-                format, request_body, response_body, response_chunks, error_message,
-                response_status_code, status, stream, metrics_latency_ms,
-                metrics_first_token_latency_ms, request_headers
-            ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6,
-                ?7, ?8, ?9, ?10, ?11,
-                ?12, ?13, ?14, ?15,
-                ?16, ?17
-            )",
-            params![
-                record.project_id,
-                record.request_id,
-                record.channel_id,
-                record.data_storage_id,
-                record.external_id,
-                record.model_id,
-                record.format,
-                record.request_body_json,
-                record.response_body_json,
-                record.response_chunks_json,
-                record.error_message,
-                record.response_status_code,
-                record.status,
-                bool_to_sql(record.stream),
-                record.metrics_latency_ms,
-                record.metrics_first_token_latency_ms,
-                record.request_headers_json,
-            ],
-        )?;
-
-        Ok(connection.last_insert_rowid())
-    }
-
-    pub fn update_request_result(
-        &self,
-        record: &UpdateRequestResultRecord<'_>,
-    ) -> rusqlite::Result<()> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_request_tables(&connection)?;
-        connection.execute(
-            "UPDATE requests
-             SET updated_at = CURRENT_TIMESTAMP,
-                 channel_id = COALESCE(?2, channel_id),
-                 external_id = COALESCE(?3, external_id),
-                 response_body = COALESCE(?4, response_body),
-                 status = ?5
-             WHERE id = ?1",
-            params![
-                record.request_id,
-                record.channel_id,
-                record.external_id,
-                record.response_body_json,
-                record.status,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn update_request_execution_result(
-        &self,
-        record: &UpdateRequestExecutionResultRecord<'_>,
-    ) -> rusqlite::Result<()> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_request_tables(&connection)?;
-        connection.execute(
-            "UPDATE request_executions
-             SET updated_at = CURRENT_TIMESTAMP,
-                 external_id = COALESCE(?2, external_id),
-                 response_body = COALESCE(?3, response_body),
-                 response_status_code = COALESCE(?4, response_status_code),
-                 error_message = COALESCE(?5, error_message),
-                 status = ?6
-             WHERE id = ?1",
-            params![
-                record.execution_id,
-                record.external_id,
-                record.response_body_json,
-                record.response_status_code,
-                record.error_message,
-                record.status,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn find_latest_completed_request_by_external_id(
-        &self,
-        route_format: &str,
-        external_id: &str,
-    ) -> rusqlite::Result<Option<StoredRequestRouteHint>> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_request_tables(&connection)?;
-        connection
-            .query_row(
-                "SELECT channel_id, model_id
-                 FROM requests
-                 WHERE format = ?1
-                   AND external_id = ?2
-                   AND status = 'completed'
-                   AND channel_id IS NOT NULL
-                 ORDER BY id DESC
-                 LIMIT 1",
-                params![route_format, external_id],
-                |row| {
-                    Ok(StoredRequestRouteHint {
-                        channel_id: row.get(0)?,
-                        model_id: row.get(1)?,
-                    })
-                },
-            )
-            .optional()
-    }
-
-    pub fn find_request_content_record(
-        &self,
-        request_id: i64,
-    ) -> rusqlite::Result<Option<StoredRequestContentRecord>> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_request_tables(&connection)?;
-        connection
-            .query_row(
-                "SELECT id, project_id, content_saved, content_storage_id, content_storage_key
-                 FROM requests WHERE id = ?1 LIMIT 1",
-                [request_id],
-                |row| {
-                    Ok(StoredRequestContentRecord {
-                        id: row.get(0)?,
-                        project_id: row.get(1)?,
-                        content_saved: row.get::<_, i64>(2)? != 0,
-                        content_storage_id: row.get(3)?,
-                        content_storage_key: row.get(4)?,
-                    })
-                },
-            )
-            .optional()
-    }
-
-    pub fn list_requests_by_project(
-        &self,
-        project_id: i64,
-    ) -> rusqlite::Result<Vec<StoredRequestSummary>> {
-        let connection = self.connection_factory.open(true)?;
-        ensure_request_tables(&connection)?;
-        let mut statement = connection.prepare(
-            "SELECT id, project_id, trace_id, channel_id, model_id, format, status, source, external_id
-             FROM requests
-             WHERE project_id = ?1
-             ORDER BY id DESC",
-        )?;
-        let rows = statement.query_map([project_id], |row| {
-            Ok(StoredRequestSummary {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                trace_id: row.get(2)?,
-                channel_id: row.get(3)?,
-                model_id: row.get(4)?,
-                format: row.get(5)?,
-                status: row.get(6)?,
-                source: row.get(7)?,
-                external_id: row.get(8)?,
-            })
-        })?;
-        rows.collect()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct UsageCostStore {
-    pub(crate) connection_factory: SqliteConnectionFactory,
-}
-
-impl UsageCostStore {
-    pub(crate) fn new(connection_factory: SqliteConnectionFactory) -> Self {
-        Self { connection_factory }
-    }
-
-    #[cfg(test)]
-    pub fn ensure_schema(&self) -> rusqlite::Result<()> {
-        let connection = self.connection_factory.open(true)?;
-        connection.execute_batch(USAGE_LOGS_TABLE_SQL)
-    }
-
-    pub fn record_usage(&self, record: &NewUsageLogRecord<'_>) -> rusqlite::Result<i64> {
-        let connection = self.connection_factory.open(true)?;
-        connection.execute_batch(USAGE_LOGS_TABLE_SQL)?;
-        connection.execute(
-            "INSERT INTO usage_logs (
-                request_id, api_key_id, project_id, channel_id, model_id,
-                prompt_tokens, completion_tokens, total_tokens,
-                prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens,
-                prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h,
-                completion_audio_tokens, completion_reasoning_tokens,
-                completion_accepted_prediction_tokens, completion_rejected_prediction_tokens,
-                source, format, total_cost, cost_items, cost_price_reference_id, deleted_at
-            ) VALUES (
-                ?1, ?2, ?3, ?4, ?5,
-                ?6, ?7, ?8,
-                ?9, ?10, ?11,
-                ?12, ?13,
-                ?14, ?15,
-                ?16, ?17,
-                ?18, ?19, ?20, ?21, ?22, 0
-            )",
-            params![
-                record.request_id,
-                record.api_key_id,
-                record.project_id,
-                record.channel_id,
-                record.model_id,
-                record.prompt_tokens,
-                record.completion_tokens,
-                record.total_tokens,
-                record.prompt_audio_tokens,
-                record.prompt_cached_tokens,
-                record.prompt_write_cached_tokens,
-                record.prompt_write_cached_tokens_5m,
-                record.prompt_write_cached_tokens_1h,
-                record.completion_audio_tokens,
-                record.completion_reasoning_tokens,
-                record.completion_accepted_prediction_tokens,
-                record.completion_rejected_prediction_tokens,
-                record.source,
-                record.format,
-                record.total_cost,
-                record.cost_items_json,
-                record.cost_price_reference_id,
-            ],
-        )?;
-
-        Ok(connection.last_insert_rowid())
-    }
-}
-
-pub struct SqliteOpenAiV1Service {
-    pub(crate) foundation: Arc<SqliteFoundation>,
-}
-
-pub struct PostgresOpenAiV1Service {
-    dsn: String,
-}
-
-impl SqliteOpenAiV1Service {
-    const DEFAULT_MAX_CHANNEL_RETRIES: usize = 2;
-
-    pub fn new(foundation: Arc<SqliteFoundation>) -> Self {
-        Self { foundation }
-    }
-
-    fn select_target_channels(
-        &self,
-        request: &OpenAiV1ExecutionRequest,
-        _route: OpenAiV1Route,
-    ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
-        let request_model = request
-            .body
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| OpenAiV1Error::InvalidRequest {
-                message: "model is required".to_owned(),
-            })?;
-
-        let targets = self
-            .foundation
-            .channel_models()
-            .select_inference_targets(
-                request_model,
-                request.trace.as_ref().map(|trace| trace.id),
-                Self::DEFAULT_MAX_CHANNEL_RETRIES,
-                "openai",
-                "",
-                request.channel_hint_id,
-            )
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to resolve upstream target: {error}"),
-            })?;
-
-        if targets.is_empty() {
-            Err(OpenAiV1Error::InvalidRequest {
-                message: "No enabled OpenAI channel is configured for the requested model"
-                    .to_owned(),
-            })
-        } else if request
-            .channel_hint_id
-            .is_some_and(|channel_hint_id| targets[0].channel_id != channel_hint_id)
-        {
-            Err(OpenAiV1Error::InvalidRequest {
-                message: "No enabled OpenAI channel matches the requested channel override"
-                    .to_owned(),
-            })
-        } else {
-            Ok(targets)
-        }
-    }
-
-    fn mark_request_failed(
-        &self,
-        request_id: i64,
-        channel_id: Option<i64>,
-        response_body: Option<&Value>,
-        external_id: Option<&str>,
-    ) -> Result<(), OpenAiV1Error> {
-        let response_body_json = response_body
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to serialize failed upstream response: {error}"),
-            })?;
-
-        self.foundation
-            .requests()
-            .update_request_result(&UpdateRequestResultRecord {
-                request_id,
-                status: "failed",
-                external_id,
-                response_body_json: response_body_json.as_deref(),
-                channel_id,
-            })
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to persist failed request state: {error}"),
-            })
-    }
-
-    fn mark_execution_failed(
-        &self,
-        execution_id: i64,
-        error_message: &str,
-        response_body: Option<&Value>,
-        response_status_code: Option<u16>,
-        external_id: Option<&str>,
-    ) -> Result<(), OpenAiV1Error> {
-        let response_body_json = response_body
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to serialize failed upstream response: {error}"),
-            })?;
-
-        self.foundation
-            .requests()
-            .update_request_execution_result(&UpdateRequestExecutionResultRecord {
-                execution_id,
-                status: "failed",
-                external_id,
-                response_body_json: response_body_json.as_deref(),
-                response_status_code: response_status_code.map(i64::from),
-                error_message: Some(error_message),
-            })
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to persist failed request execution state: {error}"),
-            })
-    }
-
-    fn complete_execution(
-        &self,
-        request: &OpenAiV1ExecutionRequest,
-        route_format: &str,
-        request_id: i64,
-        execution_id: i64,
-        target: &SelectedOpenAiTarget,
-        status: u16,
-        response_body: Value,
-        usage: Option<ExtractedUsage>,
-    ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-        let response_body_json =
-            serde_json::to_string(&response_body).map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to serialize upstream response: {error}"),
-            })?;
-        let external_id = response_body
-            .get("id")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned);
-
-        self.foundation
-            .requests()
-            .update_request_result(&UpdateRequestResultRecord {
-                request_id,
-                status: "completed",
-                external_id: external_id.as_deref(),
-                response_body_json: Some(response_body_json.as_str()),
-                channel_id: Some(target.channel_id),
-            })
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to update request: {error}"),
-            })?;
-        self.foundation
-            .requests()
-            .update_request_execution_result(&UpdateRequestExecutionResultRecord {
-                execution_id,
-                status: "completed",
-                external_id: external_id.as_deref(),
-                response_body_json: Some(response_body_json.as_str()),
-                response_status_code: Some(status as i64),
-                error_message: None,
-            })
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to update request execution: {error}"),
-            })?;
-
-        if let Some(usage) = usage {
-            let usage_cost = compute_usage_cost(&target.model, &usage);
-            if let Ok(cost_items_json) = serde_json::to_string(&usage_cost.cost_items) {
-                let _ = self
-                    .foundation
-                    .usage_costs()
-                    .record_usage(&NewUsageLogRecord {
-                        request_id,
-                        api_key_id: request.api_key_id,
-                        project_id: request.project.id,
-                        channel_id: Some(target.channel_id),
-                        model_id: target.actual_model_id.as_str(),
-                        prompt_tokens: usage.prompt_tokens,
-                        completion_tokens: usage.completion_tokens,
-                        total_tokens: usage.total_tokens,
-                        prompt_audio_tokens: usage.prompt_audio_tokens,
-                        prompt_cached_tokens: usage.prompt_cached_tokens,
-                        prompt_write_cached_tokens: usage.prompt_write_cached_tokens,
-                        prompt_write_cached_tokens_5m: usage.prompt_write_cached_tokens_5m,
-                        prompt_write_cached_tokens_1h: usage.prompt_write_cached_tokens_1h,
-                        completion_audio_tokens: usage.completion_audio_tokens,
-                        completion_reasoning_tokens: usage.completion_reasoning_tokens,
-                        completion_accepted_prediction_tokens: usage
-                            .completion_accepted_prediction_tokens,
-                        completion_rejected_prediction_tokens: usage
-                            .completion_rejected_prediction_tokens,
-                        source: "api",
-                        format: route_format,
-                        total_cost: usage_cost.total_cost,
-                        cost_items_json: cost_items_json.as_str(),
-                        cost_price_reference_id: usage_cost
-                            .price_reference_id
-                            .as_deref()
-                            .unwrap_or(""),
-                    });
-            }
-        }
-
-        Ok(OpenAiV1ExecutionResponse {
-            status,
-            body: response_body,
-        })
-    }
-
-    fn should_retry(&self, error: &OpenAiV1Error) -> bool {
-        match error {
-            OpenAiV1Error::Internal { .. } => true,
-            OpenAiV1Error::Upstream { status, .. } => {
-                *status == 408 || *status == 409 || *status == 429 || *status >= 500
-            }
-            OpenAiV1Error::InvalidRequest { .. } => false,
-        }
-    }
-
-    fn execute_shared_route<UrlBuilder, ResponseMapper, UsageExtractor>(
-        &self,
-        request: &OpenAiV1ExecutionRequest,
-        route_format: &str,
-        upstream_method: reqwest::Method,
-        targets: Vec<SelectedOpenAiTarget>,
-        upstream_body: &Value,
-        upstream_headers: &HashMap<String, String>,
-        data_storage_id: Option<i64>,
-        upstream_url_for_target: UrlBuilder,
-        response_mapper: ResponseMapper,
-        usage_extractor: UsageExtractor,
-    ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error>
-    where
-        UrlBuilder: Fn(&SelectedOpenAiTarget) -> String,
-        ResponseMapper: Fn(Value) -> Result<Value, OpenAiV1Error>,
-        UsageExtractor: Fn(&Value) -> Option<ExtractedUsage>,
-    {
-        let masked_request_headers = sanitize_headers_json(upstream_headers);
-        let request_body_json =
-            serde_json::to_string(&request.body).map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to serialize request body: {error}"),
-            })?;
-        let upstream_body_json =
-            serde_json::to_string(upstream_body).map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to serialize upstream request body: {error}"),
-            })?;
-        let stream = request
-            .body
-            .get("stream")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-
-        let request_id = self
-            .foundation
-            .requests()
-            .create_request(&NewRequestRecord {
-                api_key_id: request.api_key_id,
-                project_id: request.project.id,
-                trace_id: request.trace.as_ref().map(|trace| trace.id),
-                data_storage_id,
-                source: "api",
-                model_id: targets[0].actual_model_id.as_str(),
-                format: route_format,
-                request_headers_json: masked_request_headers.as_str(),
-                request_body_json: request_body_json.as_str(),
-                response_body_json: None,
-                response_chunks_json: None,
-                channel_id: None,
-                external_id: None,
-                status: "processing",
-                stream,
-                client_ip: request.client_ip.as_deref().unwrap_or(""),
-                metrics_latency_ms: None,
-                metrics_first_token_latency_ms: None,
-                content_saved: false,
-                content_storage_id: None,
-                content_storage_key: None,
-                content_saved_at: None,
-            })
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to persist request: {error}"),
-            })?;
-        let mut last_error = None;
-
-        for (index, target) in targets.iter().enumerate() {
-            self.foundation
-                .requests()
-                .update_request_result(&UpdateRequestResultRecord {
-                    request_id,
-                    status: "processing",
-                    external_id: None,
-                    response_body_json: None,
-                    channel_id: Some(target.channel_id),
-                })
-                .map_err(|error| OpenAiV1Error::Internal {
-                    message: format!("Failed to update request attempt channel: {error}"),
-                })?;
-
-            let execution_id = match self.foundation.requests().create_request_execution(
-                &NewRequestExecutionRecord {
-                    project_id: request.project.id,
-                    request_id,
-                    channel_id: Some(target.channel_id),
-                    data_storage_id,
-                    external_id: None,
-                    model_id: target.actual_model_id.as_str(),
-                    format: route_format,
-                    request_body_json: upstream_body_json.as_str(),
-                    response_body_json: None,
-                    response_chunks_json: None,
-                    error_message: "",
-                    response_status_code: None,
-                    status: "processing",
-                    stream,
-                    metrics_latency_ms: None,
-                    metrics_first_token_latency_ms: None,
-                    request_headers_json: masked_request_headers.as_str(),
-                },
-            ) {
-                Ok(execution_id) => execution_id,
-                Err(error) => {
-                    let request_error = OpenAiV1Error::Internal {
-                        message: format!("Failed to persist request execution: {error}"),
-                    };
-                    self.mark_request_failed(request_id, Some(target.channel_id), None, None)?;
-                    return Err(request_error);
-                }
-            };
-
-            let attempt_result = (|| -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-                let built_headers =
-                    build_upstream_headers(upstream_headers, target.api_key.as_str())?;
-                let client = reqwest::blocking::Client::new();
-                let mut upstream_request = client
-                    .request(
-                        upstream_method.clone(),
-                        upstream_url_for_target(target).as_str(),
-                    )
-                    .headers(built_headers);
-                if matches!(upstream_method, reqwest::Method::POST) {
-                    upstream_request = upstream_request.json(upstream_body);
-                }
-                let upstream_response =
-                    upstream_request
-                        .send()
-                        .map_err(|error| OpenAiV1Error::Internal {
-                            message: format!("Failed to execute upstream request: {error}"),
-                        })?;
-
-                let status = upstream_response.status().as_u16();
-                let response_text =
-                    upstream_response
-                        .text()
-                        .map_err(|error| OpenAiV1Error::Internal {
-                            message: format!("Failed to read upstream response: {error}"),
-                        })?;
-                let raw_response_body: Value =
-                    serde_json::from_str(&response_text).map_err(|error| {
-                        OpenAiV1Error::Internal {
-                            message: format!("Failed to decode upstream response: {error}"),
-                        }
-                    })?;
-
-                if (200..300).contains(&status) {
-                    let usage = usage_extractor(&raw_response_body);
-                    let response_body = response_mapper(raw_response_body)?;
-                    self.complete_execution(
-                        request,
-                        route_format,
-                        request_id,
-                        execution_id,
-                        target,
-                        status,
-                        response_body,
-                        usage,
-                    )
-                } else {
-                    Err(OpenAiV1Error::Upstream {
-                        status,
-                        body: raw_response_body,
-                    })
-                }
-            })();
-
-            match attempt_result {
-                Ok(response) => return Ok(response),
-                Err(error) => {
-                    let (response_body, response_status_code, external_id) = match &error {
-                        OpenAiV1Error::Upstream { status, body } => (
-                            Some(body),
-                            Some(*status),
-                            body.get("id").and_then(Value::as_str),
-                        ),
-                        OpenAiV1Error::Internal { .. } | OpenAiV1Error::InvalidRequest { .. } => {
-                            (None, None, None)
-                        }
-                    };
-
-                    self.mark_execution_failed(
-                        execution_id,
-                        openai_error_message(&error).as_str(),
-                        response_body,
-                        response_status_code,
-                        external_id,
-                    )?;
-
-                    let retryable = self.should_retry(&error);
-                    let is_last = index + 1 == targets.len();
-                    if retryable && !is_last {
-                        last_error = Some(error);
-                        continue;
-                    }
-
-                    self.mark_request_failed(
-                        request_id,
-                        Some(target.channel_id),
-                        response_body,
-                        external_id,
-                    )?;
-                    return Err(error);
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| OpenAiV1Error::Internal {
-            message: "No upstream channel attempt was executed".to_owned(),
-        }))
-    }
-}
-
-impl PostgresOpenAiV1Service {
-    const DEFAULT_MAX_CHANNEL_RETRIES: usize = 2;
-
-    pub fn new(dsn: impl Into<String>) -> Self {
-        Self { dsn: dsn.into() }
-    }
-
-    fn run_blocking<T, F>(&self, operation: F) -> Result<T, OpenAiV1Error>
-    where
-        T: Send + 'static,
-        F: FnOnce(String) -> Result<T, OpenAiV1Error> + Send + 'static,
-    {
-        let dsn = self.dsn.clone();
-
-        if tokio::runtime::Handle::try_current().is_ok() {
-            std::thread::spawn(move || operation(dsn))
-                .join()
-                .unwrap_or_else(|_| panic!("postgres openai-v1 worker thread panicked"))
-        } else {
-            operation(dsn)
-        }
-    }
-
-    fn connect_for_execution(dsn: &str) -> Result<PostgresClient, OpenAiV1Error> {
-        let mut client =
-            PostgresClient::connect(dsn, NoTls).map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to connect to postgres: {error}"),
-            })?;
-        ensure_channel_model_tables_postgres(&mut client).map_err(|error| {
-            OpenAiV1Error::Internal {
-                message: format!("Failed to ensure channel/model schema: {error}"),
-            }
-        })?;
-        ensure_request_tables_postgres(&mut client).map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to ensure request schema: {error}"),
-        })?;
-        ensure_usage_logs_table_postgres(&mut client).map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to ensure usage schema: {error}"),
-        })?;
-        Ok(client)
-    }
-
-    fn list_enabled_models_blocking(
-        dsn: &str,
-        include: Option<&str>,
-    ) -> Result<Vec<OpenAiModel>, OpenAiV1Error> {
-        let mut client = Self::connect_for_execution(dsn)?;
-        let include = ModelInclude::parse(include);
-        list_enabled_model_records_postgres(&mut client)?
-            .into_iter()
-            .map(|record| Ok(record.into_openai_model(&include)))
-            .collect()
-    }
-
-    fn list_enabled_model_records_blocking(
-        dsn: &str,
-    ) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
-        let mut client = Self::connect_for_execution(dsn)?;
-        list_enabled_model_records_postgres(&mut client)
-    }
-
-    fn select_target_channels_blocking(
-        dsn: &str,
-        request: &OpenAiV1ExecutionRequest,
-        _route: OpenAiV1Route,
-    ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
-        let request_model = request
-            .body
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| OpenAiV1Error::InvalidRequest {
-                message: "model is required".to_owned(),
-            })?;
-
-        let targets = select_inference_targets_postgres(
-            dsn,
-            request_model,
-            request.trace.as_ref().map(|trace| trace.id),
-            Self::DEFAULT_MAX_CHANNEL_RETRIES,
-            "openai",
-            "",
-            request.channel_hint_id,
-        )?;
-
-        if targets.is_empty() {
-            Err(OpenAiV1Error::InvalidRequest {
-                message: "No enabled OpenAI channel is configured for the requested model"
-                    .to_owned(),
-            })
-        } else if request
-            .channel_hint_id
-            .is_some_and(|channel_hint_id| targets[0].channel_id != channel_hint_id)
-        {
-            Err(OpenAiV1Error::InvalidRequest {
-                message: "No enabled OpenAI channel matches the requested channel override"
-                    .to_owned(),
-            })
-        } else {
-            Ok(targets)
-        }
-    }
-}
-
-impl OpenAiV1Port for SqliteOpenAiV1Service {
+impl OpenAiV1Port for SeaOrmOpenAiV1Service {
     fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error> {
-        let models = self
-            .foundation
-            .channel_models()
-            .list_enabled_models(include)
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to list models: {error}"),
-            })?;
-
-        Ok(ModelListResponse {
-            object: "list",
-            data: models,
-        })
-    }
-
-    fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
-        let models = self
-            .foundation
-            .channel_models()
-            .list_enabled_model_records()
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to list models: {error}"),
-            })?;
-
-        let data = models
-            .into_iter()
-            .map(|record| AnthropicModel {
-                id: record.model_id,
-                kind: "model",
-                display_name: record.name,
-                created: sqlite_timestamp_to_rfc3339(record.created_at.as_str()),
-            })
-            .collect::<Vec<_>>();
-        let first_id = data.first().map(|model| model.id.clone());
-        let last_id = data.last().map(|model| model.id.clone());
-
-        Ok(AnthropicModelListResponse {
-            object: "list",
-            data,
-            has_more: false,
-            first_id,
-            last_id,
-        })
-    }
-
-    fn list_gemini_models(&self) -> Result<GeminiModelListResponse, OpenAiV1Error> {
-        let models = self
-            .foundation
-            .channel_models()
-            .list_enabled_model_records()
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to list models: {error}"),
-            })?;
-
-        Ok(GeminiModelListResponse {
-            models: models
-                .into_iter()
-                .enumerate()
-                .map(|(index, record)| GeminiModel {
-                    name: format!("models/{}", record.model_id),
-                    base_model_id: record.model_id.clone(),
-                    version: format!("{}-{index}", record.model_id),
-                    display_name: record.name.clone(),
-                    description: record.name,
-                    supported_generation_methods: vec!["generateContent", "streamGenerateContent"],
-                })
-                .collect(),
-        })
-    }
-
-    fn execute(
-        &self,
-        route: OpenAiV1Route,
-        request: OpenAiV1ExecutionRequest,
-    ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-        validate_openai_request(route, &request.body)?;
-
-        let targets = self.select_target_channels(&request, route)?;
-        let data_storage_id = self
-            .foundation
-            .system_settings()
-            .default_data_storage_id()
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to load data storage configuration: {error}"),
-            })?;
-
-        let upstream_body = rewrite_model(&request.body, targets[0].actual_model_id.as_str());
-        self.execute_shared_route(
-            &request,
-            route.format(),
-            reqwest::Method::POST,
-            targets,
-            &upstream_body,
-            &request.headers,
-            data_storage_id,
-            |target| target.upstream_url(route),
-            Ok,
-            |response_body| extract_usage(route, response_body),
-        )
-    }
-
-    fn execute_compatibility(
-        &self,
-        route: CompatibilityRoute,
-        request: OpenAiV1ExecutionRequest,
-    ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-        let data_storage_id = self
-            .foundation
-            .system_settings()
-            .default_data_storage_id()
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to load data storage configuration: {error}"),
-            })?;
-        let prepared = prepare_compatibility_request(route, &request)?;
-        let targets = if matches!(
-            route,
-            CompatibilityRoute::DoubaoGetTask | CompatibilityRoute::DoubaoDeleteTask
-        ) {
-            self.select_doubao_task_targets(&request, &prepared)?
-        } else {
-            self.foundation
-                .channel_models()
-                .select_inference_targets(
-                    prepared.request_model_id.as_str(),
-                    request.trace.as_ref().map(|trace| trace.id),
-                    Self::DEFAULT_MAX_CHANNEL_RETRIES,
-                    prepared.channel_type,
-                    prepared.model_type,
-                    None,
-                )
-                .map_err(|error| OpenAiV1Error::Internal {
-                    message: format!("Failed to resolve upstream target: {error}"),
-                })?
-        };
-
-        if targets.is_empty() {
-            return Err(OpenAiV1Error::InvalidRequest {
-                message: format!(
-                    "No enabled {} channel is configured for the requested model",
-                    prepared.channel_type
-                ),
-            });
-        }
-
-        let upstream_body = if prepared.upstream_body.is_null() {
-            Value::Null
-        } else {
-            rewrite_model(&prepared.upstream_body, targets[0].actual_model_id.as_str())
-        };
-        let route_task_id = prepared.task_id.clone();
-        self.execute_shared_route(
-            &request,
-            route.format(),
-            compatibility_upstream_method(route),
-            targets,
-            &upstream_body,
-            &request.headers,
-            data_storage_id,
-            move |target| compatibility_upstream_url(target, route, route_task_id.as_deref()),
-            |response_body| map_compatibility_response(route, response_body),
-            |response_body| compatibility_usage(route, response_body),
-        )
-    }
-}
-
-impl OpenAiV1Port for PostgresOpenAiV1Service {
-    fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error> {
+        let db = self.db.clone();
         let include_owned = include.map(ToOwned::to_owned);
-        let models = self.run_blocking(move |dsn| {
-            Self::list_enabled_models_blocking(&dsn, include_owned.as_deref())
+        let models = db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            let include = ModelInclude::parse(include_owned.as_deref());
+            let models = list_enabled_model_records_seaorm(&connection, db.backend())
+                .await?
+                .into_iter()
+                .map(|record| record.into_openai_model(&include))
+                .collect::<Vec<_>>();
+            Ok(models)
         })?;
 
-        Ok(ModelListResponse {
-            object: "list",
-            data: models,
-        })
+        Ok(ModelListResponse { object: "list", data: models })
     }
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
-        let models =
-            self.run_blocking(move |dsn| Self::list_enabled_model_records_blocking(&dsn))?;
+        let db = self.db.clone();
+        let models = db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            list_enabled_model_records_seaorm(&connection, db.backend()).await
+        })?;
 
         let data = models
             .into_iter()
@@ -1315,8 +73,11 @@ impl OpenAiV1Port for PostgresOpenAiV1Service {
     }
 
     fn list_gemini_models(&self) -> Result<GeminiModelListResponse, OpenAiV1Error> {
-        let models =
-            self.run_blocking(move |dsn| Self::list_enabled_model_records_blocking(&dsn))?;
+        let db = self.db.clone();
+        let models = db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            list_enabled_model_records_seaorm(&connection, db.backend()).await
+        })?;
 
         Ok(GeminiModelListResponse {
             models: models
@@ -1341,13 +102,17 @@ impl OpenAiV1Port for PostgresOpenAiV1Service {
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
         validate_openai_request(route, &request.body)?;
         let route_format = route.format().to_owned();
+        let db = self.db.clone();
 
-        self.run_blocking(move |dsn| {
-            let targets = Self::select_target_channels_blocking(&dsn, &request, route)?;
-            let data_storage_id = default_data_storage_id_postgres(&dsn)?;
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            let backend = db.backend();
+            let targets = select_target_channels_seaorm(&connection, backend, &request, route).await?;
+            let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
             let upstream_body = rewrite_model(&request.body, targets[0].actual_model_id.as_str());
-            execute_shared_route_postgres(
-                &dsn,
+            execute_shared_route_seaorm(
+                &connection,
+                backend,
                 &request,
                 route_format.as_str(),
                 reqwest::Method::POST,
@@ -1359,6 +124,7 @@ impl OpenAiV1Port for PostgresOpenAiV1Service {
                 Ok,
                 |response_body| extract_usage(route, response_body),
             )
+            .await
         })
     }
 
@@ -1367,24 +133,29 @@ impl OpenAiV1Port for PostgresOpenAiV1Service {
         route: CompatibilityRoute,
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-        self.run_blocking(move |dsn| {
-            let data_storage_id = default_data_storage_id_postgres(&dsn)?;
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            let backend = db.backend();
+            let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
             let prepared = prepare_compatibility_request(route, &request)?;
             let targets = if matches!(
                 route,
                 CompatibilityRoute::DoubaoGetTask | CompatibilityRoute::DoubaoDeleteTask
             ) {
-                select_doubao_task_targets_postgres(&dsn, &request, &prepared)?
+                select_doubao_task_targets_seaorm(&connection, backend, &request, &prepared).await?
             } else {
-                select_inference_targets_postgres(
-                    &dsn,
+                select_inference_targets_seaorm(
+                    &connection,
+                    backend,
                     prepared.request_model_id.as_str(),
                     request.trace.as_ref().map(|trace| trace.id),
-                    Self::DEFAULT_MAX_CHANNEL_RETRIES,
+                    2,
                     prepared.channel_type,
                     prepared.model_type,
                     None,
-                )?
+                )
+                .await?
             };
 
             if targets.is_empty() {
@@ -1402,8 +173,9 @@ impl OpenAiV1Port for PostgresOpenAiV1Service {
                 rewrite_model(&prepared.upstream_body, targets[0].actual_model_id.as_str())
             };
             let route_task_id = prepared.task_id.clone();
-            execute_shared_route_postgres(
-                &dsn,
+            execute_shared_route_seaorm(
+                &connection,
+                backend,
                 &request,
                 route.format(),
                 compatibility_upstream_method(route),
@@ -1415,99 +187,218 @@ impl OpenAiV1Port for PostgresOpenAiV1Service {
                 |response_body| map_compatibility_response(route, response_body),
                 |response_body| compatibility_usage(route, response_body),
             )
+            .await
         })
     }
 }
 
-impl SqliteOpenAiV1Service {
-    fn select_doubao_task_targets(
+impl OpenAiV1Repository for SeaOrmOpenAiV1Service {
+    fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::list_models(self, include)
+    }
+
+    fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::list_anthropic_models(self)
+    }
+
+    fn list_gemini_models(&self) -> Result<GeminiModelListResponse, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::list_gemini_models(self)
+    }
+
+    fn execute(
         &self,
-        request: &OpenAiV1ExecutionRequest,
-        prepared: &PreparedCompatibilityRequest,
-    ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
-        let task_id = prepared
-            .task_id
-            .as_deref()
-            .ok_or_else(|| OpenAiV1Error::InvalidRequest {
-                message: "task id is required".to_owned(),
-            })?;
-        let request_hint = self
-            .foundation
-            .requests()
-            .find_latest_completed_request_by_external_id("doubao/video_create", task_id)
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to resolve Doubao task origin: {error}"),
-            })?
-            .ok_or_else(|| OpenAiV1Error::Upstream {
-                status: 404,
-                body: serde_json::json!({"error": {"message": "not found"}}),
-            })?;
+        route: OpenAiV1Route,
+        request: OpenAiV1ExecutionRequest,
+    ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::execute(self, route, request)
+    }
 
-        let mut targets = self
-            .foundation
-            .channel_models()
-            .select_inference_targets(
-                request_hint.model_id.as_str(),
-                request.trace.as_ref().map(|trace| trace.id),
-                Self::DEFAULT_MAX_CHANNEL_RETRIES,
-                prepared.channel_type,
-                prepared.model_type,
-                None,
-            )
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to resolve upstream target: {error}"),
-            })?;
+    fn execute_compatibility(
+        &self,
+        route: CompatibilityRoute,
+        request: OpenAiV1ExecutionRequest,
+    ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::execute_compatibility(self, route, request)
+    }
+}
 
-        if let Some(index) = targets
-            .iter()
-            .position(|target| target.channel_id == request_hint.channel_id)
-        {
-            let preferred = targets.remove(index);
-            targets.insert(0, preferred);
-        } else {
-            return Err(OpenAiV1Error::Upstream {
-                status: 404,
-                body: serde_json::json!({"error": {"message": "not found"}}),
-            });
-        }
+fn map_openai_db_err(error: sea_orm::DbErr) -> OpenAiV1Error {
+    OpenAiV1Error::Internal {
+        message: error.to_string(),
+    }
+}
 
+fn openai_sql<'a>(
+    backend: DatabaseBackend,
+    sqlite: &'a str,
+    postgres: &'a str,
+    mysql: &'a str,
+) -> &'a str {
+    match backend {
+        DatabaseBackend::Sqlite => sqlite,
+        DatabaseBackend::Postgres => postgres,
+        DatabaseBackend::MySql => mysql,
+    }
+}
+
+async fn query_one_openai(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    sqlite_sql: &str,
+    postgres_sql: &str,
+    mysql_sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> Result<Option<sea_orm::QueryResult>, OpenAiV1Error> {
+    db.query_one(Statement::from_sql_and_values(
+        backend,
+        openai_sql(backend, sqlite_sql, postgres_sql, mysql_sql),
+        values,
+    ))
+    .await
+    .map_err(map_openai_db_err)
+}
+
+async fn query_all_openai(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    sqlite_sql: &str,
+    postgres_sql: &str,
+    mysql_sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> Result<Vec<sea_orm::QueryResult>, OpenAiV1Error> {
+    db.query_all(Statement::from_sql_and_values(
+        backend,
+        openai_sql(backend, sqlite_sql, postgres_sql, mysql_sql),
+        values,
+    ))
+    .await
+    .map_err(map_openai_db_err)
+}
+
+async fn execute_openai(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    sqlite_sql: &str,
+    postgres_sql: &str,
+    mysql_sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> Result<ExecResult, OpenAiV1Error> {
+    db.execute(Statement::from_sql_and_values(
+        backend,
+        openai_sql(backend, sqlite_sql, postgres_sql, mysql_sql),
+        values,
+    ))
+    .await
+    .map_err(map_openai_db_err)
+}
+
+fn last_insert_id_openai(result: &ExecResult, backend: DatabaseBackend) -> Result<i64, OpenAiV1Error> {
+    let id = result.last_insert_id();
+    if id == 0 {
+        Err(OpenAiV1Error::Internal {
+            message: format!("missing last insert id for {backend:?} operation"),
+        })
+    } else {
+        Ok(id as i64)
+    }
+}
+
+async fn default_data_storage_id_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+) -> Result<Option<i64>, OpenAiV1Error> {
+    query_one_openai(
+        db,
+        backend,
+        "SELECT value FROM systems WHERE key = ? AND deleted_at = 0 LIMIT 1",
+        "SELECT value FROM systems WHERE key = $1 AND deleted_at = 0 LIMIT 1",
+        "SELECT value FROM systems WHERE `key` = ? AND deleted_at = 0 LIMIT 1",
+        vec![crate::foundation::shared::SYSTEM_KEY_DEFAULT_DATA_STORAGE.into()],
+    )
+    .await
+    .map(|row| row.and_then(|row| row.try_get_by_index::<String>(0).ok()))
+    .map(|value| value.and_then(|current| current.parse::<i64>().ok()))
+}
+
+async fn list_enabled_model_records_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
+    query_all_openai(
+        db,
+        backend,
+        "SELECT id, created_at, developer, model_id, type, name, icon, remark, model_card FROM models WHERE deleted_at = 0 AND status = 'enabled' ORDER BY id ASC",
+        "SELECT id, created_at::text, developer, model_id, type, name, icon, remark, model_card FROM models WHERE deleted_at = 0 AND status = 'enabled' ORDER BY id ASC",
+        "SELECT id, CAST(created_at AS CHAR), developer, model_id, type, name, icon, remark, model_card FROM models WHERE deleted_at = 0 AND status = 'enabled' ORDER BY id ASC",
+        vec![],
+    )
+    .await?
+    .into_iter()
+    .map(stored_model_record_from_seaorm_row)
+    .collect()
+}
+
+fn stored_model_record_from_seaorm_row(row: sea_orm::QueryResult) -> Result<StoredModelRecord, OpenAiV1Error> {
+    Ok(StoredModelRecord {
+        id: row.try_get_by_index(0).map_err(map_openai_db_err)?,
+        created_at: row.try_get_by_index(1).map_err(map_openai_db_err)?,
+        developer: row.try_get_by_index(2).map_err(map_openai_db_err)?,
+        model_id: row.try_get_by_index(3).map_err(map_openai_db_err)?,
+        model_type: row.try_get_by_index(4).map_err(map_openai_db_err)?,
+        name: row.try_get_by_index(5).map_err(map_openai_db_err)?,
+        icon: row.try_get_by_index(6).map_err(map_openai_db_err)?,
+        remark: row.try_get_by_index(7).map_err(map_openai_db_err)?,
+        model_card_json: row.try_get_by_index(8).map_err(map_openai_db_err)?,
+    })
+}
+
+async fn select_target_channels_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    request: &OpenAiV1ExecutionRequest,
+    _route: OpenAiV1Route,
+) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
+    let request_model = request
+        .body
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| OpenAiV1Error::InvalidRequest {
+            message: "model is required".to_owned(),
+        })?;
+
+    let targets = select_inference_targets_seaorm(
+        db,
+        backend,
+        request_model,
+        request.trace.as_ref().map(|trace| trace.id),
+        2,
+        "openai",
+        "",
+        request.channel_hint_id,
+    )
+    .await?;
+
+    if targets.is_empty() {
+        Err(OpenAiV1Error::InvalidRequest {
+            message: "No enabled OpenAI channel is configured for the requested model".to_owned(),
+        })
+    } else if request
+        .channel_hint_id
+        .is_some_and(|channel_hint_id| targets[0].channel_id != channel_hint_id)
+    {
+        Err(OpenAiV1Error::InvalidRequest {
+            message: "No enabled OpenAI channel matches the requested channel override".to_owned(),
+        })
+    } else {
         Ok(targets)
     }
 }
 
-fn default_data_storage_id_postgres(dsn: &str) -> Result<Option<i64>, OpenAiV1Error> {
-    let mut client = PostgresOpenAiV1Service::connect_for_execution(dsn)?;
-    query_system_value_postgres(
-        &mut client,
-        crate::foundation::shared::SYSTEM_KEY_DEFAULT_DATA_STORAGE,
-    )
-    .map_err(|error| OpenAiV1Error::Internal {
-        message: format!("Failed to load data storage configuration: {error}"),
-    })
-    .map(|value| value.and_then(|current| current.parse::<i64>().ok()))
-}
-
-fn list_enabled_model_records_postgres(
-    client: &mut PostgresClient,
-) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
-    client
-        .query(
-            "SELECT id, created_at::text, developer, model_id, type, name, icon, remark, model_card
-             FROM models WHERE deleted_at = 0 AND status = 'enabled' ORDER BY id ASC",
-            &[],
-        )
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to list models: {error}"),
-        })
-        .map(|rows| {
-            rows.into_iter()
-                .map(stored_model_record_from_postgres_row)
-                .collect()
-        })
-}
-
-fn select_inference_targets_postgres(
-    dsn: &str,
+async fn select_inference_targets_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     request_model_id: &str,
     trace_id: Option<i64>,
     max_channel_retries: usize,
@@ -1515,64 +406,49 @@ fn select_inference_targets_postgres(
     model_type: &str,
     preferred_channel_id: Option<i64>,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
-    let mut client = PostgresOpenAiV1Service::connect_for_execution(dsn)?;
-    let params: [&(dyn PostgresToSql + Sync); 3] = [&request_model_id, &model_type, &channel_type];
-    let rows = client
-        .query(
-            "SELECT c.id, c.base_url, c.credentials, c.supported_models, c.ordering_weight,
-                    m.created_at::text, m.developer, m.model_id, m.type, m.name, m.icon, m.remark, m.model_card
-               FROM channels c
-               JOIN models m ON m.model_id = $1
-              WHERE c.deleted_at = 0
-                AND c.status = 'enabled'
-                AND m.deleted_at = 0
-                AND m.status = 'enabled'
-                AND c.type = $3
-                AND ($2 = '' OR m.type = $2)
-              ORDER BY c.ordering_weight DESC, c.id ASC",
-            &params,
-        )
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to resolve upstream target: {error}"),
-        })?;
-    let preferred_trace_channel_id = trace_id
-        .map(|trace_id| {
-            query_preferred_trace_channel_id_postgres(&mut client, trace_id, request_model_id)
-        })
-        .transpose()?
-        .flatten();
-    let mut candidates = Vec::new();
+    let rows = query_all_openai(
+        db,
+        backend,
+        "SELECT c.id, c.base_url, c.credentials, c.supported_models, c.ordering_weight, m.created_at, m.developer, m.model_id, m.type, m.name, m.icon, m.remark, m.model_card FROM channels c JOIN models m ON m.model_id = ? WHERE c.deleted_at = 0 AND c.status = 'enabled' AND m.deleted_at = 0 AND m.status = 'enabled' AND c.type = ? AND (? = '' OR m.type = ?) ORDER BY c.ordering_weight DESC, c.id ASC",
+        "SELECT c.id, c.base_url, c.credentials, c.supported_models, c.ordering_weight, m.created_at::text, m.developer, m.model_id, m.type, m.name, m.icon, m.remark, m.model_card FROM channels c JOIN models m ON m.model_id = $1 WHERE c.deleted_at = 0 AND c.status = 'enabled' AND m.deleted_at = 0 AND m.status = 'enabled' AND c.type = $3 AND ($2 = '' OR m.type = $2) ORDER BY c.ordering_weight DESC, c.id ASC",
+        "SELECT c.id, c.base_url, c.credentials, c.supported_models, c.ordering_weight, CAST(m.created_at AS CHAR), m.developer, m.model_id, m.type, m.name, m.icon, m.remark, m.model_card FROM channels c JOIN models m ON m.model_id = ? WHERE c.deleted_at = 0 AND c.status = 'enabled' AND m.deleted_at = 0 AND m.status = 'enabled' AND c.type = ? AND (? = '' OR m.type = ?) ORDER BY c.ordering_weight DESC, c.id ASC",
+        vec![request_model_id.into(), model_type.into(), channel_type.into(), model_type.into()],
+    )
+    .await?;
 
+    let preferred_trace_channel_id = match trace_id {
+        Some(trace_id) => query_preferred_trace_channel_id_seaorm(db, backend, trace_id, request_model_id).await?,
+        None => None,
+    };
+
+    let mut candidates = Vec::new();
     for row in rows {
-        let supported_models_json: String = row.get(3);
+        let supported_models_json: String = row.try_get_by_index(3).map_err(map_openai_db_err)?;
         if !model_supported_by_channel(&supported_models_json, request_model_id) {
             continue;
         }
-
-        let credentials_json: String = row.get(2);
+        let credentials_json: String = row.try_get_by_index(2).map_err(map_openai_db_err)?;
         let api_key = extract_channel_api_key(&credentials_json);
         if api_key.is_empty() {
             continue;
         }
-
-        let channel_id: i64 = row.get(0);
-        let ordering_weight: i64 = row.get(4);
-        let routing_stats = query_channel_routing_stats_postgres(&mut client, channel_id)?;
+        let channel_id: i64 = row.try_get_by_index(0).map_err(map_openai_db_err)?;
+        let ordering_weight: i64 = row.try_get_by_index(4).map_err(map_openai_db_err)?;
+        let routing_stats = query_channel_routing_stats_seaorm(db, backend, channel_id).await?;
         let model = StoredModelRecord {
             id: 0,
-            created_at: row.get(5),
-            developer: row.get(6),
-            model_id: row.get(7),
-            model_type: row.get(8),
-            name: row.get(9),
-            icon: row.get(10),
-            remark: row.get(11),
-            model_card_json: row.get(12),
+            created_at: row.try_get_by_index(5).map_err(map_openai_db_err)?,
+            developer: row.try_get_by_index(6).map_err(map_openai_db_err)?,
+            model_id: row.try_get_by_index(7).map_err(map_openai_db_err)?,
+            model_type: row.try_get_by_index(8).map_err(map_openai_db_err)?,
+            name: row.try_get_by_index(9).map_err(map_openai_db_err)?,
+            icon: row.try_get_by_index(10).map_err(map_openai_db_err)?,
+            remark: row.try_get_by_index(11).map_err(map_openai_db_err)?,
+            model_card_json: row.try_get_by_index(12).map_err(map_openai_db_err)?,
         };
-
         candidates.push(SelectedOpenAiTarget {
             channel_id,
-            base_url: row.get(1),
+            base_url: row.try_get_by_index(1).map_err(map_openai_db_err)?,
             api_key,
             actual_model_id: request_model_id.to_owned(),
             ordering_weight,
@@ -1584,22 +460,86 @@ fn select_inference_targets_postgres(
 
     candidates.sort_by(compare_openai_target_priority);
     if let Some(preferred_channel_id) = preferred_channel_id {
-        if let Some(index) = candidates
-            .iter()
-            .position(|target| target.channel_id == preferred_channel_id)
-        {
+        if let Some(index) = candidates.iter().position(|target| target.channel_id == preferred_channel_id) {
             let preferred = candidates.remove(index);
             candidates.insert(0, preferred);
         }
     }
-
     let top_k = calculate_top_k(candidates.len(), max_channel_retries);
     candidates.truncate(top_k);
     Ok(candidates)
 }
 
-fn select_doubao_task_targets_postgres(
-    dsn: &str,
+async fn query_preferred_trace_channel_id_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    trace_id: i64,
+    model_id: &str,
+) -> Result<Option<i64>, OpenAiV1Error> {
+    query_one_openai(
+        db,
+        backend,
+        "SELECT channel_id FROM requests WHERE trace_id = ? AND model_id = ? AND status = 'completed' AND channel_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        "SELECT channel_id FROM requests WHERE trace_id = $1 AND model_id = $2 AND status = 'completed' AND channel_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        "SELECT channel_id FROM requests WHERE trace_id = ? AND model_id = ? AND status = 'completed' AND channel_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        vec![trace_id.into(), model_id.into()],
+    )
+    .await
+    .map(|row| row.and_then(|row| row.try_get_by_index(0).ok()))
+}
+
+async fn query_channel_routing_stats_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    channel_id: i64,
+) -> Result<ChannelRoutingStats, OpenAiV1Error> {
+    let selection_count = query_one_openai(
+        db,
+        backend,
+        "SELECT COUNT(*) FROM requests WHERE channel_id = ?",
+        "SELECT COUNT(*) FROM requests WHERE channel_id = $1",
+        "SELECT COUNT(*) FROM requests WHERE channel_id = ?",
+        vec![channel_id.into()],
+    )
+    .await?
+    .and_then(|row| row.try_get_by_index(0).ok())
+    .unwrap_or(0);
+    let processing_count = query_one_openai(
+        db,
+        backend,
+        "SELECT COUNT(*) FROM requests WHERE channel_id = ? AND status = 'processing'",
+        "SELECT COUNT(*) FROM requests WHERE channel_id = $1 AND status = 'processing'",
+        "SELECT COUNT(*) FROM requests WHERE channel_id = ? AND status = 'processing'",
+        vec![channel_id.into()],
+    )
+    .await?
+    .and_then(|row| row.try_get_by_index(0).ok())
+    .unwrap_or(0);
+    let statuses = query_all_openai(
+        db,
+        backend,
+        "SELECT status FROM request_executions WHERE channel_id = ? ORDER BY id DESC LIMIT 10",
+        "SELECT status FROM request_executions WHERE channel_id = $1 ORDER BY id DESC LIMIT 10",
+        "SELECT status FROM request_executions WHERE channel_id = ? ORDER BY id DESC LIMIT 10",
+        vec![channel_id.into()],
+    )
+    .await?
+    .into_iter()
+    .filter_map(|row| row.try_get_by_index::<String>(0).ok())
+    .collect::<Vec<_>>();
+    let last_status_failed = statuses.first().is_some_and(|status| status == "failed");
+    let consecutive_failures = statuses.iter().take_while(|status| status.as_str() == "failed").count() as i64;
+    Ok(ChannelRoutingStats {
+        selection_count,
+        processing_count,
+        consecutive_failures,
+        last_status_failed,
+    })
+}
+
+async fn select_doubao_task_targets_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     request: &OpenAiV1ExecutionRequest,
     prepared: &PreparedCompatibilityRequest,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
@@ -1609,27 +549,29 @@ fn select_doubao_task_targets_postgres(
         .ok_or_else(|| OpenAiV1Error::InvalidRequest {
             message: "task id is required".to_owned(),
         })?;
-    let request_hint =
-        find_latest_completed_request_by_external_id_postgres(dsn, "doubao/video_create", task_id)?
-            .ok_or_else(|| OpenAiV1Error::Upstream {
-                status: 404,
-                body: serde_json::json!({"error": {"message": "not found"}}),
-            })?;
-
-    let mut targets = select_inference_targets_postgres(
-        dsn,
+    let request_hint = find_latest_completed_request_by_external_id_seaorm(
+        db,
+        backend,
+        "doubao/video_create",
+        task_id,
+    )
+    .await?
+    .ok_or_else(|| OpenAiV1Error::Upstream {
+        status: 404,
+        body: serde_json::json!({"error": {"message": "not found"}}),
+    })?;
+    let mut targets = select_inference_targets_seaorm(
+        db,
+        backend,
         request_hint.model_id.as_str(),
         request.trace.as_ref().map(|trace| trace.id),
-        PostgresOpenAiV1Service::DEFAULT_MAX_CHANNEL_RETRIES,
+        2,
         prepared.channel_type,
         prepared.model_type,
         None,
-    )?;
-
-    if let Some(index) = targets
-        .iter()
-        .position(|target| target.channel_id == request_hint.channel_id)
-    {
+    )
+    .await?;
+    if let Some(index) = targets.iter().position(|target| target.channel_id == request_hint.channel_id) {
         let preferred = targets.remove(index);
         targets.insert(0, preferred);
         Ok(targets)
@@ -1641,8 +583,32 @@ fn select_doubao_task_targets_postgres(
     }
 }
 
-fn execute_shared_route_postgres<UrlBuilder, ResponseMapper, UsageExtractor>(
-    dsn: &str,
+async fn find_latest_completed_request_by_external_id_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    route_format: &str,
+    external_id: &str,
+) -> Result<Option<StoredRequestRouteHint>, OpenAiV1Error> {
+    query_one_openai(
+        db,
+        backend,
+        "SELECT channel_id, model_id FROM requests WHERE format = ? AND external_id = ? AND status = 'completed' AND channel_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        "SELECT channel_id, model_id FROM requests WHERE format = $1 AND external_id = $2 AND status = 'completed' AND channel_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        "SELECT channel_id, model_id FROM requests WHERE format = ? AND external_id = ? AND status = 'completed' AND channel_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        vec![route_format.into(), external_id.into()],
+    )
+    .await
+    .map(|row| {
+        row.map(|row| StoredRequestRouteHint {
+            channel_id: row.try_get_by_index(0).unwrap_or_default(),
+            model_id: row.try_get_by_index(1).unwrap_or_default(),
+        })
+    })
+}
+
+async fn execute_shared_route_seaorm<UrlBuilder, ResponseMapper, UsageExtractor>(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     request: &OpenAiV1ExecutionRequest,
     route_format: &str,
     upstream_method: reqwest::Method,
@@ -1660,23 +626,17 @@ where
     UsageExtractor: Fn(&Value) -> Option<ExtractedUsage>,
 {
     let masked_request_headers = sanitize_headers_json(upstream_headers);
-    let request_body_json =
-        serde_json::to_string(&request.body).map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to serialize request body: {error}"),
-        })?;
-    let upstream_body_json =
-        serde_json::to_string(upstream_body).map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to serialize upstream request body: {error}"),
-        })?;
-    let stream = request
-        .body
-        .get("stream")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let request_body_json = serde_json::to_string(&request.body).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to serialize request body: {error}"),
+    })?;
+    let upstream_body_json = serde_json::to_string(upstream_body).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to serialize upstream request body: {error}"),
+    })?;
+    let stream = request.body.get("stream").and_then(Value::as_bool).unwrap_or(false);
 
-    let mut client = PostgresOpenAiV1Service::connect_for_execution(dsn)?;
-    let request_id = create_request_postgres(
-        &mut client,
+    let request_id = create_request_seaorm(
+        db,
+        backend,
         &NewRequestRecord {
             api_key_id: request.api_key_id,
             project_id: request.project.id,
@@ -1701,12 +661,14 @@ where
             content_storage_key: None,
             content_saved_at: None,
         },
-    )?;
-    let mut last_error = None;
+    )
+    .await?;
 
+    let mut last_error = None;
     for (index, target) in targets.iter().enumerate() {
-        update_request_result_postgres(
-            &mut client,
+        update_request_result_seaorm(
+            db,
+            backend,
             &UpdateRequestResultRecord {
                 request_id,
                 status: "processing",
@@ -1714,10 +676,12 @@ where
                 response_body_json: None,
                 channel_id: Some(target.channel_id),
             },
-        )?;
+        )
+        .await?;
 
-        let execution_id = create_request_execution_postgres(
-            &mut client,
+        let execution_id = create_request_execution_seaorm(
+            db,
+            backend,
             &NewRequestExecutionRecord {
                 project_id: request.project.id,
                 request_id,
@@ -1737,44 +701,35 @@ where
                 metrics_first_token_latency_ms: None,
                 request_headers_json: masked_request_headers.as_str(),
             },
-        )?;
+        )
+        .await?;
 
-        let attempt_result = (|| -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+        let attempt_result = async {
             let built_headers = build_upstream_headers(upstream_headers, target.api_key.as_str())?;
-            let client_http = reqwest::blocking::Client::new();
+            let client_http = reqwest::Client::new();
             let mut upstream_request = client_http
-                .request(
-                    upstream_method.clone(),
-                    upstream_url_for_target(target).as_str(),
-                )
+                .request(upstream_method.clone(), upstream_url_for_target(target).as_str())
                 .headers(built_headers);
             if matches!(upstream_method, reqwest::Method::POST) {
                 upstream_request = upstream_request.json(upstream_body);
             }
-            let upstream_response =
-                upstream_request
-                    .send()
-                    .map_err(|error| OpenAiV1Error::Internal {
-                        message: format!("Failed to execute upstream request: {error}"),
-                    })?;
-
+            let upstream_response = upstream_request.send().await.map_err(|error| OpenAiV1Error::Internal {
+                message: format!("Failed to execute upstream request: {error}"),
+            })?;
             let status = upstream_response.status().as_u16();
-            let response_text =
-                upstream_response
-                    .text()
-                    .map_err(|error| OpenAiV1Error::Internal {
-                        message: format!("Failed to read upstream response: {error}"),
-                    })?;
-            let raw_response_body: Value =
-                serde_json::from_str(&response_text).map_err(|error| OpenAiV1Error::Internal {
-                    message: format!("Failed to decode upstream response: {error}"),
-                })?;
+            let response_text = upstream_response.text().await.map_err(|error| OpenAiV1Error::Internal {
+                message: format!("Failed to read upstream response: {error}"),
+            })?;
+            let raw_response_body: Value = serde_json::from_str(&response_text).map_err(|error| OpenAiV1Error::Internal {
+                message: format!("Failed to decode upstream response: {error}"),
+            })?;
 
             if (200..300).contains(&status) {
                 let usage = usage_extractor(&raw_response_body);
                 let response_body = response_mapper(raw_response_body)?;
-                complete_execution_postgres(
-                    &mut client,
+                complete_execution_seaorm(
+                    db,
+                    backend,
                     request,
                     route_format,
                     request_id,
@@ -1784,13 +739,12 @@ where
                     response_body,
                     usage,
                 )
+                .await
             } else {
-                Err(OpenAiV1Error::Upstream {
-                    status,
-                    body: raw_response_body,
-                })
+                Err(OpenAiV1Error::Upstream { status, body: raw_response_body })
             }
-        })();
+        }
+        .await;
 
         match attempt_result {
             Ok(response) => return Ok(response),
@@ -1801,19 +755,18 @@ where
                         Some(*status),
                         body.get("id").and_then(Value::as_str),
                     ),
-                    OpenAiV1Error::Internal { .. } | OpenAiV1Error::InvalidRequest { .. } => {
-                        (None, None, None)
-                    }
+                    OpenAiV1Error::Internal { .. } | OpenAiV1Error::InvalidRequest { .. } => (None, None, None),
                 };
-
-                mark_execution_failed_postgres(
-                    &mut client,
+                mark_execution_failed_seaorm(
+                    db,
+                    backend,
                     execution_id,
                     openai_error_message(&error).as_str(),
                     response_body,
                     response_status_code,
                     external_id,
-                )?;
+                )
+                .await?;
 
                 let retryable = should_retry_openai_error(&error);
                 let is_last = index + 1 == targets.len();
@@ -1821,14 +774,15 @@ where
                     last_error = Some(error);
                     continue;
                 }
-
-                mark_request_failed_postgres(
-                    &mut client,
+                mark_request_failed_seaorm(
+                    db,
+                    backend,
                     request_id,
                     Some(target.channel_id),
                     response_body,
                     external_id,
-                )?;
+                )
+                .await?;
                 return Err(error);
             }
         }
@@ -1839,8 +793,9 @@ where
     }))
 }
 
-fn complete_execution_postgres(
-    client: &mut PostgresClient,
+async fn complete_execution_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     request: &OpenAiV1ExecutionRequest,
     route_format: &str,
     request_id: i64,
@@ -1850,17 +805,13 @@ fn complete_execution_postgres(
     response_body: Value,
     usage: Option<ExtractedUsage>,
 ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-    let response_body_json =
-        serde_json::to_string(&response_body).map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to serialize upstream response: {error}"),
-        })?;
-    let external_id = response_body
-        .get("id")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-
-    update_request_result_postgres(
-        client,
+    let response_body_json = serde_json::to_string(&response_body).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to serialize upstream response: {error}"),
+    })?;
+    let external_id = response_body.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
+    update_request_result_seaorm(
+        db,
+        backend,
         &UpdateRequestResultRecord {
             request_id,
             status: "completed",
@@ -1868,9 +819,11 @@ fn complete_execution_postgres(
             response_body_json: Some(response_body_json.as_str()),
             channel_id: Some(target.channel_id),
         },
-    )?;
-    update_request_execution_result_postgres(
-        client,
+    )
+    .await?;
+    update_request_execution_result_seaorm(
+        db,
+        backend,
         &UpdateRequestExecutionResultRecord {
             execution_id,
             status: "completed",
@@ -1879,13 +832,15 @@ fn complete_execution_postgres(
             response_status_code: Some(status as i64),
             error_message: None,
         },
-    )?;
+    )
+    .await?;
 
     if let Some(usage) = usage {
         let usage_cost = compute_usage_cost(&target.model, &usage);
         if let Ok(cost_items_json) = serde_json::to_string(&usage_cost.cost_items) {
-            record_usage_postgres(
-                client,
+            let _ = record_usage_seaorm(
+                db,
+                backend,
                 &NewUsageLogRecord {
                     request_id,
                     api_key_id: request.api_key_id,
@@ -1902,38 +857,25 @@ fn complete_execution_postgres(
                     prompt_write_cached_tokens_1h: usage.prompt_write_cached_tokens_1h,
                     completion_audio_tokens: usage.completion_audio_tokens,
                     completion_reasoning_tokens: usage.completion_reasoning_tokens,
-                    completion_accepted_prediction_tokens: usage
-                        .completion_accepted_prediction_tokens,
-                    completion_rejected_prediction_tokens: usage
-                        .completion_rejected_prediction_tokens,
+                    completion_accepted_prediction_tokens: usage.completion_accepted_prediction_tokens,
+                    completion_rejected_prediction_tokens: usage.completion_rejected_prediction_tokens,
                     source: "api",
                     format: route_format,
                     total_cost: usage_cost.total_cost,
                     cost_items_json: cost_items_json.as_str(),
                     cost_price_reference_id: usage_cost.price_reference_id.as_deref().unwrap_or(""),
                 },
-            )?;
+            )
+            .await;
         }
     }
 
-    Ok(OpenAiV1ExecutionResponse {
-        status,
-        body: response_body,
-    })
+    Ok(OpenAiV1ExecutionResponse { status, body: response_body })
 }
 
-fn should_retry_openai_error(error: &OpenAiV1Error) -> bool {
-    match error {
-        OpenAiV1Error::Internal { .. } => true,
-        OpenAiV1Error::Upstream { status, .. } => {
-            *status == 408 || *status == 409 || *status == 429 || *status >= 500
-        }
-        OpenAiV1Error::InvalidRequest { .. } => false,
-    }
-}
-
-fn mark_request_failed_postgres(
-    client: &mut PostgresClient,
+async fn mark_request_failed_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     request_id: i64,
     channel_id: Option<i64>,
     response_body: Option<&Value>,
@@ -1945,9 +887,9 @@ fn mark_request_failed_postgres(
         .map_err(|error| OpenAiV1Error::Internal {
             message: format!("Failed to serialize failed upstream response: {error}"),
         })?;
-
-    update_request_result_postgres(
-        client,
+    update_request_result_seaorm(
+        db,
+        backend,
         &UpdateRequestResultRecord {
             request_id,
             status: "failed",
@@ -1956,10 +898,12 @@ fn mark_request_failed_postgres(
             channel_id,
         },
     )
+    .await
 }
 
-fn mark_execution_failed_postgres(
-    client: &mut PostgresClient,
+async fn mark_execution_failed_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     execution_id: i64,
     error_message: &str,
     response_body: Option<&Value>,
@@ -1972,9 +916,9 @@ fn mark_execution_failed_postgres(
         .map_err(|error| OpenAiV1Error::Internal {
             message: format!("Failed to serialize failed upstream response: {error}"),
         })?;
-
-    update_request_execution_result_postgres(
-        client,
+    update_request_execution_result_seaorm(
+        db,
+        backend,
         &UpdateRequestExecutionResultRecord {
             execution_id,
             status: "failed",
@@ -1984,328 +928,247 @@ fn mark_execution_failed_postgres(
             error_message: Some(error_message),
         },
     )
+    .await
 }
 
-fn create_request_postgres(
-    client: &mut PostgresClient,
+async fn create_request_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     record: &NewRequestRecord<'_>,
 ) -> Result<i64, OpenAiV1Error> {
-    let params: [&(dyn PostgresToSql + Sync); 22] = [
-        &record.api_key_id,
-        &record.project_id,
-        &record.trace_id,
-        &record.data_storage_id,
-        &record.source,
-        &record.model_id,
-        &record.format,
-        &record.request_headers_json,
-        &record.request_body_json,
-        &record.response_body_json,
-        &record.response_chunks_json,
-        &record.channel_id,
-        &record.external_id,
-        &record.status,
-        &record.stream,
-        &record.client_ip,
-        &record.metrics_latency_ms,
-        &record.metrics_first_token_latency_ms,
-        &record.content_saved,
-        &record.content_storage_id,
-        &record.content_storage_key,
-        &record.content_saved_at,
-    ];
-    client
-        .query_one(
-            "INSERT INTO requests (
-                api_key_id, project_id, trace_id, data_storage_id, source, model_id, format,
-                request_headers, request_body, response_body, response_chunks, channel_id,
-                external_id, status, stream, client_ip, metrics_latency_ms,
-                metrics_first_token_latency_ms, content_saved, content_storage_id,
-                content_storage_key, content_saved_at
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11, $12,
-                $13, $14, $15, $16, $17,
-                $18, $19, $20,
-                $21, $22
-            ) RETURNING id",
-            &params,
-        )
-        .map(|row| row.get(0))
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to persist request: {error}"),
-        })
+    match backend {
+        DatabaseBackend::Sqlite => {
+            let result = execute_openai(
+                db,
+                backend,
+                "INSERT INTO requests (api_key_id, project_id, trace_id, data_storage_id, source, model_id, format, request_headers, request_body, response_body, response_chunks, channel_id, external_id, status, stream, client_ip, metrics_latency_ms, metrics_first_token_latency_ms, content_saved, content_storage_id, content_storage_key, content_saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "",
+                "",
+                vec![
+                    record.api_key_id.into(), record.project_id.into(), record.trace_id.into(), record.data_storage_id.into(),
+                    record.source.into(), record.model_id.into(), record.format.into(), record.request_headers_json.into(),
+                    record.request_body_json.into(), record.response_body_json.into(), record.response_chunks_json.into(),
+                    record.channel_id.into(), record.external_id.into(), record.status.into(), record.stream.into(),
+                    record.client_ip.into(), record.metrics_latency_ms.into(), record.metrics_first_token_latency_ms.into(),
+                    record.content_saved.into(), record.content_storage_id.into(), record.content_storage_key.into(), record.content_saved_at.into(),
+                ],
+            ).await?;
+            last_insert_id_openai(&result, backend)
+        }
+        DatabaseBackend::Postgres => {
+            let row = query_one_openai(
+                db,
+                backend,
+                "",
+                "INSERT INTO requests (api_key_id, project_id, trace_id, data_storage_id, source, model_id, format, request_headers, request_body, response_body, response_chunks, channel_id, external_id, status, stream, client_ip, metrics_latency_ms, metrics_first_token_latency_ms, content_saved, content_storage_id, content_storage_key, content_saved_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id",
+                "",
+                vec![
+                    record.api_key_id.into(), record.project_id.into(), record.trace_id.into(), record.data_storage_id.into(),
+                    record.source.into(), record.model_id.into(), record.format.into(), record.request_headers_json.into(),
+                    record.request_body_json.into(), record.response_body_json.into(), record.response_chunks_json.into(),
+                    record.channel_id.into(), record.external_id.into(), record.status.into(), record.stream.into(),
+                    record.client_ip.into(), record.metrics_latency_ms.into(), record.metrics_first_token_latency_ms.into(),
+                    record.content_saved.into(), record.content_storage_id.into(), record.content_storage_key.into(), record.content_saved_at.into(),
+                ],
+            ).await?;
+            row.ok_or_else(|| OpenAiV1Error::Internal { message: "Failed to persist request".to_owned() })?
+                .try_get_by_index(0)
+                .map_err(map_openai_db_err)
+        }
+        DatabaseBackend::MySql => {
+            let result = execute_openai(
+                db,
+                backend,
+                "",
+                "",
+                "INSERT INTO requests (api_key_id, project_id, trace_id, data_storage_id, source, model_id, format, request_headers, request_body, response_body, response_chunks, channel_id, external_id, status, stream, client_ip, metrics_latency_ms, metrics_first_token_latency_ms, content_saved, content_storage_id, content_storage_key, content_saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                vec![
+                    record.api_key_id.into(), record.project_id.into(), record.trace_id.into(), record.data_storage_id.into(),
+                    record.source.into(), record.model_id.into(), record.format.into(), record.request_headers_json.into(),
+                    record.request_body_json.into(), record.response_body_json.into(), record.response_chunks_json.into(),
+                    record.channel_id.into(), record.external_id.into(), record.status.into(), record.stream.into(),
+                    record.client_ip.into(), record.metrics_latency_ms.into(), record.metrics_first_token_latency_ms.into(),
+                    record.content_saved.into(), record.content_storage_id.into(), record.content_storage_key.into(), record.content_saved_at.into(),
+                ],
+            ).await?;
+            last_insert_id_openai(&result, backend)
+        }
+    }
 }
 
-fn create_request_execution_postgres(
-    client: &mut PostgresClient,
+async fn create_request_execution_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     record: &NewRequestExecutionRecord<'_>,
 ) -> Result<i64, OpenAiV1Error> {
-    let params: [&(dyn PostgresToSql + Sync); 17] = [
-        &record.project_id,
-        &record.request_id,
-        &record.channel_id,
-        &record.data_storage_id,
-        &record.external_id,
-        &record.model_id,
-        &record.format,
-        &record.request_body_json,
-        &record.response_body_json,
-        &record.response_chunks_json,
-        &record.error_message,
-        &record.response_status_code,
-        &record.status,
-        &record.stream,
-        &record.metrics_latency_ms,
-        &record.metrics_first_token_latency_ms,
-        &record.request_headers_json,
-    ];
-    client
-        .query_one(
-            "INSERT INTO request_executions (
-                project_id, request_id, channel_id, data_storage_id, external_id, model_id,
-                format, request_body, response_body, response_chunks, error_message,
-                response_status_code, status, stream, metrics_latency_ms,
-                metrics_first_token_latency_ms, request_headers
-            ) VALUES (
-                $1, $2, $3, $4, $5, $6,
-                $7, $8, $9, $10, $11,
-                $12, $13, $14, $15,
-                $16, $17
-            ) RETURNING id",
-            &params,
-        )
-        .map(|row| row.get(0))
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to persist request execution: {error}"),
-        })
+    match backend {
+        DatabaseBackend::Sqlite => {
+            let result = execute_openai(
+                db,
+                backend,
+                "INSERT INTO request_executions (project_id, request_id, channel_id, data_storage_id, external_id, model_id, format, request_body, response_body, response_chunks, error_message, response_status_code, status, stream, metrics_latency_ms, metrics_first_token_latency_ms, request_headers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "",
+                "",
+                vec![
+                    record.project_id.into(), record.request_id.into(), record.channel_id.into(), record.data_storage_id.into(),
+                    record.external_id.into(), record.model_id.into(), record.format.into(), record.request_body_json.into(),
+                    record.response_body_json.into(), record.response_chunks_json.into(), record.error_message.into(),
+                    record.response_status_code.into(), record.status.into(), record.stream.into(), record.metrics_latency_ms.into(),
+                    record.metrics_first_token_latency_ms.into(), record.request_headers_json.into(),
+                ],
+            ).await?;
+            last_insert_id_openai(&result, backend)
+        }
+        DatabaseBackend::Postgres => {
+            let row = query_one_openai(
+                db,
+                backend,
+                "",
+                "INSERT INTO request_executions (project_id, request_id, channel_id, data_storage_id, external_id, model_id, format, request_body, response_body, response_chunks, error_message, response_status_code, status, stream, metrics_latency_ms, metrics_first_token_latency_ms, request_headers) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id",
+                "",
+                vec![
+                    record.project_id.into(), record.request_id.into(), record.channel_id.into(), record.data_storage_id.into(),
+                    record.external_id.into(), record.model_id.into(), record.format.into(), record.request_body_json.into(),
+                    record.response_body_json.into(), record.response_chunks_json.into(), record.error_message.into(),
+                    record.response_status_code.into(), record.status.into(), record.stream.into(), record.metrics_latency_ms.into(),
+                    record.metrics_first_token_latency_ms.into(), record.request_headers_json.into(),
+                ],
+            ).await?;
+            row.ok_or_else(|| OpenAiV1Error::Internal { message: "Failed to persist request execution".to_owned() })?
+                .try_get_by_index(0)
+                .map_err(map_openai_db_err)
+        }
+        DatabaseBackend::MySql => {
+            let result = execute_openai(
+                db,
+                backend,
+                "",
+                "",
+                "INSERT INTO request_executions (project_id, request_id, channel_id, data_storage_id, external_id, model_id, format, request_body, response_body, response_chunks, error_message, response_status_code, status, stream, metrics_latency_ms, metrics_first_token_latency_ms, request_headers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                vec![
+                    record.project_id.into(), record.request_id.into(), record.channel_id.into(), record.data_storage_id.into(),
+                    record.external_id.into(), record.model_id.into(), record.format.into(), record.request_body_json.into(),
+                    record.response_body_json.into(), record.response_chunks_json.into(), record.error_message.into(),
+                    record.response_status_code.into(), record.status.into(), record.stream.into(), record.metrics_latency_ms.into(),
+                    record.metrics_first_token_latency_ms.into(), record.request_headers_json.into(),
+                ],
+            ).await?;
+            last_insert_id_openai(&result, backend)
+        }
+    }
 }
 
-fn update_request_result_postgres(
-    client: &mut PostgresClient,
+async fn update_request_result_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     record: &UpdateRequestResultRecord<'_>,
 ) -> Result<(), OpenAiV1Error> {
-    let params: [&(dyn PostgresToSql + Sync); 5] = [
-        &record.request_id,
-        &record.channel_id,
-        &record.external_id,
-        &record.response_body_json,
-        &record.status,
-    ];
-    client
-        .execute(
-            "UPDATE requests
-                SET updated_at = CURRENT_TIMESTAMP,
-                    channel_id = COALESCE($2, channel_id),
-                    external_id = COALESCE($3, external_id),
-                    response_body = COALESCE($4, response_body),
-                    status = $5
-              WHERE id = $1",
-            &params,
-        )
-        .map(|_| ())
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to update request: {error}"),
-        })
+    execute_openai(
+        db,
+        backend,
+        "UPDATE requests SET updated_at = CURRENT_TIMESTAMP, channel_id = COALESCE(?, channel_id), external_id = COALESCE(?, external_id), response_body = COALESCE(?, response_body), status = ? WHERE id = ?",
+        "UPDATE requests SET updated_at = CURRENT_TIMESTAMP, channel_id = COALESCE($2, channel_id), external_id = COALESCE($3, external_id), response_body = COALESCE($4, response_body), status = $5 WHERE id = $1",
+        "UPDATE requests SET updated_at = CURRENT_TIMESTAMP, channel_id = COALESCE(?, channel_id), external_id = COALESCE(?, external_id), response_body = COALESCE(?, response_body), status = ? WHERE id = ?",
+        if matches!(backend, DatabaseBackend::Sqlite) {
+            vec![record.channel_id.into(), record.external_id.into(), record.response_body_json.into(), record.status.into(), record.request_id.into()]
+        } else if matches!(backend, DatabaseBackend::MySql) {
+            vec![record.channel_id.into(), record.external_id.into(), record.response_body_json.into(), record.status.into(), record.request_id.into()]
+        } else {
+            vec![record.request_id.into(), record.channel_id.into(), record.external_id.into(), record.response_body_json.into(), record.status.into()]
+        },
+    ).await.map(|_| ())
 }
 
-fn update_request_execution_result_postgres(
-    client: &mut PostgresClient,
+async fn update_request_execution_result_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     record: &UpdateRequestExecutionResultRecord<'_>,
 ) -> Result<(), OpenAiV1Error> {
-    let params: [&(dyn PostgresToSql + Sync); 6] = [
-        &record.execution_id,
-        &record.external_id,
-        &record.response_body_json,
-        &record.response_status_code,
-        &record.error_message,
-        &record.status,
-    ];
-    client
-        .execute(
-            "UPDATE request_executions
-                SET updated_at = CURRENT_TIMESTAMP,
-                    external_id = COALESCE($2, external_id),
-                    response_body = COALESCE($3, response_body),
-                    response_status_code = COALESCE($4, response_status_code),
-                    error_message = COALESCE($5, error_message),
-                    status = $6
-              WHERE id = $1",
-            &params,
-        )
-        .map(|_| ())
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to update request execution: {error}"),
-        })
+    execute_openai(
+        db,
+        backend,
+        "UPDATE request_executions SET updated_at = CURRENT_TIMESTAMP, external_id = COALESCE(?, external_id), response_body = COALESCE(?, response_body), response_status_code = COALESCE(?, response_status_code), error_message = COALESCE(?, error_message), status = ? WHERE id = ?",
+        "UPDATE request_executions SET updated_at = CURRENT_TIMESTAMP, external_id = COALESCE($2, external_id), response_body = COALESCE($3, response_body), response_status_code = COALESCE($4, response_status_code), error_message = COALESCE($5, error_message), status = $6 WHERE id = $1",
+        "UPDATE request_executions SET updated_at = CURRENT_TIMESTAMP, external_id = COALESCE(?, external_id), response_body = COALESCE(?, response_body), response_status_code = COALESCE(?, response_status_code), error_message = COALESCE(?, error_message), status = ? WHERE id = ?",
+        if matches!(backend, DatabaseBackend::Sqlite) {
+            vec![record.external_id.into(), record.response_body_json.into(), record.response_status_code.into(), record.error_message.into(), record.status.into(), record.execution_id.into()]
+        } else if matches!(backend, DatabaseBackend::MySql) {
+            vec![record.external_id.into(), record.response_body_json.into(), record.response_status_code.into(), record.error_message.into(), record.status.into(), record.execution_id.into()]
+        } else {
+            vec![record.execution_id.into(), record.external_id.into(), record.response_body_json.into(), record.response_status_code.into(), record.error_message.into(), record.status.into()]
+        },
+    ).await.map(|_| ())
 }
 
-fn record_usage_postgres(
-    client: &mut PostgresClient,
+async fn record_usage_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
     record: &NewUsageLogRecord<'_>,
 ) -> Result<i64, OpenAiV1Error> {
-    let params: [&(dyn PostgresToSql + Sync); 22] = [
-        &record.request_id,
-        &record.api_key_id,
-        &record.project_id,
-        &record.channel_id,
-        &record.model_id,
-        &record.prompt_tokens,
-        &record.completion_tokens,
-        &record.total_tokens,
-        &record.prompt_audio_tokens,
-        &record.prompt_cached_tokens,
-        &record.prompt_write_cached_tokens,
-        &record.prompt_write_cached_tokens_5m,
-        &record.prompt_write_cached_tokens_1h,
-        &record.completion_audio_tokens,
-        &record.completion_reasoning_tokens,
-        &record.completion_accepted_prediction_tokens,
-        &record.completion_rejected_prediction_tokens,
-        &record.source,
-        &record.format,
-        &record.total_cost,
-        &record.cost_items_json,
-        &record.cost_price_reference_id,
-    ];
-    client
-        .query_one(
-            "INSERT INTO usage_logs (
-                request_id, api_key_id, project_id, channel_id, model_id,
-                prompt_tokens, completion_tokens, total_tokens,
-                prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens,
-                prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h,
-                completion_audio_tokens, completion_reasoning_tokens,
-                completion_accepted_prediction_tokens, completion_rejected_prediction_tokens,
-                source, format, total_cost, cost_items, cost_price_reference_id, deleted_at
-            ) VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8,
-                $9, $10, $11,
-                $12, $13,
-                $14, $15,
-                $16, $17,
-                $18, $19, $20, $21, $22, 0
-            ) RETURNING id",
-            &params,
-        )
-        .map(|row| row.get(0))
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to record usage: {error}"),
-        })
+    match backend {
+        DatabaseBackend::Sqlite => {
+            let result = execute_openai(
+                db,
+                backend,
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                "",
+                "",
+                vec![
+                    record.request_id.into(), record.api_key_id.into(), record.project_id.into(), record.channel_id.into(), record.model_id.into(),
+                    record.prompt_tokens.into(), record.completion_tokens.into(), record.total_tokens.into(), record.prompt_audio_tokens.into(), record.prompt_cached_tokens.into(),
+                    record.prompt_write_cached_tokens.into(), record.prompt_write_cached_tokens_5m.into(), record.prompt_write_cached_tokens_1h.into(), record.completion_audio_tokens.into(),
+                    record.completion_reasoning_tokens.into(), record.completion_accepted_prediction_tokens.into(), record.completion_rejected_prediction_tokens.into(),
+                    record.source.into(), record.format.into(), record.total_cost.into(), record.cost_items_json.into(), record.cost_price_reference_id.into(),
+                ],
+            ).await?;
+            last_insert_id_openai(&result, backend)
+        }
+        DatabaseBackend::Postgres => {
+            let row = query_one_openai(
+                db,
+                backend,
+                "",
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, deleted_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, 0) RETURNING id",
+                "",
+                vec![
+                    record.request_id.into(), record.api_key_id.into(), record.project_id.into(), record.channel_id.into(), record.model_id.into(),
+                    record.prompt_tokens.into(), record.completion_tokens.into(), record.total_tokens.into(), record.prompt_audio_tokens.into(), record.prompt_cached_tokens.into(),
+                    record.prompt_write_cached_tokens.into(), record.prompt_write_cached_tokens_5m.into(), record.prompt_write_cached_tokens_1h.into(), record.completion_audio_tokens.into(),
+                    record.completion_reasoning_tokens.into(), record.completion_accepted_prediction_tokens.into(), record.completion_rejected_prediction_tokens.into(),
+                    record.source.into(), record.format.into(), record.total_cost.into(), record.cost_items_json.into(), record.cost_price_reference_id.into(),
+                ],
+            ).await?;
+            row.ok_or_else(|| OpenAiV1Error::Internal { message: "Failed to record usage".to_owned() })?
+                .try_get_by_index(0)
+                .map_err(map_openai_db_err)
+        }
+        DatabaseBackend::MySql => {
+            let result = execute_openai(
+                db,
+                backend,
+                "",
+                "",
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                vec![
+                    record.request_id.into(), record.api_key_id.into(), record.project_id.into(), record.channel_id.into(), record.model_id.into(),
+                    record.prompt_tokens.into(), record.completion_tokens.into(), record.total_tokens.into(), record.prompt_audio_tokens.into(), record.prompt_cached_tokens.into(),
+                    record.prompt_write_cached_tokens.into(), record.prompt_write_cached_tokens_5m.into(), record.prompt_write_cached_tokens_1h.into(), record.completion_audio_tokens.into(),
+                    record.completion_reasoning_tokens.into(), record.completion_accepted_prediction_tokens.into(), record.completion_rejected_prediction_tokens.into(),
+                    record.source.into(), record.format.into(), record.total_cost.into(), record.cost_items_json.into(), record.cost_price_reference_id.into(),
+                ],
+            ).await?;
+            last_insert_id_openai(&result, backend)
+        }
+    }
 }
 
-fn find_latest_completed_request_by_external_id_postgres(
-    dsn: &str,
-    route_format: &str,
-    external_id: &str,
-) -> Result<Option<StoredRequestRouteHint>, OpenAiV1Error> {
-    let mut client = PostgresOpenAiV1Service::connect_for_execution(dsn)?;
-    client
-        .query_opt(
-            "SELECT channel_id, model_id
-               FROM requests
-              WHERE format = $1
-                AND external_id = $2
-                AND status = 'completed'
-                AND channel_id IS NOT NULL
-              ORDER BY id DESC
-              LIMIT 1",
-            &[&route_format, &external_id],
-        )
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to resolve Doubao task origin: {error}"),
-        })
-        .map(|row| {
-            row.map(|row| StoredRequestRouteHint {
-                channel_id: row.get(0),
-                model_id: row.get(1),
-            })
-        })
-}
-
-fn query_preferred_trace_channel_id_postgres(
-    client: &mut PostgresClient,
-    trace_id: i64,
-    model_id: &str,
-) -> Result<Option<i64>, OpenAiV1Error> {
-    let params: [&(dyn PostgresToSql + Sync); 2] = [&trace_id, &model_id];
-    client
-        .query_opt(
-            "SELECT channel_id
-               FROM requests
-              WHERE trace_id = $1
-                AND model_id = $2
-                AND status = 'completed'
-                AND channel_id IS NOT NULL
-              ORDER BY id DESC
-              LIMIT 1",
-            &params,
-        )
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to resolve upstream target: {error}"),
-        })
-        .map(|row| row.map(|row| row.get(0)))
-}
-
-fn query_channel_routing_stats_postgres(
-    client: &mut PostgresClient,
-    channel_id: i64,
-) -> Result<ChannelRoutingStats, OpenAiV1Error> {
-    let selection_count: i64 = client
-        .query_one(
-            "SELECT COUNT(*) FROM requests WHERE channel_id = $1",
-            &[&channel_id],
-        )
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to resolve upstream target: {error}"),
-        })?
-        .get(0);
-    let processing_count: i64 = client
-        .query_one(
-            "SELECT COUNT(*) FROM requests WHERE channel_id = $1 AND status = 'processing'",
-            &[&channel_id],
-        )
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to resolve upstream target: {error}"),
-        })?
-        .get(0);
-    let statuses = client
-        .query(
-            "SELECT status FROM request_executions WHERE channel_id = $1 ORDER BY id DESC LIMIT 10",
-            &[&channel_id],
-        )
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to resolve upstream target: {error}"),
-        })?
-        .into_iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<Vec<_>>();
-
-    let last_status_failed = statuses.first().is_some_and(|status| status == "failed");
-    let consecutive_failures = statuses
-        .iter()
-        .take_while(|status| status.as_str() == "failed")
-        .count() as i64;
-
-    Ok(ChannelRoutingStats {
-        selection_count,
-        processing_count,
-        consecutive_failures,
-        last_status_failed,
-    })
-}
-
-fn stored_model_record_from_postgres_row(row: Row) -> StoredModelRecord {
-    StoredModelRecord {
-        id: row.get(0),
-        created_at: row.get(1),
-        developer: row.get(2),
-        model_id: row.get(3),
-        model_type: row.get(4),
-        name: row.get(5),
-        icon: row.get(6),
-        remark: row.get(7),
-        model_card_json: row.get(8),
+fn should_retry_openai_error(error: &OpenAiV1Error) -> bool {
+    match error {
+        OpenAiV1Error::Internal { .. } => true,
+        OpenAiV1Error::Upstream { status, .. } => {
+            *status == 408 || *status == 409 || *status == 429 || *status >= 500
+        }
+        OpenAiV1Error::InvalidRequest { .. } => false,
     }
 }
 
@@ -2366,7 +1229,6 @@ pub struct ChannelRoutingStats {
     pub last_status_failed: bool,
 }
 
-#[cfg(test)]
 pub struct NewChannelRecord<'a> {
     pub name: &'a str,
     pub channel_type: &'a str,
@@ -2383,7 +1245,6 @@ pub struct NewChannelRecord<'a> {
     pub remark: &'a str,
 }
 
-#[cfg(test)]
 pub struct NewModelRecord<'a> {
     pub developer: &'a str,
     pub model_id: &'a str,
@@ -2491,7 +1352,7 @@ pub(crate) struct ModelInclude {
 }
 
 impl ModelInclude {
-    fn parse(include: Option<&str>) -> Self {
+    pub(crate) fn parse(include: Option<&str>) -> Self {
         match include.map(str::trim).filter(|value| !value.is_empty()) {
             None => Self::default(),
             Some("all") => Self {
@@ -2581,7 +1442,7 @@ pub(crate) struct ComputedUsageCost {
 }
 
 impl StoredModelRecord {
-    fn into_openai_model(self, include: &ModelInclude) -> OpenAiModel {
+    pub(crate) fn into_openai_model(self, include: &ModelInclude) -> OpenAiModel {
         let parsed = parse_model_card(self.model_card_json.as_str());
         let created = parse_created_at_to_unix(self.created_at.as_str());
 
@@ -2622,7 +1483,7 @@ impl StoredModelRecord {
 }
 
 impl SelectedOpenAiTarget {
-    fn upstream_url(&self, route: OpenAiV1Route) -> String {
+    pub(crate) fn upstream_url(&self, route: OpenAiV1Route) -> String {
         let trimmed = self.base_url.trim_end_matches('/');
         match route {
             OpenAiV1Route::ChatCompletions => format!("{trimmed}/chat/completions"),
@@ -4002,30 +2863,6 @@ pub(crate) fn parse_created_at_to_unix(raw: &str) -> i64 {
         .unwrap_or(0)
 }
 
-pub(crate) fn list_enabled_model_records(
-    connection: &Connection,
-) -> rusqlite::Result<Vec<StoredModelRecord>> {
-    let mut statement = connection.prepare(
-        "SELECT id, created_at, developer, model_id, type, name, icon, remark, model_card
-         FROM models WHERE deleted_at = 0 AND status = 'enabled' ORDER BY id ASC",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(StoredModelRecord {
-            id: row.get(0)?,
-            created_at: row.get(1)?,
-            developer: row.get(2)?,
-            model_id: row.get(3)?,
-            model_type: row.get(4)?,
-            name: row.get(5)?,
-            icon: row.get(6)?,
-            remark: row.get(7)?,
-            model_card_json: row.get(8)?,
-        })
-    })?;
-
-    rows.collect()
-}
-
 pub(crate) fn model_supported_by_channel(supported_models_json: &str, model_id: &str) -> bool {
     serde_json::from_str::<Vec<String>>(supported_models_json)
         .unwrap_or_default()
@@ -4071,65 +2908,6 @@ pub(crate) fn compare_selection_pressure(
         })
 }
 
-pub(crate) fn query_preferred_trace_channel_id(
-    connection: &Connection,
-    trace_id: i64,
-    model_id: &str,
-) -> rusqlite::Result<Option<i64>> {
-    connection
-        .query_row(
-            "SELECT channel_id
-             FROM requests
-             WHERE trace_id = ?1
-               AND model_id = ?2
-               AND status = 'completed'
-               AND channel_id IS NOT NULL
-             ORDER BY id DESC
-             LIMIT 1",
-            params![trace_id, model_id],
-            |row| row.get(0),
-        )
-        .optional()
-}
-
-pub(crate) fn query_channel_routing_stats(
-    connection: &Connection,
-    channel_id: i64,
-) -> rusqlite::Result<ChannelRoutingStats> {
-    let selection_count = connection.query_row(
-        "SELECT COUNT(*) FROM requests WHERE channel_id = ?1",
-        [channel_id],
-        |row| row.get(0),
-    )?;
-    let processing_count = connection.query_row(
-        "SELECT COUNT(*) FROM requests WHERE channel_id = ?1 AND status = 'processing'",
-        [channel_id],
-        |row| row.get(0),
-    )?;
-
-    let mut statement = connection.prepare(
-        "SELECT status FROM request_executions
-         WHERE channel_id = ?1
-         ORDER BY id DESC
-         LIMIT 10",
-    )?;
-    let rows = statement.query_map([channel_id], |row| row.get::<_, String>(0))?;
-    let statuses = rows.collect::<rusqlite::Result<Vec<_>>>()?;
-
-    let last_status_failed = statuses.first().is_some_and(|status| status == "failed");
-    let consecutive_failures = statuses
-        .iter()
-        .take_while(|status| status.as_str() == "failed")
-        .count() as i64;
-
-    Ok(ChannelRoutingStats {
-        selection_count,
-        processing_count,
-        consecutive_failures,
-        last_status_failed,
-    })
-}
-
 pub(crate) fn extract_channel_api_key(credentials_json: &str) -> String {
     let value = serde_json::from_str::<Value>(credentials_json).unwrap_or(Value::Null);
     value
@@ -4149,27 +2927,4 @@ pub(crate) fn extract_channel_api_key(credentials_json: &str) -> String {
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_default()
-}
-
-#[cfg(test)]
-pub(crate) fn query_channel_id(connection: &Connection, name: &str) -> rusqlite::Result<i64> {
-    connection.query_row(
-        "SELECT id FROM channels WHERE name = ?1 AND deleted_at = 0 LIMIT 1",
-        [name],
-        |row| row.get(0),
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn query_model_id(
-    connection: &Connection,
-    developer: &str,
-    model_id: &str,
-    model_type: &str,
-) -> rusqlite::Result<i64> {
-    connection.query_row(
-        "SELECT id FROM models WHERE developer = ?1 AND model_id = ?2 AND type = ?3 AND deleted_at = 0 LIMIT 1",
-        params![developer, model_id, model_type],
-        |row| row.get(0),
-    )
 }

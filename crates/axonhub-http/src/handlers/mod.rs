@@ -13,57 +13,68 @@ use crate::errors::{
     compatibility_internal_error_response, error_response, internal_error_response,
     not_implemented_response,
 };
+use crate::middleware::ActixRequest;
 use crate::models::{
     CompatibilityRoute, GraphqlExecutionResult, GraphqlRequestPayload, HealthResponse,
     OpenAiV1ExecutionRequest, OpenAiV1Route,
 };
-use crate::state::{request_context_snapshot, HttpState, OpenAiV1Capability, RequestAuthContext, RequestContextState};
-use axum::body;
-use axum::http::{Method, StatusCode, Uri};
-use axum::response::{IntoResponse, Response};
-use axum::{extract::State, Json};
+use crate::state::{
+    HttpState, OpenAiV1Capability, RequestAuthContext, RequestContextState,
+    request_context_snapshot,
+};
+use actix_web::body::BoxBody;
+use actix_web::http::{Method, StatusCode, Uri};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, web};
+use bytes::Bytes;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-pub(crate) async fn health(State(state): State<HttpState>) -> Json<HealthResponse> {
-    Json(HealthResponse {
+pub(crate) async fn health(state: web::Data<HttpState>) -> web::Json<HealthResponse> {
+    web::Json(HealthResponse {
         status: "ok",
-        service: state.service_name,
-        version: state.version,
+        service: state.service_name.clone(),
+        version: state.version.clone(),
         backend: "rust",
         migration_status: "progressive cutover",
         api_parity: "supported_scope",
         legacy_go_backend_present: false,
-        config_source: state.config_source,
+        config_source: state.config_source.clone(),
     })
 }
 
-pub(crate) async fn debug_context(request: axum::extract::Request) -> impl IntoResponse {
+pub(crate) async fn debug_context(request: ActixRequest) -> HttpResponse {
     let context = request
+        .0
         .extensions()
         .get::<RequestContextState>()
         .cloned()
         .unwrap_or_default();
 
     let snapshot = request_context_snapshot(context);
-    (StatusCode::OK, Json(snapshot))
+    HttpResponse::Ok().json(snapshot)
 }
 
 pub(crate) async fn execute_openai_request(
     state: HttpState,
-    mut request: axum::extract::Request,
+    request: HttpRequest,
+    body: Bytes,
     original_uri: Uri,
     route: OpenAiV1Route,
-) -> Response {
+) -> HttpResponse {
     if let OpenAiV1Capability::Unsupported { message } = &state.openai_v1 {
-        return not_implemented_response("/v1/*", Method::POST, original_uri, None)
-            .with_message(message);
+        return not_implemented_response(
+            "/v1/*",
+            Method::POST,
+            original_uri,
+            None,
+        )
+        .with_message(message);
     }
 
-    let body = match parse_json_body(&mut request).await {
+    let body = match parse_json_body(body) {
         Ok(body) => body,
         Err(response) => return response,
     };
@@ -73,26 +84,26 @@ pub(crate) async fn execute_openai_request(
 
 pub(crate) async fn execute_openai_request_with_body(
     state: HttpState,
-    request: axum::extract::Request,
+    request: HttpRequest,
     original_uri: Uri,
     route: OpenAiV1Route,
     body: Value,
     channel_hint_id: Option<i64>,
-) -> Response {
+) -> HttpResponse {
     let openai = match &state.openai_v1 {
         OpenAiV1Capability::Unsupported { message } => {
-            return not_implemented_response("/v1/*", Method::POST, original_uri, None)
-                .with_message(message)
+            return not_implemented_response(
+                "/v1/*",
+                Method::POST,
+                original_uri,
+                None,
+            )
+            .with_message(message)
         }
         OpenAiV1Capability::Available { openai } => openai,
     };
 
-    let execution_request = match build_openai_execution_request(
-        request,
-        body,
-        HashMap::new(),
-        channel_hint_id,
-    ) {
+    let execution_request = match build_openai_execution_request(request, body, HashMap::new(), channel_hint_id) {
         Ok(payload) => payload,
         Err(response) => return response,
     };
@@ -103,7 +114,7 @@ pub(crate) async fn execute_openai_request_with_body(
     match execution_result {
         Ok(Ok(result)) => {
             let status = StatusCode::from_u16(result.status).unwrap_or(StatusCode::OK);
-            (status, Json(result.body)).into_response()
+            actix_json_response(status, result.body)
         }
         Ok(Err(error)) => crate::errors::openai_error_response(error),
         Err(_) => internal_error_response("OpenAI `/v1` execution task failed".to_owned()),
@@ -112,11 +123,12 @@ pub(crate) async fn execute_openai_request_with_body(
 
 pub(crate) async fn execute_compatibility_request(
     state: HttpState,
-    mut request: axum::extract::Request,
+    request: HttpRequest,
+    body: Bytes,
     original_uri: Uri,
     route: CompatibilityRoute,
     path_params: HashMap<String, String>,
-) -> Response {
+) -> HttpResponse {
     let openai = match &state.openai_v1 {
         OpenAiV1Capability::Unsupported { message } => {
             let route_family = match route {
@@ -146,7 +158,7 @@ pub(crate) async fn execute_compatibility_request(
         | CompatibilityRoute::JinaEmbeddings
         | CompatibilityRoute::GeminiGenerateContent
         | CompatibilityRoute::GeminiStreamGenerateContent
-        | CompatibilityRoute::DoubaoCreateTask => match parse_json_body_for_compatibility(&mut request, route).await {
+        | CompatibilityRoute::DoubaoCreateTask => match parse_json_body_for_compatibility(body, route) {
             Ok(body) => body,
             Err(response) => return response,
         },
@@ -164,7 +176,7 @@ pub(crate) async fn execute_compatibility_request(
     match execution_result {
         Ok(Ok(result)) => {
             let status = StatusCode::from_u16(result.status).unwrap_or(StatusCode::OK);
-            (status, Json(result.body)).into_response()
+            actix_json_response(status, result.body)
         }
         Ok(Err(error)) => compatibility_error_response(route, error),
         Err(_) => compatibility_internal_error_response(route),
@@ -172,23 +184,14 @@ pub(crate) async fn execute_compatibility_request(
 }
 
 pub(crate) async fn execute_graphql_request<Executor>(
-    mut request: axum::extract::Request,
+    body: Bytes,
     executor: Executor,
-) -> Response
+) -> HttpResponse
 where
-    Executor: FnOnce(GraphqlRequestPayload) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>>,
+    Executor: FnOnce(
+        GraphqlRequestPayload,
+    ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>>,
 {
-    let body = match body::to_bytes(std::mem::take(request.body_mut()), usize::MAX).await {
-        Ok(body) => body,
-        Err(_) => {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                "Bad Request",
-                "Invalid request format",
-            )
-        }
-    };
-
     if body.is_empty() {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -210,7 +213,7 @@ where
 
     let result = executor(payload).await;
     let status = StatusCode::from_u16(result.status).unwrap_or(StatusCode::OK);
-    (status, Json(result.body)).into_response()
+    actix_json_response(status, result.body)
 }
 
 pub(crate) fn graphql_playground_html(endpoint: &str) -> String {
@@ -229,20 +232,17 @@ pub(crate) fn provider_edge_admin_port(
 }
 
 pub(crate) fn build_openai_execution_request(
-    mut request: axum::extract::Request,
+    request: HttpRequest,
     body: Value,
     path_params: HashMap<String, String>,
     channel_hint_id: Option<i64>,
-) -> Result<OpenAiV1ExecutionRequest, Response> {
+) -> Result<OpenAiV1ExecutionRequest, HttpResponse> {
     let path = request.uri().path().to_owned();
-    let query = request
-        .uri()
-        .query()
-        .map(parse_query_pairs)
-        .unwrap_or_default();
+    let query = request.uri().query().map(parse_query_pairs).unwrap_or_default();
     let context = request
-        .extensions_mut()
-        .remove::<RequestContextState>()
+        .extensions()
+        .get::<RequestContextState>()
+        .cloned()
         .unwrap_or_default();
 
     let project = context.project.ok_or_else(|| {
@@ -269,7 +269,12 @@ pub(crate) fn build_openai_execution_request(
     let headers = request
         .headers()
         .iter()
-        .filter_map(|(name, value)| value.to_str().ok().map(|current| (name.as_str().to_owned(), current.to_owned())))
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|current| (name.as_str().to_owned(), current.to_owned()))
+        })
         .collect::<HashMap<_, _>>();
 
     Ok(OpenAiV1ExecutionRequest {
@@ -286,11 +291,7 @@ pub(crate) fn build_openai_execution_request(
     })
 }
 
-pub(crate) async fn parse_json_body(request: &mut axum::extract::Request) -> Result<Value, Response> {
-    let body = body::to_bytes(std::mem::take(request.body_mut()), usize::MAX)
-        .await
-        .map_err(|_| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid request format"))?;
-
+pub(crate) fn parse_json_body(body: Bytes) -> Result<Value, HttpResponse> {
     if body.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -303,14 +304,10 @@ pub(crate) async fn parse_json_body(request: &mut axum::extract::Request) -> Res
         .map_err(|_| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid request format"))
 }
 
-async fn parse_json_body_for_compatibility(
-    request: &mut axum::extract::Request,
+fn parse_json_body_for_compatibility(
+    body: Bytes,
     route: CompatibilityRoute,
-) -> Result<Value, Response> {
-    let body = body::to_bytes(std::mem::take(request.body_mut()), usize::MAX)
-        .await
-        .map_err(|_| compatibility_bad_request_response(route, "Invalid request format"))?;
-
+) -> Result<Value, HttpResponse> {
     if body.is_empty() {
         return Err(compatibility_bad_request_response(route, "Request body is empty"));
     }
@@ -338,4 +335,8 @@ pub(crate) fn parse_query_pairs(raw: &str) -> HashMap<String, String> {
             (key.to_owned(), value.to_owned())
         })
         .collect()
+}
+
+pub(crate) fn actix_json_response(status: StatusCode, value: Value) -> HttpResponse<BoxBody> {
+    HttpResponse::build(status).json(value)
 }

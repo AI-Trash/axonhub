@@ -4,38 +4,37 @@ use crate::errors::{
 };
 use crate::handlers::{execute_openai_request_with_body, parse_json_body};
 use crate::models::{
-    InitializeSystemRequest, InitializeSystemResponse, SignInRequest, SignInResponse,
-    SystemStatusResponse, OpenAiV1Route, ProjectContext,
+    InitializeSystemRequest, InitializeSystemResponse, OpenAiV1Route, ProjectContext,
+    SignInRequest, SignInResponse, SystemStatusResponse,
 };
-use crate::ports::{AdminError, SignInError, SystemInitializeError, SystemQueryError};
 use crate::state::{
     AdminCapability, HttpState, IdentityCapability, OpenAiV1Capability, RequestAuthContext,
     RequestContextState, SystemBootstrapCapability,
 };
-use axum::body;
-use axum::extract::{rejection::JsonRejection, OriginalUri, Path, Request, State};
-use axum::http::{Method, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::Json;
+use actix_web::body::BoxBody;
+use actix_web::http::{Method, StatusCode};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, web};
+use bytes::Bytes;
 use serde_json::Value;
 use std::borrow::Cow;
 
 pub(crate) async fn system_status(
-    State(state): State<HttpState>,
-    OriginalUri(original_uri): OriginalUri,
-) -> impl IntoResponse {
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+) -> HttpResponse {
     match &state.system_bootstrap {
         SystemBootstrapCapability::Unsupported { message } => {
-            not_implemented_response("/admin/system/status", Method::GET, original_uri, None)
-                .with_message(message)
+            not_implemented_response(
+                "/admin/system/status",
+                Method::GET,
+                request.uri().clone(),
+                None,
+            )
+            .with_message(message)
         }
         SystemBootstrapCapability::Available { system } => match system.is_initialized() {
-            Ok(is_initialized) => (
-                StatusCode::OK,
-                Json(SystemStatusResponse { is_initialized }),
-            )
-                .into_response(),
-            Err(SystemQueryError::QueryFailed) => {
+            Ok(is_initialized) => HttpResponse::Ok().json(SystemStatusResponse { is_initialized }),
+            Err(crate::ports::SystemQueryError::QueryFailed) => {
                 internal_error_response("Failed to check system status".to_owned())
             }
         },
@@ -43,17 +42,22 @@ pub(crate) async fn system_status(
 }
 
 pub(crate) async fn initialize_system(
-    State(state): State<HttpState>,
-    OriginalUri(original_uri): OriginalUri,
-    payload: Result<Json<InitializeSystemRequest>, JsonRejection>,
-) -> impl IntoResponse {
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    body: Bytes,
+) -> HttpResponse {
     match &state.system_bootstrap {
         SystemBootstrapCapability::Unsupported { message } => {
-            not_implemented_response("/admin/system/initialize", Method::POST, original_uri, None)
-                .with_message(message)
+            not_implemented_response(
+                "/admin/system/initialize",
+                Method::POST,
+                request.uri().clone(),
+                None,
+            )
+            .with_message(message)
         }
         SystemBootstrapCapability::Available { system } => {
-            let Json(request) = match payload {
+            let request: InitializeSystemRequest = match serde_json::from_slice(&body) {
                 Ok(payload) => payload,
                 Err(_) => return invalid_initialize_request_response(),
             };
@@ -65,39 +69,32 @@ pub(crate) async fn initialize_system(
             match system.is_initialized() {
                 Ok(true) => return already_initialized_response(),
                 Ok(false) => {}
-                Err(SystemQueryError::QueryFailed) => {
+                Err(crate::ports::SystemQueryError::QueryFailed) => {
                     return internal_error_response("Failed to check initialization status".to_owned())
                 }
             }
 
             match system.initialize(&request) {
-                Ok(()) => (
-                    StatusCode::OK,
-                    Json(InitializeSystemResponse {
-                        success: true,
-                        message: "System initialized successfully".to_owned(),
-                    }),
-                )
-                    .into_response(),
-                Err(SystemInitializeError::AlreadyInitialized) => already_initialized_response(),
-                Err(SystemInitializeError::InitializeFailed(message)) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(InitializeSystemResponse {
+                Ok(()) => HttpResponse::Ok().json(InitializeSystemResponse {
+                    success: true,
+                    message: "System initialized successfully".to_owned(),
+                }),
+                Err(crate::ports::SystemInitializeError::AlreadyInitialized) => {
+                    already_initialized_response()
+                }
+                Err(crate::ports::SystemInitializeError::InitializeFailed(message)) => {
+                    HttpResponse::InternalServerError().json(InitializeSystemResponse {
                         success: false,
                         message: format!("Failed to initialize system: {message}"),
-                    }),
-                )
-                    .into_response(),
+                    })
+                }
             }
         }
     }
 }
 
-pub(crate) async fn sign_in(
-    State(state): State<HttpState>,
-    payload: Result<Json<SignInRequest>, JsonRejection>,
-) -> Response {
-    let Json(request) = match payload {
+pub(crate) async fn sign_in(state: web::Data<HttpState>, body: Bytes) -> HttpResponse {
+    let request: SignInRequest = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {
             return error_response(
@@ -114,20 +111,16 @@ pub(crate) async fn sign_in(
     };
 
     match identity.admin_signin(&request) {
-        Ok(result) => (
-            StatusCode::OK,
-            Json(SignInResponse {
-                user: result.user,
-                token: result.token,
-            }),
-        )
-            .into_response(),
-        Err(SignInError::InvalidCredentials) => error_response(
+        Ok(result) => HttpResponse::Ok().json(SignInResponse {
+            user: result.user,
+            token: result.token,
+        }),
+        Err(crate::ports::SignInError::InvalidCredentials) => error_response(
             StatusCode::UNAUTHORIZED,
             "Unauthorized",
             "Invalid email or password",
         ),
-        Err(SignInError::Internal) => error_response(
+        Err(crate::ports::SignInError::Internal) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal Server Error",
             "Internal server error",
@@ -136,17 +129,16 @@ pub(crate) async fn sign_in(
 }
 
 pub(crate) async fn download_request_content(
-    State(state): State<HttpState>,
-    Path(request_id): Path<i64>,
-    OriginalUri(original_uri): OriginalUri,
-    request: Request,
-) -> Response {
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    request_id: web::Path<i64>,
+) -> HttpResponse<BoxBody> {
     let admin = match &state.admin {
         AdminCapability::Unsupported { message } => {
             return not_implemented_response(
                 "/admin/requests/:request_id/content",
                 Method::GET,
-                original_uri,
+                request.uri().clone(),
                 None,
             )
             .with_message(message)
@@ -182,47 +174,48 @@ pub(crate) async fn download_request_content(
     let user = match user {
         Some(user) => user,
         None => {
-            return error_response(
-                StatusCode::UNAUTHORIZED,
-                "Unauthorized",
-                "Invalid token",
-            )
+            return error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid token")
         }
     };
 
-    match admin.download_request_content(project_id, request_id, user) {
-        Ok(content) => Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "application/octet-stream")
-            .header(
+    match admin.download_request_content(project_id, request_id.into_inner(), user) {
+        Ok(content) => HttpResponse::Ok()
+            .insert_header(("Content-Type", "application/octet-stream"))
+            .insert_header((
                 "Content-Disposition",
                 format!("attachment; filename={:?}", content.filename),
-            )
-            .header("Cache-Control", "private, max-age=0, no-cache")
-            .header("Content-Length", content.bytes.len().to_string())
-            .body(body::Body::from(content.bytes))
-            .unwrap_or_else(|_| internal_error_response("Failed to build content response".to_owned())),
-        Err(AdminError::BadRequest { message }) => {
+            ))
+            .insert_header(("Cache-Control", "private, max-age=0, no-cache"))
+            .insert_header(("Content-Length", content.bytes.len().to_string()))
+            .body(content.bytes),
+        Err(crate::ports::AdminError::BadRequest { message }) => {
             error_response(StatusCode::BAD_REQUEST, "Bad Request", &message)
         }
-        Err(AdminError::NotFound { message }) => {
+        Err(crate::ports::AdminError::NotFound { message }) => {
             error_response(StatusCode::NOT_FOUND, "Not Found", &message)
         }
-        Err(AdminError::Internal { message }) => internal_error_response(message),
+        Err(crate::ports::AdminError::Internal { message }) => internal_error_response(message),
     }
 }
 
 pub(crate) async fn playground_chat(
-    State(state): State<HttpState>,
-    OriginalUri(original_uri): OriginalUri,
-    mut request: Request,
-) -> Response {
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    body: Bytes,
+) -> HttpResponse {
+    let original_uri = request.uri().clone();
+
     if let OpenAiV1Capability::Unsupported { message } = &state.openai_v1 {
-        return not_implemented_response("/admin/playground/chat", Method::POST, original_uri, None)
-            .with_message(message);
+        return not_implemented_response(
+            "/admin/playground/chat",
+            Method::POST,
+            original_uri,
+            None,
+        )
+        .with_message(message);
     }
 
-    let body = match parse_json_body(&mut request).await {
+    let body = match parse_json_body(body) {
         Ok(body) => body,
         Err(response) => return response,
     };
@@ -231,7 +224,7 @@ pub(crate) async fn playground_chat(
         return response;
     }
 
-    if let Some(response) = apply_playground_project_context(&state, &mut request) {
+    if let Some(response) = apply_playground_project_context(&state, &request) {
         return response;
     }
 
@@ -241,7 +234,7 @@ pub(crate) async fn playground_chat(
     };
 
     execute_openai_request_with_body(
-        state,
+        state.get_ref().clone(),
         request,
         original_uri,
         OpenAiV1Route::ChatCompletions,
@@ -251,7 +244,7 @@ pub(crate) async fn playground_chat(
     .await
 }
 
-fn validate_playground_chat_request(body: &Value) -> Option<Response> {
+fn validate_playground_chat_request(body: &Value) -> Option<HttpResponse> {
     let body_object = body.as_object()?;
 
     if body_object
@@ -269,7 +262,7 @@ fn validate_playground_chat_request(body: &Value) -> Option<Response> {
     None
 }
 
-fn resolve_playground_channel_override(request: &Request) -> Result<Option<i64>, Response> {
+fn resolve_playground_channel_override(request: &HttpRequest) -> Result<Option<i64>, HttpResponse> {
     let query_channel_id = request_query_value(request, "channel_id")
         .map(|value| {
             decode_query_component(value).map_err(|()| {
@@ -289,7 +282,10 @@ fn resolve_playground_channel_override(request: &Request) -> Result<Option<i64>,
         .map_err(|()| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid channel ID"))
 }
 
-fn apply_playground_project_context(state: &HttpState, request: &mut Request) -> Option<Response> {
+fn apply_playground_project_context(
+    state: &HttpState,
+    request: &HttpRequest,
+) -> Option<HttpResponse> {
     if request
         .extensions()
         .get::<RequestContextState>()
@@ -303,17 +299,15 @@ fn apply_playground_project_context(state: &HttpState, request: &mut Request) ->
         return None;
     };
 
-    let project_id = decode_query_component(project_id).map_err(|()| {
-        error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid project ID")
-    });
+    let project_id = decode_query_component(project_id)
+        .map_err(|()| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid project ID"));
     let project_id = match project_id {
         Ok(project_id) => project_id,
         Err(response) => return Some(response),
     };
 
-    let project_id = parse_project_query_value(project_id.as_ref()).map_err(|()| {
-        error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid project ID")
-    });
+    let project_id = parse_project_query_value(project_id.as_ref())
+        .map_err(|()| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid project ID"));
     let project_id = match project_id {
         Ok(project_id) => project_id,
         Err(response) => return Some(response),
@@ -345,8 +339,9 @@ fn apply_playground_project_context(state: &HttpState, request: &mut Request) ->
     };
 
     let mut context = request
-        .extensions_mut()
-        .remove::<RequestContextState>()
+        .extensions()
+        .get::<RequestContextState>()
+        .cloned()
         .unwrap_or_default();
     context.project = Some(ProjectContext {
         id: project.id,
@@ -358,7 +353,7 @@ fn apply_playground_project_context(state: &HttpState, request: &mut Request) ->
     None
 }
 
-fn request_query_value<'a>(request: &'a Request, key: &str) -> Option<&'a str> {
+fn request_query_value<'a>(request: &'a HttpRequest, key: &str) -> Option<&'a str> {
     request.uri().query().and_then(|query| {
         query.split('&').find_map(|pair| {
             let (current_key, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -369,7 +364,7 @@ fn request_query_value<'a>(request: &'a Request, key: &str) -> Option<&'a str> {
     })
 }
 
-fn request_header_value<'a>(request: &'a Request, key: &str) -> Option<&'a str> {
+fn request_header_value<'a>(request: &'a HttpRequest, key: &str) -> Option<&'a str> {
     request
         .headers()
         .get(key)

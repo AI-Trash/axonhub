@@ -1,13 +1,122 @@
 use super::*;
-use axum::body::Body;
-use axum::http::{Method, Request, StatusCode};
-use axum::response::Response;
+use actix_web::body::{BoxBody, MessageBody};
+use actix_web::dev::ServiceResponse;
+use actix_web::http::{Method, StatusCode};
+use actix_web::test as actix_test;
 use serde_json::json;
 use serde_json::Value;
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
-use tower::util::ServiceExt;
+
+#[derive(Clone)]
+struct TestApp {
+    state: HttpState,
+    http_metrics: HttpMetricsCapability,
+}
+
+impl TestApp {
+    fn new(state: HttpState) -> Self {
+        Self {
+            state,
+            http_metrics: HttpMetricsCapability::Disabled,
+        }
+    }
+
+    fn with_metrics(state: HttpState, http_metrics: HttpMetricsCapability) -> Self {
+        Self {
+            state,
+            http_metrics,
+        }
+    }
+
+    async fn oneshot(&self, request: TestHttpRequest) -> Result<ServiceResponse<BoxBody>, actix_web::Error> {
+        let app = actix_test::init_service(router_with_metrics_and_base_path(
+            self.state.clone(),
+            self.http_metrics.clone(),
+            "/",
+        ))
+        .await;
+
+        let mut actix_request = actix_test::TestRequest::default()
+            .method(Method::from_bytes(request.method.as_bytes()).expect("valid method"))
+            .uri(&request.uri);
+        for (name, value) in &request.headers {
+            actix_request = actix_request.insert_header((name.as_str(), value.as_str()));
+        }
+
+        Ok(actix_test::call_service(&app, actix_request.set_payload(request.body).to_request()).await)
+    }
+}
+
+fn router(state: HttpState) -> TestApp {
+    TestApp::new(state)
+}
+
+fn router_with_metrics(state: HttpState, http_metrics_capability: HttpMetricsCapability) -> TestApp {
+    TestApp::with_metrics(state, http_metrics_capability)
+}
+
+struct Body;
+
+impl Body {
+    fn empty() -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn from(value: impl Into<Vec<u8>>) -> Vec<u8> {
+        value.into()
+    }
+}
+
+struct Request;
+
+impl Request {
+    fn builder() -> TestRequestBuilder {
+        TestRequestBuilder::default()
+    }
+}
+
+#[derive(Default)]
+struct TestRequestBuilder {
+    method: Option<String>,
+    uri: Option<String>,
+    headers: Vec<(String, String)>,
+}
+
+impl TestRequestBuilder {
+    fn uri(mut self, uri: impl Into<String>) -> Self {
+        self.uri = Some(uri.into());
+        self
+    }
+
+    fn method(mut self, method: impl ToString) -> Self {
+        self.method = Some(method.to_string());
+        self
+    }
+
+    fn header(mut self, name: impl ToString, value: impl ToString) -> Self {
+        self.headers.push((name.to_string(), value.to_string()));
+        self
+    }
+
+    fn body(self, body: Vec<u8>) -> Result<TestHttpRequest, Infallible> {
+        Ok(TestHttpRequest {
+            method: self.method.unwrap_or_else(|| "GET".to_owned()),
+            uri: self.uri.unwrap_or_else(|| "/".to_owned()),
+            headers: self.headers,
+            body,
+        })
+    }
+}
+
+struct TestHttpRequest {
+    method: String,
+    uri: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RecordedHttpMetric {
@@ -524,10 +633,12 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         state
     }
 
-    async fn read_json(response: Response) -> Value {
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
+    async fn read_json<B>(response: ServiceResponse<B>) -> Value
+    where
+        B: MessageBody + 'static,
+        B::Error: std::fmt::Debug,
+    {
+        let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
         serde_json::from_slice(&body).unwrap()
     }
 
@@ -810,7 +921,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             .to_str()
             .unwrap()
             .contains("video.mp4"));
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
         assert_eq!(body.as_ref(), b"video-content");
     }
 
@@ -1907,7 +2018,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             .await
             .unwrap();
         assert_eq!(stream_response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(stream_response.into_body(), usize::MAX).await.unwrap();
+        let body = actix_web::body::to_bytes(stream_response.into_body()).await.unwrap();
         let payload = String::from_utf8(body.to_vec()).unwrap();
         assert!(payload.contains("hello from gemini stream"));
         assert!(payload.starts_with('['));
@@ -2011,7 +2122,11 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             )
             .await
             .unwrap();
-        assert_eq!(unsupported_response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(unsupported_response.status(), StatusCode::NOT_IMPLEMENTED);
+        let unsupported_json = read_json(unsupported_response).await;
+        assert_eq!(unsupported_json["error"], "not_implemented");
+        assert_eq!(unsupported_json["route_family"], "/*");
+        assert_eq!(unsupported_json["path"], "/doubao/v3/contents/generations/status");
     }
 
     #[tokio::test]
@@ -2251,7 +2366,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             .await
             .unwrap();
         assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
-        let delete_body = axum::body::to_bytes(delete_response.into_body(), usize::MAX)
+        let delete_body = actix_web::body::to_bytes(delete_response.into_body())
             .await
             .unwrap();
         assert!(delete_body.is_empty());
@@ -2451,4 +2566,34 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             assert_eq!(json["migration_status"], "progressive cutover", "{path}");
             assert_eq!(json["legacy_go_backend_present"], false, "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn root_unmatched_routes_keep_structured_truthful_501_payloads() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/totally-unported-surface")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let json = read_json(response).await;
+        assert_eq!(json["error"], "not_implemented");
+        assert_eq!(json["route_family"], "/*");
+        assert_eq!(json["method"], "GET");
+        assert_eq!(json["path"], "/totally-unported-surface");
+        assert_eq!(json["migration_status"], "progressive cutover");
+        assert_eq!(json["legacy_go_backend_present"], false);
     }

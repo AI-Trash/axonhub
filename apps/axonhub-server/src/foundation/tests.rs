@@ -6,7 +6,7 @@ use super::{
         SCOPE_READ_USERS, SCOPE_READ_SETTINGS, SCOPE_WRITE_API_KEYS, SCOPE_WRITE_SETTINGS,
         SCOPE_WRITE_USERS,
     },
-    graphql::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
+    graphql_sqlite_support::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
     identity_service::SqliteIdentityService,
     openai_v1::{
         NewChannelRecord, NewModelRecord, NewRequestExecutionRecord, NewRequestRecord,
@@ -20,17 +20,20 @@ use super::{
     system::{ensure_identity_tables, hash_password, SqliteBootstrapService},
 };
 use axonhub_http::{
-    router, AdminCapability, AdminError, AdminGraphqlCapability, AdminPort,
+    router as http_router, AdminCapability, AdminError, AdminGraphqlCapability, AdminPort,
     AuthUserContext, HttpState, IdentityCapability, IdentityPort, InitializeSystemRequest,
     OpenAiV1Capability, OpenAiV1ExecutionRequest, OpenAiV1Route, OpenApiGraphqlCapability,
     OpenAiV1Port, ProjectContext, ProviderEdgeAdminCapability, RequestContextCapability, SignInRequest,
     SystemBootstrapCapability, SystemBootstrapPort, TraceConfig,
 };
-use axum::body::Body;
-use axum::http::{Method, Request, StatusCode};
+use actix_web::body::{BoxBody, MessageBody};
+use actix_web::dev::ServiceResponse;
+use actix_web::http::{Method, StatusCode};
+use actix_web::test as actix_test;
 use rusqlite::{params, Connection};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -38,7 +41,101 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tower::util::ServiceExt;
+
+#[derive(Clone)]
+struct TestApp {
+    state: HttpState,
+}
+
+impl TestApp {
+    fn new(state: HttpState) -> Self {
+        Self { state }
+    }
+
+    async fn oneshot(&self, request: TestHttpRequest) -> Result<ServiceResponse<BoxBody>, actix_web::Error> {
+        let app = actix_test::init_service(http_router(self.state.clone())).await;
+        let mut actix_request = actix_test::TestRequest::default()
+            .method(Method::from_bytes(request.method.as_bytes()).expect("valid method"))
+            .uri(&request.uri);
+        for (name, value) in &request.headers {
+            actix_request = actix_request.insert_header((name.as_str(), value.as_str()));
+        }
+        Ok(actix_test::call_service(&app, actix_request.set_payload(request.body).to_request()).await)
+    }
+}
+
+async fn read_json_response<B>(response: ServiceResponse<B>) -> Value
+where
+    B: MessageBody + 'static,
+    B::Error: std::fmt::Debug,
+{
+    let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+fn router(state: HttpState) -> TestApp {
+    TestApp::new(state)
+}
+
+struct Body;
+
+impl Body {
+    fn empty() -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn from(value: impl Into<Vec<u8>>) -> Vec<u8> {
+        value.into()
+    }
+}
+
+struct Request;
+
+impl Request {
+    fn builder() -> TestRequestBuilder {
+        TestRequestBuilder::default()
+    }
+}
+
+#[derive(Default)]
+struct TestRequestBuilder {
+    method: Option<String>,
+    uri: Option<String>,
+    headers: Vec<(String, String)>,
+}
+
+impl TestRequestBuilder {
+    fn uri(mut self, uri: impl Into<String>) -> Self {
+        self.uri = Some(uri.into());
+        self
+    }
+
+    fn method(mut self, method: impl ToString) -> Self {
+        self.method = Some(method.to_string());
+        self
+    }
+
+    fn header(mut self, name: impl ToString, value: impl ToString) -> Self {
+        self.headers.push((name.to_string(), value.to_string()));
+        self
+    }
+
+    fn body(self, body: Vec<u8>) -> Result<TestHttpRequest, Infallible> {
+        Ok(TestHttpRequest {
+            method: self.method.unwrap_or_else(|| "GET".to_owned()),
+            uri: self.uri.unwrap_or_else(|| "/".to_owned()),
+            headers: self.headers,
+            body,
+        })
+    }
+}
+
+struct TestHttpRequest {
+    method: String,
+    uri: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
 
     fn temp_sqlite_path(name: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -142,7 +239,7 @@ use tower::util::ServiceExt;
     fn graphql_test_app(
         foundation: Arc<SqliteFoundation>,
         bootstrap: SqliteBootstrapService,
-    ) -> axum::Router {
+    ) -> TestApp {
         router(HttpState {
             service_name: "AxonHub".to_owned(),
             version: "v0.9.20".to_owned(),
@@ -3107,13 +3204,6 @@ use tower::util::ServiceExt;
         assert!(doubao_channels.iter().all(|channel_id| *channel_id == doubao_channels[0]));
 
         std::fs::remove_file(db_path).ok();
-    }
-
-    async fn read_json_response(response: axum::response::Response) -> Value {
-        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        serde_json::from_slice(&body).unwrap()
     }
 
     fn mock_openai_server_url() -> &'static str {

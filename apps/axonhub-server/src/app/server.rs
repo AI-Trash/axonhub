@@ -1,17 +1,12 @@
 use anyhow::{Context, Result};
+use actix_web::{HttpServer, dev::ServerHandle};
 use axonhub_config::load;
-use axonhub_http::{router, router_with_metrics, HttpMetricsCapability, HttpState, TraceConfig};
-use axum::Router;
+use axonhub_http::{router_with_metrics_and_base_path, HttpMetricsCapability, HttpState, TraceConfig};
 use std::net::SocketAddr;
 use std::process;
 
 use super::build_info::version;
-use super::capabilities::{
-    build_admin_capability, build_admin_graphql_capability, build_identity_capability,
-    build_openai_v1_capability, build_openapi_graphql_capability,
-    build_provider_edge_admin_capability, build_system_bootstrap_capability,
-    build_request_context_capability,
-};
+use super::capabilities::build_server_capabilities;
 use super::metrics::MetricsRuntime;
 
 pub(crate) async fn start_server() -> Result<()> {
@@ -27,6 +22,12 @@ pub(crate) async fn start_server() -> Result<()> {
         .context("server.port must be between 1 and 65535")?;
 
     let address = format!("{}:{port}", loaded.config.server.host);
+    let capabilities = build_server_capabilities(
+        &loaded.config.db.dialect,
+        &loaded.config.db.dsn,
+        loaded.config.server.api.auth.allow_no_auth,
+        version(),
+    );
     let state = HttpState {
         service_name: loaded.config.server.name.clone(),
         version: version().to_owned(),
@@ -34,32 +35,14 @@ pub(crate) async fn start_server() -> Result<()> {
             .source
             .as_ref()
             .map(|path| path.display().to_string()),
-        system_bootstrap: build_system_bootstrap_capability(
-            &loaded.config.db.dialect,
-            &loaded.config.db.dsn,
-            version(),
-        ),
-        identity: build_identity_capability(
-            &loaded.config.db.dialect,
-            &loaded.config.db.dsn,
-            loaded.config.server.api.auth.allow_no_auth,
-        ),
-        request_context: build_request_context_capability(
-            &loaded.config.db.dialect,
-            &loaded.config.db.dsn,
-            loaded.config.server.api.auth.allow_no_auth,
-        ),
-        openai_v1: build_openai_v1_capability(&loaded.config.db.dialect, &loaded.config.db.dsn),
-        admin: build_admin_capability(&loaded.config.db.dialect, &loaded.config.db.dsn),
-        admin_graphql: build_admin_graphql_capability(&loaded.config.db.dialect, &loaded.config.db.dsn),
-        openapi_graphql: build_openapi_graphql_capability(
-            &loaded.config.db.dialect,
-            &loaded.config.db.dsn,
-        ),
-        provider_edge_admin: build_provider_edge_admin_capability(
-            &loaded.config.db.dialect,
-            &loaded.config.db.dsn,
-        ),
+        system_bootstrap: capabilities.system_bootstrap,
+        identity: capabilities.identity,
+        request_context: capabilities.request_context,
+        openai_v1: capabilities.openai_v1,
+        admin: capabilities.admin,
+        admin_graphql: capabilities.admin_graphql,
+        openapi_graphql: capabilities.openapi_graphql,
+        provider_edge_admin: capabilities.provider_edge_admin,
         allow_no_auth: loaded.config.server.api.auth.allow_no_auth,
         trace_config: TraceConfig {
             thread_header: Some(loaded.config.server.trace.thread_header.clone()),
@@ -73,32 +56,41 @@ pub(crate) async fn start_server() -> Result<()> {
     };
 
     let metrics_runtime = MetricsRuntime::new(&loaded.config.metrics, &loaded.config.server.name)?;
-    let app = if let Some(metrics_runtime) = metrics_runtime.as_ref() {
-        mount_base_path(
-            router_with_metrics(
-                state,
-                HttpMetricsCapability::Available {
-                    recorder: metrics_runtime.recorder(),
-                },
-            ),
-            &loaded.config.server.base_path,
-        )
+    let http_metrics = if let Some(metrics_runtime) = metrics_runtime.as_ref() {
+        HttpMetricsCapability::Available {
+            recorder: metrics_runtime.recorder(),
+        }
     } else {
-        mount_base_path(router(state), &loaded.config.server.base_path)
+        HttpMetricsCapability::Disabled
     };
-    let listener = tokio::net::TcpListener::bind(&address)
-        .await
-        .with_context(|| format!("Failed to bind {address}"))?;
 
-    let listener_address = listener.local_addr()?;
+    let state_for_server = state.clone();
+    let base_path = loaded.config.server.base_path.clone();
+    let server = HttpServer::new(move || {
+        router_with_metrics_and_base_path(
+            state_for_server.clone(),
+            http_metrics.clone(),
+            &base_path,
+        )
+    })
+    .disable_signals()
+    .bind(&address)
+    .with_context(|| format!("Failed to bind {address}"))?;
+
+    let listener_address = server.addrs().first().copied().context("No HTTP listener address bound")?;
     let service_name = loaded.config.server.name.clone();
 
-    for line in startup_messages(&service_name, listener_address, loaded.config.metrics.enabled) {
+    for line in startup_messages(
+        &service_name,
+        listener_address,
+        loaded.config.metrics.enabled,
+    ) {
         println!("{line}");
     }
 
-    let server_result = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+    let server = server.run();
+    let server_handle = server.handle();
+    let server_result = run_server_with_shutdown(server, server_handle)
         .await
         .context("HTTP server exited unexpectedly");
 
@@ -109,18 +101,21 @@ pub(crate) async fn start_server() -> Result<()> {
     server_result
 }
 
-pub(crate) fn mount_base_path(app: Router, base_path: &str) -> Router {
-    let normalized = base_path.trim();
-    if normalized.is_empty() || normalized == "/" {
-        return app;
-    }
-
-    let prefixed = format!("/{}", normalized.trim_matches('/'));
-    Router::new().nest(&prefixed, app)
-}
-
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+async fn run_server_with_shutdown(
+    server: actix_web::dev::Server,
+    handle: ServerHandle,
+) -> std::io::Result<()> {
+    tokio::select! {
+        result = server => result,
+        _ = shutdown_signal() => {
+            handle.stop(true).await;
+            Ok(())
+        }
+    }
 }
 
 pub(crate) fn startup_messages(

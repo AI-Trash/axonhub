@@ -1,226 +1,295 @@
+use crate::errors::not_implemented_response;
 use crate::handlers;
 use crate::middleware::{
-    apply_request_context, record_http_metrics, require_admin_jwt, require_api_key_or_no_auth,
-    require_gemini_key, require_service_api_key,
+    admin_auth, api_key_auth, gemini_auth, http_metrics, request_context, service_api_key_auth,
 };
 use crate::state::{HttpMetricsCapability, HttpState};
-use axum::middleware::from_fn_with_state;
-use axum::routing::{any, delete, get, post};
-use axum::Router;
+use actix_web::dev::{ServiceFactory, ServiceRequest, ServiceResponse};
+use actix_web::web::{self, ServiceConfig};
+use actix_web::App;
 
-pub(crate) fn admin_public_routes() -> Router<HttpState> {
-    Router::new()
-        .route("/system/status", get(handlers::admin::system_status))
-        .route(
-            "/system/initialize",
-            post(handlers::admin::initialize_system),
-        )
-        .route("/auth/signin", post(handlers::admin::sign_in))
+fn configure_admin_public(cfg: &mut ServiceConfig) {
+    cfg.service(
+        web::resource("/system/status").route(web::get().to(handlers::admin::system_status)),
+    )
+    .service(
+        web::resource("/system/initialize").route(web::post().to(handlers::admin::initialize_system)),
+    )
+    .service(web::resource("/auth/signin").route(web::post().to(handlers::admin::sign_in)));
 }
 
-pub(crate) fn admin_protected_routes(state: &HttpState) -> Router<HttpState> {
-    Router::new()
-        .route("/debug/context", get(handlers::debug_context))
-        .route(
-            "/playground",
-            get(handlers::graphql::admin_graphql_playground),
+fn configure_admin_protected(cfg: &mut ServiceConfig) {
+    cfg.service(web::resource("/debug/context").route(web::get().to(handlers::debug_context)))
+        .service(
+            web::resource("/playground")
+                .route(web::get().to(handlers::graphql::admin_graphql_playground)),
         )
-        .route("/playground/chat", post(handlers::admin::playground_chat))
-        .route("/graphql", post(handlers::graphql::admin_graphql))
-        .route(
-            "/codex/oauth/start",
-            post(handlers::provider_edge::start_codex_oauth),
+        .service(
+            web::resource("/playground/chat").route(web::post().to(handlers::admin::playground_chat)),
         )
-        .route(
-            "/codex/oauth/exchange",
-            post(handlers::provider_edge::exchange_codex_oauth),
+        .service(web::resource("/graphql").route(web::post().to(handlers::graphql::admin_graphql)))
+        .service(
+            web::resource("/codex/oauth/start")
+                .route(web::post().to(handlers::provider_edge::start_codex_oauth)),
         )
-        .route(
-            "/claudecode/oauth/start",
-            post(handlers::provider_edge::start_claudecode_oauth),
+        .service(
+            web::resource("/codex/oauth/exchange")
+                .route(web::post().to(handlers::provider_edge::exchange_codex_oauth)),
         )
-        .route(
-            "/claudecode/oauth/exchange",
-            post(handlers::provider_edge::exchange_claudecode_oauth),
+        .service(
+            web::resource("/claudecode/oauth/start")
+                .route(web::post().to(handlers::provider_edge::start_claudecode_oauth)),
         )
-        .route(
-            "/antigravity/oauth/start",
-            post(handlers::provider_edge::start_antigravity_oauth),
+        .service(
+            web::resource("/claudecode/oauth/exchange")
+                .route(web::post().to(handlers::provider_edge::exchange_claudecode_oauth)),
         )
-        .route(
-            "/antigravity/oauth/exchange",
-            post(handlers::provider_edge::exchange_antigravity_oauth),
+        .service(
+            web::resource("/antigravity/oauth/start")
+                .route(web::post().to(handlers::provider_edge::start_antigravity_oauth)),
         )
-        .route(
-            "/copilot/oauth/start",
-            post(handlers::provider_edge::start_copilot_oauth),
+        .service(
+            web::resource("/antigravity/oauth/exchange")
+                .route(web::post().to(handlers::provider_edge::exchange_antigravity_oauth)),
         )
-        .route(
-            "/copilot/oauth/poll",
-            post(handlers::provider_edge::poll_copilot_oauth),
+        .service(
+            web::resource("/copilot/oauth/start")
+                .route(web::post().to(handlers::provider_edge::start_copilot_oauth)),
         )
-        .route(
-            "/requests/:request_id/content",
-            get(handlers::admin::download_request_content),
+        .service(
+            web::resource("/copilot/oauth/poll")
+                .route(web::post().to(handlers::provider_edge::poll_copilot_oauth)),
         )
-        .layer(from_fn_with_state(state.clone(), apply_request_context))
-        .layer(from_fn_with_state(state.clone(), require_admin_jwt))
+        .service(
+            web::resource("/requests/{request_id}/content")
+                .route(web::get().to(handlers::admin::download_request_content)),
+        )
+        .default_service(web::route().to(handlers::unported::unported_admin));
 }
 
-pub(crate) fn openai_v1_routes(state: &HttpState) -> Router<HttpState> {
-    Router::new()
-        .route("/debug/context", any(handlers::debug_context))
-        .route("/models", get(handlers::openai_v1::list_openai_models))
-        .route(
-            "/chat/completions",
-            post(handlers::openai_v1::openai_chat_completions),
+fn configure_openai_v1(cfg: &mut ServiceConfig) {
+    cfg.service(web::resource("/debug/context").route(web::to(handlers::debug_context)))
+        .service(web::resource("/models").route(web::get().to(handlers::openai_v1::list_openai_models)))
+        .service(
+            web::resource("/chat/completions")
+                .route(web::post().to(handlers::openai_v1::openai_chat_completions)),
         )
-        .route("/responses", post(handlers::openai_v1::openai_responses))
-        .route("/embeddings", post(handlers::openai_v1::openai_embeddings))
-        .route("/videos", post(handlers::openai_v1::openai_videos_create))
-        .route("/videos/:id", get(handlers::openai_v1::openai_videos_get))
-        .route(
-            "/videos/:id",
-            delete(handlers::openai_v1::openai_videos_delete),
+        .service(
+            web::resource("/responses").route(web::post().to(handlers::openai_v1::openai_responses)),
         )
-        .route("/rerank", post(handlers::jina::jina_rerank))
-        .route("/messages", post(handlers::anthropic::anthropic_messages))
-        .route("/", any(handlers::unported::unported_v1))
-        .fallback(handlers::unported::unported_v1)
-        .layer(from_fn_with_state(state.clone(), apply_request_context))
-        .layer(from_fn_with_state(
-            state.clone(),
-            require_api_key_or_no_auth,
-        ))
+        .service(
+            web::resource("/embeddings").route(web::post().to(handlers::openai_v1::openai_embeddings)),
+        )
+        .service(
+            web::resource("/videos").route(web::post().to(handlers::openai_v1::openai_videos_create)),
+        )
+        .service(
+            web::resource("/videos/{id}")
+                .route(web::get().to(handlers::openai_v1::openai_videos_get))
+                .route(web::delete().to(handlers::openai_v1::openai_videos_delete)),
+        )
+        .service(web::resource("/rerank").route(web::post().to(handlers::jina::jina_rerank)))
+        .service(
+            web::resource("/messages").route(web::post().to(handlers::anthropic::anthropic_messages)),
+        )
+        .service(web::resource("/").route(web::to(handlers::unported::unported_v1)))
+        .default_service(web::route().to(handlers::unported::unported_v1));
 }
 
-pub(crate) fn jina_routes(state: &HttpState) -> Router<HttpState> {
-    Router::new()
-        .route("/debug/context", any(handlers::debug_context))
-        .route("/embeddings", post(handlers::jina::jina_embeddings))
-        .route("/rerank", post(handlers::jina::jina_rerank))
-        .layer(from_fn_with_state(state.clone(), apply_request_context))
-        .layer(from_fn_with_state(
-            state.clone(),
-            require_api_key_or_no_auth,
-        ))
+fn configure_jina(cfg: &mut ServiceConfig) {
+    cfg.service(web::resource("/debug/context").route(web::to(handlers::debug_context)))
+        .service(web::resource("/embeddings").route(web::post().to(handlers::jina::jina_embeddings)))
+        .service(web::resource("/rerank").route(web::post().to(handlers::jina::jina_rerank)));
 }
 
-pub(crate) fn anthropic_routes(state: &HttpState) -> Router<HttpState> {
-    Router::new()
-        .route("/debug/context", any(handlers::debug_context))
-        .route("/messages", post(handlers::anthropic::anthropic_messages))
-        .route("/models", get(handlers::anthropic::list_anthropic_models))
-        .layer(from_fn_with_state(state.clone(), apply_request_context))
-        .layer(from_fn_with_state(
-            state.clone(),
-            require_api_key_or_no_auth,
-        ))
+fn configure_anthropic(cfg: &mut ServiceConfig) {
+    cfg.service(web::resource("/debug/context").route(web::to(handlers::debug_context)))
+        .service(
+            web::resource("/messages").route(web::post().to(handlers::anthropic::anthropic_messages)),
+        )
+        .service(
+            web::resource("/models").route(web::get().to(handlers::anthropic::list_anthropic_models)),
+        );
 }
 
-pub(crate) fn v1beta_routes(state: &HttpState) -> Router<HttpState> {
-    Router::new()
-        .route("/models", get(handlers::gemini::list_gemini_models))
-        .route(
-            "/models/*action",
-            post(handlers::gemini::gemini_generate_content),
+fn configure_v1beta(cfg: &mut ServiceConfig) {
+    cfg.service(web::resource("/models").route(web::get().to(handlers::gemini::list_gemini_models)))
+        .service(
+            web::resource("/models/{action:.*}")
+                .route(web::post().to(handlers::gemini::gemini_generate_content)),
         )
-        .layer(from_fn_with_state(state.clone(), apply_request_context))
-        .layer(from_fn_with_state(state.clone(), require_gemini_key))
+        .default_service(web::route().to(handlers::unported::unported_gemini));
 }
 
-pub(crate) fn openapi_routes(state: &HttpState) -> Router<HttpState> {
-    Router::new()
-        .route("/debug/context", any(handlers::debug_context))
-        .route(
-            "/v1/playground",
-            get(handlers::graphql::openapi_graphql_playground),
+fn configure_openapi(cfg: &mut ServiceConfig) {
+    cfg.service(web::resource("/debug/context").route(web::to(handlers::debug_context)))
+        .service(
+            web::resource("/v1/playground")
+                .route(web::get().to(handlers::graphql::openapi_graphql_playground)),
         )
-        .route("/v1/graphql", post(handlers::graphql::openapi_graphql))
-        .layer(from_fn_with_state(state.clone(), apply_request_context))
-        .layer(from_fn_with_state(state.clone(), require_service_api_key))
+        .service(
+            web::resource("/v1/graphql").route(web::post().to(handlers::graphql::openapi_graphql)),
+        );
 }
 
-pub(crate) fn doubao_routes(state: &HttpState) -> Router<HttpState> {
-    Router::new()
-        .route(
-            "/doubao/v3/debug/context",
-            any(handlers::debug_context)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(
-                    state.clone(),
-                    require_api_key_or_no_auth,
-                )),
-        )
-        .route(
-            "/doubao/v3/contents/generations/tasks",
-            post(handlers::doubao::doubao_create_task)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(
-                    state.clone(),
-                    require_api_key_or_no_auth,
-                )),
-        )
-        .route(
-            "/doubao/v3/contents/generations/tasks/:id",
-            get(handlers::doubao::doubao_get_task)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(
-                    state.clone(),
-                    require_api_key_or_no_auth,
-                )),
-        )
-        .route(
-            "/doubao/v3/contents/generations/tasks/:id",
-            delete(handlers::doubao::doubao_delete_task)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(
-                    state.clone(),
-                    require_api_key_or_no_auth,
-                )),
-        )
+fn configure_doubao(cfg: &mut ServiceConfig) {
+    cfg.service(
+        web::scope("/doubao/v3")
+            .service(
+                web::resource("/debug/context")
+                    .wrap(request_context())
+                    .wrap(api_key_auth())
+                    .route(web::to(handlers::debug_context)),
+            )
+            .service(
+                web::resource("/contents/generations/tasks")
+                    .wrap(request_context())
+                    .wrap(api_key_auth())
+                    .route(web::post().to(handlers::doubao::doubao_create_task)),
+            )
+            .service(
+                web::resource("/contents/generations/tasks/{id}")
+                    .wrap(request_context())
+                    .wrap(api_key_auth())
+                    .route(web::get().to(handlers::doubao::doubao_get_task))
+                    .route(web::delete().to(handlers::doubao::doubao_delete_task)),
+            ),
+    );
 }
 
-pub(crate) fn gemini_routes(state: &HttpState) -> Router<HttpState> {
-    Router::new()
-        .route(
-            "/gemini/:gemini_api_version/debug/context",
-            any(handlers::debug_context)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
-        .route(
-            "/gemini/:gemini_api_version/models",
-            get(handlers::gemini::list_gemini_models)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
-        .route(
-            "/gemini/:gemini_api_version/models/*action",
-            post(handlers::gemini::gemini_generate_content)
-                .layer(from_fn_with_state(state.clone(), apply_request_context))
-                .layer(from_fn_with_state(state.clone(), require_gemini_key)),
-        )
+fn configure_gemini(cfg: &mut ServiceConfig) {
+    cfg.service(
+        web::scope("/gemini/{gemini_api_version}")
+            .service(
+                web::resource("/debug/context")
+                    .wrap(request_context())
+                    .wrap(gemini_auth())
+                    .route(web::to(handlers::debug_context)),
+            )
+            .service(
+                web::resource("/models")
+                    .wrap(request_context())
+                    .wrap(gemini_auth())
+                    .route(web::get().to(handlers::gemini::list_gemini_models)),
+            )
+            .service(
+                web::resource("/models/{action:.*}")
+                    .wrap(request_context())
+                    .wrap(gemini_auth())
+                    .route(web::post().to(handlers::gemini::gemini_generate_content)),
+            )
+            .default_service(
+                web::route()
+                    .wrap(request_context())
+                    .wrap(gemini_auth())
+                    .to(handlers::unported::unported_gemini),
+            ),
+    );
 }
 
-pub fn router(state: HttpState) -> Router {
+fn configure_http_routes(cfg: &mut ServiceConfig) {
+    cfg.service(web::resource("/health").route(web::get().to(handlers::health)))
+        .service(
+            web::scope("/admin")
+                .configure(configure_admin_public)
+                .service(
+                    web::scope("")
+                        .wrap(request_context())
+                        .wrap(admin_auth())
+                        .configure(configure_admin_protected),
+                ),
+        )
+        .service(
+            web::scope("/v1")
+                .wrap(request_context())
+                .wrap(api_key_auth())
+                .configure(configure_openai_v1),
+        )
+        .service(
+            web::scope("/jina/v1")
+                .wrap(request_context())
+                .wrap(api_key_auth())
+                .configure(configure_jina),
+        )
+        .service(
+            web::scope("/anthropic/v1")
+                .wrap(request_context())
+                .wrap(api_key_auth())
+                .configure(configure_anthropic),
+        )
+        .configure(configure_doubao)
+        .configure(configure_gemini)
+        .service(
+            web::scope("/v1beta")
+                .wrap(request_context())
+                .wrap(gemini_auth())
+                .configure(configure_v1beta),
+        )
+        .service(
+            web::scope("/openapi")
+                .wrap(request_context())
+                .wrap(service_api_key_auth())
+                .configure(configure_openapi),
+        );
+}
+
+pub fn router(
+    state: HttpState,
+) -> App<
+    impl ServiceFactory<
+        ServiceRequest,
+        Config = (),
+        Response = ServiceResponse,
+        Error = actix_web::Error,
+        InitError = (),
+    >,
+> {
     router_with_metrics(state, HttpMetricsCapability::Disabled)
 }
 
-pub fn router_with_metrics(state: HttpState, http_metrics: HttpMetricsCapability) -> Router {
-    Router::new()
-        .route("/health", get(handlers::health))
-        .nest(
-            "/admin",
-            admin_public_routes().merge(admin_protected_routes(&state)),
-        )
-        .nest("/v1", openai_v1_routes(&state))
-        .nest("/jina/v1", jina_routes(&state))
-        .nest("/anthropic/v1", anthropic_routes(&state))
-        .merge(doubao_routes(&state))
-        .merge(gemini_routes(&state))
-        .nest("/v1beta", v1beta_routes(&state))
-        .nest("/openapi", openapi_routes(&state))
-        .layer(from_fn_with_state(http_metrics, record_http_metrics))
-        .with_state(state)
+pub fn router_with_metrics(
+    state: HttpState,
+    http_metrics_capability: HttpMetricsCapability,
+) -> App<
+    impl ServiceFactory<
+        ServiceRequest,
+        Config = (),
+        Response = ServiceResponse,
+        Error = actix_web::Error,
+        InitError = (),
+    >,
+> {
+    router_with_metrics_and_base_path(state, http_metrics_capability, "/")
+}
+
+pub fn router_with_metrics_and_base_path(
+    state: HttpState,
+    http_metrics_capability: HttpMetricsCapability,
+    base_path: &str,
+) -> App<
+    impl ServiceFactory<
+        ServiceRequest,
+        Config = (),
+        Response = ServiceResponse,
+        Error = actix_web::Error,
+        InitError = (),
+    >,
+> {
+    let normalized = base_path.trim();
+    let prefixed = format!("/{}", normalized.trim_matches('/'));
+
+    App::new()
+        .app_data(web::Data::new(state))
+        .wrap(http_metrics(http_metrics_capability))
+        .configure(move |cfg| {
+            if normalized.is_empty() || normalized == "/" {
+                configure_http_routes(cfg);
+            } else {
+                cfg.service(web::scope(&prefixed).configure(configure_http_routes));
+            }
+        })
+        .default_service(web::to(|request: actix_web::HttpRequest| async move {
+            not_implemented_response("/*", request.method().clone(), request.uri().clone(), None)
+                .into_response()
+        }))
 }

@@ -1,383 +1,520 @@
-use crate::errors::{auth_unsupported_response, error_response};
-use crate::models::ApiKeyType;
-use crate::state::{
-    GeminiQueryKey, HttpMetricsCapability, HttpState, IdentityCapability, RequestAuthContext,
-    RequestContextCapability, RequestContextState,
+use crate::state::transport::{
+    HttpMetricRecord, HttpRejection, TransportHeaders, authenticate_admin_request,
+    authenticate_api_key_request, authenticate_gemini_request,
+    authenticate_service_api_key_request, enrich_request_context, resolve_http_metric_path,
 };
-use axum::extract::{MatchedPath, Query, Request, State};
-use axum::http::HeaderMap;
-use axum::http::StatusCode;
-use axum::middleware::Next;
-use axum::response::Response;
+use crate::state::{GeminiQueryKey, HttpMetricsCapability, HttpState, RequestContextState};
+use actix_web::body::{BoxBody, MessageBody};
+use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
+use actix_web::http::StatusCode;
+use actix_web::{Error, FromRequest, HttpMessage, HttpResponse, web};
+use std::future::{Future, Ready as StdReady, ready};
+use std::pin::Pin;
+use std::rc::Rc;
+use std::task::{Context, Poll};
 use std::time::Instant;
 
-pub(crate) async fn record_http_metrics(
-    State(metrics): State<HttpMetricsCapability>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let HttpMetricsCapability::Available { recorder } = metrics else {
-        return next.run(request).await;
-    };
-
-    let method = request.method().clone();
-    let path = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map(MatchedPath::as_str)
-        .unwrap_or_else(|| request.uri().path())
-        .to_owned();
-    let started_at = Instant::now();
-
-    let response = next.run(request).await;
-    recorder.record_http_request(
-        method.as_str(),
-        &path,
-        response.status().as_u16(),
-        started_at.elapsed(),
-    );
-
-    response
+pub(crate) fn request_context() -> RequestContextMiddleware {
+    RequestContextMiddleware
 }
 
-pub(crate) async fn require_admin_jwt(
-    State(state): State<HttpState>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    let token = match extract_required_bearer_token(request.headers()) {
-        Ok(token) => token,
-        Err(response) => return response,
-    };
-
-    let identity = match &state.identity {
-        IdentityCapability::Unsupported { message } => return auth_unsupported_response(message),
-        IdentityCapability::Available { identity } => identity,
-    };
-
-    let user = match identity.authenticate_admin_jwt(token) {
-        Ok(user) => user,
-        Err(crate::ports::AdminAuthError::InvalidToken) => {
-            return error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid token")
-        }
-        Err(crate::ports::AdminAuthError::Internal) => {
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal Server Error",
-                "Failed to validate token",
-            )
-        }
-    };
-
-    let context = request.extensions_mut().remove::<RequestContextState>().unwrap_or_default();
-    request.extensions_mut().insert(RequestContextState {
-        auth: Some(RequestAuthContext::Admin(user)),
-        ..context
-    });
-
-    next.run(request).await
+pub(crate) fn admin_auth() -> AdminAuthMiddleware {
+    AdminAuthMiddleware
 }
 
-pub(crate) async fn require_api_key_or_no_auth(
-    State(state): State<HttpState>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    let identity = match &state.identity {
-        IdentityCapability::Unsupported { message } => return auth_unsupported_response(message),
-        IdentityCapability::Available { identity } => identity,
-    };
-
-    let header_key = extract_api_key_from_headers(request.headers());
-    let api_key = match identity.authenticate_api_key(header_key.as_deref(), state.allow_no_auth) {
-        Ok(api_key) => api_key,
-        Err(crate::ports::ApiKeyAuthError::Missing | crate::ports::ApiKeyAuthError::Invalid) => {
-            return error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid API key")
-        }
-        Err(crate::ports::ApiKeyAuthError::Internal) => {
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal Server Error",
-                "Failed to validate API key",
-            )
-        }
-    };
-
-    let context = request.extensions_mut().remove::<RequestContextState>().unwrap_or_default();
-    request.extensions_mut().insert(RequestContextState {
-        auth: Some(RequestAuthContext::ApiKey(api_key)),
-        ..context
-    });
-
-    next.run(request).await
+pub(crate) fn api_key_auth() -> ApiKeyAuthMiddleware {
+    ApiKeyAuthMiddleware
 }
 
-pub(crate) async fn require_service_api_key(
-    State(state): State<HttpState>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    let identity = match &state.identity {
-        IdentityCapability::Unsupported { message } => return auth_unsupported_response(message),
-        IdentityCapability::Available { identity } => identity,
-    };
-
-    let token = match extract_required_bearer_token(request.headers()) {
-        Ok(token) => token,
-        Err(response) => return response,
-    };
-
-    let api_key = match identity.authenticate_api_key(Some(token), false) {
-        Ok(api_key) if api_key.key_type == ApiKeyType::ServiceAccount => api_key,
-        Ok(_) | Err(crate::ports::ApiKeyAuthError::Missing | crate::ports::ApiKeyAuthError::Invalid) => {
-            return error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid API key")
-        }
-        Err(crate::ports::ApiKeyAuthError::Internal) => {
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal Server Error",
-                "Failed to validate API key",
-            )
-        }
-    };
-
-    let context = request.extensions_mut().remove::<RequestContextState>().unwrap_or_default();
-    request.extensions_mut().insert(RequestContextState {
-        auth: Some(RequestAuthContext::ApiKey(api_key)),
-        ..context
-    });
-
-    next.run(request).await
+pub(crate) fn service_api_key_auth() -> ServiceApiKeyAuthMiddleware {
+    ServiceApiKeyAuthMiddleware
 }
 
-pub(crate) async fn require_gemini_key(
-    State(state): State<HttpState>,
-    Query(query): Query<GeminiQueryKey>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    let identity = match &state.identity {
-        IdentityCapability::Unsupported { message } => return auth_unsupported_response(message),
-        IdentityCapability::Available { identity } => identity,
-    };
-
-    let header_key = extract_api_key_from_headers(request.headers());
-    let api_key = match identity.authenticate_gemini_key(query.key.as_deref(), header_key.as_deref()) {
-        Ok(api_key) => api_key,
-        Err(crate::ports::ApiKeyAuthError::Missing | crate::ports::ApiKeyAuthError::Invalid) => {
-            return error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "invalid api key")
-        }
-        Err(crate::ports::ApiKeyAuthError::Internal) => {
-            return error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal Server Error",
-                "Failed to validate API key",
-            )
-        }
-    };
-
-    let context = request.extensions_mut().remove::<RequestContextState>().unwrap_or_default();
-    request.extensions_mut().insert(RequestContextState {
-        auth: Some(RequestAuthContext::ApiKey(api_key)),
-        ..context
-    });
-
-    next.run(request).await
+pub(crate) fn gemini_auth() -> GeminiAuthMiddleware {
+    GeminiAuthMiddleware
 }
 
-pub(crate) async fn apply_request_context(
-    State(state): State<HttpState>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    let request_context_port = match &state.request_context {
-        RequestContextCapability::Unsupported { message } => {
-            request.extensions_mut().insert(RequestContextState::default());
-            let _ = message;
-            return next.run(request).await;
-        }
-        RequestContextCapability::Available { request_context } => request_context,
-    };
+pub(crate) fn http_metrics(http_metrics: HttpMetricsCapability) -> HttpMetricsMiddleware {
+    HttpMetricsMiddleware { http_metrics }
+}
 
-    let mut context = request.extensions_mut().remove::<RequestContextState>().unwrap_or_default();
+pub(crate) struct RequestContextMiddleware;
 
-    let request_header = trace_request_header_name(&state.trace_config);
-    context.request_id = request
-        .headers()
-        .get(&request_header)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
+impl<S, B> Transform<S, ServiceRequest> for RequestContextMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Transform = RequestContextMiddlewareService<S>;
+    type InitError = ();
+    type Future = StdReady<Result<Self::Transform, Self::InitError>>;
 
-    let auth_project = context.auth.as_ref().and_then(|auth| match auth {
-        RequestAuthContext::ApiKey(key) => Some(key.project.clone()),
-        RequestAuthContext::Admin(_) => None,
-    });
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(RequestContextMiddlewareService {
+            service: Rc::new(service),
+        }))
+    }
+}
 
-    let header_project = match parse_project_header(request.headers()) {
-        Ok(Some(id)) => match request_context_port.resolve_project(id) {
-            Ok(project) => project,
-            Err(crate::ports::ContextResolveError::Internal) => {
-                return error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Internal Server Error",
-                    "Failed to resolve project context",
-                )
-            }
-        },
-        Ok(None) => None,
-        Err(response) => return response,
-    };
+pub(crate) struct RequestContextMiddlewareService<S> {
+    service: Rc<S>,
+}
 
-    context.project = header_project.or(auth_project);
+impl<S, B> Service<ServiceRequest> for RequestContextMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    if let Some(project) = context.project.as_ref() {
-        if let Some(thread_id) = request_header_value(request.headers(), &trace_thread_header_name(&state.trace_config)) {
-            match request_context_port.resolve_thread(project.id, thread_id) {
-                Ok(thread) => {
-                    context.thread = thread;
-                }
-                Err(crate::ports::ContextResolveError::Internal) => {
-                    return error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Internal Server Error",
-                        "Failed to resolve thread context",
-                    )
-                }
-            }
-        }
-
-        if let Some(trace_id) = extract_trace_id(request.headers(), &state.trace_config) {
-            let thread_db_id = context.thread.as_ref().map(|thread| thread.id);
-            match request_context_port.resolve_trace(project.id, trace_id, thread_db_id) {
-                Ok(trace) => {
-                    context.trace = trace;
-                }
-                Err(crate::ports::ContextResolveError::Internal) => {
-                    return error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Internal Server Error",
-                        "Failed to resolve trace context",
-                    )
-                }
-            }
-        }
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
     }
 
-    request.extensions_mut().insert(context);
-    next.run(request).await
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let service = Rc::clone(&self.service);
+        Box::pin(async move {
+            let state = match req.app_data::<web::Data<HttpState>>() {
+                Some(state) => state.clone(),
+                None => {
+                    return Ok(req.into_response(
+                        crate::errors::internal_error_response(
+                            "HTTP state is not configured".to_owned(),
+                        )
+                        .map_into_boxed_body(),
+                    ))
+                }
+            };
+
+            let headers = transport_headers(req.headers());
+            let context = req
+                .extensions_mut()
+                .remove::<RequestContextState>()
+                .unwrap_or_default();
+            let context = match enrich_request_context(
+                &state.request_context,
+                &headers,
+                &state.trace_config,
+                context,
+            ) {
+                Ok(context) => context,
+                Err(rejection) => {
+                    return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
+                }
+            };
+            req.extensions_mut().insert(context);
+
+            let response = service.call(req).await?.map_into_boxed_body();
+            Ok(response)
+        })
+    }
 }
 
-pub(crate) fn trace_thread_header_name(config: &crate::models::TraceConfig) -> String {
-    config
-        .thread_header
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "AH-Thread-Id".to_owned())
+pub(crate) struct AdminAuthMiddleware;
+
+impl<S, B> Transform<S, ServiceRequest> for AdminAuthMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Transform = AdminAuthMiddlewareService<S>;
+    type InitError = ();
+    type Future = StdReady<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(AdminAuthMiddlewareService {
+            service: Rc::new(service),
+        }))
+    }
 }
 
-pub(crate) fn trace_request_header_name(config: &crate::models::TraceConfig) -> String {
-    config
-        .request_header
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "X-Request-Id".to_owned())
+pub(crate) struct AdminAuthMiddlewareService<S> {
+    service: Rc<S>,
 }
 
-pub(crate) fn trace_header_name(config: &crate::models::TraceConfig) -> String {
-    config
-        .trace_header
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "AH-Trace-Id".to_owned())
-}
+impl<S, B> Service<ServiceRequest> for AdminAuthMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-pub(crate) fn request_header_value<'a>(headers: &'a HeaderMap, header_name: &str) -> Option<&'a str> {
-    headers
-        .get(header_name)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-pub(crate) fn extract_trace_id<'a>(
-    headers: &'a HeaderMap,
-    config: &crate::models::TraceConfig,
-) -> Option<&'a str> {
-    request_header_value(headers, &trace_header_name(config)).or_else(|| {
-        config
-            .extra_trace_headers
-            .iter()
-            .find_map(|header| request_header_value(headers, header))
-    })
-}
-
-fn parse_project_header(headers: &HeaderMap) -> Result<Option<i64>, Response> {
-    let Some(raw) = request_header_value(headers, "X-Project-ID") else {
-        return Ok(None);
-    };
-
-    parse_project_guid(raw)
-        .map(Some)
-        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid project ID"))
-}
-
-fn parse_project_guid(raw: &str) -> Option<i64> {
-    let value = raw.trim();
-    let prefix = "gid://axonhub/project/";
-    if !value.starts_with(prefix) {
-        return None;
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
     }
 
-    value[prefix.len()..].parse::<i64>().ok()
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let service = Rc::clone(&self.service);
+        Box::pin(async move {
+            let state = match req.app_data::<web::Data<HttpState>>() {
+                Some(state) => state.clone(),
+                None => {
+                    return Ok(req.into_response(
+                        crate::errors::internal_error_response(
+                            "HTTP state is not configured".to_owned(),
+                        )
+                        .map_into_boxed_body(),
+                    ))
+                }
+            };
+
+            let headers = transport_headers(req.headers());
+            let context = req
+                .extensions_mut()
+                .remove::<RequestContextState>()
+                .unwrap_or_default();
+            let context = match authenticate_admin_request(&state.identity, &headers, context) {
+                Ok(context) => context,
+                Err(rejection) => {
+                    return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
+                }
+            };
+            req.extensions_mut().insert(context);
+
+            let response = service.call(req).await?.map_into_boxed_body();
+            Ok(response)
+        })
+    }
 }
 
-fn extract_required_bearer_token(headers: &HeaderMap) -> Result<&str, Response> {
-    let value = request_header_value(headers, "Authorization").ok_or_else(|| {
-        error_response(
-            StatusCode::UNAUTHORIZED,
-            "Unauthorized",
-            "API key is required",
-        )
-    })?;
+pub(crate) struct ApiKeyAuthMiddleware;
 
-    value.strip_prefix("Bearer ").ok_or_else(|| {
-        error_response(
-            StatusCode::UNAUTHORIZED,
-            "Unauthorized",
-            "invalid token: Authorization header must start with 'Bearer '",
-        )
-    })
+impl<S, B> Transform<S, ServiceRequest> for ApiKeyAuthMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Transform = ApiKeyAuthMiddlewareService<S>;
+    type InitError = ();
+    type Future = StdReady<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(ApiKeyAuthMiddlewareService {
+            service: Rc::new(service),
+        }))
+    }
 }
 
-fn extract_api_key_from_headers(headers: &HeaderMap) -> Option<String> {
-    const HEADER_NAMES: [&str; 7] = [
-        "Authorization",
-        "X-API-Key",
-        "X-Api-Key",
-        "API-Key",
-        "Api-Key",
-        "X-Goog-Api-Key",
-        "X-Google-Api-Key",
-    ];
+pub(crate) struct ApiKeyAuthMiddlewareService<S> {
+    service: Rc<S>,
+}
 
-    const PREFIXES: [&str; 4] = ["Bearer ", "Token ", "Api-Key ", "API-Key "];
+impl<S, B> Service<ServiceRequest> for ApiKeyAuthMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    for header in HEADER_NAMES {
-        let Some(value) = request_header_value(headers, header) else {
-            continue;
-        };
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
 
-        let key = PREFIXES
-            .iter()
-            .find_map(|prefix| value.strip_prefix(prefix))
-            .unwrap_or(value)
-            .trim();
-        if !key.is_empty() {
-            return Some(key.to_owned());
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let service = Rc::clone(&self.service);
+        Box::pin(async move {
+            let state = match req.app_data::<web::Data<HttpState>>() {
+                Some(state) => state.clone(),
+                None => {
+                    return Ok(req.into_response(
+                        crate::errors::internal_error_response(
+                            "HTTP state is not configured".to_owned(),
+                        )
+                        .map_into_boxed_body(),
+                    ))
+                }
+            };
+
+            let headers = transport_headers(req.headers());
+            let context = req
+                .extensions_mut()
+                .remove::<RequestContextState>()
+                .unwrap_or_default();
+            let context = match authenticate_api_key_request(
+                &state.identity,
+                &headers,
+                state.allow_no_auth,
+                context,
+            ) {
+                Ok(context) => context,
+                Err(rejection) => {
+                    return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
+                }
+            };
+            req.extensions_mut().insert(context);
+
+            let response = service.call(req).await?.map_into_boxed_body();
+            Ok(response)
+        })
+    }
+}
+
+pub(crate) struct ServiceApiKeyAuthMiddleware;
+
+impl<S, B> Transform<S, ServiceRequest> for ServiceApiKeyAuthMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Transform = ServiceApiKeyAuthMiddlewareService<S>;
+    type InitError = ();
+    type Future = StdReady<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(ServiceApiKeyAuthMiddlewareService {
+            service: Rc::new(service),
+        }))
+    }
+}
+
+pub(crate) struct ServiceApiKeyAuthMiddlewareService<S> {
+    service: Rc<S>,
+}
+
+impl<S, B> Service<ServiceRequest> for ServiceApiKeyAuthMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let service = Rc::clone(&self.service);
+        Box::pin(async move {
+            let state = match req.app_data::<web::Data<HttpState>>() {
+                Some(state) => state.clone(),
+                None => {
+                    return Ok(req.into_response(
+                        crate::errors::internal_error_response(
+                            "HTTP state is not configured".to_owned(),
+                        )
+                        .map_into_boxed_body(),
+                    ))
+                }
+            };
+
+            let headers = transport_headers(req.headers());
+            let context = req
+                .extensions_mut()
+                .remove::<RequestContextState>()
+                .unwrap_or_default();
+            let context = match authenticate_service_api_key_request(&state.identity, &headers, context) {
+                Ok(context) => context,
+                Err(rejection) => {
+                    return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
+                }
+            };
+            req.extensions_mut().insert(context);
+
+            let response = service.call(req).await?.map_into_boxed_body();
+            Ok(response)
+        })
+    }
+}
+
+pub(crate) struct GeminiAuthMiddleware;
+
+impl<S, B> Transform<S, ServiceRequest> for GeminiAuthMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Transform = GeminiAuthMiddlewareService<S>;
+    type InitError = ();
+    type Future = StdReady<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(GeminiAuthMiddlewareService {
+            service: Rc::new(service),
+        }))
+    }
+}
+
+pub(crate) struct GeminiAuthMiddlewareService<S> {
+    service: Rc<S>,
+}
+
+impl<S, B> Service<ServiceRequest> for GeminiAuthMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let service = Rc::clone(&self.service);
+        Box::pin(async move {
+            let state = match req.app_data::<web::Data<HttpState>>() {
+                Some(state) => state.clone(),
+                None => {
+                    return Ok(req.into_response(
+                        crate::errors::internal_error_response(
+                            "HTTP state is not configured".to_owned(),
+                        )
+                        .map_into_boxed_body(),
+                    ))
+                }
+            };
+
+            let headers = transport_headers(req.headers());
+            let query = match web::Query::<GeminiQueryKey>::from_query(req.query_string()) {
+                Ok(query) => query.into_inner(),
+                Err(_) => GeminiQueryKey { key: None },
+            };
+            let context = req
+                .extensions_mut()
+                .remove::<RequestContextState>()
+                .unwrap_or_default();
+            let context = match authenticate_gemini_request(
+                &state.identity,
+                &headers,
+                query.key.as_deref(),
+                context,
+            ) {
+                Ok(context) => context,
+                Err(rejection) => {
+                    return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
+                }
+            };
+            req.extensions_mut().insert(context);
+
+            let response = service.call(req).await?.map_into_boxed_body();
+            Ok(response)
+        })
+    }
+}
+
+pub(crate) struct HttpMetricsMiddleware {
+    http_metrics: HttpMetricsCapability,
+}
+
+impl<S, B> Transform<S, ServiceRequest> for HttpMetricsMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Transform = HttpMetricsMiddlewareService<S>;
+    type InitError = ();
+    type Future = StdReady<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(HttpMetricsMiddlewareService {
+            service: Rc::new(service),
+            http_metrics: self.http_metrics.clone(),
+        }))
+    }
+}
+
+pub(crate) struct HttpMetricsMiddlewareService<S> {
+    service: Rc<S>,
+    http_metrics: HttpMetricsCapability,
+}
+
+impl<S, B> Service<ServiceRequest> for HttpMetricsMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let service = Rc::clone(&self.service);
+        let http_metrics = self.http_metrics.clone();
+        Box::pin(async move {
+            let HttpMetricsCapability::Available { recorder } = http_metrics else {
+                return Ok(service.call(req).await?.map_into_boxed_body());
+            };
+
+            let method = req.method().clone();
+            let path = resolve_http_metric_path(
+                req.match_pattern().as_deref(),
+                req.request().path(),
+            );
+            let started_at = Instant::now();
+
+            let response = service.call(req).await?.map_into_boxed_body();
+            let metric = HttpMetricRecord::new(method.as_str(), path, response.status().as_u16());
+            recorder.record_http_request(
+                &metric.method,
+                &metric.path,
+                metric.status_code,
+                started_at.elapsed(),
+            );
+
+            Ok(response)
+        })
+    }
+}
+
+fn transport_headers(headers: &actix_web::http::header::HeaderMap) -> TransportHeaders {
+    let mut result = TransportHeaders::default();
+    for (name, value) in headers {
+        if let Ok(value) = value.to_str() {
+            result.insert(name.as_str(), value);
         }
     }
+    result
+}
 
-    None
+fn http_rejection_response(rejection: HttpRejection) -> HttpResponse {
+    match rejection {
+        HttpRejection::Error(error) => crate::errors::error_response(
+            StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            error.kind,
+            &error.message,
+        ),
+        HttpRejection::NotImplemented(route) => {
+            crate::errors::NotImplementedJsonResponse::from_route(route).into_response()
+        }
+    }
+}
+
+pub(crate) struct ActixRequest(pub actix_web::HttpRequest);
+
+impl FromRequest for ActixRequest {
+    type Error = Error;
+    type Future = StdReady<Result<Self, Self::Error>>;
+
+    fn from_request(
+        req: &actix_web::HttpRequest,
+        _payload: &mut actix_web::dev::Payload,
+    ) -> Self::Future {
+        ready(Ok(Self(req.clone())))
+    }
 }

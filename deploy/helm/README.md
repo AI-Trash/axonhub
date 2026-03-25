@@ -1,5 +1,7 @@
 # AxonHub Helm Chart
 
+> **Important:** This Helm chart deploys the **legacy Go backend only**. The current Rust backend cutover is not yet supported for Kubernetes via Helm. For Rust deployments, use the `docker-compose.rust.yml` file or the `axonhub-rust_*` release artifacts. See the [Backend Migration Status](../../README.md#backend-migration-status) section in the main README for details.
+
 This Helm chart deploys AxonHub on Kubernetes with PostgreSQL database.
 
 ## Prerequisites

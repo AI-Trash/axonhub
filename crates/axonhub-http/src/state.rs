@@ -9,6 +9,9 @@ use crate::ports::{
 use std::sync::Arc;
 use std::time::Duration;
 
+#[path = "transport.rs"]
+pub(crate) mod transport;
+
 #[derive(Clone)]
 pub enum SystemBootstrapCapability {
     Unsupported {
@@ -111,10 +114,26 @@ pub(crate) struct RequestContextState {
     pub trace: Option<TraceContext>,
 }
 
+impl RequestContextState {
+    pub(crate) fn with_auth(mut self, auth: RequestAuthContext) -> Self {
+        self.auth = Some(auth);
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum RequestAuthContext {
     Admin(AuthUserContext),
     ApiKey(AuthApiKeyContext),
+}
+
+impl RequestAuthContext {
+    pub(crate) fn project(&self) -> Option<ProjectContext> {
+        match self {
+            Self::ApiKey(key) => Some(key.project.clone()),
+            Self::Admin(_) => None,
+        }
+    }
 }
 
 pub(crate) fn request_context_snapshot(context: RequestContextState) -> RequestContextSnapshot {

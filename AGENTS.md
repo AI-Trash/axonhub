@@ -34,7 +34,7 @@ AxonHub is an all-in-one AI development platform that serves as a unified API ga
 ## Technology Stack
 
 - **Backend (current full implementation)**: Go 1.26.0+ with Gin HTTP framework, Ent ORM, gqlgen GraphQL, FX dependency injection
-- **Backend (migration slice)**: Rust workspace with Tokio, Axum, Serde, and shared workspace dependencies
+- **Backend (migration slice)**: Rust workspace with Tokio, Actix Web, Serde, and shared workspace dependencies
 - **Frontend**: React 19 with TypeScript, TanStack Router, TanStack Query, Zustand, Tailwind CSS
 - **Database**: SQLite (development), PostgreSQL/MySQL/TiDB (production)
 - **Authentication**: JWT with role-based access control
@@ -46,7 +46,7 @@ AxonHub is an all-in-one AI development platform that serves as a unified API ga
 - `Cargo.toml` — Root Cargo workspace with shared dependencies
 - `apps/axonhub-server` — Rust `axonhub` binary preserving the operator-facing CLI shape
 - `crates/axonhub-config` — Rust config loading, defaults, env override, preview/get helpers
-- `crates/axonhub-http` — Axum router with `/health` and truthful unported route stubs
+- `crates/axonhub-http` — Actix router with `/health` and truthful unported route stubs
 
 ### Legacy Go Backend
 

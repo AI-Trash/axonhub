@@ -4,35 +4,36 @@ use crate::state::{
     AdminGraphqlCapability, HttpState, OpenApiGraphqlCapability, RequestAuthContext,
     RequestContextState,
 };
-use axum::extract::{OriginalUri, Request, State};
-use axum::http::{Method, StatusCode};
-use axum::response::{IntoResponse, Response};
+use actix_web::http::{Method, StatusCode};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, web};
+use bytes::Bytes;
 
-pub(crate) async fn admin_graphql_playground() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [("content-type", "text/html; charset=utf-8")],
-        graphql_playground_html("/admin/graphql"),
-    )
+pub(crate) async fn admin_graphql_playground() -> HttpResponse {
+    HttpResponse::Ok()
+        .insert_header(("content-type", "text/html; charset=utf-8"))
+        .body(graphql_playground_html("/admin/graphql"))
 }
 
-pub(crate) async fn openapi_graphql_playground() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [("content-type", "text/html; charset=utf-8")],
-        graphql_playground_html("/openapi/v1/graphql"),
-    )
+pub(crate) async fn openapi_graphql_playground() -> HttpResponse {
+    HttpResponse::Ok()
+        .insert_header(("content-type", "text/html; charset=utf-8"))
+        .body(graphql_playground_html("/openapi/v1/graphql"))
 }
 
 pub(crate) async fn admin_graphql(
-    State(state): State<HttpState>,
-    OriginalUri(original_uri): OriginalUri,
-    request: Request,
-) -> Response {
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    body: Bytes,
+) -> HttpResponse {
     let graphql = match &state.admin_graphql {
         AdminGraphqlCapability::Unsupported { message } => {
-            return not_implemented_response("/admin/graphql", Method::POST, original_uri, None)
-                .with_message(message)
+            return not_implemented_response(
+                "/admin/graphql",
+                Method::POST,
+                request.uri().clone(),
+                None,
+            )
+            .with_message(message)
         }
         AdminGraphqlCapability::Available { graphql } => graphql,
     };
@@ -56,18 +57,23 @@ pub(crate) async fn admin_graphql(
         None => return error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid token"),
     };
 
-    execute_graphql_request(request, |payload| graphql.execute_graphql(payload, project_id, user)).await
+    execute_graphql_request(body, |payload| graphql.execute_graphql(payload, project_id, user)).await
 }
 
 pub(crate) async fn openapi_graphql(
-    State(state): State<HttpState>,
-    OriginalUri(original_uri): OriginalUri,
-    request: Request,
-) -> Response {
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    body: Bytes,
+) -> HttpResponse {
     let graphql = match &state.openapi_graphql {
         OpenApiGraphqlCapability::Unsupported { message } => {
-            return not_implemented_response("/openapi/v1/graphql", Method::POST, original_uri, None)
-                .with_message(message)
+            return not_implemented_response(
+                "/openapi/v1/graphql",
+                Method::POST,
+                request.uri().clone(),
+                None,
+            )
+            .with_message(message)
         }
         OpenApiGraphqlCapability::Available { graphql } => graphql,
     };
@@ -83,13 +89,9 @@ pub(crate) async fn openapi_graphql(
     let owner_api_key = match owner_api_key {
         Some(owner_api_key) => owner_api_key,
         None => {
-            return error_response(
-                StatusCode::UNAUTHORIZED,
-                "Unauthorized",
-                "Invalid API key",
-            )
+            return error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid API key")
         }
     };
 
-    execute_graphql_request(request, |payload| graphql.execute_graphql(payload, owner_api_key)).await
+    execute_graphql_request(body, |payload| graphql.execute_graphql(payload, owner_api_key)).await
 }

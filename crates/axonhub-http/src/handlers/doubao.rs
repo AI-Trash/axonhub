@@ -1,19 +1,20 @@
 use crate::handlers::execute_compatibility_request;
 use crate::models::CompatibilityRoute;
 use crate::state::HttpState;
-use axum::extract::{OriginalUri, Path, Request, State};
-use axum::response::Response;
+use actix_web::{HttpRequest, HttpResponse, web};
+use bytes::Bytes;
 use std::collections::HashMap;
 
 pub(crate) async fn doubao_create_task(
-    State(state): State<HttpState>,
-    OriginalUri(original_uri): OriginalUri,
-    request: Request,
-) -> Response {
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    body: Bytes,
+) -> HttpResponse {
     execute_compatibility_request(
-        state,
-        request,
-        original_uri,
+        state.get_ref().clone(),
+        request.clone(),
+        body,
+        request.uri().clone(),
         CompatibilityRoute::DoubaoCreateTask,
         HashMap::new(),
     )
@@ -21,17 +22,17 @@ pub(crate) async fn doubao_create_task(
 }
 
 pub(crate) async fn doubao_get_task(
-    State(state): State<HttpState>,
-    Path(id): Path<String>,
-    OriginalUri(original_uri): OriginalUri,
-    request: Request,
-) -> Response {
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    path: web::Path<String>,
+) -> HttpResponse {
     let mut path_params = HashMap::new();
-    path_params.insert("id".to_owned(), id);
+    path_params.insert("id".to_owned(), path.into_inner());
     execute_compatibility_request(
-        state,
-        request,
-        original_uri,
+        state.get_ref().clone(),
+        request.clone(),
+        Bytes::new(),
+        request.uri().clone(),
         CompatibilityRoute::DoubaoGetTask,
         path_params,
     )
@@ -39,17 +40,17 @@ pub(crate) async fn doubao_get_task(
 }
 
 pub(crate) async fn doubao_delete_task(
-    State(state): State<HttpState>,
-    Path(id): Path<String>,
-    OriginalUri(original_uri): OriginalUri,
-    request: Request,
-) -> Response {
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    path: web::Path<String>,
+) -> HttpResponse {
     let mut path_params = HashMap::new();
-    path_params.insert("id".to_owned(), id);
+    path_params.insert("id".to_owned(), path.into_inner());
     execute_compatibility_request(
-        state,
-        request,
-        original_uri,
+        state.get_ref().clone(),
+        request.clone(),
+        Bytes::new(),
+        request.uri().clone(),
         CompatibilityRoute::DoubaoDeleteTask,
         path_params,
     )

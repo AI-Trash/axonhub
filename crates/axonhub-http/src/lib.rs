@@ -26,6 +26,7 @@ pub use ports::{
 };
 pub use routes::router;
 pub use routes::router_with_metrics;
+pub use routes::router_with_metrics_and_base_path;
 pub use state::{
     AdminCapability, AdminGraphqlCapability, HttpMetricsCapability, HttpMetricsRecorder,
     HttpState, IdentityCapability, OpenAiV1Capability, OpenApiGraphqlCapability,

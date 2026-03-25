@@ -1,142 +1,35 @@
 use axonhub_http::{
     ContextResolveError, ProjectContext, RequestContextPort, ThreadContext, TraceContext,
 };
-use postgres::{Client as PostgresClient, NoTls};
+use sea_orm::{ConnectionTrait, DatabaseBackend, ExecResult, Statement};
 
 use super::{
-    identity_service::{query_project_postgres, IdentityAuthService},
-    request_context::TraceContextStore,
-    shared::SqliteFoundation,
-    system::{ensure_identity_tables_postgres, ensure_trace_tables_postgres},
+    identity_service::query_project_seaorm,
+    ports::RequestContextRepository,
+    seaorm::SeaOrmConnectionFactory,
 };
-use std::sync::Arc;
+#[cfg(test)]
+pub(crate) use super::request_context_sqlite_support::SqliteRequestContextService;
 
-#[derive(Debug, Clone)]
-pub struct RequestContextService {
-    identity_auth: IdentityAuthService,
-    trace_contexts: TraceContextStore,
+pub struct SeaOrmRequestContextService {
+    db: SeaOrmConnectionFactory,
 }
 
-impl RequestContextService {
-    pub fn new(identity_auth: IdentityAuthService, trace_contexts: TraceContextStore) -> Self {
-        Self {
-            identity_auth,
-            trace_contexts,
-        }
-    }
-
-    pub fn resolve_project(
-        &self,
-        project_id: i64,
-    ) -> Result<Option<ProjectContext>, ContextResolveError> {
-        self.identity_auth.resolve_project(project_id)
-    }
-
-    pub fn resolve_thread(
-        &self,
-        project_id: i64,
-        thread_id: &str,
-    ) -> Result<Option<ThreadContext>, ContextResolveError> {
-        self.trace_contexts
-            .get_or_create_thread(project_id, thread_id.trim())
-            .map(Some)
-            .map_err(|_| ContextResolveError::Internal)
-    }
-
-    pub fn resolve_trace(
-        &self,
-        project_id: i64,
-        trace_id: &str,
-        thread_db_id: Option<i64>,
-    ) -> Result<Option<TraceContext>, ContextResolveError> {
-        self.trace_contexts
-            .get_or_create_trace(project_id, trace_id.trim(), thread_db_id)
-            .map(Some)
-            .map_err(|_| ContextResolveError::Internal)
+impl SeaOrmRequestContextService {
+    pub fn new(db: SeaOrmConnectionFactory, _allow_no_auth: bool) -> Self {
+        Self { db }
     }
 }
 
-pub struct SqliteRequestContextService {
-    request_contexts: RequestContextService,
-}
-
-impl SqliteRequestContextService {
-    pub fn new(foundation: Arc<SqliteFoundation>, allow_no_auth: bool) -> Self {
-        Self {
-            request_contexts: foundation.request_context_service(allow_no_auth),
-        }
-    }
-}
-
-impl RequestContextPort for SqliteRequestContextService {
+impl RequestContextPort for SeaOrmRequestContextService {
     fn resolve_project(
         &self,
         project_id: i64,
     ) -> Result<Option<ProjectContext>, ContextResolveError> {
-        self.request_contexts.resolve_project(project_id)
-    }
-
-    fn resolve_thread(
-        &self,
-        project_id: i64,
-        thread_id: &str,
-    ) -> Result<Option<ThreadContext>, ContextResolveError> {
-        self.request_contexts.resolve_thread(project_id, thread_id)
-    }
-
-    fn resolve_trace(
-        &self,
-        project_id: i64,
-        trace_id: &str,
-        thread_db_id: Option<i64>,
-    ) -> Result<Option<TraceContext>, ContextResolveError> {
-        self.request_contexts
-            .resolve_trace(project_id, trace_id, thread_db_id)
-    }
-}
-
-pub struct PostgresRequestContextService {
-    dsn: String,
-}
-
-impl PostgresRequestContextService {
-    pub fn new(dsn: impl Into<String>) -> Self {
-        Self { dsn: dsn.into() }
-    }
-
-    fn run_blocking<T, F>(&self, operation: F) -> Result<T, ContextResolveError>
-    where
-        T: Send + 'static,
-        F: FnOnce(String) -> Result<T, ContextResolveError> + Send + 'static,
-    {
-        let dsn = self.dsn.clone();
-
-        if tokio::runtime::Handle::try_current().is_ok() {
-            std::thread::spawn(move || operation(dsn))
-                .join()
-                .unwrap_or_else(|_| panic!("postgres request-context worker thread panicked"))
-        } else {
-            operation(dsn)
-        }
-    }
-
-    fn connect(dsn: &str) -> Result<PostgresClient, ContextResolveError> {
-        let mut client =
-            PostgresClient::connect(dsn, NoTls).map_err(|_| ContextResolveError::Internal)?;
-        ensure_identity_tables_postgres(&mut client).map_err(|_| ContextResolveError::Internal)?;
-        ensure_trace_tables_postgres(&mut client).map_err(|_| ContextResolveError::Internal)?;
-        Ok(client)
-    }
-}
-
-impl RequestContextPort for PostgresRequestContextService {
-    fn resolve_project(
-        &self,
-        project_id: i64,
-    ) -> Result<Option<ProjectContext>, ContextResolveError> {
-        self.run_blocking(move |dsn| {
-            let mut client = Self::connect(&dsn)?;
-            match query_project_postgres(&mut client, project_id) {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|_| ContextResolveError::Internal)?;
+            match query_project_seaorm(&connection, db.backend(), project_id).await {
                 Ok(project) if project.status == "active" => Ok(Some(ProjectContext {
                     id: project.id,
                     name: project.name,
@@ -144,10 +37,9 @@ impl RequestContextPort for PostgresRequestContextService {
                 })),
                 Ok(_) => Ok(None),
                 Err(axonhub_http::ApiKeyAuthError::Invalid) => Ok(None),
-                Err(
-                    axonhub_http::ApiKeyAuthError::Missing
-                    | axonhub_http::ApiKeyAuthError::Internal,
-                ) => Err(ContextResolveError::Internal),
+                Err(axonhub_http::ApiKeyAuthError::Missing | axonhub_http::ApiKeyAuthError::Internal) => {
+                    Err(ContextResolveError::Internal)
+                }
             }
         })
     }
@@ -157,42 +49,25 @@ impl RequestContextPort for PostgresRequestContextService {
         project_id: i64,
         thread_id: &str,
     ) -> Result<Option<ThreadContext>, ContextResolveError> {
+        let db = self.db.clone();
         let thread_id = thread_id.trim().to_owned();
-
-        self.run_blocking(move |dsn| {
-            let mut client = Self::connect(&dsn)?;
-            if let Some(row) = client
-                .query_opt(
-                    "SELECT id, thread_id, project_id FROM threads WHERE thread_id = $1 LIMIT 1",
-                    &[&thread_id],
-                )
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|_| ContextResolveError::Internal)?;
+            let backend = db.backend();
+            if let Some(existing) = query_thread_seaorm(&connection, backend, &thread_id)
+                .await
                 .map_err(|_| ContextResolveError::Internal)?
             {
-                let existing = ThreadContext {
-                    id: row.get(0),
-                    thread_id: row.get(1),
-                    project_id: row.get(2),
-                };
                 if existing.project_id == project_id {
                     return Ok(Some(existing));
                 }
                 return Err(ContextResolveError::Internal);
             }
 
-            let insert_params: [&(dyn postgres::types::ToSql + Sync); 2] =
-                [&project_id, &thread_id];
-            let row = client
-                .query_one(
-                    "INSERT INTO threads (project_id, thread_id) VALUES ($1, $2) RETURNING id",
-                    &insert_params,
-                )
+            let id = insert_thread_seaorm(&connection, backend, project_id, &thread_id)
+                .await
                 .map_err(|_| ContextResolveError::Internal)?;
-
-            Ok(Some(ThreadContext {
-                id: row.get(0),
-                thread_id,
-                project_id,
-            }))
+            Ok(Some(ThreadContext { id, thread_id, project_id }))
         })
     }
 
@@ -202,23 +77,15 @@ impl RequestContextPort for PostgresRequestContextService {
         trace_id: &str,
         thread_db_id: Option<i64>,
     ) -> Result<Option<TraceContext>, ContextResolveError> {
+        let db = self.db.clone();
         let trace_id = trace_id.trim().to_owned();
-
-        self.run_blocking(move |dsn| {
-            let mut client = Self::connect(&dsn)?;
-            if let Some(row) = client
-                .query_opt(
-                    "SELECT id, trace_id, project_id, thread_id FROM traces WHERE trace_id = $1 LIMIT 1",
-                    &[&trace_id],
-                )
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|_| ContextResolveError::Internal)?;
+            let backend = db.backend();
+            if let Some(existing) = query_trace_seaorm(&connection, backend, &trace_id)
+                .await
                 .map_err(|_| ContextResolveError::Internal)?
             {
-                let existing = TraceContext {
-                    id: row.get(0),
-                    trace_id: row.get(1),
-                    project_id: row.get(2),
-                    thread_id: row.get(3),
-                };
                 if existing.project_id == project_id
                     && (thread_db_id.is_none() || existing.thread_id == thread_db_id)
                 {
@@ -227,21 +94,208 @@ impl RequestContextPort for PostgresRequestContextService {
                 return Err(ContextResolveError::Internal);
             }
 
-            let insert_params: [&(dyn postgres::types::ToSql + Sync); 3] =
-                [&project_id, &trace_id, &thread_db_id];
-            let row = client
-                .query_one(
-                    "INSERT INTO traces (project_id, trace_id, thread_id) VALUES ($1, $2, $3) RETURNING id",
-                    &insert_params,
-                )
+            let id = insert_trace_seaorm(&connection, backend, project_id, &trace_id, thread_db_id)
+                .await
                 .map_err(|_| ContextResolveError::Internal)?;
-
-            Ok(Some(TraceContext {
-                id: row.get(0),
-                trace_id,
-                project_id,
-                thread_id: thread_db_id,
-            }))
+            Ok(Some(TraceContext { id, trace_id, project_id, thread_id: thread_db_id }))
         })
+    }
+}
+
+impl RequestContextRepository for SeaOrmRequestContextService {
+    fn resolve_project(
+        &self,
+        project_id: i64,
+    ) -> Result<Option<ProjectContext>, ContextResolveError> {
+        <Self as RequestContextPort>::resolve_project(self, project_id)
+    }
+
+    fn resolve_thread(
+        &self,
+        project_id: i64,
+        thread_id: &str,
+    ) -> Result<Option<ThreadContext>, ContextResolveError> {
+        <Self as RequestContextPort>::resolve_thread(self, project_id, thread_id)
+    }
+
+    fn resolve_trace(
+        &self,
+        project_id: i64,
+        trace_id: &str,
+        thread_db_id: Option<i64>,
+    ) -> Result<Option<TraceContext>, ContextResolveError> {
+        <Self as RequestContextPort>::resolve_trace(self, project_id, trace_id, thread_db_id)
+    }
+}
+
+fn request_context_sql<'a>(
+    backend: DatabaseBackend,
+    sqlite: &'a str,
+    postgres: &'a str,
+    mysql: &'a str,
+) -> &'a str {
+    match backend {
+        DatabaseBackend::Sqlite => sqlite,
+        DatabaseBackend::Postgres => postgres,
+        DatabaseBackend::MySql => mysql,
+    }
+}
+
+async fn query_one_request_context(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    sqlite_sql: &str,
+    postgres_sql: &str,
+    mysql_sql: &str,
+    values: Vec<sea_orm::Value>,
+) -> Result<Option<sea_orm::QueryResult>, sea_orm::DbErr> {
+    db.query_one(Statement::from_sql_and_values(
+        backend,
+        request_context_sql(backend, sqlite_sql, postgres_sql, mysql_sql),
+        values,
+    ))
+    .await
+}
+
+fn inserted_id(result: &ExecResult, backend: DatabaseBackend) -> Result<i64, sea_orm::DbErr> {
+    let id = result.last_insert_id();
+    if id == 0 {
+        Err(sea_orm::DbErr::Custom(format!(
+            "missing inserted id for request-context {backend:?} operation"
+        )))
+    } else {
+        Ok(id as i64)
+    }
+}
+
+async fn query_thread_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    thread_id: &str,
+) -> Result<Option<ThreadContext>, sea_orm::DbErr> {
+    query_one_request_context(
+        db,
+        backend,
+        "SELECT id, thread_id, project_id FROM threads WHERE thread_id = ? LIMIT 1",
+        "SELECT id, thread_id, project_id FROM threads WHERE thread_id = $1 LIMIT 1",
+        "SELECT id, thread_id, project_id FROM threads WHERE thread_id = ? LIMIT 1",
+        vec![thread_id.into()],
+    )
+    .await?
+    .map(|row| {
+        Ok(ThreadContext {
+            id: row.try_get_by_index(0)?,
+            thread_id: row.try_get_by_index(1)?,
+            project_id: row.try_get_by_index(2)?,
+        })
+    })
+    .transpose()
+}
+
+async fn insert_thread_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    project_id: i64,
+    thread_id: &str,
+) -> Result<i64, sea_orm::DbErr> {
+    match backend {
+        DatabaseBackend::Sqlite => {
+            let result = db
+                .execute(Statement::from_sql_and_values(
+                    backend,
+                    "INSERT INTO threads (project_id, thread_id) VALUES (?, ?)",
+                    vec![project_id.into(), thread_id.into()],
+                ))
+                .await?;
+            inserted_id(&result, backend)
+        }
+        DatabaseBackend::Postgres => {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    backend,
+                    "INSERT INTO threads (project_id, thread_id) VALUES ($1, $2) RETURNING id",
+                    vec![project_id.into(), thread_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| sea_orm::DbErr::RecordNotFound("thread insert returning id".to_owned()))?;
+            row.try_get_by_index(0)
+        }
+        DatabaseBackend::MySql => {
+            let result = db
+                .execute(Statement::from_sql_and_values(
+                    backend,
+                    "INSERT INTO threads (project_id, thread_id) VALUES (?, ?)",
+                    vec![project_id.into(), thread_id.into()],
+                ))
+                .await?;
+            inserted_id(&result, backend)
+        }
+    }
+}
+
+async fn query_trace_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    trace_id: &str,
+) -> Result<Option<TraceContext>, sea_orm::DbErr> {
+    query_one_request_context(
+        db,
+        backend,
+        "SELECT id, trace_id, project_id, thread_id FROM traces WHERE trace_id = ? LIMIT 1",
+        "SELECT id, trace_id, project_id, thread_id FROM traces WHERE trace_id = $1 LIMIT 1",
+        "SELECT id, trace_id, project_id, thread_id FROM traces WHERE trace_id = ? LIMIT 1",
+        vec![trace_id.into()],
+    )
+    .await?
+    .map(|row| {
+        Ok(TraceContext {
+            id: row.try_get_by_index(0)?,
+            trace_id: row.try_get_by_index(1)?,
+            project_id: row.try_get_by_index(2)?,
+            thread_id: row.try_get_by_index(3)?,
+        })
+    })
+    .transpose()
+}
+
+async fn insert_trace_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    project_id: i64,
+    trace_id: &str,
+    thread_db_id: Option<i64>,
+) -> Result<i64, sea_orm::DbErr> {
+    match backend {
+        DatabaseBackend::Sqlite => {
+            let result = db
+                .execute(Statement::from_sql_and_values(
+                    backend,
+                    "INSERT INTO traces (project_id, trace_id, thread_id) VALUES (?, ?, ?)",
+                    vec![project_id.into(), trace_id.into(), thread_db_id.into()],
+                ))
+                .await?;
+            inserted_id(&result, backend)
+        }
+        DatabaseBackend::Postgres => {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    backend,
+                    "INSERT INTO traces (project_id, trace_id, thread_id) VALUES ($1, $2, $3) RETURNING id",
+                    vec![project_id.into(), trace_id.into(), thread_db_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| sea_orm::DbErr::RecordNotFound("trace insert returning id".to_owned()))?;
+            row.try_get_by_index(0)
+        }
+        DatabaseBackend::MySql => {
+            let result = db
+                .execute(Statement::from_sql_and_values(
+                    backend,
+                    "INSERT INTO traces (project_id, trace_id, thread_id) VALUES (?, ?, ?)",
+                    vec![project_id.into(), trace_id.into(), thread_db_id.into()],
+                ))
+                .await?;
+            inserted_id(&result, backend)
+        }
     }
 }

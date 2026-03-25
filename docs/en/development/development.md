@@ -6,8 +6,60 @@ AxonHub is in an additive Go-to-Rust backend migration.
 
 - **Current full backend:** legacy Go service under `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/`
 - **Rust migration slice:** Cargo workspace rooted at `Cargo.toml`
-- **What the Rust slice implements today:** config loading, CLI compatibility, `/health`, SQLite-scoped `GET /admin/system/status` and `POST /admin/system/initialize`, the practical OpenAI-compatible `/v1` subset (`/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`) with auth/context, routing, and SQLite persistence for the migrated path, plus explicit `501 Not Implemented` stubs for unported HTTP families
-- **What is not migrated yet:** GraphQL, the broader admin plane, non-target provider wrappers/families, multi-dialect parity beyond SQLite, and full API parity
+
+### Rust Slice Current Coverage (Verified)
+
+The Rust slice implements the following verified SQLite- and PostgreSQL-backed surface:
+
+- **Config & CLI**: config loading, CLI compatibility (`config preview`, `config validate`, `config get`, `version`, `help`)
+- **Health & system**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
+- **Identity & context**: authentication, request context, JWT handling
+- **Admin read routes**: `GET /admin/requests/:request_id/content`
+- **Admin GraphQL**: `POST /admin/graphql` with playground, OAuth flows (Codex, Claude Code, Antigravity, Copilot)
+- **OpenAPI GraphQL**: `POST /openapi/v1/graphql` with playground
+- **OpenAI-compatible `/v1` inference**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`
+- **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
+- **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as configured
+- **Database support**: SQLite and PostgreSQL fully verified; MySQL wired through shared SeaORM seam but full integration verification pending
+
+### Rust Slice Remaining Work (Explicit Buckets)
+
+**Next (high-priority, near-term):**
+
+- Image generation endpoints (`/v1/images/generations`, `/v1/images/edits`)
+- RBAC/permission system migration (internal/scopes)
+- Core business logic surfaces (internal/server/biz): channel/model management, request lifecycle, usage/cost, trace/thread
+- Transformer/pipeline migration (llm/transformer, llm/pipeline): provider orchestration, outbound adapters
+- Model association/fetching parity
+- System onboarding completeness (bootstrap flows, default data)
+- OAuth parity verification (complete OAuth flow implementations)
+- MySQL integration verification completion
+
+**Later (medium-priority, mid-term):**
+
+- AiSDK compatibility (complete Vercel AI SDK protocol)
+- Full admin GraphQL write operations and advanced queries
+- Advanced/enterprise features: prompt protection, provider quota management, circuit breakers, channel auto-disable
+- Config alignment: full parity with legacy Go backend configuration options
+- Broader test parity: integration test coverage matching the Go suite
+- Additional provider-specific features (Gemini tools, Anthropic extensions)
+
+**Deferred with 501 (explicit boundaries):**
+
+- Operational/background items that remain Go-only until separate migration gates
+- Legacy-only database dialects (TiDB, Neon DB) - remain on Go backend
+- Helm Kubernetes deployment path (Go backend only)
+- Full legacy Go API surface that is not part of the targeted Rust slice
+
+### Unported HTTP Families (Truthful 501)
+
+Route families outside the verified scope return structured `501 Not Implemented` JSON:
+
+- `/v1/images/generations`, `/v1/images/edits` (image generation)
+- `/admin/*` write operations (user management, project creation, role assignment, etc.)
+- Non-target provider wrappers not yet migrated
+- Realtime API endpoints
+- Full admin plane beyond read operations
 
 Use the Go backend or the released Docker/binary artifacts when you need the full product surface. Use the Rust workspace when working on the migration itself.
 
@@ -30,7 +82,7 @@ The migration does **not** change the product goal. It changes the implementatio
 ### Backend
 
 - **Stable implementation:** Go 1.26+, Gin, Ent, gqlgen, FX
-- **Migration slice:** Rust 1.78+, Tokio, Axum, Serde, Cargo workspace with workspace dependencies
+- **Migration slice:** Rust 1.78+, Tokio, Actix Web, Serde, Cargo workspace with shared dependencies
 
 ### Frontend
 
@@ -54,7 +106,7 @@ The migration does **not** change the product goal. It changes the implementatio
 - `Cargo.toml` — workspace root and shared dependency versions
 - `apps/axonhub-server` — Rust `axonhub` binary
 - `crates/axonhub-config` — shared config contract, defaults, env overrides, preview/get helpers
-- `crates/axonhub-http` — Axum router with `/health`, SQLite-scoped bootstrap/system routes, migrated OpenAI-compatible `/v1` routes, and truthful `501` route stubs for unported families
+- `crates/axonhub-http` — Actix router with `/health`, verified SQLite- and PostgreSQL-backed bootstrap/system routes, migrated OpenAI-compatible `/v1` routes, and truthful `501` route stubs for unported families
 
 ### Legacy Go Backend
 
@@ -79,9 +131,10 @@ cargo run -p axonhub-server --
 Current Rust behavior is intentionally limited:
 
 - `/health` returns a truthful health payload
-- `/admin/system/status` and `/admin/system/initialize` work on the supported SQLite migration path
-- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` run through the practical migrated Rust slice with auth/context, routing, and SQLite-backed persistence side effects
-- `/admin/*`, non-target `/v1/*`, `/anthropic/v1/*`, `/jina/v1/*`, `/doubao/v3/*`, `/gemini/*`, `/v1beta/*`, `/openapi/*`, and other unported families return structured `501 Not Implemented` JSON
+- `/admin/system/status` and `/admin/system/initialize` work on the supported SQLite- and PostgreSQL-backed migration paths
+- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` run through the practical migrated Rust slice with auth/context, routing, and SQLite- and PostgreSQL-backed persistence side effects
+- MySQL uses the same SeaORM-backed repository seam, but full Rust-side integration verification is still pending; TiDB and Neon DB remain Go-only
+- `/admin/*` write operations, non-target `/v1/*` routes such as image generation, and other still-unported families remain explicit structured `501 Not Implemented` JSON boundaries
 - config file paths and `AXONHUB_*` env keys mirror the first shared contract from `conf/conf.go`
 
 ## Frontend Development

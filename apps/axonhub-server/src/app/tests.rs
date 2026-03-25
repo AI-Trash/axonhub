@@ -13,33 +13,132 @@ use super::server::startup_messages;
 use crate::foundation::{
     provider_edge::PROVIDER_EDGE_REQUIRED_ENV_VARS,
     shared::{
-        SqliteFoundation, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME, SYSTEM_KEY_BRAND_NAME,
-        SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_VERSION,
+        SqliteFoundation, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
+        SYSTEM_KEY_BRAND_NAME, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_VERSION,
     },
     system::SqliteBootstrapService,
 };
 use axonhub_http::{
-    router, HttpState, InitializeSystemRequest, ProviderEdgeAdminCapability,
+    router as http_router, HttpState, InitializeSystemRequest, ProviderEdgeAdminCapability,
     SystemBootstrapCapability, SystemBootstrapPort, SystemInitializeError, TraceConfig,
 };
 use axonhub_http::{
-    AdminAuthError, ApiKeyAuthError, ContextResolveError, IdentityCapability, IdentityPort,
-    RequestContextCapability, RequestContextPort, AuthUserContext, AuthApiKeyContext,
-    ProjectContext, ThreadContext, TraceContext, SignInRequest, SignInSuccess, SignInError,
+    AdminAuthError, ApiKeyAuthError, AuthApiKeyContext, AuthUserContext, ContextResolveError,
+    IdentityCapability, IdentityPort, ProjectContext, RequestContextCapability, RequestContextPort,
+    SignInError, SignInRequest, SignInSuccess, ThreadContext, TraceContext,
 };
-use axum::body::Body;
-use axum::http::{Method, Request, StatusCode};
+use actix_web::body::{BoxBody, MessageBody};
+use actix_web::dev::ServiceResponse;
+use actix_web::http::{Method, StatusCode};
+use actix_web::test as actix_test;
 use pg_embed::pg_enums::PgAuthMethod;
 use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
 use pg_embed::postgres::{PgEmbed, PgSettings};
 use postgres::{Client as PostgresClient, NoTls};
-use std::io::{Read, Write};
 use rusqlite::OptionalExtension;
+use std::convert::Infallible;
+use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tower::util::ServiceExt;
+
+#[derive(Clone)]
+struct TestApp {
+    state: HttpState,
+}
+
+impl TestApp {
+    fn new(state: HttpState) -> Self {
+        Self { state }
+    }
+
+    async fn oneshot(&self, request: TestHttpRequest) -> Result<ServiceResponse<BoxBody>, actix_web::Error> {
+        let app = actix_test::init_service(http_router(self.state.clone())).await;
+        let mut actix_request = actix_test::TestRequest::default()
+            .method(Method::from_bytes(request.method.as_bytes()).expect("valid method"))
+            .uri(&request.uri);
+        for (name, value) in &request.headers {
+            actix_request = actix_request.insert_header((name.as_str(), value.as_str()));
+        }
+        Ok(actix_test::call_service(&app, actix_request.set_payload(request.body).to_request()).await)
+    }
+}
+
+async fn read_body<B>(response: ServiceResponse<B>) -> Vec<u8>
+where
+    B: MessageBody + 'static,
+    B::Error: std::fmt::Debug,
+{
+    actix_web::body::to_bytes(response.into_body())
+        .await
+        .unwrap()
+        .to_vec()
+}
+
+fn router(state: HttpState) -> TestApp {
+    TestApp::new(state)
+}
+
+struct Body;
+
+impl Body {
+    fn empty() -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn from(value: impl Into<Vec<u8>>) -> Vec<u8> {
+        value.into()
+    }
+}
+
+struct Request;
+
+impl Request {
+    fn builder() -> TestRequestBuilder {
+        TestRequestBuilder::default()
+    }
+}
+
+#[derive(Default)]
+struct TestRequestBuilder {
+    method: Option<String>,
+    uri: Option<String>,
+    headers: Vec<(String, String)>,
+}
+
+impl TestRequestBuilder {
+    fn uri(mut self, uri: impl Into<String>) -> Self {
+        self.uri = Some(uri.into());
+        self
+    }
+
+    fn method(mut self, method: impl ToString) -> Self {
+        self.method = Some(method.to_string());
+        self
+    }
+
+    fn header(mut self, name: impl ToString, value: impl ToString) -> Self {
+        self.headers.push((name.to_string(), value.to_string()));
+        self
+    }
+
+    fn body(self, body: Vec<u8>) -> Result<TestHttpRequest, Infallible> {
+        Ok(TestHttpRequest {
+            method: self.method.unwrap_or_else(|| "GET".to_owned()),
+            uri: self.uri.unwrap_or_else(|| "/".to_owned()),
+            headers: self.headers,
+            body,
+        })
+    }
+}
+
+struct TestHttpRequest {
+    method: String,
+    uri: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
 
 // Fake identity service for testing unsupported dialect with auth
 #[derive(Clone)]
@@ -246,30 +345,96 @@ impl Drop for ProviderEdgeEnvFixture {
 
 fn provider_edge_env_values() -> Vec<(&'static str, &'static str)> {
     vec![
-        ("AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL", "https://example.test/codex/authorize"),
-        ("AXONHUB_PROVIDER_EDGE_CODEX_TOKEN_URL", "https://example.test/codex/token"),
+        (
+            "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
+            "https://example.test/codex/authorize",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CODEX_TOKEN_URL",
+            "https://example.test/codex/token",
+        ),
         ("AXONHUB_PROVIDER_EDGE_CODEX_CLIENT_ID", "codex-client-id"),
-        ("AXONHUB_PROVIDER_EDGE_CODEX_REDIRECT_URI", "http://localhost:1455/auth/callback"),
-        ("AXONHUB_PROVIDER_EDGE_CODEX_SCOPES", "openid profile email offline_access"),
+        (
+            "AXONHUB_PROVIDER_EDGE_CODEX_REDIRECT_URI",
+            "http://localhost:1455/auth/callback",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CODEX_SCOPES",
+            "openid profile email offline_access",
+        ),
         ("AXONHUB_PROVIDER_EDGE_CODEX_USER_AGENT", "codex-test-agent"),
-        ("AXONHUB_PROVIDER_EDGE_CLAUDECODE_AUTHORIZE_URL", "https://example.test/claudecode/authorize"),
-        ("AXONHUB_PROVIDER_EDGE_CLAUDECODE_TOKEN_URL", "https://example.test/claudecode/token"),
-        ("AXONHUB_PROVIDER_EDGE_CLAUDECODE_CLIENT_ID", "claudecode-client-id"),
-        ("AXONHUB_PROVIDER_EDGE_CLAUDECODE_REDIRECT_URI", "http://localhost:54545/callback"),
-        ("AXONHUB_PROVIDER_EDGE_CLAUDECODE_SCOPES", "org:create_api_key user:profile user:inference"),
-        ("AXONHUB_PROVIDER_EDGE_CLAUDECODE_USER_AGENT", "claudecode-test-agent"),
-        ("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_AUTHORIZE_URL", "https://example.test/antigravity/authorize"),
-        ("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_TOKEN_URL", "https://example.test/antigravity/token"),
-        ("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_ID", "antigravity-client-id"),
-        ("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_SECRET", "antigravity-client-secret"),
-        ("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_REDIRECT_URI", "http://localhost:51121/oauth-callback"),
-        ("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_SCOPES", "scope-a scope-b"),
-        ("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_LOAD_ENDPOINTS", "https://example.test/load-a,https://example.test/load-b"),
-        ("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_USER_AGENT", "antigravity-test-agent"),
-        ("AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_METADATA", r#"{"ideType":"ANTIGRAVITY"}"#),
-        ("AXONHUB_PROVIDER_EDGE_COPILOT_DEVICE_CODE_URL", "https://example.test/copilot/device/code"),
-        ("AXONHUB_PROVIDER_EDGE_COPILOT_ACCESS_TOKEN_URL", "https://example.test/copilot/access/token"),
-        ("AXONHUB_PROVIDER_EDGE_COPILOT_CLIENT_ID", "copilot-client-id"),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_AUTHORIZE_URL",
+            "https://example.test/claudecode/authorize",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_TOKEN_URL",
+            "https://example.test/claudecode/token",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_CLIENT_ID",
+            "claudecode-client-id",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_REDIRECT_URI",
+            "http://localhost:54545/callback",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_SCOPES",
+            "org:create_api_key user:profile user:inference",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_USER_AGENT",
+            "claudecode-test-agent",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_AUTHORIZE_URL",
+            "https://example.test/antigravity/authorize",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_TOKEN_URL",
+            "https://example.test/antigravity/token",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_ID",
+            "antigravity-client-id",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_SECRET",
+            "antigravity-client-secret",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_REDIRECT_URI",
+            "http://localhost:51121/oauth-callback",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_SCOPES",
+            "scope-a scope-b",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_LOAD_ENDPOINTS",
+            "https://example.test/load-a,https://example.test/load-b",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_USER_AGENT",
+            "antigravity-test-agent",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_METADATA",
+            r#"{"ideType":"ANTIGRAVITY"}"#,
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_COPILOT_DEVICE_CODE_URL",
+            "https://example.test/copilot/device/code",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_COPILOT_ACCESS_TOKEN_URL",
+            "https://example.test/copilot/access/token",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_COPILOT_CLIENT_ID",
+            "copilot-client-id",
+        ),
         ("AXONHUB_PROVIDER_EDGE_COPILOT_SCOPE", "read:user"),
     ]
 }
@@ -493,7 +658,10 @@ fn sqlite_bootstrap_persists_initialized_state_and_system_keys() {
         )
         .optional()
         .unwrap();
-    assert_eq!(primary_storage_name.as_deref(), Some(PRIMARY_DATA_STORAGE_NAME));
+    assert_eq!(
+        primary_storage_name.as_deref(),
+        Some(PRIMARY_DATA_STORAGE_NAME)
+    );
 
     std::fs::remove_file(db_path).ok();
 }
@@ -621,8 +789,9 @@ fn postgres_identity_capability_supports_signin_jwt_and_service_api_key_auth() {
 #[test]
 fn postgres_request_context_capability_resolves_project_thread_and_trace() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut embedded_pg, dsn, data_dir) =
-        runtime.block_on(start_embedded_postgres("postgres-request-context-capability"));
+    let (mut embedded_pg, dsn, data_dir) = runtime.block_on(start_embedded_postgres(
+        "postgres-request-context-capability",
+    ));
 
     let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
     let system = match bootstrap {
@@ -653,8 +822,14 @@ fn postgres_request_context_capability_resolves_project_thread_and_trace() {
     assert_eq!(project.id, 1);
     assert_eq!(project.name, "Default Project");
 
-    let thread = request_context.resolve_thread(project.id, "thread-postgres-1").unwrap().unwrap();
-    let same_thread = request_context.resolve_thread(project.id, "thread-postgres-1").unwrap().unwrap();
+    let thread = request_context
+        .resolve_thread(project.id, "thread-postgres-1")
+        .unwrap()
+        .unwrap();
+    let same_thread = request_context
+        .resolve_thread(project.id, "thread-postgres-1")
+        .unwrap()
+        .unwrap();
     assert_eq!(same_thread.id, thread.id);
     assert_eq!(same_thread.thread_id, "thread-postgres-1");
 
@@ -671,11 +846,17 @@ fn postgres_request_context_capability_resolves_project_thread_and_trace() {
 
     let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
     let thread_count: i64 = connection
-        .query_one("SELECT COUNT(*) FROM threads WHERE thread_id = $1", &[&"thread-postgres-1"])
+        .query_one(
+            "SELECT COUNT(*) FROM threads WHERE thread_id = $1",
+            &[&"thread-postgres-1"],
+        )
         .unwrap()
         .get(0);
     let trace_count: i64 = connection
-        .query_one("SELECT COUNT(*) FROM traces WHERE trace_id = $1", &[&"trace-postgres-1"])
+        .query_one(
+            "SELECT COUNT(*) FROM traces WHERE trace_id = $1",
+            &[&"trace-postgres-1"],
+        )
         .unwrap()
         .get(0);
     assert_eq!(thread_count, 1);
@@ -687,7 +868,8 @@ fn postgres_request_context_capability_resolves_project_thread_and_trace() {
 
 #[tokio::test]
 async fn postgres_router_signin_and_debug_context_routes_work_for_auth_and_context() {
-    let (mut embedded_pg, dsn, data_dir) = start_embedded_postgres("postgres-auth-context-router").await;
+    let (mut embedded_pg, dsn, data_dir) =
+        start_embedded_postgres("postgres-auth-context-router").await;
 
     let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
     let system = match bootstrap {
@@ -749,9 +931,7 @@ async fn postgres_router_signin_and_debug_context_routes_work_for_auth_and_conte
         .await
         .unwrap();
     assert_eq!(signin_response.status(), StatusCode::OK);
-    let signin_body = axum::body::to_bytes(signin_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let signin_body = read_body(signin_response).await;
     let signin_json = serde_json::from_slice::<serde_json::Value>(&signin_body).unwrap();
     let token = signin_json["token"]
         .as_str()
@@ -776,15 +956,19 @@ async fn postgres_router_signin_and_debug_context_routes_work_for_auth_and_conte
         .await
         .unwrap();
     assert_eq!(admin_debug_response.status(), StatusCode::OK);
-    let admin_debug_body = axum::body::to_bytes(admin_debug_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let admin_debug_body = read_body(admin_debug_response).await;
     let admin_debug_json = serde_json::from_slice::<serde_json::Value>(&admin_debug_body).unwrap();
     assert_eq!(admin_debug_json["auth"]["mode"], "jwt");
     assert_eq!(admin_debug_json["auth"]["user_id"], 1);
     assert_eq!(admin_debug_json["project"]["id"], 1);
-    assert_eq!(admin_debug_json["thread"]["threadId"], "thread-router-postgres");
-    assert_eq!(admin_debug_json["trace"]["traceId"], "trace-router-postgres");
+    assert_eq!(
+        admin_debug_json["thread"]["threadId"],
+        "thread-router-postgres"
+    );
+    assert_eq!(
+        admin_debug_json["trace"]["traceId"],
+        "trace-router-postgres"
+    );
     assert_eq!(admin_debug_json["requestId"], "req-router-postgres");
 
     let openapi_debug_response = app
@@ -802,16 +986,24 @@ async fn postgres_router_signin_and_debug_context_routes_work_for_auth_and_conte
         .await
         .unwrap();
     assert_eq!(openapi_debug_response.status(), StatusCode::OK);
-    let openapi_debug_body = axum::body::to_bytes(openapi_debug_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let openapi_debug_json = serde_json::from_slice::<serde_json::Value>(&openapi_debug_body).unwrap();
+    let openapi_debug_body = read_body(openapi_debug_response).await;
+    let openapi_debug_json =
+        serde_json::from_slice::<serde_json::Value>(&openapi_debug_body).unwrap();
     assert_eq!(openapi_debug_json["auth"]["mode"], "api_key");
     assert_eq!(openapi_debug_json["auth"]["api_key_id"], 2);
-    assert_eq!(openapi_debug_json["auth"]["api_key_type"], "service_account");
+    assert_eq!(
+        openapi_debug_json["auth"]["api_key_type"],
+        "service_account"
+    );
     assert_eq!(openapi_debug_json["project"]["id"], 1);
-    assert_eq!(openapi_debug_json["thread"]["threadId"], "thread-service-postgres");
-    assert_eq!(openapi_debug_json["trace"]["traceId"], "trace-service-postgres");
+    assert_eq!(
+        openapi_debug_json["thread"]["threadId"],
+        "thread-service-postgres"
+    );
+    assert_eq!(
+        openapi_debug_json["trace"]["traceId"],
+        "trace-service-postgres"
+    );
     assert_eq!(openapi_debug_json["requestId"], "req-service-postgres");
 
     embedded_pg.stop_db().await.unwrap();
@@ -860,7 +1052,10 @@ fn postgres_admin_request_content_route_downloads_seeded_content() {
     let (project_id, request_id) = {
         let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
         let project_id: i64 = connection
-            .query_one("SELECT id FROM projects WHERE deleted_at = 0 ORDER BY id ASC LIMIT 1", &[])
+            .query_one(
+                "SELECT id FROM projects WHERE deleted_at = 0 ORDER BY id ASC LIMIT 1",
+                &[],
+            )
             .unwrap()
             .get(0);
         let storage_settings = serde_json::json!({
@@ -914,7 +1109,9 @@ fn postgres_admin_request_content_route_downloads_seeded_content() {
         (project_id, request_id)
     };
 
-    let full_path = content_dir.join(format!("{project_id}/requests/{request_id}/video/video.mp4"));
+    let full_path = content_dir.join(format!(
+        "{project_id}/requests/{request_id}/video/video.mp4"
+    ));
     std::fs::create_dir_all(full_path.parent().unwrap()).unwrap();
     std::fs::write(&full_path, b"postgres-video-content").unwrap();
 
@@ -951,7 +1148,10 @@ fn postgres_admin_request_content_route_downloads_seeded_content() {
                     .uri(format!("/admin/requests/{request_id}/content"))
                     .method(Method::GET.as_str())
                     .header("Authorization", format!("Bearer {token}"))
-                    .header("X-Project-ID", format!("gid://axonhub/project/{project_id}"))
+                    .header(
+                        "X-Project-ID",
+                        format!("gid://axonhub/project/{project_id}"),
+                    )
                     .body(Body::empty())
                     .unwrap(),
             ),
@@ -967,7 +1167,7 @@ fn postgres_admin_request_content_route_downloads_seeded_content() {
         .unwrap()
         .contains("video.mp4"));
     let body = runtime
-        .block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+        .block_on(actix_web::body::to_bytes(response.into_body()))
         .unwrap();
     assert_eq!(body.as_ref(), b"postgres-video-content");
 
@@ -1100,9 +1300,7 @@ async fn postgres_admin_graphql_route_executes_current_subset() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = read_body(response).await;
     let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
     assert!(json.get("errors").map(|v| v.is_null()).unwrap_or(true));
     let models = json["data"]["queryModels"]
@@ -1120,7 +1318,8 @@ async fn postgres_admin_graphql_route_executes_current_subset() {
 
 #[tokio::test]
 async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truthful() {
-    let (mut embedded_pg, dsn, data_dir) = start_embedded_postgres("postgres-openai-v1-subset").await;
+    let (mut embedded_pg, dsn, data_dir) =
+        start_embedded_postgres("postgres-openai-v1-subset").await;
 
     let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
     let system = match bootstrap {
@@ -1297,9 +1496,7 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
         .unwrap();
     assert_eq!(models_response.status(), StatusCode::OK);
     let models_json = serde_json::from_slice::<serde_json::Value>(
-        &axum::body::to_bytes(models_response.into_body(), usize::MAX)
-            .await
-            .unwrap(),
+        &read_body(models_response).await,
     )
     .unwrap();
     assert_eq!(models_json["data"][0]["id"], "gpt-4o");
@@ -1354,12 +1551,12 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK, "path {path}");
         let json = serde_json::from_slice::<serde_json::Value>(
-            &axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap(),
+            &read_body(response).await,
         )
         .unwrap();
-        let actual = expected_json_path.iter().fold(&json, |current, key| &current[*key]);
+        let actual = expected_json_path
+            .iter()
+            .fold(&json, |current, key| &current[*key]);
         assert_eq!(actual, &expected_value, "path {path}");
     }
 
@@ -1409,8 +1606,26 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
     .join()
     .expect("postgres /v1 verification thread");
 
-    assert_eq!(request_statuses, vec!["completed", "completed", "completed", "completed", "completed"]);
-    assert_eq!(execution_statuses, vec!["completed", "completed", "completed", "completed", "completed"]);
+    assert_eq!(
+        request_statuses,
+        vec![
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+        ]
+    );
+    assert_eq!(
+        execution_statuses,
+        vec![
+            "completed",
+            "completed",
+            "completed",
+            "completed",
+            "completed"
+        ]
+    );
     assert_eq!(usage_count, 5);
     assert_eq!(trace_thread_count, 1);
 
@@ -1420,7 +1635,8 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
 
 #[tokio::test]
 async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthful() {
-    let (mut embedded_pg, dsn, data_dir) = start_embedded_postgres("postgres-openai-v1-videos").await;
+    let (mut embedded_pg, dsn, data_dir) =
+        start_embedded_postgres("postgres-openai-v1-videos").await;
 
     let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
     let system = match bootstrap {
@@ -1531,9 +1747,7 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
         .unwrap();
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_json = serde_json::from_slice::<serde_json::Value>(
-        &axum::body::to_bytes(create_response.into_body(), usize::MAX)
-            .await
-            .unwrap(),
+        &read_body(create_response).await,
     )
     .unwrap();
     assert_eq!(create_json["id"], "video_mock_task");
@@ -1555,13 +1769,14 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
         .unwrap();
     assert_eq!(get_response.status(), StatusCode::OK);
     let get_json = serde_json::from_slice::<serde_json::Value>(
-        &axum::body::to_bytes(get_response.into_body(), usize::MAX)
-            .await
-            .unwrap(),
+        &read_body(get_response).await,
     )
     .unwrap();
     assert_eq!(get_json["id"], "video_mock_task");
-    assert_eq!(get_json["content"]["video_url"], "https://example.com/generated.mp4");
+    assert_eq!(
+        get_json["content"]["video_url"],
+        "https://example.com/generated.mp4"
+    );
 
     let delete_response = app
         .clone()
@@ -1579,9 +1794,7 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
         .await
         .unwrap();
     assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
-    let delete_body = axum::body::to_bytes(delete_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let delete_body = read_body(delete_response).await;
     assert!(delete_body.is_empty());
 
     let unported_images = app
@@ -1626,8 +1839,18 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
     .join()
     .expect("postgres /v1 videos verification thread");
 
-    assert_eq!(request_formats, vec!["doubao/video_create", "doubao/video_get", "doubao/video_delete"]);
-    assert_eq!(execution_statuses, vec!["completed", "completed", "completed"]);
+    assert_eq!(
+        request_formats,
+        vec![
+            "doubao/video_create",
+            "doubao/video_get",
+            "doubao/video_delete"
+        ]
+    );
+    assert_eq!(
+        execution_statuses,
+        vec!["completed", "completed", "completed"]
+    );
     assert_eq!(trace_thread_count, 1);
 
     embedded_pg.stop_db().await.unwrap();
@@ -1692,9 +1915,7 @@ async fn main_router_serves_fresh_status_and_initialize_for_sqlite_scope() {
         .unwrap();
 
     assert_eq!(status_response.status(), StatusCode::OK);
-    let status_body = axum::body::to_bytes(status_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let status_body = read_body(status_response).await;
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&status_body).unwrap()["isInitialized"],
         false
@@ -1783,11 +2004,7 @@ fn config_cli_parser_preserves_current_subcommands() {
         Some(ConfigCommand::Validate)
     );
     assert_eq!(
-        parse_config_command(&[
-            "axonhub".to_owned(),
-            "config".to_owned(),
-            "get".to_owned(),
-        ]),
+        parse_config_command(&["axonhub".to_owned(), "config".to_owned(), "get".to_owned(),]),
         Some(ConfigCommand::Get)
     );
     assert_eq!(
@@ -1795,11 +2012,7 @@ fn config_cli_parser_preserves_current_subcommands() {
         None
     );
     assert_eq!(
-        parse_config_command(&[
-            "axonhub".to_owned(),
-            "config".to_owned(),
-            "set".to_owned(),
-        ]),
+        parse_config_command(&["axonhub".to_owned(), "config".to_owned(), "set".to_owned(),]),
         None
     );
 }
@@ -1813,7 +2026,10 @@ fn help_and_config_usage_texts_list_current_cli_contract() {
     assert!(HELP_TEXT.contains("axonhub version"));
     assert!(HELP_TEXT.contains("axonhub help"));
 
-    assert_eq!(CONFIG_USAGE_TEXT, "Usage: axonhub config <preview|validate|get>\n");
+    assert_eq!(
+        CONFIG_USAGE_TEXT,
+        "Usage: axonhub config <preview|validate|get>\n"
+    );
     assert!(CONFIG_GET_USAGE_TEXT.contains("server.port    Server port number"));
     assert!(CONFIG_GET_USAGE_TEXT.contains("server.name    Server name"));
     assert!(CONFIG_GET_USAGE_TEXT.contains("server.base_path  Server base path"));
@@ -1852,7 +2068,8 @@ fn startup_messages_are_truthful_for_metrics_and_identity() {
 
 #[tokio::test]
 async fn postgres_bootstrap_capability_serves_fresh_status_and_initialize() {
-    let (mut embedded_pg, dsn, data_dir) = start_embedded_postgres("postgres-bootstrap-router").await;
+    let (mut embedded_pg, dsn, data_dir) =
+        start_embedded_postgres("postgres-bootstrap-router").await;
     let state = HttpState {
         service_name: "AxonHub".to_owned(),
         version: "v0.9.20".to_owned(),
@@ -1901,9 +2118,7 @@ async fn postgres_bootstrap_capability_serves_fresh_status_and_initialize() {
         .unwrap();
 
     assert_eq!(status_response.status(), StatusCode::OK);
-    let status_body = axum::body::to_bytes(status_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let status_body = read_body(status_response).await;
     let json = serde_json::from_slice::<serde_json::Value>(&status_body).unwrap();
     assert_eq!(json["isInitialized"], false);
 
@@ -1923,9 +2138,7 @@ async fn postgres_bootstrap_capability_serves_fresh_status_and_initialize() {
         .unwrap();
 
     assert_eq!(initialize_response.status(), StatusCode::OK);
-    let initialize_body = axum::body::to_bytes(initialize_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let initialize_body = read_body(initialize_response).await;
     let json = serde_json::from_slice::<serde_json::Value>(&initialize_body).unwrap();
     assert_eq!(json["success"], true);
     assert_eq!(json["message"], "System initialized successfully");
@@ -1942,9 +2155,7 @@ async fn postgres_bootstrap_capability_serves_fresh_status_and_initialize() {
         .unwrap();
 
     assert_eq!(second_status_response.status(), StatusCode::OK);
-    let second_status_body = axum::body::to_bytes(second_status_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let second_status_body = read_body(second_status_response).await;
     let json = serde_json::from_slice::<serde_json::Value>(&second_status_body).unwrap();
     assert_eq!(json["isInitialized"], true);
 
@@ -1952,63 +2163,58 @@ async fn postgres_bootstrap_capability_serves_fresh_status_and_initialize() {
     std::fs::remove_dir_all(data_dir).ok();
 }
 
-#[tokio::test]
-async fn mysql_bootstrap_routes_remain_truthful_as_unsupported() {
-    let db_path = temp_sqlite_path("unsupported-dialect-truthful");
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability("mysql", &db_path.display().to_string(), "v0.9.20"),
-        identity: build_identity_capability("mysql", &db_path.display().to_string(), false),
-        request_context: build_request_context_capability("mysql", &db_path.display().to_string(), false),
-        openai_v1: build_openai_v1_capability("mysql", &db_path.display().to_string()),
-        admin: build_admin_capability("mysql", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability("mysql", &db_path.display().to_string()),
-        openapi_graphql: build_openapi_graphql_capability("mysql", &db_path.display().to_string()),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Use the legacy Go backend for these routes.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+#[test]
+fn mysql_capabilities_route_through_the_same_seaorm_slice() {
+    let mysql_dsn = "mysql://axonhub:axonhub_password@127.0.0.1:3306/axonhub";
 
-    let app = router(state);
+    match build_system_bootstrap_capability("mysql", mysql_dsn, "v0.9.20") {
+        SystemBootstrapCapability::Available { .. } => {}
+        SystemBootstrapCapability::Unsupported { message } => {
+            panic!("Expected mysql bootstrap capability to be available: {message}");
+        }
+    }
 
-    let status_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/admin/system/status")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    match build_identity_capability("mysql", mysql_dsn, false) {
+        IdentityCapability::Available { .. } => {}
+        IdentityCapability::Unsupported { message } => {
+            panic!("Expected mysql identity capability to be available: {message}");
+        }
+    }
 
-    assert_eq!(status_response.status(), StatusCode::NOT_IMPLEMENTED);
-    let status_body = axum::body::to_bytes(status_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json = serde_json::from_slice::<serde_json::Value>(&status_body).unwrap();
-    assert_eq!(json["error"], "not_implemented");
-    assert_eq!(json["route_family"], "/admin/system/status");
-    assert_eq!(json["path"], "/admin/system/status");
-    assert_eq!(json["method"], "GET");
-    assert_eq!(
-        json["message"],
-        "DB-backed admin system status/bootstrap is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3 and postgres."
-    );
+    match build_request_context_capability("mysql", mysql_dsn, false) {
+        RequestContextCapability::Available { .. } => {}
+        RequestContextCapability::Unsupported { message } => {
+            panic!("Expected mysql request-context capability to be available: {message}");
+        }
+    }
 
-    std::fs::remove_file(db_path).ok();
+    match build_openai_v1_capability("mysql", mysql_dsn) {
+        axonhub_http::OpenAiV1Capability::Available { .. } => {}
+        axonhub_http::OpenAiV1Capability::Unsupported { message } => {
+            panic!("Expected mysql OpenAI v1 capability to be available: {message}");
+        }
+    }
+
+    match build_admin_capability("mysql", mysql_dsn) {
+        axonhub_http::AdminCapability::Available { .. } => {}
+        axonhub_http::AdminCapability::Unsupported { message } => {
+            panic!("Expected mysql admin capability to be available: {message}");
+        }
+    }
+
+    match build_admin_graphql_capability("mysql", mysql_dsn) {
+        axonhub_http::AdminGraphqlCapability::Available { .. } => {}
+        axonhub_http::AdminGraphqlCapability::Unsupported { message } => {
+            panic!("Expected mysql admin graphql capability to be available: {message}");
+        }
+    }
+
+    match build_openapi_graphql_capability("mysql", mysql_dsn) {
+        axonhub_http::OpenApiGraphqlCapability::Available { .. } => {}
+        axonhub_http::OpenApiGraphqlCapability::Unsupported { message } => {
+            panic!("Expected mysql openapi graphql capability to be available: {message}");
+        }
+    }
 }
 
 #[tokio::test]
@@ -2071,9 +2277,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
         .unwrap();
 
     let start_status = start_response.status();
-    let start_body = axum::body::to_bytes(start_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let start_body = read_body(start_response).await;
 
     assert_eq!(start_status, StatusCode::NOT_IMPLEMENTED);
     let json = serde_json::from_slice::<serde_json::Value>(&start_body).unwrap();
@@ -2103,9 +2307,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
         .unwrap();
 
     let exchange_status = exchange_response.status();
-    let exchange_body = axum::body::to_bytes(exchange_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let exchange_body = read_body(exchange_response).await;
 
     assert_eq!(exchange_status, StatusCode::NOT_IMPLEMENTED);
     let json = serde_json::from_slice::<serde_json::Value>(&exchange_body).unwrap();
@@ -2135,9 +2337,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
         .unwrap();
 
     let exchange_status = exchange_response.status();
-    let exchange_body = axum::body::to_bytes(exchange_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let exchange_body = read_body(exchange_response).await;
 
     assert_eq!(exchange_status, StatusCode::NOT_IMPLEMENTED);
     let json = serde_json::from_slice::<serde_json::Value>(&exchange_body).unwrap();
@@ -2236,9 +2436,7 @@ async fn postgres_provider_edge_routes_remain_truthful_when_secure_runtime_confi
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = read_body(response).await;
     let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
     assert_eq!(json["route_family"], "/admin/codex/oauth/start");
     assert_eq!(json["path"], "/admin/codex/oauth/start");
@@ -2305,11 +2503,11 @@ async fn postgres_provider_edge_routes_start_when_secure_runtime_config_is_prese
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    let body = read_body(response).await;
     let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
-    assert!(json["session_id"].as_str().is_some_and(|value| !value.is_empty()));
+    assert!(json["session_id"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
     let auth_url = json["auth_url"].as_str().expect("expected auth_url");
     assert!(auth_url.starts_with("https://example.test/codex/authorize?"));
     assert!(auth_url.contains("client_id=codex-client-id"));
@@ -2318,14 +2516,15 @@ async fn postgres_provider_edge_routes_start_when_secure_runtime_config_is_prese
 }
 
 #[tokio::test]
-async fn unsupported_dialect_keeps_graphql_routes_truthful() {
+async fn unsupported_non_seaorm_dialect_keeps_graphql_routes_truthful() {
     let db_path = temp_sqlite_path("unsupported-dialect-graphql");
+
     let state = HttpState {
         service_name: "AxonHub".to_owned(),
         version: "v0.9.20".to_owned(),
         config_source: None,
         system_bootstrap: build_system_bootstrap_capability(
-            "postgres",
+            "oracle",
             &db_path.display().to_string(),
             "v0.9.20",
         ),
@@ -2335,16 +2534,10 @@ async fn unsupported_dialect_keeps_graphql_routes_truthful() {
         request_context: RequestContextCapability::Available {
             request_context: Arc::new(FakeIdentityService::new()),
         },
-        openai_v1: build_openai_v1_capability("postgres", &db_path.display().to_string()),
-        admin: build_admin_capability("postgres", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability(
-            "postgres",
-            &db_path.display().to_string(),
-        ),
-        openapi_graphql: build_openapi_graphql_capability(
-            "postgres",
-            &db_path.display().to_string(),
-        ),
+        openai_v1: build_openai_v1_capability("oracle", &db_path.display().to_string()),
+        admin: build_admin_capability("oracle", &db_path.display().to_string()),
+        admin_graphql: build_admin_graphql_capability("oracle", &db_path.display().to_string()),
+        openapi_graphql: build_openapi_graphql_capability("oracle", &db_path.display().to_string()),
         provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
             message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
         },
@@ -2378,13 +2571,11 @@ async fn unsupported_dialect_keeps_graphql_routes_truthful() {
         .await
         .unwrap();
 
-    assert_eq!(admin_graphql_response.status(), StatusCode::OK);
-    let admin_graphql_body = axum::body::to_bytes(admin_graphql_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
+    assert_eq!(admin_graphql_response.status(), StatusCode::NOT_IMPLEMENTED);
+    let admin_graphql_body = read_body(admin_graphql_response).await;
     let json = serde_json::from_slice::<serde_json::Value>(&admin_graphql_body).unwrap();
-    assert!(json.get("errors").map(|v| v.is_null()).unwrap_or(true));
-    assert!(json["data"]["queryModels"].is_array());
+    assert_eq!(json["error"], "not_implemented");
+    assert_eq!(json["route_family"], "/admin/graphql");
 
     let openapi_graphql_response = app
         .clone()
@@ -2402,16 +2593,15 @@ async fn unsupported_dialect_keeps_graphql_routes_truthful() {
         .await
         .unwrap();
 
-    assert_eq!(openapi_graphql_response.status(), StatusCode::OK);
-    let openapi_graphql_body = axum::body::to_bytes(openapi_graphql_response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json = serde_json::from_slice::<serde_json::Value>(&openapi_graphql_body).unwrap();
-    assert!(json.get("errors").map(|v| v.is_null()).unwrap_or(true));
     assert_eq!(
-        json["data"]["createLLMAPIKey"]["name"],
-        "Postgres Unsupported Test Key"
+        openapi_graphql_response.status(),
+        StatusCode::NOT_IMPLEMENTED
     );
+    let openapi_graphql_body =
+        read_body(openapi_graphql_response).await;
+    let json = serde_json::from_slice::<serde_json::Value>(&openapi_graphql_body).unwrap();
+    assert_eq!(json["error"], "not_implemented");
+    assert_eq!(json["route_family"], "/openapi/v1/graphql");
 
     std::fs::remove_file(db_path).ok();
 }
@@ -2494,13 +2684,18 @@ async fn sqlite_backed_openapi_graphql_route_executes_pilot_mutation() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = read_body(response).await;
     let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
 
     assert!(json.get("errors").map(|v| v.is_null()).unwrap_or(true));
     let data = json.get("data").expect("expected data field");
-    let api_key = data.get("createLLMAPIKey").expect("expected createLLMAPIKey field");
-    assert_eq!(api_key.get("name").and_then(|v| v.as_str()), Some("SDK Key"));
+    let api_key = data
+        .get("createLLMAPIKey")
+        .expect("expected createLLMAPIKey field");
+    assert_eq!(
+        api_key.get("name").and_then(|v| v.as_str()),
+        Some("SDK Key")
+    );
     let scopes = api_key.get("scopes").and_then(|v| v.as_array()).unwrap();
     let scope_strs: Vec<&str> = scopes.iter().filter_map(|v| v.as_str()).collect();
     assert!(scope_strs.contains(&"read_channels"));
@@ -2511,7 +2706,8 @@ async fn sqlite_backed_openapi_graphql_route_executes_pilot_mutation() {
 
 #[tokio::test]
 async fn postgres_openapi_graphql_route_executes_pilot_mutation() {
-    let (mut embedded_pg, dsn, data_dir) = start_embedded_postgres("postgres-openapi-graphql-pilot").await;
+    let (mut embedded_pg, dsn, data_dir) =
+        start_embedded_postgres("postgres-openapi-graphql-pilot").await;
 
     let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
     let system = match bootstrap {
@@ -2574,13 +2770,15 @@ async fn postgres_openapi_graphql_route_executes_pilot_mutation() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = read_body(response).await;
     let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
 
     assert!(json.get("errors").map(|v| v.is_null()).unwrap_or(true));
     let api_key = json["data"]["createLLMAPIKey"].clone();
     assert_eq!(api_key["name"], "SDK Key");
-    assert!(api_key["key"].as_str().is_some_and(|value| value.starts_with("ah-")));
+    assert!(api_key["key"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("ah-")));
     let scopes = api_key["scopes"].as_array().expect("expected scopes array");
     let scope_strs: Vec<&str> = scopes.iter().filter_map(|v| v.as_str()).collect();
     assert!(scope_strs.contains(&"read_channels"));
@@ -2691,7 +2889,7 @@ async fn sqlite_backed_openapi_graphql_route_rejects_missing_or_invalid_service_
         .unwrap();
 
     assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
-    let missing_body = axum::body::to_bytes(missing_response.into_body(), usize::MAX).await.unwrap();
+    let missing_body = read_body(missing_response).await;
     let missing_json = serde_json::from_slice::<serde_json::Value>(&missing_body).unwrap();
     assert_eq!(missing_json["error"]["type"], "Unauthorized");
     assert_eq!(missing_json["error"]["message"], "API key is required");
@@ -2712,7 +2910,7 @@ async fn sqlite_backed_openapi_graphql_route_rejects_missing_or_invalid_service_
         .unwrap();
 
     assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
-    let invalid_body = axum::body::to_bytes(invalid_response.into_body(), usize::MAX).await.unwrap();
+    let invalid_body = read_body(invalid_response).await;
     let invalid_json = serde_json::from_slice::<serde_json::Value>(&invalid_body).unwrap();
     assert_eq!(invalid_json["error"]["type"], "Unauthorized");
     assert_eq!(invalid_json["error"]["message"], "Invalid API key");

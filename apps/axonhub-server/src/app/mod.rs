@@ -3,6 +3,7 @@ mod capabilities;
 mod cli;
 mod metrics;
 mod server;
+mod services;
 
 use anyhow::Result;
 use std::env;

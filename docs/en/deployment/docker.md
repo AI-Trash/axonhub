@@ -2,11 +2,11 @@
 
 ## Important Migration Note
 
-The repository is now in the final Rust cutover stage for the supported SQLite-backed AxonHub surface.
+The repository is now in the final Rust cutover stage for the supported SQLite- and PostgreSQL-backed AxonHub surface.
 
 Today:
 
-- the **Rust backend** is the supported runtime for the verified SQLite-backed replacement scope in this repository: CLI/config, `/health`, admin bootstrap/status/auth/read routes, admin GraphQL, OpenAPI GraphQL, request-context/auth foundations, and the migrated inference families already covered by repo evidence,
+- the **Rust backend** is the supported runtime for the verified SQLite- and PostgreSQL-backed replacement scope in this repository: CLI/config, `/health`, admin bootstrap/status/auth/read routes, admin GraphQL, OpenAPI GraphQL, request-context/auth foundations, and the migrated inference families already covered by repo evidence,
 - route families outside that verified scope still return explicit Rust `501 Not Implemented` payloads,
 - `looplj/axonhub:latest` remains available only as the rollback target while the Go retirement gates are being closed.
 
@@ -31,13 +31,16 @@ docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 
 The compose example keeps the Rust runtime's default SQLite data and other relative runtime files on a named Docker volume. A one-off `docker run --rm` container is intentionally ephemeral unless you add your own volume mounts.
 
+The binary PASS/FAIL cutover, HOLD, and ROLLBACK criteria for these Rust-tagged delivery paths are defined in `.sisyphus/artifacts/rust-backend-seaorm-actix-migration-plan/final-cutover-gates.md`.
+
 What to expect from that image today:
 
 - `/health` is available
-- `GET /admin/system/status` and `POST /admin/system/initialize` are supported on the verified SQLite-backed runtime path
-- the verified Rust replacement scope also covers admin auth/read flows, admin GraphQL, OpenAPI GraphQL, request-context/auth foundations, and the migrated inference families when the compatible SQLite data path is configured
+- `GET /admin/system/status` and `POST /admin/system/initialize` are supported on the verified SQLite- and PostgreSQL-backed runtime paths
+- the verified Rust replacement scope also covers admin auth/read flows, admin GraphQL, OpenAPI GraphQL, request-context/auth foundations, and the migrated inference families on the accepted SQLite and PostgreSQL paths
 - route families outside that verified scope return explicit `501 Not Implemented` JSON instead of redirecting operators to the legacy Go backend
-- multi-dialect replacement beyond SQLite is still out of scope for this cutover gate
+- MySQL is wired through the same SeaORM-backed repository seam but is not yet fully integration-verified in the Rust test suite
+- multi-dialect replacement beyond SQLite and PostgreSQL is still out of scope for this cutover gate
 
 ## Quick Start
 
@@ -125,8 +128,8 @@ healthcheck:
 Keep these distinctions clear while the Go retirement gates are still in progress:
 
 - Docker deployment for the supported scope now centers on the Rust runtime.
-- The verified replacement scope is still **SQLite-backed only**; unsupported dialects and unported route families remain explicit exclusions.
-- If you run the Rust backend directly from the workspace, `/health`, the SQLite-backed admin/bootstrap/auth/GraphQL surface, and the migrated inference families are available alongside explicit `501` route stubs for every remaining unsupported family.
+- The verified replacement scope currently covers **SQLite and PostgreSQL**; MySQL is wired but not yet fully integration-verified, and unsupported dialects and unported route families remain explicit exclusions.
+- If you run the Rust backend directly from the workspace, `/health`, the SQLite/PostgreSQL-backed admin/bootstrap/auth/GraphQL surface, and the migrated inference families are available alongside explicit `501` route stubs for every remaining unsupported family.
 
 ## Troubleshooting
 
