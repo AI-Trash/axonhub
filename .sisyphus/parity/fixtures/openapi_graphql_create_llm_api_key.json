@@ -1,0 +1,12 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/openapi/v1/graphql",
+    "headers": {
+      "Authorization": "Bearer service-key-123",
+      "Content-Type": "application/json"
+    },
+    "body": "{\"query\":\"mutation { createLLMAPIKey(name: \\\"SDK Key\\\") { key name scopes } }\"}"
+  },
+  "normalize_generated_key": true
+}

@@ -1,0 +1,66 @@
+{
+  "suite_sets": {
+    "stable-core": [
+      "cli_version",
+      "config_get_server_name",
+      "admin_system_status_initial",
+      "v1_models_basic",
+      "openapi_graphql_create_llm_api_key"
+    ],
+    "known-gaps": [
+      "config_get_cache_default_expiration_alias"
+    ],
+    "all": [
+      "cli_version",
+      "config_get_server_name",
+      "config_get_cache_default_expiration_alias",
+      "admin_system_status_initial",
+      "v1_models_basic",
+      "openapi_graphql_create_llm_api_key"
+    ]
+  },
+  "suites": {
+    "cli_version": {
+      "kind": "cli",
+      "family": "cli_config",
+      "expected_parity": true,
+      "fixture": "fixtures/cli_version.json",
+      "description": "Compare top-level version output"
+    },
+    "config_get_server_name": {
+      "kind": "cli",
+      "family": "cli_config",
+      "expected_parity": true,
+      "fixture": "fixtures/config_get_server_name.json",
+      "description": "Compare config get for server.name"
+    },
+    "config_get_cache_default_expiration_alias": {
+      "kind": "cli",
+      "family": "cli_config",
+      "expected_parity": false,
+      "fixture": "fixtures/config_get_cache_default_expiration_alias.json",
+      "description": "Capture current Go-vs-Rust cache alias mismatch"
+    },
+    "admin_system_status_initial": {
+      "kind": "oracle_test",
+      "family": "admin",
+      "expected_parity": true,
+      "fixture": "fixtures/admin_system_status_initial.json",
+      "description": "Compare fresh /admin/system/status responses"
+    },
+    "v1_models_basic": {
+      "kind": "oracle_test",
+      "family": "v1",
+      "expected_parity": true,
+      "fixture": "fixtures/v1_models_basic.json",
+      "description": "Compare representative /v1/models responses"
+    },
+    "openapi_graphql_create_llm_api_key": {
+      "kind": "oracle_test",
+      "family": "graphql",
+      "expected_parity": true,
+      "fixture": "fixtures/openapi_graphql_create_llm_api_key.json",
+      "description": "Compare representative GraphQL createLLMAPIKey behavior"
+    }
+  }
+}

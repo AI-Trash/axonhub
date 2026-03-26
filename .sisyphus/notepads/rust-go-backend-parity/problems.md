@@ -1,1 +1,2 @@
 2026-03-27: Background agent outputs were not materially useful for extraction in this run, so the final inventory is grounded in direct repository reads and deterministic parsing rather than delegated summaries.
+2026-03-27: `apps/axonhub-server/src/app/parity_oracle.rs` still duplicates lightweight Actix request helpers from `apps/axonhub-server/src/app/tests.rs`; the harness is working for Task 2, but extracting shared test support remains follow-up cleanup rather than part of this retry.

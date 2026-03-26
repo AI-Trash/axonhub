@@ -1,0 +1,7 @@
+{
+  "args": [
+    "config",
+    "get",
+    "cache.default_expiration"
+  ]
+}

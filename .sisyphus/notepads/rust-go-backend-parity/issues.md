@@ -1,2 +1,3 @@
 2026-03-27: Rust release/docs posture remains an explicit parity gap even where runtime coverage exists; README/README.zh-CN, AGENTS, backend rules, and Helm docs still frame Rust as a migration slice and Go as required fallback/truth source.
 2026-03-27: Route-level parity must be measured separately from behavior parity; GraphQL breadth, Ent-backed persistence surface, provider-edge capability availability, GC, provider-quota polling, and legacy-only dialects remain uncovered even when Rust exposes matching entrypoints.
+2026-03-27: The local task environment did not have `go` on PATH for Python subprocesses at first, so Task 2 verification was blocked until Go 1.26.1 was installed via Homebrew and the runner could execute real Go oracles.

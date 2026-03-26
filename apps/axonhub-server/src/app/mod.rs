@@ -14,4 +14,7 @@ pub(crate) async fn run() -> Result<()> {
 }
 
 #[cfg(test)]
+mod parity_oracle;
+
+#[cfg(test)]
 mod tests;

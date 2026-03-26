@@ -4,6 +4,7 @@
 	e2e-test e2e-backend-start e2e-backend-stop e2e-backend-status e2e-backend-restart e2e-backend-clean \
 	migration-test migration-test-all migration-test-all-dbs \
 	sync-faq sync-models filter-logs \
+	parity-oracle-list parity-oracle-core parity-oracle-known-gap parity-oracle-stability \
 	lint lint-privacy
 
 # Generate GraphQL and Ent code
@@ -145,6 +146,18 @@ sync-models:
 	@node ./scripts/sync/sync-model-developers.js
 
 # --- Utilities ---
+
+parity-oracle-list:
+	@python3 .sisyphus/tools/parity_oracle.py list
+
+parity-oracle-core:
+	@python3 .sisyphus/tools/parity_oracle.py compare-set --suite-set stable-core
+
+parity-oracle-known-gap:
+	@python3 .sisyphus/tools/parity_oracle.py compare --suite config_get_cache_default_expiration_alias --diff-out .sisyphus/evidence/task-2-known-gap.diff
+
+parity-oracle-stability:
+	@python3 .sisyphus/tools/parity_oracle.py stability --suite-set stable-core --output .sisyphus/evidence/task-2-stability.txt
 
 # Filter and analyze load balance logs
 filter-logs:
