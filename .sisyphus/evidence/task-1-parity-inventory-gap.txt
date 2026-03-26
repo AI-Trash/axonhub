@@ -1,0 +1,44 @@
+Task 1 Go→Rust parity inventory gap report
+
+Validator mode: deterministic source-backed inventory vs discovered Go counts
+Total inventory entries: 134
+
+RUST PARITY GAPS
+[background_runtime]
+- runtime:antigravity-version-init :: missing :: Go starts detached antigravity version initialization; Rust startup scan did not surface an equivalent.
+- runtime:gc-worker :: missing :: Current Rust migration slice does not expose the Go GC worker and storage-policy cleanup runtime.
+- runtime:provider-quota-poller :: missing :: Rust retains the config key but not the full Go provider-quota subsystem parity.
+
+[config]
+- config:cache.cleanup_interval :: missing :: Rust contract does not currently document this Go config key.
+- config:cache.default_expiration :: missing :: Rust contract does not currently document this Go config key.
+
+[database_runtime]
+- database-dialect:neon :: legacy-only :: Rust contract marks Neon as legacy-Go-only
+- database-dialect:tidb :: legacy-only :: Rust contract marks TiDB as legacy-Go-only
+- persistence:ent-schema-surface :: partial :: Rust supports only the migration slice; not every Go Ent-owned data surface is ported.
+
+[graphql]
+- graphql:admin_mutation :: partial :: Rust exposes admin/openapi GraphQL entrypoints behind capabilities, but Go owns the full resolver breadth.
+- graphql:admin_query :: partial :: Rust exposes admin/openapi GraphQL entrypoints behind capabilities, but Go owns the full resolver breadth.
+- graphql:openapi_mutation :: partial :: Rust openapi GraphQL exists behind capability gating; Go openapi schema currently centers createLLMAPIKey.
+
+[http_routes]
+- route:GET:/favicon :: missing :: No additional note
+- route:POST:/v1/images/edits :: missing :: Rust /v1 default-service still routes this family to explicit 501 not implemented handling.
+
+[provider_edge]
+- provider-edge:antigravity:exchange :: partial :: Rust wires the route family but still returns explicit 501 when provider-edge capability is unavailable.
+- provider-edge:antigravity:start :: partial :: Rust wires the route family but still returns explicit 501 when provider-edge capability is unavailable.
+- provider-edge:claudecode:exchange :: partial :: Rust wires the route family but still returns explicit 501 when provider-edge capability is unavailable.
+- provider-edge:claudecode:start :: partial :: Rust wires the route family but still returns explicit 501 when provider-edge capability is unavailable.
+- provider-edge:codex:exchange :: partial :: Rust wires the route family but still returns explicit 501 when provider-edge capability is unavailable.
+- provider-edge:codex:start :: partial :: Rust wires the route family but still returns explicit 501 when provider-edge capability is unavailable.
+- provider-edge:copilot:poll :: partial :: Rust wires the route family but still returns explicit 501 when provider-edge capability is unavailable.
+- provider-edge:copilot:start :: partial :: Rust wires the route family but still returns explicit 501 when provider-edge capability is unavailable.
+
+[release_docs_posture]
+- release:explicit-501-posture :: gap :: Both READMEs explicitly advertise 501 boundaries for remaining route families and protocol variants.
+- release:helm-go-only :: gap :: Helm README says Rust cutover is not supported for Kubernetes via Helm.
+- release:legacy-backend-positioning :: gap :: Repository messaging still explicitly labels Go as legacy-but-required truth source and Rust as migration slice/cutover subset.
+- release:legacy-only-dialects-docs :: gap :: Docs and Rust config contract both keep TiDB/Neon on the legacy Go backend.

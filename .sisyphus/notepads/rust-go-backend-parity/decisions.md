@@ -1,0 +1,2 @@
+2026-03-27: Chose a source-backed generator/validator in `.sisyphus/tools/parity_inventory.py` instead of a hand-authored static manifest so Task 1 evidence stays deterministic, count-checkable, and reusable by later parity tasks.
+2026-03-27: Kept the validator honest by treating `missing`, `partial`, `legacy-only`, and docs `gap` states as explicit reportable parity gaps while reserving hard validator count failures for inventory/discovery mismatches.

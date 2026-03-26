@@ -1,0 +1,3 @@
+2026-03-27: Go route truth lives in `internal/server/routes.go`; the current observable Go HTTP surface is 35 registered routes once the commented-out `/v1/images/variations` placeholder is excluded.
+2026-03-27: Rust route parity is much closer at the routing layer than the migration docs imply: the generated inventory matched 33/35 Go routes, with current route-level misses isolated to `/favicon` and `POST /v1/images/edits`.
+2026-03-27: Config parity still has a subtle alias/documentation mismatch: Go defaults `cache.default_expiration` and `cache.cleanup_interval`, while Rust documents only the canonicalized `cache.memory.*` keys plus aliases.

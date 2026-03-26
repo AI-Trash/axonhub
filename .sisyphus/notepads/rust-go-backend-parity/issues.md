@@ -1,0 +1,2 @@
+2026-03-27: Rust release/docs posture remains an explicit parity gap even where runtime coverage exists; README/README.zh-CN, AGENTS, backend rules, and Helm docs still frame Rust as a migration slice and Go as required fallback/truth source.
+2026-03-27: Route-level parity must be measured separately from behavior parity; GraphQL breadth, Ent-backed persistence surface, provider-edge capability availability, GC, provider-quota polling, and legacy-only dialects remain uncovered even when Rust exposes matching entrypoints.
