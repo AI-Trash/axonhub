@@ -73,6 +73,21 @@ pub(crate) async fn openai_embeddings(
     .await
 }
 
+pub(crate) async fn openai_images_generations(
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    body: Bytes,
+) -> HttpResponse {
+    execute_openai_request(
+        state.get_ref().clone(),
+        request.clone(),
+        body,
+        request.uri().clone(),
+        crate::models::OpenAiV1Route::ImagesGenerations,
+    )
+    .await
+}
+
 pub(crate) async fn openai_videos_create(
     state: web::Data<HttpState>,
     request: HttpRequest,

@@ -134,6 +134,7 @@ pub enum OpenAiV1Route {
     ChatCompletions,
     Responses,
     Embeddings,
+    ImagesGenerations,
 }
 
 impl OpenAiV1Route {
@@ -142,6 +143,7 @@ impl OpenAiV1Route {
             Self::ChatCompletions => "openai/chat_completions",
             Self::Responses => "openai/responses",
             Self::Embeddings => "openai/embeddings",
+            Self::ImagesGenerations => "openai/images_generations",
         }
     }
 }

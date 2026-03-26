@@ -25,48 +25,72 @@ pub(crate) const ROLE_LEVEL_PROJECT: ScopeLevel = ScopeLevel::Project;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScopeSlug {
+    ReadDashboard,
     ReadSettings,
     WriteSettings,
     ReadChannels,
+    WriteChannels,
+    ReadDataStorages,
+    WriteDataStorages,
     ReadUsers,
     WriteUsers,
     ReadRoles,
     WriteRoles,
+    ReadProjects,
+    WriteProjects,
     ReadApiKeys,
     WriteApiKeys,
     ReadRequests,
     WriteRequests,
+    ReadPrompts,
+    WritePrompts,
 }
 
 impl ScopeSlug {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
+            Self::ReadDashboard => "read_dashboard",
             Self::ReadSettings => "read_settings",
             Self::WriteSettings => "write_settings",
             Self::ReadChannels => "read_channels",
+            Self::WriteChannels => "write_channels",
+            Self::ReadDataStorages => "read_data_storages",
+            Self::WriteDataStorages => "write_data_storages",
             Self::ReadUsers => "read_users",
             Self::WriteUsers => "write_users",
             Self::ReadRoles => "read_roles",
             Self::WriteRoles => "write_roles",
+            Self::ReadProjects => "read_projects",
+            Self::WriteProjects => "write_projects",
             Self::ReadApiKeys => "read_api_keys",
             Self::WriteApiKeys => "write_api_keys",
             Self::ReadRequests => "read_requests",
             Self::WriteRequests => "write_requests",
+            Self::ReadPrompts => "read_prompts",
+            Self::WritePrompts => "write_prompts",
         }
     }
 }
 
+pub(crate) const SCOPE_READ_DASHBOARD: ScopeSlug = ScopeSlug::ReadDashboard;
 pub(crate) const SCOPE_READ_SETTINGS: ScopeSlug = ScopeSlug::ReadSettings;
 pub(crate) const SCOPE_WRITE_SETTINGS: ScopeSlug = ScopeSlug::WriteSettings;
 pub(crate) const SCOPE_READ_CHANNELS: ScopeSlug = ScopeSlug::ReadChannels;
+pub(crate) const SCOPE_WRITE_CHANNELS: ScopeSlug = ScopeSlug::WriteChannels;
+pub(crate) const SCOPE_READ_DATA_STORAGES: ScopeSlug = ScopeSlug::ReadDataStorages;
+pub(crate) const SCOPE_WRITE_DATA_STORAGES: ScopeSlug = ScopeSlug::WriteDataStorages;
 pub(crate) const SCOPE_READ_USERS: ScopeSlug = ScopeSlug::ReadUsers;
 pub(crate) const SCOPE_WRITE_USERS: ScopeSlug = ScopeSlug::WriteUsers;
 pub(crate) const SCOPE_READ_ROLES: ScopeSlug = ScopeSlug::ReadRoles;
 pub(crate) const SCOPE_WRITE_ROLES: ScopeSlug = ScopeSlug::WriteRoles;
+pub(crate) const SCOPE_READ_PROJECTS: ScopeSlug = ScopeSlug::ReadProjects;
+pub(crate) const SCOPE_WRITE_PROJECTS: ScopeSlug = ScopeSlug::WriteProjects;
 pub(crate) const SCOPE_READ_API_KEYS: ScopeSlug = ScopeSlug::ReadApiKeys;
 pub(crate) const SCOPE_WRITE_API_KEYS: ScopeSlug = ScopeSlug::WriteApiKeys;
 pub(crate) const SCOPE_READ_REQUESTS: ScopeSlug = ScopeSlug::ReadRequests;
 pub(crate) const SCOPE_WRITE_REQUESTS: ScopeSlug = ScopeSlug::WriteRequests;
+pub(crate) const SCOPE_READ_PROMPTS: ScopeSlug = ScopeSlug::ReadPrompts;
+pub(crate) const SCOPE_WRITE_PROMPTS: ScopeSlug = ScopeSlug::WritePrompts;
 
 const SYSTEM_ONLY_LEVELS: &[ScopeLevel] = &[ROLE_LEVEL_SYSTEM];
 const SYSTEM_AND_PROJECT_LEVELS: &[ScopeLevel] = &[ROLE_LEVEL_SYSTEM, ROLE_LEVEL_PROJECT];
@@ -80,6 +104,11 @@ pub(crate) struct Scope {
 
 pub(crate) const CURRENT_SCOPE_VOCABULARY: &[Scope] = &[
     Scope {
+        slug: SCOPE_READ_DASHBOARD,
+        description: "View dashboard",
+        levels: SYSTEM_ONLY_LEVELS,
+    },
+    Scope {
         slug: SCOPE_READ_SETTINGS,
         description: "View system settings",
         levels: SYSTEM_ONLY_LEVELS,
@@ -92,6 +121,21 @@ pub(crate) const CURRENT_SCOPE_VOCABULARY: &[Scope] = &[
     Scope {
         slug: SCOPE_READ_CHANNELS,
         description: "View channel information",
+        levels: SYSTEM_ONLY_LEVELS,
+    },
+    Scope {
+        slug: SCOPE_WRITE_CHANNELS,
+        description: "Manage channels/models (create, edit, delete)",
+        levels: SYSTEM_ONLY_LEVELS,
+    },
+    Scope {
+        slug: SCOPE_READ_DATA_STORAGES,
+        description: "View data storage information",
+        levels: SYSTEM_ONLY_LEVELS,
+    },
+    Scope {
+        slug: SCOPE_WRITE_DATA_STORAGES,
+        description: "Manage data storages (create, edit, delete)",
         levels: SYSTEM_ONLY_LEVELS,
     },
     Scope {
@@ -115,6 +159,16 @@ pub(crate) const CURRENT_SCOPE_VOCABULARY: &[Scope] = &[
         levels: SYSTEM_AND_PROJECT_LEVELS,
     },
     Scope {
+        slug: SCOPE_READ_PROJECTS,
+        description: "View project information",
+        levels: SYSTEM_ONLY_LEVELS,
+    },
+    Scope {
+        slug: SCOPE_WRITE_PROJECTS,
+        description: "Manage projects (create, edit, delete)",
+        levels: SYSTEM_ONLY_LEVELS,
+    },
+    Scope {
         slug: SCOPE_READ_API_KEYS,
         description: "View API keys",
         levels: SYSTEM_AND_PROJECT_LEVELS,
@@ -132,6 +186,16 @@ pub(crate) const CURRENT_SCOPE_VOCABULARY: &[Scope] = &[
     Scope {
         slug: SCOPE_WRITE_REQUESTS,
         description: "Manage request records",
+        levels: SYSTEM_AND_PROJECT_LEVELS,
+    },
+    Scope {
+        slug: SCOPE_READ_PROMPTS,
+        description: "View prompts",
+        levels: SYSTEM_AND_PROJECT_LEVELS,
+    },
+    Scope {
+        slug: SCOPE_WRITE_PROMPTS,
+        description: "Manage prompts (create, edit, delete)",
         levels: SYSTEM_AND_PROJECT_LEVELS,
     },
 ];
@@ -158,11 +222,7 @@ pub(crate) const PROJECT_VIEWER_SCOPES: &[ScopeSlug] = &[SCOPE_READ_USERS, SCOPE
 
 pub(crate) const DEFAULT_USER_API_KEY_SCOPES: &[ScopeSlug] =
     &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS];
-pub(crate) const DEFAULT_SERVICE_API_KEY_SCOPES: &[ScopeSlug] = &[
-    SCOPE_READ_CHANNELS,
-    SCOPE_WRITE_REQUESTS,
-    SCOPE_WRITE_API_KEYS,
-];
+pub(crate) const DEFAULT_SERVICE_API_KEY_SCOPES: &[ScopeSlug] = &[];
 pub(crate) const NO_AUTH_API_KEY_SCOPES: &[ScopeSlug] =
     &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS];
 pub(crate) const LLM_API_KEY_SCOPES: &[ScopeSlug] = &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS];
@@ -273,7 +333,8 @@ mod tests {
     fn scope_catalog_keeps_the_current_rust_subset() {
         assert!(is_valid_scope(SCOPE_READ_SETTINGS.as_str()));
         assert!(is_valid_scope(SCOPE_WRITE_API_KEYS.as_str()));
-        assert!(!is_valid_scope("read_projects"));
+        assert!(is_valid_scope(SCOPE_READ_PROJECTS.as_str()));
+        assert!(is_valid_scope(SCOPE_READ_PROMPTS.as_str()));
         assert_eq!(all_scopes(None).len(), CURRENT_SCOPE_VOCABULARY.len());
         assert!(all_scopes(Some(ROLE_LEVEL_PROJECT))
             .iter()
@@ -338,6 +399,15 @@ mod tests {
 
         assert!(api_key_has_scope(&api_key, SCOPE_WRITE_REQUESTS));
         assert!(!api_key_has_scope(&api_key, SCOPE_WRITE_API_KEYS));
+    }
+
+    #[test]
+    fn default_service_api_key_scopes_match_go_service_account_creation_semantics() {
+        assert!(scope_strings(DEFAULT_SERVICE_API_KEY_SCOPES).is_empty());
+        assert_eq!(
+            scope_strings(DEFAULT_USER_API_KEY_SCOPES),
+            vec!["read_channels".to_owned(), "write_requests".to_owned()]
+        );
     }
 
     #[test]

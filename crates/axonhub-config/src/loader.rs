@@ -2,9 +2,10 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde_yaml::Value;
 
+use crate::contract::validate_supported_config_shape;
 use crate::env::apply_env_overrides;
 use crate::legacy::normalize_legacy_aliases;
 use crate::preview::PreviewFormat;
@@ -31,6 +32,12 @@ impl LoadedConfig {
             let mut file_value: Value = serde_yaml::from_str(&contents)
                 .with_context(|| format!("failed to parse config file: {}", path.display()))?;
             normalize_legacy_aliases(&mut file_value);
+            validate_supported_config_shape(&file_value).map_err(|error| {
+                anyhow!(
+                    "failed to validate config file contract: {}: {error}",
+                    path.display()
+                )
+            })?;
             merge_values(&mut merged, file_value);
         }
 

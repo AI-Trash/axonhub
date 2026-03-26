@@ -434,6 +434,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                             OpenAiV1Route::ChatCompletions => "chatcmpl_rust",
                             OpenAiV1Route::Responses => "resp_rust",
                             OpenAiV1Route::Embeddings => "embed_rust",
+                            OpenAiV1Route::ImagesGenerations => "imggen_rust",
                         },
                         "model": request.body["model"].clone(),
                         "project_id": request.project.id,
@@ -2481,6 +2482,11 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                 r#"{"model":"gpt-4o","input":"hi"}"#,
                 "embed_rust",
             ),
+            (
+                "/v1/images/generations",
+                r#"{"model":"gpt-image-1","prompt":"draw a cat"}"#,
+                "imggen_rust",
+            ),
         ] {
             let response = app
                 .clone()
@@ -2516,7 +2522,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/v1/images")
+                    .uri("/v1/images/edits")
                     .method(Method::POST)
                     .header("X-API-Key", "api-key-123")
                     .body(Body::empty())
@@ -2542,7 +2548,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         for (method, path, header_name, header_value, expected_family) in [
             (
                 Method::POST,
-                "/v1/images",
+                "/v1/images/edits",
                 Some("X-API-Key"),
                 Some("api-key-123"),
                 "/v1/*",
@@ -2566,6 +2572,91 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             assert_eq!(json["migration_status"], "progressive cutover", "{path}");
             assert_eq!(json["legacy_go_backend_present"], false, "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn aisdk_protocol_markers_keep_v1_requests_on_truthful_501_boundary() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        for (path, header_name, header_value, body) in [
+            (
+                "/v1/chat/completions",
+                "X-Vercel-Ai-Ui-Message-Stream",
+                "v1",
+                r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
+            ),
+            (
+                "/v1/responses",
+                "X-Vercel-AI-Data-Stream",
+                "v1",
+                r#"{"model":"gpt-4o","input":"hi"}"#,
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .method(Method::POST)
+                        .header("content-type", "application/json")
+                        .header("X-API-Key", "api-key-123")
+                        .header(header_name, header_value)
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "{path}");
+            let json = read_json(response).await;
+            assert_eq!(json["error"], "not_implemented", "{path}");
+            assert_eq!(json["route_family"], "/v1/*", "{path}");
+            assert_eq!(json["path"], path, "{path}");
+            assert_eq!(json["method"], "POST", "{path}");
+            assert_eq!(
+                json["message"],
+                "AiSDK compatibility is not supported in the Rust HTTP slice yet. Requests that opt into the Vercel AI SDK protocol via `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` remain on the explicit `/v1/*` 501 boundary.",
+                "{path}"
+            );
+            assert_eq!(json["migration_status"], "progressive cutover", "{path}");
+            assert_eq!(json["legacy_go_backend_present"], false, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn v1_realtime_attempts_stay_on_truthful_v1_boundary() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/realtime")
+                    .method(Method::GET)
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let json = read_json(response).await;
+        assert_eq!(json["error"], "not_implemented");
+        assert_eq!(json["route_family"], "/v1/*");
+        assert_eq!(json["method"], "GET");
+        assert_eq!(json["path"], "/v1/realtime");
+        assert_eq!(json["migration_status"], "progressive cutover");
+        assert_eq!(json["legacy_go_backend_present"], false);
     }
 
     #[tokio::test]

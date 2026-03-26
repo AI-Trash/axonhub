@@ -1,42 +1,47 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use async_graphql::{
-    Enum, InputObject, SimpleObject,
-};
+use async_graphql::{Enum, InputObject, SimpleObject};
 use axonhub_http::{
     AdminGraphqlPort, AuthApiKeyContext, AuthUserContext, GraphqlExecutionResult,
     GraphqlRequestPayload, OpenApiGraphqlPort, ProjectContext, TraceContext,
 };
 use getrandom::getrandom;
 use hex::encode as hex_encode;
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
 
 use super::{
     admin::{
+        default_auto_backup_settings, default_storage_policy, default_system_channel_settings,
         BackupFrequencySetting, ProbeFrequencySetting, StoredAutoBackupSettings,
         StoredChannelProbeData, StoredProviderQuotaStatus, StoredStoragePolicy,
         StoredSystemChannelSettings,
     },
     authz::{
         scope_strings, serialize_scope_slugs, user_has_system_scope, LLM_API_KEY_SCOPES,
-        SCOPE_READ_CHANNELS, SCOPE_READ_SETTINGS,
+        SCOPE_READ_CHANNELS, SCOPE_READ_SETTINGS, SCOPE_WRITE_SETTINGS,
     },
     openai_v1::{parse_model_card, StoredChannelSummary, StoredModelRecord, StoredRequestSummary},
     ports::{AdminGraphqlRepository, OpenApiGraphqlRepository},
-    seaorm::SeaOrmConnectionFactory,
+    repositories::graphql::{
+        AdminGraphqlSubsetRepository, GraphqlAutoBackupSettingsRecord,
+        GraphqlStoragePolicyRecord, GraphqlSystemChannelSettingsRecord,
+        OpenApiGraphqlMutationRepository,
+        SeaOrmAdminGraphqlSubsetRepository, SeaOrmOpenApiGraphqlMutationRepository,
+    },
     shared::{format_unix_timestamp, graphql_gid, i64_to_i32},
 };
+use serde_json::json;
 
 pub struct SeaOrmAdminGraphqlService {
-    db: SeaOrmConnectionFactory,
+    repository: SeaOrmAdminGraphqlSubsetRepository,
 }
 
 pub struct SeaOrmOpenApiGraphqlService {
-    db: SeaOrmConnectionFactory,
+    repository: SeaOrmOpenApiGraphqlMutationRepository,
 }
+
 
 
 #[derive(Debug, Clone, SimpleObject)]
@@ -62,7 +67,8 @@ pub(crate) struct AdminGraphqlStoragePolicy {
     pub(crate) cleanup_options: Vec<AdminGraphqlCleanupOption>,
 }
 
-#[derive(Debug, Clone, InputObject)]
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
 #[graphql(name = "CleanupOptionInput")]
 pub(crate) struct AdminGraphqlCleanupOptionInput {
     pub(crate) resource_type: String,
@@ -70,7 +76,8 @@ pub(crate) struct AdminGraphqlCleanupOptionInput {
     pub(crate) cleanup_days: i32,
 }
 
-#[derive(Debug, Clone, InputObject)]
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
 #[graphql(name = "UpdateStoragePolicyInput")]
 pub(crate) struct AdminGraphqlUpdateStoragePolicyInput {
     pub(crate) store_chunks: Option<bool>,
@@ -96,15 +103,18 @@ pub(crate) struct AdminGraphqlAutoBackupSettings {
     pub(crate) last_backup_error: Option<String>,
 }
 
-#[derive(Debug, Clone, InputObject)]
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
 #[graphql(name = "UpdateAutoBackupSettingsInput")]
 pub(crate) struct AdminGraphqlUpdateAutoBackupSettingsInput {
     pub(crate) enabled: Option<bool>,
     pub(crate) frequency: Option<BackupFrequencySetting>,
+    #[serde(rename = "dataStorageID")]
     #[graphql(name = "dataStorageID")]
     pub(crate) data_storage_id: Option<i32>,
     pub(crate) include_channels: Option<bool>,
     pub(crate) include_models: Option<bool>,
+    #[serde(rename = "includeAPIKeys")]
     #[graphql(name = "includeAPIKeys")]
     pub(crate) include_api_keys: Option<bool>,
     pub(crate) include_model_prices: Option<bool>,
@@ -131,14 +141,16 @@ pub(crate) struct AdminGraphqlSystemChannelSettings {
     pub(crate) probe: AdminGraphqlChannelProbeSetting,
 }
 
-#[derive(Debug, Clone, InputObject)]
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
 #[graphql(name = "UpdateChannelProbeSettingInput")]
 pub(crate) struct AdminGraphqlUpdateChannelProbeSettingInput {
     pub(crate) enabled: bool,
     pub(crate) frequency: ProbeFrequencySetting,
 }
 
-#[derive(Debug, Clone, InputObject)]
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
 #[graphql(name = "UpdateSystemChannelSettingsInput")]
 pub(crate) struct AdminGraphqlUpdateSystemChannelSettingsInput {
     pub(crate) probe: Option<AdminGraphqlUpdateChannelProbeSettingInput>,
@@ -246,14 +258,18 @@ pub(crate) enum CreateLlmApiKeyError {
 }
 
 impl SeaOrmAdminGraphqlService {
-    pub fn new(db: SeaOrmConnectionFactory) -> Self {
-        Self { db }
+    pub fn new(db: super::seaorm::SeaOrmConnectionFactory) -> Self {
+        Self {
+            repository: SeaOrmAdminGraphqlSubsetRepository::new(db),
+        }
     }
 }
 
 impl SeaOrmOpenApiGraphqlService {
-    pub fn new(db: SeaOrmConnectionFactory) -> Self {
-        Self { db }
+    pub fn new(db: super::seaorm::SeaOrmConnectionFactory) -> Self {
+        Self {
+            repository: SeaOrmOpenApiGraphqlMutationRepository::new(db),
+        }
     }
 }
 
@@ -264,12 +280,10 @@ impl AdminGraphqlPort for SeaOrmAdminGraphqlService {
         project_id: Option<i64>,
         user: AuthUserContext,
     ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
-        let db = self.db.clone();
+        let repository = self.repository.clone();
         Box::pin(async move {
             let payload = request;
-            match db.run_sync(move |db| async move {
-                execute_admin_graphql_seaorm_request(db, payload, project_id, user).await
-            }) {
+            match execute_admin_graphql_seaorm_request(repository, payload, project_id, user).await {
                 Ok(result) => result,
                 Err(message) => GraphqlExecutionResult {
                     status: 200,
@@ -300,12 +314,10 @@ impl OpenApiGraphqlPort for SeaOrmOpenApiGraphqlService {
         request: GraphqlRequestPayload,
         owner_api_key: AuthApiKeyContext,
     ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
-        let db = self.db.clone();
+        let repository = self.repository.clone();
         Box::pin(async move {
             let payload = request;
-            match db.run_sync(move |db| async move {
-                execute_openapi_graphql_seaorm_request(db, payload, owner_api_key).await
-            }) {
+            match execute_openapi_graphql_seaorm_request(repository, payload, owner_api_key).await {
                 Ok(result) => result,
                 Err(message) => GraphqlExecutionResult {
                     status: 200,
@@ -329,120 +341,83 @@ impl OpenApiGraphqlRepository for SeaOrmOpenApiGraphqlService {
     }
 }
 
-fn graphql_sql<'a>(
-    backend: DatabaseBackend,
-    sqlite: &'a str,
-    postgres: &'a str,
-    mysql: &'a str,
-) -> &'a str {
-    match backend {
-        DatabaseBackend::Sqlite => sqlite,
-        DatabaseBackend::Postgres => postgres,
-        DatabaseBackend::MySql => mysql,
-    }
-}
-
-async fn query_one_graphql(
-    db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
-    sqlite_sql: &str,
-    postgres_sql: &str,
-    mysql_sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<Option<sea_orm::QueryResult>, String> {
-    db.query_one(Statement::from_sql_and_values(
-        backend,
-        graphql_sql(backend, sqlite_sql, postgres_sql, mysql_sql),
-        values,
-    ))
-    .await
-    .map_err(|error| error.to_string())
-}
-
-pub(crate) async fn query_all_graphql(
-    db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
-    sqlite_sql: &str,
-    postgres_sql: &str,
-    mysql_sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<Vec<sea_orm::QueryResult>, String> {
-    db.query_all(Statement::from_sql_and_values(
-        backend,
-        graphql_sql(backend, sqlite_sql, postgres_sql, mysql_sql),
-        values,
-    ))
-    .await
-    .map_err(|error| error.to_string())
-}
-
 async fn execute_admin_graphql_seaorm_request(
-    db: SeaOrmConnectionFactory,
+    repository: SeaOrmAdminGraphqlSubsetRepository,
     payload: GraphqlRequestPayload,
     _project_id: Option<i64>,
     user: AuthUserContext,
 ) -> Result<GraphqlExecutionResult, String> {
     let query = payload.query.trim();
 
-    if query.contains("allScopes") {
+    if query.contains("storagePolicy") {
         if !user_has_system_scope(&user, SCOPE_READ_SETTINGS) {
-            return Ok(GraphqlExecutionResult {
-                status: 200,
-                body: serde_json::json!({
-                    "data": {"allScopes": Value::Null},
-                    "errors": [{"message": "permission denied"}],
-                }),
-            });
+            return graphql_permission_denied("storagePolicy");
         }
 
-        let all_scopes = vec![
-            admin_scope_info("read_settings", "Read system settings", &["system"]),
-            admin_scope_info("write_settings", "Write system settings", &["system"]),
-            admin_scope_info("read_channels", "Read channel configurations", &["system"]),
-            admin_scope_info("write_channels", "Write channel configurations", &["system"]),
-            admin_scope_info("read_requests", "Read request data", &["system", "project"]),
-            admin_scope_info("write_requests", "Write request data", &["system", "project"]),
-            admin_scope_info("read_users", "Read user data", &["system"]),
-            admin_scope_info("write_users", "Write user data", &["system"]),
-            admin_scope_info("read_api_keys", "Read API keys", &["system"]),
-            admin_scope_info("write_api_keys", "Write API keys", &["system"]),
-        ];
+        return query_storage_policy_seaorm(&repository);
+    }
 
-        return Ok(GraphqlExecutionResult {
-            status: 200,
-            body: serde_json::json!({"data": {"allScopes": all_scopes}}),
-        });
+    if query.contains("autoBackupSettings") {
+        if !user_has_system_scope(&user, SCOPE_READ_SETTINGS) {
+            return graphql_permission_denied("autoBackupSettings");
+        }
+
+        return query_auto_backup_settings_seaorm(&repository);
+    }
+
+    if query.contains("systemChannelSettings") {
+        if !user_has_system_scope(&user, SCOPE_READ_SETTINGS) {
+            return graphql_permission_denied("systemChannelSettings");
+        }
+
+        return query_system_channel_settings_seaorm(&repository);
+    }
+
+    if query.contains("updateStoragePolicy") {
+        if !user_has_system_scope(&user, SCOPE_WRITE_SETTINGS) {
+            return graphql_permission_denied("updateStoragePolicy");
+        }
+
+        return update_storage_policy_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateAutoBackupSettings") {
+        if !user.is_owner {
+            return graphql_owner_denied("updateAutoBackupSettings");
+        }
+
+        return update_auto_backup_settings_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateSystemChannelSettings") {
+        if !user_has_system_scope(&user, SCOPE_WRITE_SETTINGS) {
+            return graphql_permission_denied("updateSystemChannelSettings");
+        }
+
+        return update_system_channel_settings_seaorm(&repository, payload.variables);
+    }
+
+    for field in ["triggerAutoBackup", "checkProviderQuotas", "triggerGcCleanup"] {
+        if query.contains(field) {
+            return graphql_not_implemented_for_route("/admin/graphql", field);
+        }
     }
 
     if query.contains("queryModels") {
         if !user_has_system_scope(&user, SCOPE_READ_CHANNELS) {
-            return Ok(GraphqlExecutionResult {
-                status: 200,
-                body: serde_json::json!({
-                    "data": {"queryModels": Value::Null},
-                    "errors": [{"message": "permission denied"}],
-                }),
-            });
+            return graphql_permission_denied("queryModels");
         }
 
-        let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
-        let models = query_all_graphql(
-            &connection,
-            db.backend(),
-            "SELECT id, status FROM models WHERE deleted_at = 0 ORDER BY id ASC",
-            "SELECT id, status FROM models WHERE deleted_at = 0 ORDER BY id ASC",
-            "SELECT id, status FROM models WHERE deleted_at = 0 ORDER BY id ASC",
-            vec![],
-        )
-        .await?
-        .into_iter()
-        .map(|row| {
-            serde_json::json!({
-                "id": graphql_gid("model", row.try_get_by_index::<i64>(0).unwrap_or_default()),
-                "status": row.try_get_by_index::<String>(1).unwrap_or_default(),
+        let models = repository
+            .query_model_statuses()?
+            .into_iter()
+            .map(|row| {
+                serde_json::json!({
+                    "id": graphql_gid("model", row.id),
+                    "status": row.status,
+                })
             })
-        })
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>();
 
         return Ok(GraphqlExecutionResult {
             status: 200,
@@ -450,7 +425,343 @@ async fn execute_admin_graphql_seaorm_request(
         });
     }
 
+    if let Some(field) = first_graphql_field_name(query) {
+        return graphql_not_implemented_for_route("/admin/graphql", field.as_str());
+    }
+
     Err("unsupported graphql subset query".to_owned())
+}
+
+fn graphql_permission_denied(field: &str) -> Result<GraphqlExecutionResult, String> {
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {field: Value::Null},
+            "errors": [{"message": "permission denied"}],
+        }),
+    })
+}
+
+fn graphql_owner_denied(field: &str) -> Result<GraphqlExecutionResult, String> {
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {field: Value::Null},
+            "errors": [{"message": "permission denied: owner access required"}],
+        }),
+    })
+}
+
+fn graphql_not_implemented_for_route(
+    route_family: &str,
+    field: &str,
+) -> Result<GraphqlExecutionResult, String> {
+    Ok(GraphqlExecutionResult {
+        status: 501,
+        body: json!({
+            "error": "not_implemented",
+            "status": 501,
+            "route_family": route_family,
+            "method": "POST",
+            "path": route_family,
+            "message": format!("GraphQL field `{field}` remains unsupported in the Rust backend cutover for `{route_family}`."),
+            "migration_status": "progressive cutover",
+            "legacy_go_backend_present": false,
+            "gemini_api_version": Value::Null,
+        }),
+    })
+}
+
+fn query_storage_policy_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let policy = load_storage_policy_seaorm(repository)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "storagePolicy": storage_policy_json(&policy),
+            }
+        }),
+    })
+}
+
+fn query_auto_backup_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let settings = load_auto_backup_settings_seaorm(repository)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "autoBackupSettings": auto_backup_settings_json(&settings),
+            }
+        }),
+    })
+}
+
+fn query_system_channel_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let settings = load_system_channel_settings_seaorm(repository)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "systemChannelSettings": system_channel_settings_json(&settings),
+            }
+        }),
+    })
+}
+
+fn update_storage_policy_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdateStoragePolicyInput>(
+        variables,
+        "input",
+        "storage policy input is required",
+    )?;
+    let mut policy = load_storage_policy_seaorm(repository)?;
+    if let Some(store_chunks) = input.store_chunks {
+        policy.store_chunks = store_chunks;
+    }
+    if let Some(store_request_body) = input.store_request_body {
+        policy.store_request_body = store_request_body;
+    }
+    if let Some(store_response_body) = input.store_response_body {
+        policy.store_response_body = store_response_body;
+    }
+    if let Some(cleanup_options) = input.cleanup_options {
+        policy.cleanup_options = cleanup_options
+            .into_iter()
+            .map(|option| super::admin::StoredCleanupOption {
+                resource_type: option.resource_type,
+                enabled: option.enabled,
+                cleanup_days: option.cleanup_days,
+            })
+            .collect();
+    }
+    let value = serde_json::to_string(&policy).map_err(|error| error.to_string())?;
+    repository.upsert_storage_policy(value.as_str())?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateStoragePolicy": true}}),
+    })
+}
+
+fn update_auto_backup_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdateAutoBackupSettingsInput>(
+        variables,
+        "input",
+        "auto backup input is required",
+    )?;
+    let mut settings = load_auto_backup_settings_seaorm(repository)?;
+    if let Some(enabled) = input.enabled {
+        settings.enabled = enabled;
+    }
+    if let Some(frequency) = input.frequency {
+        settings.frequency = frequency;
+    }
+    if let Some(data_storage_id) = input.data_storage_id {
+        settings.data_storage_id = i64::from(data_storage_id);
+    }
+    if let Some(include_channels) = input.include_channels {
+        settings.include_channels = include_channels;
+    }
+    if let Some(include_models) = input.include_models {
+        settings.include_models = include_models;
+    }
+    if let Some(include_api_keys) = input.include_api_keys {
+        settings.include_api_keys = include_api_keys;
+    }
+    if let Some(include_model_prices) = input.include_model_prices {
+        settings.include_model_prices = include_model_prices;
+    }
+    if let Some(retention_days) = input.retention_days {
+        settings.retention_days = retention_days.max(0);
+    }
+    if settings.enabled && settings.data_storage_id <= 0 {
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {"updateAutoBackupSettings": Value::Null},
+                "errors": [{"message": "dataStorageID is required when auto backup is enabled"}],
+            }),
+        });
+    }
+    let value = serde_json::to_string(&settings).map_err(|error| error.to_string())?;
+    repository.upsert_auto_backup_settings(value.as_str())?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateAutoBackupSettings": true}}),
+    })
+}
+
+fn update_system_channel_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let mut settings = load_system_channel_settings_seaorm(repository)?;
+    if let Some(probe) = variables.get("input").and_then(|input| input.get("probe")) {
+        let enabled = probe
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "invalid probe.enabled: expected boolean".to_owned())?;
+        let frequency = parse_probe_frequency_graphql_value(
+            probe
+                .get("frequency")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "invalid probe.frequency: expected string".to_owned())?,
+        )?;
+        settings.probe = super::admin::StoredChannelProbeSettings { enabled, frequency };
+    }
+    let value = serde_json::to_string(&settings).map_err(|error| error.to_string())?;
+    repository.upsert_system_channel_settings(value.as_str())?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateSystemChannelSettings": true}}),
+    })
+}
+
+fn load_storage_policy_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<StoredStoragePolicy, String> {
+    deserialize_setting_or_default(repository.query_storage_policy()?, default_storage_policy)
+}
+
+fn load_auto_backup_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<StoredAutoBackupSettings, String> {
+    deserialize_setting_or_default(repository.query_auto_backup_settings()?, default_auto_backup_settings)
+}
+
+fn load_system_channel_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<StoredSystemChannelSettings, String> {
+    deserialize_setting_or_default(
+        repository.query_system_channel_settings()?,
+        default_system_channel_settings,
+    )
+}
+
+fn deserialize_setting_or_default<T, Record, F>(
+    record: Option<Record>,
+    default_factory: F,
+) -> Result<T, String>
+where
+    T: for<'de> Deserialize<'de>,
+    Record: IntoGraphqlSettingValue,
+    F: FnOnce() -> T,
+{
+    let Some(record) = record else {
+        return Ok(default_factory());
+    };
+    serde_json::from_str(record.setting_value())
+        .map_err(|error| format!("failed to decode stored admin setting: {error}"))
+}
+
+trait IntoGraphqlSettingValue {
+    fn setting_value(&self) -> &str;
+}
+
+impl IntoGraphqlSettingValue for GraphqlStoragePolicyRecord {
+    fn setting_value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl IntoGraphqlSettingValue for GraphqlAutoBackupSettingsRecord {
+    fn setting_value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl IntoGraphqlSettingValue for GraphqlSystemChannelSettingsRecord {
+    fn setting_value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+fn parse_graphql_variable_input<T>(
+    variables: Value,
+    key: &str,
+    missing_message: &str,
+) -> Result<T, String>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let input = variables
+        .get(key)
+        .cloned()
+        .ok_or_else(|| missing_message.to_owned())?;
+    serde_json::from_value(input).map_err(|error| format!("invalid {key}: {error}"))
+}
+
+fn storage_policy_json(policy: &StoredStoragePolicy) -> Value {
+    json!({
+        "storeChunks": policy.store_chunks,
+        "storeRequestBody": policy.store_request_body,
+        "storeResponseBody": policy.store_response_body,
+        "cleanupOptions": policy.cleanup_options.iter().map(|option| {
+            json!({
+                "resourceType": option.resource_type,
+                "enabled": option.enabled,
+                "cleanupDays": option.cleanup_days,
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn auto_backup_settings_json(settings: &StoredAutoBackupSettings) -> Value {
+    json!({
+        "enabled": settings.enabled,
+        "frequency": settings.frequency,
+        "dataStorageID": settings.data_storage_id,
+        "includeChannels": settings.include_channels,
+        "includeModels": settings.include_models,
+        "includeAPIKeys": settings.include_api_keys,
+        "includeModelPrices": settings.include_model_prices,
+        "retentionDays": settings.retention_days,
+        "lastBackupAt": settings.last_backup_at.map(format_unix_timestamp),
+        "lastBackupError": if settings.last_backup_error.trim().is_empty() {
+            Value::Null
+        } else {
+            Value::String(settings.last_backup_error.clone())
+        },
+    })
+}
+
+fn system_channel_settings_json(settings: &StoredSystemChannelSettings) -> Value {
+    json!({
+        "probe": {
+            "enabled": settings.probe.enabled,
+            "frequency": probe_frequency_graphql_name(settings.probe.frequency),
+        }
+    })
+}
+
+fn parse_probe_frequency_graphql_value(value: &str) -> Result<ProbeFrequencySetting, String> {
+    match value {
+        "ONE_MINUTE" => Ok(ProbeFrequencySetting::OneMinute),
+        "FIVE_MINUTES" => Ok(ProbeFrequencySetting::FiveMinutes),
+        "THIRTY_MINUTES" => Ok(ProbeFrequencySetting::ThirtyMinutes),
+        "ONE_HOUR" => Ok(ProbeFrequencySetting::OneHour),
+        other => Err(format!("invalid probe.frequency: {other}")),
+    }
+}
+
+fn probe_frequency_graphql_name(value: ProbeFrequencySetting) -> &'static str {
+    match value {
+        ProbeFrequencySetting::OneMinute => "ONE_MINUTE",
+        ProbeFrequencySetting::FiveMinutes => "FIVE_MINUTES",
+        ProbeFrequencySetting::ThirtyMinutes => "THIRTY_MINUTES",
+        ProbeFrequencySetting::OneHour => "ONE_HOUR",
+    }
 }
 
 fn generate_llm_api_key() -> Result<String, String> {
@@ -460,32 +771,22 @@ fn generate_llm_api_key() -> Result<String, String> {
 }
 
 async fn create_llm_api_key_seaorm(
-    db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
+    repository: &SeaOrmOpenApiGraphqlMutationRepository,
     owner_api_key: &AuthApiKeyContext,
     trimmed_name: &str,
 ) -> Result<OpenApiGraphqlApiKey, CreateLlmApiKeyError> {
-    let owner_record = query_one_graphql(
-        db,
-        backend,
-        "SELECT id, user_id, key, name, type, status, project_id, scopes FROM api_keys WHERE key = ? AND deleted_at = 0 LIMIT 1",
-        "SELECT id, user_id, key, name, type, status, project_id, scopes FROM api_keys WHERE key = $1 AND deleted_at = 0 LIMIT 1",
-        "SELECT id, user_id, `key`, name, type, status, project_id, scopes FROM api_keys WHERE `key` = ? AND deleted_at = 0 LIMIT 1",
-        vec![owner_api_key.key.as_str().into()],
-    )
-    .await
-    .map_err(CreateLlmApiKeyError::Internal)?
+    if trimmed_name.is_empty() {
+        return Err(CreateLlmApiKeyError::InvalidName);
+    }
+
+    let owner_record = repository
+        .query_owner_api_key(owner_api_key.key.as_str())
+        .map_err(CreateLlmApiKeyError::Internal)?
     .ok_or_else(|| CreateLlmApiKeyError::Internal("failed to load owner api key".to_owned()))?;
 
-    let owner_key_type = owner_record
-        .try_get_by_index::<String>(4)
-        .map_err(|error| CreateLlmApiKeyError::Internal(error.to_string()))?;
-    let owner_user_id = owner_record
-        .try_get_by_index::<i64>(1)
-        .map_err(|error| CreateLlmApiKeyError::Internal(error.to_string()))?;
-    let owner_project_id = owner_record
-        .try_get_by_index::<i64>(6)
-        .map_err(|error| CreateLlmApiKeyError::Internal(error.to_string()))?;
+    let owner_key_type = owner_record.key_type;
+    let owner_user_id = owner_record.user_id;
+    let owner_project_id = owner_record.project_id;
 
     if owner_key_type != "service_account" || owner_project_id != owner_api_key.project.id {
         return Err(CreateLlmApiKeyError::PermissionDenied);
@@ -496,24 +797,15 @@ async fn create_llm_api_key_seaorm(
     let scopes_json = serialize_scope_slugs(LLM_API_KEY_SCOPES)
         .map_err(|error| CreateLlmApiKeyError::Internal(format!("failed to serialize scopes: {error}")))?;
 
-    db.execute(Statement::from_sql_and_values(
-        backend,
-        graphql_sql(
-            backend,
-            "INSERT INTO api_keys (user_id, project_id, key, name, type, status, scopes, profiles, deleted_at) VALUES (?, ?, ?, ?, 'user', 'enabled', ?, '{}', 0)",
-            "INSERT INTO api_keys (user_id, project_id, key, name, type, status, scopes, profiles, deleted_at) VALUES ($1, $2, $3, $4, 'user', 'enabled', $5, '{}', 0)",
-            "INSERT INTO api_keys (user_id, project_id, `key`, name, type, status, scopes, profiles, deleted_at) VALUES (?, ?, ?, ?, 'user', 'enabled', ?, '{}', 0)",
-        ),
-        vec![
-            owner_user_id.into(),
-            owner_api_key.project.id.into(),
-            generated_key.as_str().into(),
-            trimmed_name.into(),
-            scopes_json.into(),
-        ],
-    ))
-    .await
-    .map_err(|error| CreateLlmApiKeyError::Internal(error.to_string()))?;
+    repository
+        .insert_llm_api_key(
+            owner_user_id,
+            owner_api_key,
+            generated_key.as_str(),
+            trimmed_name,
+            scopes_json.as_str(),
+        )
+        .map_err(CreateLlmApiKeyError::Internal)?;
 
     Ok(OpenApiGraphqlApiKey {
         key: generated_key,
@@ -523,7 +815,7 @@ async fn create_llm_api_key_seaorm(
 }
 
 async fn execute_openapi_graphql_seaorm_request(
-    db: SeaOrmConnectionFactory,
+    repository: SeaOrmOpenApiGraphqlMutationRepository,
     payload: GraphqlRequestPayload,
     owner_api_key: AuthApiKeyContext,
 ) -> Result<GraphqlExecutionResult, String> {
@@ -546,10 +838,9 @@ async fn execute_openapi_graphql_seaorm_request(
     }
 
     if query.contains("createLLMAPIKey") {
-        let name = extract_create_llm_api_key_name(&payload.query)
+        let name = extract_create_llm_api_key_name(&payload.query, &payload.variables)
             .ok_or_else(|| "api key name is required".to_owned())?;
-        let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
-        return create_llm_api_key_seaorm(&connection, db.backend(), &owner_api_key, &name)
+        return create_llm_api_key_seaorm(&repository, &owner_api_key, &name)
             .await
             .map(|api_key| GraphqlExecutionResult {
                 status: 200,
@@ -579,31 +870,47 @@ async fn execute_openapi_graphql_seaorm_request(
             });
     }
 
-    Ok(GraphqlExecutionResult {
-        status: 200,
-        body: serde_json::json!({
-            "data": null,
-            "errors": [{"message": "unsupported openapi graphql pilot query"}],
-        }),
-    })
+    if let Some(field) = first_graphql_field_name(query) {
+        return graphql_not_implemented_for_route("/openapi/v1/graphql", field.as_str());
+    }
+
+    Err("unsupported openapi graphql query".to_owned())
 }
 
-pub(crate) fn extract_create_llm_api_key_name(query: &str) -> Option<String> {
+pub(crate) fn extract_create_llm_api_key_name(query: &str, variables: &Value) -> Option<String> {
+    if let Some(value) = variables
+        .get("name")
+        .or_else(|| variables.get("input").and_then(|input| input.get("name")))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(value.to_owned());
+    }
+
     let marker = "createLLMAPIKey(name:";
     let start = query.find(marker)? + marker.len();
     let remainder = query.get(start..)?.trim_start();
     let first_quote = remainder.find('"')? + 1;
     let after_first = remainder.get(first_quote..)?;
     let end_quote = after_first.find('"')?;
-    Some(after_first[..end_quote].to_owned())
+    let name = after_first[..end_quote].trim();
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
-pub(crate) fn admin_scope_info(scope: &str, description: &str, levels: &[&str]) -> Value {
-    serde_json::json!({
-        "scope": scope,
-        "description": description,
-        "levels": levels,
-    })
+fn first_graphql_field_name(query: &str) -> Option<String> {
+    let trimmed = query.trim();
+    let body = if let Some(start) = trimmed.find('{') {
+        trimmed.get(start + 1..)?
+    } else {
+        trimmed
+    };
+
+    let token = body
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .find(|token| !token.is_empty())?;
+
+    Some(token.to_owned())
 }
 
 #[derive(Debug, Clone, SimpleObject)]

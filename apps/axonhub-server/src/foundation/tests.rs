@@ -1910,6 +1910,39 @@ struct TestHttpRequest {
                 remark: "Task 7 runtime test",
             })
             .unwrap();
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Image Mock",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-image-1"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-image-1",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 90,
+                error_message: "",
+                remark: "Task 13 image runtime test",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-image-1",
+                model_type: "image",
+                name: "GPT Image 1",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":8192,"output":0},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 13 image runtime test",
+            })
+            .unwrap();
 
         let app = router(HttpState {
             service_name: "AxonHub".to_owned(),
@@ -1983,6 +2016,10 @@ struct TestHttpRequest {
                 "/v1/embeddings",
                 r#"{"model":"gpt-4o","input":"hi"}"#,
             ),
+            (
+                "/v1/images/generations",
+                r#"{"model":"gpt-image-1","prompt":"draw a cat"}"#,
+            ),
         ] {
             let response = app
                 .clone()
@@ -2006,7 +2043,7 @@ struct TestHttpRequest {
         let unported = app
             .oneshot(
                 Request::builder()
-                    .uri("/v1/images")
+                    .uri("/v1/images/edits")
                     .method(Method::POST)
                     .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
                     .body(Body::empty())
@@ -2027,7 +2064,7 @@ struct TestHttpRequest {
                 .map(Result::unwrap)
                 .collect()
         };
-        assert_eq!(request_statuses, vec!["completed", "completed", "completed"]);
+        assert_eq!(request_statuses, vec!["completed", "completed", "completed", "completed"]);
 
         let request_trace_channels: Vec<(i64, i64)> = {
             let mut statement = connection
@@ -2039,7 +2076,7 @@ struct TestHttpRequest {
                 .map(Result::unwrap)
                 .collect()
         };
-        assert_eq!(request_trace_channels.len(), 3);
+        assert_eq!(request_trace_channels.len(), 4);
         assert!(request_trace_channels.iter().all(|(trace_id, _)| *trace_id > 0));
         let first_trace_id = request_trace_channels[0].0;
         assert!(request_trace_channels
@@ -2073,12 +2110,12 @@ struct TestHttpRequest {
                 .map(Result::unwrap)
                 .collect()
         };
-        assert_eq!(execution_statuses, vec!["completed", "completed", "completed"]);
+        assert_eq!(execution_statuses, vec!["completed", "completed", "completed", "completed"]);
 
         let usage_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(usage_count, 3);
+        assert_eq!(usage_count, 4);
 
         let usage_rows: Vec<(String, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, String, String)> = {
             let mut statement = connection
@@ -2114,7 +2151,7 @@ struct TestHttpRequest {
                 .map(Result::unwrap)
                 .collect()
         };
-        assert_eq!(usage_rows.len(), 3);
+        assert_eq!(usage_rows.len(), 4);
         let responses_usage = &usage_rows[1];
         assert_eq!(responses_usage.1, 12);
         assert_eq!(responses_usage.2, 4);
@@ -2132,6 +2169,12 @@ struct TestHttpRequest {
         assert!(responses_usage
             .12
             .contains("\"promptWriteCacheVariantCode\":\"five_min\""));
+
+        let image_usage = &usage_rows[3];
+        assert_eq!(image_usage.0, "openai/images_generations");
+        assert_eq!(image_usage.1, 20);
+        assert_eq!(image_usage.2, 30);
+        assert_eq!(image_usage.3, 50);
 
         std::fs::remove_file(db_path).ok();
     }
@@ -2300,6 +2343,324 @@ struct TestHttpRequest {
     }
 
     #[tokio::test]
+    async fn openai_v1_route_denies_over_quota_api_key_without_success_accounting_side_effects() {
+        let db_path = temp_sqlite_path("task9-openai-quota-denial");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Quota Mock",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 9 quota denial test",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 9 quota denial model",
+            })
+            .unwrap();
+
+        let quota_profiles = serde_json::json!({
+            "activeProfile": "quota-hit",
+            "profiles": [
+                {
+                    "name": "quota-hit",
+                    "quota": {
+                        "requests": 1,
+                        "period": {
+                            "type": "all_time"
+                        }
+                    }
+                }
+            ]
+        })
+        .to_string();
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            connection
+                .execute(
+                    "UPDATE api_keys SET profiles = ?2 WHERE key = ?1",
+                    params![DEFAULT_USER_API_KEY_VALUE, quota_profiles],
+                )
+                .unwrap();
+
+            let api_key_id = foundation
+                .identities()
+                .find_api_key_by_value(DEFAULT_USER_API_KEY_VALUE)
+                .unwrap()
+                .id;
+            let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+            connection
+                .execute(
+                    "INSERT INTO usage_logs (
+                        created_at, updated_at,
+                        request_id, api_key_id, project_id, channel_id, model_id,
+                        prompt_tokens, completion_tokens, total_tokens,
+                        prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens,
+                        prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h,
+                        completion_audio_tokens, completion_reasoning_tokens,
+                        completion_accepted_prediction_tokens, completion_rejected_prediction_tokens,
+                        source, format, total_cost, cost_items, cost_price_reference_id, deleted_at
+                    ) VALUES (
+                        '2000-01-01 00:00:00', '2000-01-01 00:00:00',
+                        999, ?1, ?2, NULL, 'gpt-4o',
+                        0, 0, 0,
+                        0, 0, 0,
+                        0, 0,
+                        0, 0,
+                        0, 0,
+                        'api', 'openai/chat_completions', 0.0, '[]', '', 0
+                    )",
+                    params![api_key_id, project_id],
+                )
+                .unwrap();
+        }
+
+        let app = router(HttpState {
+            service_name: "AxonHub".to_owned(),
+            version: "v0.9.20".to_owned(),
+            config_source: None,
+            system_bootstrap: SystemBootstrapCapability::Available {
+                system: Arc::new(bootstrap),
+            },
+            identity: IdentityCapability::Available {
+                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+            },
+            request_context: RequestContextCapability::Available {
+                request_context: Arc::new(SqliteRequestContextService::new(
+                    foundation.clone(),
+                    false,
+                )),
+            },
+            openai_v1: OpenAiV1Capability::Available {
+                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+            },
+            admin: AdminCapability::Available {
+                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            },
+            admin_graphql: AdminGraphqlCapability::Unsupported {
+                message: "test-only unsupported admin graphql".to_owned(),
+            },
+            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+                message: "test-only unsupported openapi graphql".to_owned(),
+            },
+            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+                message: "test-only unsupported provider-edge admin".to_owned(),
+            },
+            allow_no_auth: false,
+            trace_config: TraceConfig {
+                thread_header: Some("AH-Thread-Id".to_owned()),
+                trace_header: Some("AH-Trace-Id".to_owned()),
+                request_header: Some("X-Request-Id".to_owned()),
+                extra_trace_headers: Vec::new(),
+                extra_trace_body_fields: Vec::new(),
+                claude_code_trace_enabled: false,
+                codex_trace_enabled: false,
+            },
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .header("AH-Thread-Id", "thread-task9-quota")
+                    .header("AH-Trace-Id", "trace-task9-quota")
+                    .body(Body::from(
+                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"deny me"}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let json = read_json_response(response).await;
+        assert_eq!(json["error"]["type"], "quota_exceeded_error");
+        assert_eq!(json["error"]["code"], "quota_exceeded");
+        assert_eq!(json["error"]["message"], "requests quota exceeded: 1/1");
+
+        let connection = foundation.open_connection(false).unwrap();
+        let request_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM requests", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(request_count, 0);
+
+        let execution_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM request_executions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(execution_count, 0);
+
+        let usage_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(usage_count, 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_image_generation_rejects_invalid_request_without_persistence_side_effects() {
+        let db_path = temp_sqlite_path("task13-openai-image-invalid");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Image Invalid Mock",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-image-1"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-image-1",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 13 invalid image test",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-image-1",
+                model_type: "image",
+                name: "GPT Image 1",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":8192,"output":0},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 13 invalid image test",
+            })
+            .unwrap();
+
+        let app = router(HttpState {
+            service_name: "AxonHub".to_owned(),
+            version: "v0.9.20".to_owned(),
+            config_source: None,
+            system_bootstrap: SystemBootstrapCapability::Available {
+                system: Arc::new(bootstrap),
+            },
+            identity: IdentityCapability::Available {
+                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+            },
+            request_context: RequestContextCapability::Available {
+                request_context: Arc::new(SqliteRequestContextService::new(
+                    foundation.clone(),
+                    false,
+                )),
+            },
+            openai_v1: OpenAiV1Capability::Available {
+                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+            },
+            admin: AdminCapability::Available {
+                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            },
+            admin_graphql: AdminGraphqlCapability::Unsupported {
+                message: "test-only unsupported admin graphql".to_owned(),
+            },
+            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+                message: "test-only unsupported openapi graphql".to_owned(),
+            },
+            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+                message: "test-only unsupported provider-edge admin".to_owned(),
+            },
+            allow_no_auth: false,
+            trace_config: TraceConfig {
+                thread_header: Some("AH-Thread-Id".to_owned()),
+                trace_header: Some("AH-Trace-Id".to_owned()),
+                request_header: Some("X-Request-Id".to_owned()),
+                extra_trace_headers: Vec::new(),
+                extra_trace_body_fields: Vec::new(),
+                claude_code_trace_enabled: false,
+                codex_trace_enabled: false,
+            },
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/images/generations")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .body(Body::from(r#"{"model":"gpt-image-1"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let json = read_json_response(response).await;
+        assert_eq!(json["error"]["message"], "prompt is required");
+
+        let connection = foundation.open_connection(false).unwrap();
+        let request_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM requests", [], |row| row.get(0))
+            .unwrap();
+        let execution_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM request_executions", [], |row| row.get(0))
+            .unwrap();
+        let usage_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(request_count, 0);
+        assert_eq!(execution_count, 0);
+        assert_eq!(usage_count, 0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
     async fn openai_v1_fails_over_to_backup_channel_when_primary_fails() {
         let db_path = temp_sqlite_path("task8-openai-failover");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
@@ -2448,9 +2809,205 @@ struct TestHttpRequest {
                 .map(Result::unwrap)
                 .collect()
         };
-        assert_eq!(execution_statuses.len(), 2);
+        assert_eq!(execution_statuses.len(), 4);
+        assert_eq!(
+            execution_statuses[..3],
+            [
+                (execution_statuses[0].0, "failed".to_owned()),
+                (execution_statuses[1].0, "failed".to_owned()),
+                (execution_statuses[2].0, "failed".to_owned()),
+            ]
+        );
         assert_eq!(execution_statuses[0].1, "failed");
-        assert_eq!(execution_statuses[1], (backup_channel_id, "completed".to_owned()));
+        assert_eq!(execution_statuses[3], (backup_channel_id, "completed".to_owned()));
+
+        let usage_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(usage_count, 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_v1_retries_same_channel_before_failover_and_persists_attempts_once() {
+        let db_path = temp_sqlite_path("task12-openai-same-channel-retry");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let retry_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Retry Primary",
+                channel_type: "openai",
+                base_url: format!("{}/retry-twice-ok", mock_openai_server_url()).as_str(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 200,
+                error_message: "",
+                remark: "Task 12 retry primary",
+            })
+            .unwrap();
+        let backup_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Retry Backup",
+                channel_type: "openai",
+                base_url: format!("{}/backup", mock_openai_server_url()).as_str(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 12 retry backup",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 12 retry model",
+            })
+            .unwrap();
+
+        let app = router(HttpState {
+            service_name: "AxonHub".to_owned(),
+            version: "v0.9.20".to_owned(),
+            config_source: None,
+            system_bootstrap: SystemBootstrapCapability::Available {
+                system: Arc::new(bootstrap),
+            },
+            identity: IdentityCapability::Available {
+                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+            },
+            request_context: RequestContextCapability::Available {
+                request_context: Arc::new(SqliteRequestContextService::new(
+                    foundation.clone(),
+                    false,
+                )),
+            },
+            openai_v1: OpenAiV1Capability::Available {
+                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+            },
+            admin: AdminCapability::Available {
+                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            },
+            admin_graphql: AdminGraphqlCapability::Unsupported {
+                message: "test-only unsupported admin graphql".to_owned(),
+            },
+            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+                message: "test-only unsupported openapi graphql".to_owned(),
+            },
+            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+                message: "test-only unsupported provider-edge admin".to_owned(),
+            },
+            allow_no_auth: false,
+            trace_config: TraceConfig {
+                thread_header: Some("AH-Thread-Id".to_owned()),
+                trace_header: Some("AH-Trace-Id".to_owned()),
+                request_header: Some("X-Request-Id".to_owned()),
+                extra_trace_headers: Vec::new(),
+                extra_trace_body_fields: Vec::new(),
+                claude_code_trace_enabled: false,
+                codex_trace_enabled: false,
+            },
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .header("AH-Trace-Id", "trace-task12-same-channel")
+                    .body(Body::from(
+                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"retry then succeed"}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json_response(response).await;
+        assert_eq!(json["id"], "chatcmpl_retry_same_channel");
+
+        let connection = foundation.open_connection(false).unwrap();
+        let request_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM requests", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(request_count, 1);
+
+        let request_channel_id: i64 = connection
+            .query_row("SELECT channel_id FROM requests ORDER BY id DESC LIMIT 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(request_channel_id, retry_channel_id);
+        assert_ne!(request_channel_id, backup_channel_id);
+
+        let execution_rows: Vec<(i64, String, Option<i64>, String)> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT channel_id, status, response_status_code, request_body FROM request_executions ORDER BY id ASC",
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(execution_rows.len(), 3);
+        assert!(execution_rows
+            .iter()
+            .all(|(channel_id, _, _, _)| *channel_id == retry_channel_id));
+        assert_eq!(
+            execution_rows
+                .iter()
+                .map(|(_, status, _, _)| status.clone())
+                .collect::<Vec<_>>(),
+            vec!["failed", "failed", "completed"]
+        );
+        assert_eq!(execution_rows[0].2, Some(503));
+        assert_eq!(execution_rows[1].2, Some(503));
+        assert_eq!(execution_rows[2].2, Some(200));
+        assert!(execution_rows
+            .iter()
+            .all(|(_, _, _, request_body)| request_body.contains("\"model\":\"gpt-4o\"")));
+
+        let usage_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(usage_count, 1);
 
         std::fs::remove_file(db_path).ok();
     }
@@ -3213,6 +3770,7 @@ struct TestHttpRequest {
                 let listener = TcpListener::bind("127.0.0.1:0").unwrap();
                 let address = listener.local_addr().unwrap();
                 thread::spawn(move || {
+                    let mut request_counts: HashMap<String, usize> = HashMap::new();
                     for stream in listener.incoming() {
                         let mut stream = match stream {
                             Ok(stream) => stream,
@@ -3235,8 +3793,18 @@ struct TestHttpRequest {
                             .next()
                             .and_then(|line| line.split_whitespace().nth(1))
                             .unwrap_or("/");
+                        let request_key = format!("{method} {path}");
+                        let request_count = request_counts.entry(request_key).or_insert(0);
+                        *request_count += 1;
+                        let request_count = *request_count;
                         let body = if path.contains("/primary-fail/") && path.ends_with("/chat/completions") {
                             r#"{"error":{"message":"primary unavailable"}}"#
+                        } else if path.contains("/retry-twice-ok/") && path.ends_with("/chat/completions") {
+                            if request_count <= 2 {
+                                r#"{"error":{"message":"retry me later"}}"#
+                            } else {
+                                r#"{"id":"chatcmpl_retry_same_channel","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"retried"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#
+                            }
                         } else if path.contains("/compressed/") && path.ends_with("/chat/completions") {
                             if request_lower.contains("accept-encoding: identity") {
                                 r#"{"id":"chatcmpl_compressed","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"compressed"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#
@@ -3259,10 +3827,17 @@ struct TestHttpRequest {
                             r#"{"id":"chatcmpl_mock","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":2},"completion_tokens_details":{"reasoning_tokens":1}}}"#
                         } else if path.ends_with("/responses") {
                             r#"{"id":"resp_mock","object":"response","created_at":1,"model":"gpt-4o","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi","annotations":[]}],"status":"completed"}],"usage":{"input_tokens":12,"input_tokens_details":{"cached_tokens":3,"write_cached_tokens":4,"write_cached_5min_tokens":4},"output_tokens":4,"output_tokens_details":{"reasoning_tokens":1,"accepted_prediction_tokens":2,"rejected_prediction_tokens":3},"total_tokens":16}}"#
+                        } else if path.ends_with("/images/generations") {
+                            r#"{"created":1,"data":[{"b64_json":"aGVsbG8=","revised_prompt":"draw a cat"}],"usage":{"prompt_tokens":20,"completion_tokens":30,"total_tokens":50,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":2}}}"#
                         } else {
                             r#"{"object":"list","data":[{"object":"embedding","embedding":[0.1,0.2],"index":0}],"model":"gpt-4o","usage":{"prompt_tokens":8,"total_tokens":8}}"#
                         };
                         let status_line = if path.contains("/primary-fail/") && path.ends_with("/chat/completions") {
+                            "HTTP/1.1 503 Service Unavailable"
+                        } else if path.contains("/retry-twice-ok/")
+                            && path.ends_with("/chat/completions")
+                            && request_count <= 2
+                        {
                             "HTTP/1.1 503 Service Unavailable"
                         } else if path.contains("/compressed/")
                             && path.ends_with("/chat/completions")

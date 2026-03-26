@@ -21,8 +21,10 @@ use super::{
         NewUsageLogRecord, PreparedCompatibilityRequest, SelectedOpenAiTarget,
         StoredChannelSummary, StoredModelRecord, StoredRequestSummary,
         UpdateRequestExecutionResultRecord, UpdateRequestResultRecord,
+        DEFAULT_MAX_SAME_CHANNEL_RETRIES,
     },
     ports::OpenAiV1Repository,
+    repositories::openai_v1::enforce_api_key_quota_seaorm,
     shared::{bool_to_sql, SqliteConnectionFactory, SqliteFoundation, USAGE_LOGS_TABLE_SQL},
     system::{ensure_channel_model_tables, ensure_request_tables},
 };
@@ -793,6 +795,7 @@ impl SqliteOpenAiV1Service {
     fn execute_shared_route<UrlBuilder, ResponseMapper, UsageExtractor>(
         &self,
         request: &OpenAiV1ExecutionRequest,
+        request_model_id: &str,
         route_format: &str,
         upstream_method: reqwest::Method,
         targets: Vec<SelectedOpenAiTarget>,
@@ -808,14 +811,20 @@ impl SqliteOpenAiV1Service {
         ResponseMapper: Fn(Value) -> Result<Value, OpenAiV1Error>,
         UsageExtractor: Fn(&Value) -> Option<ExtractedUsage>,
     {
+        self.foundation.seaorm().run_sync({
+            let api_key_id = request.api_key_id;
+            move |db| async move {
+                let connection = db.connect_migrated().await.map_err(|error| OpenAiV1Error::Internal {
+                    message: format!("Failed to open quota database connection: {error}"),
+                })?;
+                enforce_api_key_quota_seaorm(&connection, db.backend(), api_key_id).await
+            }
+        })?;
+
         let masked_request_headers = sanitize_headers_json(upstream_headers);
         let request_body_json =
             serde_json::to_string(&request.body).map_err(|error| OpenAiV1Error::Internal {
                 message: format!("Failed to serialize request body: {error}"),
-            })?;
-        let upstream_body_json =
-            serde_json::to_string(upstream_body).map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to serialize upstream request body: {error}"),
             })?;
         let stream = request
             .body
@@ -832,7 +841,7 @@ impl SqliteOpenAiV1Service {
                 trace_id: request.trace.as_ref().map(|trace| trace.id),
                 data_storage_id,
                 source: "api",
-                model_id: targets[0].actual_model_id.as_str(),
+                model_id: request_model_id,
                 format: route_format,
                 request_headers_json: masked_request_headers.as_str(),
                 request_body_json: request_body_json.as_str(),
@@ -856,143 +865,159 @@ impl SqliteOpenAiV1Service {
         let mut last_error = None;
 
         for (index, target) in targets.iter().enumerate() {
-            self.foundation
-                .requests()
-                .update_request_result(&UpdateRequestResultRecord {
-                    request_id,
-                    status: "processing",
-                    external_id: None,
-                    response_body_json: None,
-                    channel_id: Some(target.channel_id),
-                })
-                .map_err(|error| OpenAiV1Error::Internal {
-                    message: format!("Failed to update request attempt channel: {error}"),
-                })?;
+            let mut same_channel_attempts = 0;
+            loop {
+                let attempt_upstream_body = if upstream_body.is_null() {
+                    Value::Null
+                } else {
+                    rewrite_model(upstream_body, target.actual_model_id.as_str())
+                };
+                let attempt_upstream_body_json = serde_json::to_string(&attempt_upstream_body)
+                    .map_err(|error| OpenAiV1Error::Internal {
+                        message: format!("Failed to serialize upstream request body: {error}"),
+                    })?;
 
-            let execution_id = match self.foundation.requests().create_request_execution(
-                &NewRequestExecutionRecord {
-                    project_id: request.project.id,
-                    request_id,
-                    channel_id: Some(target.channel_id),
-                    data_storage_id,
-                    external_id: None,
-                    model_id: target.actual_model_id.as_str(),
-                    format: route_format,
-                    request_body_json: upstream_body_json.as_str(),
-                    response_body_json: None,
-                    response_chunks_json: None,
-                    error_message: "",
-                    response_status_code: None,
-                    status: "processing",
-                    stream,
-                    metrics_latency_ms: None,
-                    metrics_first_token_latency_ms: None,
-                    request_headers_json: masked_request_headers.as_str(),
-                },
-            ) {
-                Ok(execution_id) => execution_id,
-                Err(error) => {
-                    let request_error = OpenAiV1Error::Internal {
-                        message: format!("Failed to persist request execution: {error}"),
-                    };
-                    self.mark_request_failed(request_id, Some(target.channel_id), None, None)?;
-                    return Err(request_error);
-                }
-            };
+                self.foundation
+                    .requests()
+                    .update_request_result(&UpdateRequestResultRecord {
+                        request_id,
+                        status: "processing",
+                        external_id: None,
+                        response_body_json: None,
+                        channel_id: Some(target.channel_id),
+                    })
+                    .map_err(|error| OpenAiV1Error::Internal {
+                        message: format!("Failed to update request attempt channel: {error}"),
+                    })?;
 
-            let attempt_result = (|| -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-                let built_headers = super::openai_v1::build_upstream_headers(
-                    upstream_headers,
-                    target.api_key.as_str(),
-                )?;
-                let client = reqwest::blocking::Client::new();
-                let mut upstream_request = client
-                    .request(
-                        upstream_method.clone(),
-                        upstream_url_for_target(target).as_str(),
-                    )
-                    .headers(built_headers);
-                if matches!(upstream_method, reqwest::Method::POST) {
-                    upstream_request = upstream_request.json(upstream_body);
-                }
-                let upstream_response =
-                    upstream_request
-                        .send()
-                        .map_err(|error| OpenAiV1Error::Internal {
-                            message: format!("Failed to execute upstream request: {error}"),
-                        })?;
+                let execution_id = match self.foundation.requests().create_request_execution(
+                    &NewRequestExecutionRecord {
+                        project_id: request.project.id,
+                        request_id,
+                        channel_id: Some(target.channel_id),
+                        data_storage_id,
+                        external_id: None,
+                        model_id: target.actual_model_id.as_str(),
+                        format: route_format,
+                        request_body_json: attempt_upstream_body_json.as_str(),
+                        response_body_json: None,
+                        response_chunks_json: None,
+                        error_message: "",
+                        response_status_code: None,
+                        status: "processing",
+                        stream,
+                        metrics_latency_ms: None,
+                        metrics_first_token_latency_ms: None,
+                        request_headers_json: masked_request_headers.as_str(),
+                    },
+                ) {
+                    Ok(execution_id) => execution_id,
+                    Err(error) => {
+                        let request_error = OpenAiV1Error::Internal {
+                            message: format!("Failed to persist request execution: {error}"),
+                        };
+                        self.mark_request_failed(request_id, Some(target.channel_id), None, None)?;
+                        return Err(request_error);
+                    }
+                };
 
-                let status = upstream_response.status().as_u16();
-                let response_text =
-                    upstream_response
-                        .text()
-                        .map_err(|error| OpenAiV1Error::Internal {
-                            message: format!("Failed to read upstream response: {error}"),
-                        })?;
-                let raw_response_body: Value =
-                    serde_json::from_str(&response_text).map_err(|error| {
+                let attempt_result = (|| -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+                    let built_headers = super::openai_v1::build_upstream_headers(
+                        upstream_headers,
+                        target.api_key.as_str(),
+                    )?;
+                    let client = reqwest::blocking::Client::new();
+                    let mut upstream_request = client
+                        .request(
+                            upstream_method.clone(),
+                            upstream_url_for_target(target).as_str(),
+                        )
+                        .headers(built_headers);
+                    if matches!(upstream_method, reqwest::Method::POST) {
+                        upstream_request = upstream_request.json(&attempt_upstream_body);
+                    }
+                    let upstream_response = upstream_request.send().map_err(|error| {
                         OpenAiV1Error::Internal {
-                            message: format!("Failed to decode upstream response: {error}"),
+                            message: format!("Failed to execute upstream request: {error}"),
                         }
                     })?;
 
-                if (200..300).contains(&status) {
-                    let usage = usage_extractor(&raw_response_body);
-                    let response_body = response_mapper(raw_response_body)?;
-                    self.complete_execution(
-                        request,
-                        route_format,
-                        request_id,
-                        execution_id,
-                        target,
-                        status,
-                        response_body,
-                        usage,
-                    )
-                } else {
-                    Err(OpenAiV1Error::Upstream {
-                        status,
-                        body: raw_response_body,
-                    })
-                }
-            })();
-
-            match attempt_result {
-                Ok(response) => return Ok(response),
-                Err(error) => {
-                    let (response_body, response_status_code, external_id) = match &error {
-                        OpenAiV1Error::Upstream { status, body } => (
-                            Some(body),
-                            Some(*status),
-                            body.get("id").and_then(Value::as_str),
-                        ),
-                        OpenAiV1Error::Internal { .. } | OpenAiV1Error::InvalidRequest { .. } => {
-                            (None, None, None)
+                    let status = upstream_response.status().as_u16();
+                    let response_text = upstream_response.text().map_err(|error| {
+                        OpenAiV1Error::Internal {
+                            message: format!("Failed to read upstream response: {error}"),
                         }
-                    };
+                    })?;
+                    let raw_response_body: Value =
+                        serde_json::from_str(&response_text).map_err(|error| {
+                            OpenAiV1Error::Internal {
+                                message: format!("Failed to decode upstream response: {error}"),
+                            }
+                        })?;
 
-                    self.mark_execution_failed(
-                        execution_id,
-                        openai_error_message(&error).as_str(),
-                        response_body,
-                        response_status_code,
-                        external_id,
-                    )?;
-
-                    let retryable = self.should_retry(&error);
-                    let is_last = index + 1 == targets.len();
-                    if retryable && !is_last {
-                        last_error = Some(error);
-                        continue;
+                    if (200..300).contains(&status) {
+                        let usage = usage_extractor(&raw_response_body);
+                        let response_body = response_mapper(raw_response_body)?;
+                        self.complete_execution(
+                            request,
+                            route_format,
+                            request_id,
+                            execution_id,
+                            target,
+                            status,
+                            response_body,
+                            usage,
+                        )
+                    } else {
+                        Err(OpenAiV1Error::Upstream {
+                            status,
+                            body: raw_response_body,
+                        })
                     }
+                })();
 
-                    self.mark_request_failed(
-                        request_id,
-                        Some(target.channel_id),
-                        response_body,
-                        external_id,
-                    )?;
-                    return Err(error);
+                match attempt_result {
+                    Ok(response) => return Ok(response),
+                    Err(error) => {
+                        let (response_body, response_status_code, external_id) = match &error {
+                            OpenAiV1Error::Upstream { status, body } => (
+                                Some(body),
+                                Some(*status),
+                                body.get("id").and_then(Value::as_str),
+                            ),
+                            OpenAiV1Error::Internal { .. } | OpenAiV1Error::InvalidRequest { .. } => {
+                                (None, None, None)
+                            }
+                        };
+
+                        self.mark_execution_failed(
+                            execution_id,
+                            openai_error_message(&error).as_str(),
+                            response_body,
+                            response_status_code,
+                            external_id,
+                        )?;
+
+                        let retryable = self.should_retry(&error);
+                        if retryable && same_channel_attempts < DEFAULT_MAX_SAME_CHANNEL_RETRIES {
+                            same_channel_attempts += 1;
+                            continue;
+                        }
+
+                        let is_last = index + 1 == targets.len();
+                        if retryable && !is_last {
+                            last_error = Some(error);
+                            break;
+                        }
+
+                        self.mark_request_failed(
+                            request_id,
+                            Some(target.channel_id),
+                            response_body,
+                            external_id,
+                        )?;
+                        return Err(error);
+                    }
                 }
             }
         }
@@ -1147,6 +1172,11 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
         let upstream_body = rewrite_model(&request.body, targets[0].actual_model_id.as_str());
         self.execute_shared_route(
             &request,
+            request
+                .body
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
             route.format(),
             reqwest::Method::POST,
             targets,
@@ -1210,6 +1240,7 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
         let route_task_id = prepared.task_id.clone();
         self.execute_shared_route(
             &request,
+            prepared.request_model_id.as_str(),
             route.format(),
             compatibility_upstream_method(route),
             targets,

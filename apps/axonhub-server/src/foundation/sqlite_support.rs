@@ -8,7 +8,7 @@ use rusqlite::{
     params, Connection as SqlConnection, Error as SqlError, OpenFlags, OptionalExtension,
     Result as SqlResult, Transaction,
 };
-use sea_orm::{ConnectionTrait, DatabaseBackend, ExecResult, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DatabaseBackend, ExecResult, TransactionTrait};
 use std::sync::Arc;
 
 use super::{
@@ -33,6 +33,7 @@ use super::{
         USERS_TABLE_SQL, USER_PROJECTS_TABLE_SQL, USER_ROLES_TABLE_SQL,
     },
 };
+use super::repositories::common::{execute as execute_sql, query_one as query_one_sql};
 
 pub(crate) type SeaOrmDbFactory = SeaOrmConnectionFactory;
 
@@ -367,19 +368,6 @@ pub(crate) async fn seaorm_initialize(
     tx.commit().await
 }
 
-fn sql_for_backend<'a>(
-    backend: DatabaseBackend,
-    sqlite: &'a str,
-    postgres: &'a str,
-    mysql: &'a str,
-) -> &'a str {
-    match backend {
-        DatabaseBackend::Sqlite => sqlite,
-        DatabaseBackend::Postgres => postgres,
-        DatabaseBackend::MySql => mysql,
-    }
-}
-
 async fn execute_seaorm<C>(
     db: &C,
     backend: DatabaseBackend,
@@ -391,11 +379,7 @@ async fn execute_seaorm<C>(
 where
     C: ConnectionTrait,
 {
-    db.execute(Statement::from_sql_and_values(
-        backend,
-        sql_for_backend(backend, sqlite_sql, postgres_sql, mysql_sql),
-        values,
-    ))
+    execute_sql(db, backend, sqlite_sql, postgres_sql, mysql_sql, values)
     .await
     .map(|_| ())
 }
@@ -411,13 +395,7 @@ async fn query_optional_i64_seaorm<C>(
 where
     C: ConnectionTrait,
 {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            backend,
-            sql_for_backend(backend, sqlite_sql, postgres_sql, mysql_sql),
-            values,
-        ))
-        .await?;
+    let row = query_one_sql(db, backend, sqlite_sql, postgres_sql, mysql_sql, values).await?;
     row.map(|row| row.try_get_by_index(0)).transpose()
 }
 
@@ -432,13 +410,7 @@ async fn query_optional_string_seaorm<C>(
 where
     C: ConnectionTrait,
 {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            backend,
-            sql_for_backend(backend, sqlite_sql, postgres_sql, mysql_sql),
-            values,
-        ))
-        .await?;
+    let row = query_one_sql(db, backend, sqlite_sql, postgres_sql, mysql_sql, values).await?;
     row.map(|row| row.try_get_by_index(0)).transpose()
 }
 
@@ -466,22 +438,17 @@ where
 {
     match backend {
         DatabaseBackend::Sqlite => {
-            let result = db
-                .execute(Statement::from_sql_and_values(backend, sqlite_sql, values))
-                .await?;
+            let result = execute_sql(db, backend, sqlite_sql, "", "", values).await?;
             inserted_id_from_result(&result, backend)
         }
         DatabaseBackend::Postgres => {
-            let row = db
-                .query_one(Statement::from_sql_and_values(backend, postgres_sql, values))
+            let row = query_one_sql(db, backend, "", postgres_sql, "", values)
                 .await?
                 .ok_or_else(|| sea_orm::DbErr::RecordNotFound(postgres_sql.to_owned()))?;
             row.try_get_by_index(0)
         }
         DatabaseBackend::MySql => {
-            let result = db
-                .execute(Statement::from_sql_and_values(backend, mysql_sql, values))
-                .await?;
+            let result = execute_sql(db, backend, "", "", mysql_sql, values).await?;
             inserted_id_from_result(&result, backend)
         }
     }

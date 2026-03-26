@@ -17,7 +17,7 @@ Rust 切片实现了以下已验证的 SQLite 和 PostgreSQL 能力面：
 - **管理只读路由**: `GET /admin/requests/:request_id/content`
 - **管理 GraphQL**: `POST /admin/graphql` 含 playground，OAuth 流程（Codex、Claude Code、Antigravity、Copilot）
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` 含 playground
-- **OpenAI 兼容 `/v1` 推理**: `/models`、`/chat/completions`、`/responses`、`/embeddings`、`/messages`、`/rerank`
+- **OpenAI 兼容 `/v1` 推理（仅标准 JSON 请求）**: `/models`、`/chat/completions`、`/responses`、`/embeddings`、`/messages`、`/rerank`
 - **视频生成**: `POST /v1/videos`、`GET /v1/videos/{id}`、`DELETE /v1/videos/{id}`
 - **其他提供商 API**: Jina、Anthropic、Gemini、Doubao 等路由（见 routes 文件）
 - **数据库支持**: SQLite 和 PostgreSQL 完全验证；MySQL 通过共享 SeaORM 接缝已布线但完整集成验证待完成
@@ -58,7 +58,8 @@ Rust 切片实现了以下已验证的 SQLite 和 PostgreSQL 能力面：
 - `/v1/images/generations`、`/v1/images/edits`（图像生成）
 - `/admin/*` 写操作（用户管理、项目创建、角色分配等）
 - 未纳入目标的提供商包装器
-- 实时 API 端点
+- 实时 API 端点（代表性的 `/v1/realtime` 请求会停留在显式 `/v1/*` `501` 边界）
+- `/v1/*` 上带有 Vercel AI SDK 协议标记头的请求（例如 `X-Vercel-Ai-Ui-Message-Stream: v1` 或 `X-Vercel-AI-Data-Stream: v1`）
 - 超越只读操作的完整管理后台
 
 如果你需要完整产品能力，请继续使用 Go 后端或当前发布的 Docker / 二进制版本。如果你在做迁移工作，请使用 Rust workspace。

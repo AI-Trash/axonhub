@@ -35,25 +35,27 @@ The Rust workspace and Rust-tagged release artifacts are the truthful replacemen
 - **Admin read routes**: `GET /admin/requests/:request_id/content`
 - **Admin GraphQL**: `POST /admin/graphql` with playground
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` with playground
-- **OpenAI-compatible `/v1` inference**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`
+- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`
 - **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
-- **OAuth flows**: Codex, Claude Code, Antigravity, Copilot OAuth endpoints
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as listed in routes
-- **Database support**: SQLite and PostgreSQL fully verified; MySQL wired through shared SeaORM seam but full integration verification pending
+- **Database support for this verified slice**: SQLite and PostgreSQL
 
-The same SeaORM-backed slice is wired for MySQL through the shared repository seam, but full MySQL-backed automated integration verification is not yet present in this Rust test suite.
+### Currently Implemented but Not Fully Verified
+
+- **Provider-edge admin OAuth helpers**: Codex, Claude Code, Antigravity, and Copilot admin OAuth routes are wired in Rust and have auth/boundary coverage across the family; the current positive route proof covers secure-runtime-gated Codex start, but full per-provider end-to-end verification is still incomplete.
+- **MySQL support**: the same SeaORM-backed slice is wired through the shared repository seam and capability builders, but full MySQL-backed automated integration verification is not yet present in this Rust test suite.
 
 ### Current Unsupported Boundary
 
 Route families outside that verified scope return explicit Rust-side `501 Not Implemented` payloads instead of instructing users to fall back to the legacy Go backend. Notably:
 
-- **Image generation**: `POST /v1/images/generations`, `POST /v1/images/edits` remain unimplemented in Rust
-- **Realtime API**: WebSocket-based realtime conversation capabilities
+- **Image editing and remaining image variants**: `POST /v1/images/edits` and any still-unmigrated image routes remain on explicit Rust `501 Not Implemented` boundaries
+- **Realtime API**: no dedicated Rust realtime/WebSocket route family is exposed; representative `/v1/realtime` traffic remains on explicit `501 Not Implemented` boundaries
 - **Full admin management**: write operations, user/project/role management, quota configuration
 - **Complete RBAC/permission system**: fine-grained access control beyond basic admin auth
 - **Core business logic surfaces**: channel/model association/fetching, usage/cost tracking, trace/thread management, system onboarding completeness
 - **Transformer/pipeline surfaces**: full provider orchestration, outbound transformers, middleware pipeline
-- **AiSDK compatibility**: complete Vercel AI SDK protocol coverage
+- **AiSDK compatibility**: Vercel AI SDK protocol requests remain unsupported in Rust; `/v1` requests marked with `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` return explicit `501 Not Implemented`
 - **Advanced/enterprise features**: prompt protection, provider quota management, circuit breakers
 - **Config alignment**: full parity with legacy Go backend configuration options
 - **Test parity**: broader integration test coverage matching the Go suite
@@ -62,7 +64,7 @@ Route families outside that verified scope return explicit Rust-side `501 Not Im
 
 **Next (high-priority, near-term):**
 
-- Image generation endpoints (`/v1/images/generations`, `/v1/images/edits`)
+- Remaining image routes beyond `POST /v1/images/generations` (notably `/v1/images/edits`)
 - RBAC/permission system migration (internal/scopes)
 - Core business logic surfaces (internal/server/biz): channel/model management, request lifecycle, usage/cost, trace/thread
 - Transformer/pipeline migration (llm/transformer, llm/pipeline): provider orchestration, outbound adapters
@@ -268,7 +270,7 @@ Tagged releases publish dedicated Rust delivery paths for the supported replacem
 - Docker images `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
 - Compose example at `docker-compose.rust.yml`
 
-These artifacts preserve the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed replacement surface already covered by Tasks 1-9: `/health`, admin bootstrap/status, identity/request-context, admin read routes, admin GraphQL, OpenAPI GraphQL, and the migrated inference families. The same SeaORM-backed slice is wired for MySQL, but full MySQL-backed automated integration verification is still pending in this Rust test suite. Any route family outside that supported scope stays on explicit Rust `501 Not Implemented` responses until separately migrated and verified.
+These artifacts preserve the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed replacement surface already covered by the current Rust test matrix: `/health`, admin bootstrap/status, identity/request-context, admin read routes, admin GraphQL, OpenAPI GraphQL, and the migrated inference families including `POST /v1/images/generations`. The same SeaORM-backed slice is wired for MySQL, but full MySQL-backed automated integration verification is still pending in this Rust test suite. Any route family outside that supported scope stays on explicit Rust `501 Not Implemented` responses until separately migrated and verified.
 
 The binary PASS/FAIL cutover, HOLD, and ROLLBACK criteria for those Rust-tagged artifacts are defined in `.sisyphus/artifacts/rust-backend-seaorm-actix-migration-plan/final-cutover-gates.md`.
 

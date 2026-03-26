@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::contract::canonical_key_for_get;
 use crate::types::Config;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -29,8 +30,10 @@ impl Config {
     }
 
     pub fn get(&self, key: &str) -> Option<serde_json::Value> {
+        let canonical_key = canonical_key_for_get(key)?;
         let value = serde_json::to_value(self).ok()?;
-        key.split('.')
+        canonical_key
+            .split('.')
             .try_fold(&value, |current, segment| current.get(segment))
             .cloned()
     }

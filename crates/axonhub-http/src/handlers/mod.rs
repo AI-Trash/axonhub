@@ -32,6 +32,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+const AISDK_PROTOCOL_NOT_IMPLEMENTED_MESSAGE: &str = "AiSDK compatibility is not supported in the Rust HTTP slice yet. Requests that opt into the Vercel AI SDK protocol via `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` remain on the explicit `/v1/*` 501 boundary.";
+
 pub(crate) async fn health(state: web::Data<HttpState>) -> web::Json<HealthResponse> {
     web::Json(HealthResponse {
         status: "ok",
@@ -72,6 +74,10 @@ pub(crate) async fn execute_openai_request(
             None,
         )
         .with_message(message);
+    }
+
+    if let Some(response) = aisdk_protocol_not_implemented_response(&request, original_uri.clone()) {
+        return response;
     }
 
     let body = match parse_json_body(body) {
@@ -302,6 +308,33 @@ pub(crate) fn parse_json_body(body: Bytes) -> Result<Value, HttpResponse> {
 
     serde_json::from_slice(&body)
         .map_err(|_| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid request format"))
+}
+
+fn aisdk_protocol_not_implemented_response(
+    request: &HttpRequest,
+    original_uri: Uri,
+) -> Option<HttpResponse> {
+    aisdk_protocol_header_present(request).then(|| {
+        not_implemented_response(
+            "/v1/*",
+            Method::from(request.method().clone()),
+            original_uri,
+            None,
+        )
+        .with_message(AISDK_PROTOCOL_NOT_IMPLEMENTED_MESSAGE)
+    })
+}
+
+fn aisdk_protocol_header_present(request: &HttpRequest) -> bool {
+    ["X-Vercel-Ai-Ui-Message-Stream", "X-Vercel-AI-Data-Stream"]
+        .into_iter()
+        .any(|name| {
+            request
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| !value.trim().is_empty())
+        })
 }
 
 fn parse_json_body_for_compatibility(

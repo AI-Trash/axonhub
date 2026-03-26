@@ -1,7 +1,7 @@
 use std::process;
 
 use anyhow::Result;
-use axonhub_config::{load, PreviewFormat};
+use axonhub_config::{load, supported_config_aliases, supported_config_keys, PreviewFormat};
 
 use super::build_info::{show_build_info, show_version};
 use super::server::start_server;
@@ -24,17 +24,7 @@ pub(crate) const HELP_TEXT: &str = concat!(
 
 pub(crate) const CONFIG_USAGE_TEXT: &str = "Usage: axonhub config <preview|validate|get>\n";
 
-pub(crate) const CONFIG_GET_USAGE_TEXT: &str = concat!(
-    "Usage: axonhub config get <key>\n",
-    "\n",
-    "Available keys:\n",
-    "  server.port    Server port number\n",
-    "  server.name    Server name\n",
-    "  server.base_path  Server base path\n",
-    "  server.debug      Server debug mode\n",
-    "  db.dialect     Database dialect\n",
-    "  db.dsn         Database DSN\n",
-);
+pub(crate) const CONFIG_GET_USAGE_HEADER: &str = "Usage: axonhub config get <key>\n\nAvailable keys:\n";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TopLevelCommand {
@@ -139,7 +129,7 @@ fn config_validate() -> Result<()> {
 
 fn config_get(args: &[String]) -> Result<()> {
     if args.len() < 4 {
-        print!("{CONFIG_GET_USAGE_TEXT}");
+        print!("{}", config_get_usage_text());
         process::exit(1);
     }
 
@@ -165,6 +155,34 @@ fn show_help() {
 
 fn print_config_usage() {
     print!("{CONFIG_USAGE_TEXT}");
+}
+
+pub(crate) fn config_get_usage_text() -> String {
+    let mut usage = String::from(CONFIG_GET_USAGE_HEADER);
+
+    for key in supported_config_keys() {
+        usage.push_str("  ");
+        usage.push_str(key.key);
+        usage.push_str("    ");
+        usage.push_str(key.description);
+        usage.push('\n');
+    }
+
+    let aliases = supported_config_aliases();
+    if !aliases.is_empty() {
+        usage.push_str("\nLegacy aliases accepted by get/preview validation:\n");
+        for alias in aliases {
+            usage.push_str("  ");
+            usage.push_str(alias.key);
+            usage.push_str("    ");
+            usage.push_str(alias.description);
+            usage.push_str(" (canonical: ");
+            usage.push_str(alias.canonical_key);
+            usage.push_str(")\n");
+        }
+    }
+
+    usage
 }
 
 pub(crate) fn parse_top_level_command(args: &[String]) -> TopLevelCommand {

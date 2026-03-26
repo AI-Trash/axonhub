@@ -21,7 +21,8 @@ use super::{
         SCOPE_READ_REQUESTS, SCOPE_READ_ROLES, SCOPE_READ_SETTINGS, SCOPE_READ_USERS,
         SCOPE_WRITE_API_KEYS, SCOPE_WRITE_SETTINGS, SCOPE_WRITE_USERS,
     },
-    graphql::{self, *},
+    graphql::*,
+    repositories::graphql::query_all_graphql,
     shared::{graphql_gid, SqliteFoundation},
     system::{ensure_identity_tables, hash_password},
 };
@@ -183,7 +184,7 @@ async fn list_traces_by_project_graphql(
     )
     .await?
     .into_iter()
-    .map(|row| {
+    .map(|row: sea_orm::QueryResult| {
         Ok::<TraceContext, String>(TraceContext {
             id: row.try_get_by_index(0).map_err(|error| error.to_string())?,
             trace_id: row.try_get_by_index(1).map_err(|error| error.to_string())?,

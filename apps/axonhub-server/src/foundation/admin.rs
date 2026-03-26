@@ -1,6 +1,5 @@
 use async_graphql::Enum;
 use axonhub_http::{AdminContentDownload, AdminError, AdminPort, AuthUserContext};
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -8,8 +7,8 @@ use std::path::{Component, Path, PathBuf};
 
 use super::{
     authz::{user_has_project_scope, user_has_system_scope, SCOPE_READ_REQUESTS},
-    openai_v1::StoredRequestContentRecord,
     ports::AdminRepository,
+    repositories::admin::{AdminStorageRepository, SeaOrmAdminStorageRepository},
     seaorm::SeaOrmConnectionFactory,
 };
 
@@ -210,12 +209,14 @@ pub(crate) struct StoredBackupApiKey {
 }
 
 pub struct SeaOrmAdminService {
-    db: SeaOrmConnectionFactory,
+    storage: SeaOrmAdminStorageRepository,
 }
 
 impl SeaOrmAdminService {
     pub fn new(db: SeaOrmConnectionFactory) -> Self {
-        Self { db }
+        Self {
+            storage: SeaOrmAdminStorageRepository::new(db),
+        }
     }
 }
 
@@ -234,103 +235,100 @@ impl AdminPort for SeaOrmAdminService {
             });
         }
 
-        let db = self.db.clone();
-        db.run_sync(move |db| async move {
-            let connection = db.connect_migrated().await.map_err(|error| AdminError::Internal {
-                message: format!("Failed to connect through SeaORM: {error}"),
+        let request = self
+            .storage
+            .query_request_content_record(request_id)?
+            .ok_or_else(|| AdminError::NotFound {
+                message: "Request not found".to_owned(),
             })?;
-            let backend = db.backend();
 
-            let request = query_request_content_record_seaorm(&connection, backend, request_id)
-                .await?
+        if request.project_id != project_id {
+            return Err(AdminError::NotFound {
+                message: "Request not found".to_owned(),
+            });
+        }
+
+        if !request.content_saved {
+            return Err(AdminError::NotFound {
+                message: "Content not found".to_owned(),
+            });
+        }
+
+        let content_storage_id =
+            request
+                .content_storage_id
                 .ok_or_else(|| AdminError::NotFound {
-                    message: "Request not found".to_owned(),
-                })?;
-
-            if request.project_id != project_id {
-                return Err(AdminError::NotFound {
-                    message: "Request not found".to_owned(),
-                });
-            }
-
-            if !request.content_saved {
-                return Err(AdminError::NotFound {
                     message: "Content not found".to_owned(),
-                });
-            }
-
-            let content_storage_id = request.content_storage_id.ok_or_else(|| AdminError::NotFound {
+                })?;
+        let key = request
+            .content_storage_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AdminError::NotFound {
                 message: "Content not found".to_owned(),
             })?;
-            let key = request
-                .content_storage_key
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| AdminError::NotFound {
-                    message: "Content not found".to_owned(),
-                })?;
 
-            let expected_prefix = format!("/{}/requests/{}/", request.project_id, request.id);
-            let normalized_key = if key.starts_with('/') {
-                key.to_owned()
-            } else {
-                format!("/{key}")
-            };
-            if !normalized_key.starts_with(expected_prefix.as_str()) {
-                return Err(AdminError::NotFound {
-                    message: "Content not found".to_owned(),
-                });
-            }
+        let expected_prefix = format!("/{}/requests/{}/", request.project_id, request.id);
+        let normalized_key = if key.starts_with('/') {
+            key.to_owned()
+        } else {
+            format!("/{key}")
+        };
+        if !normalized_key.starts_with(expected_prefix.as_str()) {
+            return Err(AdminError::NotFound {
+                message: "Content not found".to_owned(),
+            });
+        }
 
-            let data_storage = query_data_storage_seaorm(&connection, backend, content_storage_id)
-                .await?
-                .ok_or_else(|| AdminError::NotFound {
-                    message: "Content storage not found".to_owned(),
-                })?;
-
-            if data_storage.storage_type == "database" {
-                return Err(AdminError::BadRequest {
-                    message: "Content storage is not file-based".to_owned(),
-                });
-            }
-
-            if data_storage.storage_type != "fs" {
-                return Err(AdminError::NotFound {
-                    message: "Content not found".to_owned(),
-                });
-            }
-
-            let settings: Value =
-                serde_json::from_str(data_storage.settings_json.as_str()).unwrap_or(Value::Null);
-            let base_directory = settings
-                .get("directory")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| AdminError::NotFound {
-                    message: "Content not found".to_owned(),
-                })?;
-            let relative = safe_relative_key_path(normalized_key.as_str()).ok_or_else(|| {
-                AdminError::NotFound {
-                    message: "Content not found".to_owned(),
-                }
+        let data_storage = self
+            .storage
+            .query_data_storage(content_storage_id)?
+            .ok_or_else(|| AdminError::NotFound {
+                message: "Content storage not found".to_owned(),
             })?;
 
-            let full_path = Path::new(base_directory).join(relative.as_path());
-            let bytes = fs::read(&full_path).map_err(|error| match error.kind() {
-                std::io::ErrorKind::NotFound => AdminError::NotFound {
-                    message: "Content not found".to_owned(),
-                },
-                _ => AdminError::Internal {
-                    message: format!("Failed to read content: {error}"),
-                },
-            })?;
+        if data_storage.storage_type == "database" {
+            return Err(AdminError::BadRequest {
+                message: "Content storage is not file-based".to_owned(),
+            });
+        }
 
-            Ok(AdminContentDownload {
-                filename: filename_from_key(normalized_key.as_str(), request.id),
-                bytes,
-            })
+        if data_storage.storage_type != "fs" {
+            return Err(AdminError::NotFound {
+                message: "Content not found".to_owned(),
+            });
+        }
+
+        let settings: Value =
+            serde_json::from_str(data_storage.settings_json.as_str()).unwrap_or(Value::Null);
+        let base_directory = settings
+            .get("directory")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AdminError::NotFound {
+                message: "Content not found".to_owned(),
+            })?;
+        let relative = safe_relative_key_path(normalized_key.as_str()).ok_or_else(|| {
+            AdminError::NotFound {
+                message: "Content not found".to_owned(),
+            }
+        })?;
+
+        let full_path = Path::new(base_directory).join(relative.as_path());
+        let bytes = fs::read(&full_path).map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => AdminError::NotFound {
+                message: "Content not found".to_owned(),
+            },
+            _ => AdminError::Internal {
+                message: format!("Failed to read content: {error}"),
+            },
+        })?;
+
+        Ok(AdminContentDownload {
+            filename: filename_from_key(normalized_key.as_str(), request.id),
+            bytes,
         })
     }
 }
@@ -344,85 +342,6 @@ impl AdminRepository for SeaOrmAdminService {
     ) -> Result<AdminContentDownload, AdminError> {
         <Self as AdminPort>::download_request_content(self, project_id, request_id, user)
     }
-}
-
-fn admin_sql<'a>(
-    backend: DatabaseBackend,
-    sqlite: &'a str,
-    postgres: &'a str,
-    mysql: &'a str,
-) -> &'a str {
-    match backend {
-        DatabaseBackend::Sqlite => sqlite,
-        DatabaseBackend::Postgres => postgres,
-        DatabaseBackend::MySql => mysql,
-    }
-}
-
-async fn query_one_admin(
-    db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
-    sqlite_sql: &str,
-    postgres_sql: &str,
-    mysql_sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<Option<sea_orm::QueryResult>, AdminError> {
-    db.query_one(Statement::from_sql_and_values(
-        backend,
-        admin_sql(backend, sqlite_sql, postgres_sql, mysql_sql),
-        values,
-    ))
-    .await
-    .map_err(|error| AdminError::Internal {
-        message: format!("SeaORM admin query failed: {error}"),
-    })
-}
-
-async fn query_request_content_record_seaorm(
-    db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
-    request_id: i64,
-) -> Result<Option<StoredRequestContentRecord>, AdminError> {
-    query_one_admin(
-        db,
-        backend,
-        "SELECT id, project_id, content_saved, content_storage_id, content_storage_key FROM requests WHERE id = ? LIMIT 1",
-        "SELECT id, project_id, content_saved, content_storage_id, content_storage_key FROM requests WHERE id = $1 LIMIT 1",
-        "SELECT id, project_id, content_saved, content_storage_id, content_storage_key FROM requests WHERE id = ? LIMIT 1",
-        vec![request_id.into()],
-    )
-    .await
-    .map(|row| {
-        row.map(|row| StoredRequestContentRecord {
-            id: row.try_get_by_index(0).unwrap_or_default(),
-            project_id: row.try_get_by_index(1).unwrap_or_default(),
-            content_saved: row.try_get_by_index(2).unwrap_or(false),
-            content_storage_id: row.try_get_by_index(3).ok(),
-            content_storage_key: row.try_get_by_index(4).ok(),
-        })
-    })
-}
-
-async fn query_data_storage_seaorm(
-    db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
-    storage_id: i64,
-) -> Result<Option<DataStorageRecord>, AdminError> {
-    query_one_admin(
-        db,
-        backend,
-        "SELECT id, name, description, type, status, settings FROM data_storages WHERE id = ? AND deleted_at = 0 LIMIT 1",
-        "SELECT id, name, description, type, status, settings FROM data_storages WHERE id = $1 AND deleted_at = 0 LIMIT 1",
-        "SELECT id, name, description, type, status, settings FROM data_storages WHERE id = ? AND deleted_at = 0 LIMIT 1",
-        vec![storage_id.into()],
-    )
-    .await
-    .map(|row| {
-        row.map(|row| DataStorageRecord {
-            storage_type: row.try_get_by_index(3).unwrap_or_default(),
-            settings_json: row.try_get_by_index(5).unwrap_or_default(),
-        })
-    })
 }
 
 pub(crate) fn default_storage_policy() -> StoredStoragePolicy {

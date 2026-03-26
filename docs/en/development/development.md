@@ -17,7 +17,7 @@ The Rust slice implements the following verified SQLite- and PostgreSQL-backed s
 - **Admin read routes**: `GET /admin/requests/:request_id/content`
 - **Admin GraphQL**: `POST /admin/graphql` with playground, OAuth flows (Codex, Claude Code, Antigravity, Copilot)
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` with playground
-- **OpenAI-compatible `/v1` inference**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`
+- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`
 - **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as configured
 - **Database support**: SQLite and PostgreSQL fully verified; MySQL wired through shared SeaORM seam but full integration verification pending
@@ -58,7 +58,8 @@ Route families outside the verified scope return structured `501 Not Implemented
 - `/v1/images/generations`, `/v1/images/edits` (image generation)
 - `/admin/*` write operations (user management, project creation, role assignment, etc.)
 - Non-target provider wrappers not yet migrated
-- Realtime API endpoints
+- Realtime API endpoints (representative `/v1/realtime` traffic stays on explicit `/v1/*` `501` boundaries)
+- Vercel AI SDK protocol marker headers on `/v1/*` requests (for example `X-Vercel-Ai-Ui-Message-Stream: v1` or `X-Vercel-AI-Data-Stream: v1`)
 - Full admin plane beyond read operations
 
 Use the Go backend or the released Docker/binary artifacts when you need the full product surface. Use the Rust workspace when working on the migration itself.

@@ -1,6 +1,7 @@
 pub(crate) mod shared;
 pub(crate) mod sqlite_support;
 pub(crate) mod seaorm;
+pub(crate) mod repositories;
 pub(crate) mod ports;
 pub(crate) mod authz;
 pub(crate) mod system;

@@ -6,16 +6,18 @@ use super::capabilities::{
     build_system_bootstrap_capability,
 };
 use super::cli::{
-    parse_config_command, parse_top_level_command, ConfigCommand, TopLevelCommand,
-    CONFIG_GET_USAGE_TEXT, CONFIG_USAGE_TEXT, HELP_TEXT,
+    config_get_usage_text, parse_config_command, parse_top_level_command, ConfigCommand,
+    TopLevelCommand, CONFIG_GET_USAGE_HEADER, CONFIG_USAGE_TEXT, HELP_TEXT,
 };
 use super::server::startup_messages;
 use crate::foundation::{
     provider_edge::PROVIDER_EDGE_REQUIRED_ENV_VARS,
     shared::{
-        SqliteFoundation, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
+        SqliteFoundation, DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE,
+        PRIMARY_DATA_STORAGE_NAME,
         SYSTEM_KEY_BRAND_NAME, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_VERSION,
     },
+    sqlite_support::hash_password,
     system::SqliteBootstrapService,
 };
 use axonhub_http::{
@@ -36,6 +38,7 @@ use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
 use pg_embed::postgres::{PgEmbed, PgSettings};
 use postgres::{Client as PostgresClient, NoTls};
 use rusqlite::OptionalExtension;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
@@ -439,6 +442,128 @@ fn provider_edge_env_values() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+fn insert_sqlite_user(
+    foundation: &Arc<SqliteFoundation>,
+    email: &str,
+    password: &str,
+    scopes: &[&str],
+) -> i64 {
+    let connection = foundation.open_connection(true).unwrap();
+    let hashed = hash_password(password).unwrap();
+    let scopes_json = serde_json::to_string(scopes).unwrap();
+    connection
+        .execute(
+            "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes, deleted_at)
+             VALUES (?1, 'activated', 'en', ?2, 'Test', 'User', '', 0, ?3, 0)",
+            rusqlite::params![email, hashed, scopes_json],
+        )
+        .unwrap();
+    connection.last_insert_rowid()
+}
+
+fn insert_sqlite_project_membership(
+    foundation: &Arc<SqliteFoundation>,
+    user_id: i64,
+    project_id: i64,
+    is_owner: bool,
+    scopes: &[&str],
+) {
+    let connection = foundation.open_connection(true).unwrap();
+    let scopes_json = serde_json::to_string(scopes).unwrap();
+    connection
+        .execute(
+            "INSERT INTO user_projects (user_id, project_id, is_owner, scopes) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![user_id, project_id, is_owner, scopes_json],
+        )
+        .unwrap();
+}
+
+fn insert_sqlite_role(
+    foundation: &Arc<SqliteFoundation>,
+    name: &str,
+    level: &str,
+    project_id: i64,
+    scopes: &[&str],
+) -> i64 {
+    let connection = foundation.open_connection(true).unwrap();
+    let scopes_json = serde_json::to_string(scopes).unwrap();
+    connection
+        .execute(
+            "INSERT INTO roles (name, level, project_id, scopes, deleted_at) VALUES (?1, ?2, ?3, ?4, 0)",
+            rusqlite::params![name, level, project_id, scopes_json],
+        )
+        .unwrap();
+    connection.last_insert_rowid()
+}
+
+fn attach_sqlite_role(foundation: &Arc<SqliteFoundation>, user_id: i64, role_id: i64) {
+    let connection = foundation.open_connection(true).unwrap();
+    connection
+        .execute(
+            "INSERT INTO user_roles (user_id, role_id) VALUES (?1, ?2)",
+            rusqlite::params![user_id, role_id],
+        )
+        .unwrap();
+}
+
+fn seed_sqlite_request_content(
+    foundation: &Arc<SqliteFoundation>,
+    project_id: i64,
+) -> (i64, std::path::PathBuf) {
+    let content_dir = temp_postgres_dir("sqlite-admin-request-content-files");
+    std::fs::create_dir_all(&content_dir).unwrap();
+
+    let connection = foundation.open_connection(true).unwrap();
+    let storage_settings = serde_json::json!({
+        "directory": content_dir.to_string_lossy(),
+    })
+    .to_string();
+    connection
+        .execute(
+            "INSERT INTO data_storages (name, description, \"primary\", type, settings, status, deleted_at)
+             VALUES (?1, ?2, 0, 'fs', ?3, 'active', 0)",
+            rusqlite::params!["SQLite Request Content FS", "sqlite-admin-read-test", storage_settings],
+        )
+        .unwrap();
+    let storage_id = connection.last_insert_rowid();
+
+    connection
+        .execute(
+            "INSERT INTO requests (
+                api_key_id, project_id, trace_id, data_storage_id, source, model_id, format,
+                request_headers, request_body, response_body, response_chunks, channel_id,
+                external_id, status, stream, client_ip, metrics_latency_ms,
+                metrics_first_token_latency_ms, content_saved, content_storage_id,
+                content_storage_key, content_saved_at
+            ) VALUES (
+                NULL, ?1, NULL, ?2, 'api', 'gpt-4o', 'openai/chat_completions',
+                '{}', '{}', NULL, NULL, NULL,
+                NULL, 'completed', 0, '', NULL,
+                NULL, 1, ?2,
+                '', '2026-03-23T00:00:00Z'
+            )",
+            rusqlite::params![project_id, storage_id],
+        )
+        .unwrap();
+    let request_id = connection.last_insert_rowid();
+
+    let content_key = format!("/{project_id}/requests/{request_id}/chat/output.json");
+    connection
+        .execute(
+            "UPDATE requests SET content_storage_key = ?2 WHERE id = ?1",
+            rusqlite::params![request_id, content_key],
+        )
+        .unwrap();
+
+    let full_path = content_dir.join(format!(
+        "{project_id}/requests/{request_id}/chat/output.json"
+    ));
+    std::fs::create_dir_all(full_path.parent().unwrap()).unwrap();
+    std::fs::write(&full_path, br#"{"content":"sqlite-request-content"}"#).unwrap();
+
+    (request_id, content_dir)
+}
+
 fn mock_openai_v1_runtime_server_url() -> &'static str {
     static SERVER_URL: OnceLock<String> = OnceLock::new();
     SERVER_URL
@@ -446,6 +571,7 @@ fn mock_openai_v1_runtime_server_url() -> &'static str {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             let address = listener.local_addr().unwrap();
             std::thread::spawn(move || {
+                let mut request_counts = HashMap::new();
                 for stream in listener.incoming() {
                     let mut stream = match stream {
                         Ok(stream) => stream,
@@ -495,10 +621,15 @@ fn mock_openai_v1_runtime_server_url() -> &'static str {
 
                     let request = String::from_utf8_lossy(&request_bytes);
                     let request_line = request.lines().next().unwrap_or_default().to_owned();
+                    let method = request_line.split_whitespace().next().unwrap_or("GET");
                     let path = request_line
                         .split_whitespace()
                         .nth(1)
                         .unwrap_or("/");
+                    let request_key = format!("{method} {path}");
+                    let request_count = request_counts.entry(request_key).or_insert(0);
+                    *request_count += 1;
+                    let request_count = *request_count;
                     let raw_body = request.split("\r\n\r\n").nth(1).unwrap_or("");
                     let request_json = serde_json::from_str::<serde_json::Value>(raw_body)
                         .unwrap_or(serde_json::Value::Null);
@@ -507,7 +638,36 @@ fn mock_openai_v1_runtime_server_url() -> &'static str {
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("gpt-4o");
 
-                    let body = if path.ends_with("/chat/completions") {
+                    let body = if path.contains("/retry-twice-ok-pg/")
+                        && path.ends_with("/chat/completions")
+                    {
+                        if request_count <= 2 {
+                            serde_json::json!({
+                                "error": {"message": "retry me later"}
+                            })
+                            .to_string()
+                        } else {
+                            serde_json::json!({
+                                "id": "chatcmpl_retry_pg",
+                                "object": "chat.completion",
+                                "created": 1,
+                                "model": request_model,
+                                "choices": [{
+                                    "index": 0,
+                                    "message": {"role": "assistant", "content": "hi"},
+                                    "finish_reason": "stop"
+                                }],
+                                "usage": {
+                                    "prompt_tokens": 10,
+                                    "completion_tokens": 5,
+                                    "total_tokens": 15,
+                                    "prompt_tokens_details": {"cached_tokens": 2},
+                                    "completion_tokens_details": {"reasoning_tokens": 1}
+                                }
+                            })
+                            .to_string()
+                        }
+                    } else if path.ends_with("/chat/completions") {
                         serde_json::json!({
                             "id": format!("chatcmpl_{}", request_model.replace('-', "_")),
                             "object": "chat.completion",
@@ -557,8 +717,24 @@ fn mock_openai_v1_runtime_server_url() -> &'static str {
                             }
                         })
                         .to_string()
+                    } else if path.ends_with("/images/generations") {
+                        serde_json::json!({
+                            "created": 1,
+                            "data": [{
+                                "b64_json": "aGVsbG8=",
+                                "revised_prompt": "draw a cat"
+                            }],
+                            "usage": {
+                                "prompt_tokens": 20,
+                                "completion_tokens": 30,
+                                "total_tokens": 50,
+                                "prompt_tokens_details": {"cached_tokens": 4},
+                                "completion_tokens_details": {"reasoning_tokens": 2}
+                            }
+                        })
+                        .to_string()
                     } else if path.ends_with("/videos/video_mock_task") {
-                        if request_line.starts_with("GET ") {
+                        if method == "GET" {
                             serde_json::json!({
                                 "id": "video_mock_task",
                                 "model": "seedance-1.0",
@@ -591,8 +767,18 @@ fn mock_openai_v1_runtime_server_url() -> &'static str {
                         .to_string()
                     };
 
+                    let status_line = if path.contains("/retry-twice-ok-pg/")
+                        && path.ends_with("/chat/completions")
+                        && request_count <= 2
+                    {
+                        "HTTP/1.1 503 Service Unavailable"
+                    } else {
+                        "HTTP/1.1 200 OK"
+                    };
+
                     let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        "{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        status_line,
                         body.len(),
                         body
                     );
@@ -1218,14 +1404,15 @@ async fn postgres_admin_graphql_route_executes_current_subset() {
             let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
             connection
                 .execute(
-                    "INSERT INTO models (developer, model_id, type, name, icon, remark, model_card, settings, status)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                    "INSERT INTO models (developer, model_id, type, name, icon, \"group\", remark, model_card, settings, status)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                     &[
                         &"openai",
                         &"gpt-4",
                         &"chat",
                         &"GPT-4",
                         &"icon",
+                        &"openai",
                         &"Test model",
                         &"{}",
                         &"{}",
@@ -1235,14 +1422,15 @@ async fn postgres_admin_graphql_route_executes_current_subset() {
                 .unwrap();
             connection
                 .execute(
-                    "INSERT INTO models (developer, model_id, type, name, icon, remark, model_card, settings, status)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                    "INSERT INTO models (developer, model_id, type, name, icon, \"group\", remark, model_card, settings, status)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                     &[
                         &"anthropic",
                         &"claude-3",
                         &"chat",
                         &"Claude 3",
                         &"icon",
+                        &"anthropic",
                         &"Test model 2",
                         &"{}",
                         &"{}",
@@ -1317,7 +1505,7 @@ async fn postgres_admin_graphql_route_executes_current_subset() {
 }
 
 #[tokio::test]
-async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truthful() {
+async fn postgres_openai_v1_subset_routes_execute_and_support_image_generations_truthfully() {
     let (mut embedded_pg, dsn, data_dir) =
         start_embedded_postgres("postgres-openai-v1-subset").await;
 
@@ -1372,8 +1560,16 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
                     r#"["jina-reranker-v2-base-multilingual"]"#,
                     85_i64,
                 ),
+                (
+                    "OpenAI Image Mock",
+                    "openai",
+                    base_url.clone(),
+                    r#"["gpt-image-1"]"#,
+                    80_i64,
+                ),
             ];
             for (name, channel_type, base_url, supported_models, ordering_weight) in channel_rows {
+                let ordering_weight_i32 = ordering_weight as i32;
                 let params: [&(dyn postgres::types::ToSql + Sync); 8] = [
                     &channel_type,
                     &base_url,
@@ -1382,7 +1578,7 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
                     &supported_models,
                     &"{}",
                     &"[]",
-                    &ordering_weight,
+                    &ordering_weight_i32,
                 ];
                 connection
                     .execute(
@@ -1429,6 +1625,15 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
                     "Jina",
                     "jina",
                     r#"{"limit":{"context":8192,"output":0},"cost":{"input":1.0,"output":0.0}}"#,
+                ),
+                (
+                    "openai",
+                    "gpt-image-1",
+                    "image",
+                    "GPT Image 1",
+                    "OpenAI",
+                    "openai",
+                    r#"{"limit":{"context":8192,"output":0},"cost":{"input":1.0,"output":2.0}}"#,
                 ),
             ];
             for (developer, model_id, model_type, name, icon, group_name, model_card_json) in model_rows {
@@ -1549,7 +1754,11 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK, "path {path}");
+        if response.status() != StatusCode::OK {
+            let status = response.status();
+            let body = String::from_utf8(read_body(response).await).unwrap_or_default();
+            panic!("path {path} returned {status}: {body}");
+        }
         let json = serde_json::from_slice::<serde_json::Value>(
             &read_body(response).await,
         )
@@ -1560,10 +1769,30 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
         assert_eq!(actual, &expected_value, "path {path}");
     }
 
+    let image_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/images/generations")
+                .method(Method::POST)
+                .header("content-type", "application/json")
+                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
+                .header("X-Project-ID", "gid://axonhub/project/1")
+                .header("AH-Thread-Id", "thread-postgres-v1")
+                .header("AH-Trace-Id", "trace-postgres-v1")
+                .body(Body::from(r#"{"model":"gpt-image-1","prompt":"draw a cat"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(image_response.status(), StatusCode::OK);
+    let image_json = serde_json::from_slice::<serde_json::Value>(&read_body(image_response).await).unwrap();
+    assert_eq!(image_json["data"][0]["b64_json"], "aGVsbG8=");
+
     let unported = app
         .oneshot(
             Request::builder()
-                .uri("/v1/images")
+                .uri("/v1/images/edits")
                 .method(Method::POST)
                 .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
                 .body(Body::empty())
@@ -1573,12 +1802,18 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
         .unwrap();
     assert_eq!(unported.status(), StatusCode::NOT_IMPLEMENTED);
 
-    let (request_statuses, execution_statuses, usage_count, trace_thread_count) = std::thread::spawn({
+    let (request_statuses, request_formats, execution_statuses, usage_formats, trace_thread_count) = std::thread::spawn({
         let dsn = dsn.clone();
         move || {
             let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
             let request_statuses = connection
                 .query("SELECT status FROM requests ORDER BY id ASC", &[])
+                .unwrap()
+                .into_iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>();
+            let request_formats = connection
+                .query("SELECT format FROM requests ORDER BY id ASC", &[])
                 .unwrap()
                 .into_iter()
                 .map(|row| row.get::<_, String>(0))
@@ -1589,10 +1824,12 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
                 .into_iter()
                 .map(|row| row.get::<_, String>(0))
                 .collect::<Vec<_>>();
-            let usage_count: i64 = connection
-                .query_one("SELECT COUNT(*) FROM usage_logs", &[])
+            let usage_formats = connection
+                .query("SELECT format FROM usage_logs ORDER BY id ASC", &[])
                 .unwrap()
-                .get(0);
+                .into_iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>();
             let trace_thread_count: i64 = connection
                 .query_one(
                     "SELECT COUNT(*) FROM traces t JOIN threads th ON th.id = t.thread_id WHERE t.trace_id = $1 AND th.thread_id = $2",
@@ -1600,7 +1837,7 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
                 )
                 .unwrap()
                 .get(0);
-            (request_statuses, execution_statuses, usage_count, trace_thread_count)
+            (request_statuses, request_formats, execution_statuses, usage_formats, trace_thread_count)
         }
     })
     .join()
@@ -1613,7 +1850,19 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
             "completed",
             "completed",
             "completed",
+            "completed",
             "completed"
+        ]
+    );
+    assert_eq!(
+        request_formats,
+        vec![
+            "openai/chat_completions",
+            "openai/responses",
+            "openai/embeddings",
+            "anthropic/message",
+            "jina/rerank",
+            "openai/images_generations"
         ]
     );
     assert_eq!(
@@ -1623,11 +1872,215 @@ async fn postgres_openai_v1_subset_routes_execute_and_keep_unported_images_truth
             "completed",
             "completed",
             "completed",
+            "completed",
             "completed"
         ]
     );
-    assert_eq!(usage_count, 5);
+    assert_eq!(usage_formats.len(), 6);
+    assert_eq!(usage_formats[5], "openai/images_generations");
     assert_eq!(trace_thread_count, 1);
+
+    embedded_pg.stop_db().await.unwrap();
+    std::fs::remove_dir_all(data_dir).ok();
+}
+
+#[tokio::test]
+async fn postgres_openai_v1_retries_same_channel_before_failover_and_records_attempts_once() {
+    let (mut embedded_pg, dsn, data_dir) =
+        start_embedded_postgres("postgres-openai-v1-same-channel-retry").await;
+
+    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
+    let system = match bootstrap {
+        SystemBootstrapCapability::Available { system } => system,
+        SystemBootstrapCapability::Unsupported { message } => {
+            panic!("Expected postgres bootstrap capability to be available: {message}");
+        }
+    };
+    system
+        .initialize(&InitializeSystemRequest {
+            owner_email: "owner@example.com".to_owned(),
+            owner_password: "password123".to_owned(),
+            owner_first_name: "System".to_owned(),
+            owner_last_name: "Owner".to_owned(),
+            brand_name: "AxonHub".to_owned(),
+        })
+        .unwrap();
+
+    std::thread::spawn({
+        let dsn = dsn.clone();
+        move || {
+            let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
+            let base_url = mock_openai_v1_runtime_server_url().to_owned();
+            let channel_rows = [
+                (
+                    "OpenAI Retry Primary",
+                    format!("{base_url}/retry-twice-ok-pg"),
+                    100_i32,
+                ),
+                ("OpenAI Retry Backup", format!("{base_url}/backup"), 90_i32),
+            ];
+            for (name, channel_base_url, ordering_weight) in channel_rows {
+                let params: [&(dyn postgres::types::ToSql + Sync); 8] = [
+                    &"openai",
+                    &channel_base_url,
+                    &name,
+                    &r#"{"apiKey":"test-upstream-key"}"#,
+                    &r#"["gpt-4o"]"#,
+                    &"{}",
+                    &"[]",
+                    &ordering_weight,
+                ];
+                connection
+                    .execute(
+                        "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at)
+                         VALUES ($1, $2, $3, 'enabled', $4, $5, FALSE, '', $6, $7, $8, '', '', 0)",
+                        &params,
+                    )
+                    .unwrap();
+            }
+
+            let model_params: [&(dyn postgres::types::ToSql + Sync); 7] = [
+                &"openai",
+                &"gpt-4o",
+                &"chat",
+                &"GPT-4o",
+                &"OpenAI",
+                &"openai",
+                &r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+            ];
+            connection
+                .execute(
+                    "INSERT INTO models (developer, model_id, type, name, icon, \"group\", model_card, settings, status, remark, deleted_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, '{}', 'enabled', '', 0)",
+                    &model_params,
+                )
+                .unwrap();
+        }
+    })
+    .join()
+    .expect("postgres /v1 same-channel retry seed thread");
+
+    let state = HttpState {
+        service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
+        identity: build_identity_capability("postgres", &dsn, false),
+        request_context: build_request_context_capability("postgres", &dsn, false),
+        openai_v1: build_openai_v1_capability("postgres", &dsn),
+        admin: build_admin_capability("postgres", &dsn),
+        admin_graphql: build_admin_graphql_capability("postgres", &dsn),
+        openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        allow_no_auth: false,
+        trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },
+    };
+
+    let response = router(state)
+        .oneshot(
+            Request::builder()
+                .uri("/v1/chat/completions")
+                .method(Method::POST)
+                .header("content-type", "application/json")
+                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
+                .header("X-Project-ID", "gid://axonhub/project/1")
+                .header("AH-Thread-Id", "thread-postgres-retry")
+                .header("AH-Trace-Id", "trace-postgres-retry")
+                .body(Body::from(
+                    r#"{"model":"gpt-4o","messages":[{"role":"user","content":"retry then succeed"}]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = serde_json::from_slice::<serde_json::Value>(&read_body(response).await).unwrap();
+    assert_eq!(json["id"], "chatcmpl_retry_pg");
+
+    let (request_count, request_model, request_channel_id, execution_rows, usage_count, trace_thread_count) =
+        std::thread::spawn({
+            let dsn = dsn.clone();
+            move || {
+                let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
+                let request_count: i64 = connection
+                    .query_one("SELECT COUNT(*) FROM requests", &[])
+                    .unwrap()
+                    .get(0);
+                let request_row = connection
+                    .query_one(
+                        "SELECT model_id, channel_id FROM requests ORDER BY id DESC LIMIT 1",
+                        &[],
+                    )
+                    .unwrap();
+                let request_model: String = request_row.get(0);
+                let request_channel_id: i64 = request_row.get(1);
+                let execution_rows = connection
+                    .query(
+                        "SELECT channel_id, status, response_status_code FROM request_executions ORDER BY id ASC",
+                        &[],
+                    )
+                    .unwrap()
+                    .into_iter()
+                    .map(|row| {
+                        (
+                            row.get::<_, i64>(0),
+                            row.get::<_, String>(1),
+                            row.get::<_, Option<i64>>(2),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let usage_count: i64 = connection
+                    .query_one("SELECT COUNT(*) FROM usage_logs", &[])
+                    .unwrap()
+                    .get(0);
+                let trace_thread_count: i64 = connection
+                    .query_one(
+                        "SELECT COUNT(*) FROM traces t JOIN threads th ON th.id = t.thread_id WHERE t.trace_id = $1 AND th.thread_id = $2",
+                        &[&"trace-postgres-retry", &"thread-postgres-retry"],
+                    )
+                    .unwrap()
+                    .get(0);
+                (
+                    request_count,
+                    request_model,
+                    request_channel_id,
+                    execution_rows,
+                    usage_count,
+                    trace_thread_count,
+                )
+            }
+        })
+        .join()
+        .expect("postgres /v1 same-channel retry verification thread");
+
+    assert_eq!(request_count, 1);
+    assert_eq!(request_model, "gpt-4o");
+    assert_eq!(trace_thread_count, 1);
+    assert_eq!(usage_count, 1);
+    assert_eq!(execution_rows.len(), 3);
+    assert!(execution_rows
+        .iter()
+        .all(|(channel_id, _, _)| *channel_id == request_channel_id));
+    assert_eq!(
+        execution_rows
+            .iter()
+            .map(|(_, status, _)| status.clone())
+            .collect::<Vec<_>>(),
+        vec!["failed", "failed", "completed"]
+    );
+    assert_eq!(execution_rows[0].2, Some(503));
+    assert_eq!(execution_rows[1].2, Some(503));
+    assert_eq!(execution_rows[2].2, Some(200));
 
     embedded_pg.stop_db().await.unwrap();
     std::fs::remove_dir_all(data_dir).ok();
@@ -1660,6 +2113,7 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
         move || {
             let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
             let base_url = mock_openai_v1_runtime_server_url().to_owned();
+            let ordering_weight_i32 = 100_i32;
             let channel_params: [&(dyn postgres::types::ToSql + Sync); 8] = [
                 &"openai",
                 &base_url,
@@ -1668,7 +2122,7 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
                 &r#"["seedance-1.0"]"#,
                 &"{}",
                 &"[]",
-                &100_i64,
+                &ordering_weight_i32,
             ];
             connection
                 .execute(
@@ -1799,11 +2253,11 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
 
     let unported_images = app
         .oneshot(
-            Request::builder()
-                .uri("/v1/images")
-                .method(Method::POST)
-                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                .body(Body::empty())
+                Request::builder()
+                    .uri("/v1/images/edits")
+                    .method(Method::POST)
+                    .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
+                    .body(Body::empty())
                 .unwrap(),
         )
         .await
@@ -2019,6 +2473,8 @@ fn config_cli_parser_preserves_current_subcommands() {
 
 #[test]
 fn help_and_config_usage_texts_list_current_cli_contract() {
+    let config_get_usage = config_get_usage_text();
+
     assert!(HELP_TEXT.contains("axonhub config preview"));
     assert!(HELP_TEXT.contains("axonhub config validate"));
     assert!(HELP_TEXT.contains("axonhub config get <key>"));
@@ -2030,12 +2486,16 @@ fn help_and_config_usage_texts_list_current_cli_contract() {
         CONFIG_USAGE_TEXT,
         "Usage: axonhub config <preview|validate|get>\n"
     );
-    assert!(CONFIG_GET_USAGE_TEXT.contains("server.port    Server port number"));
-    assert!(CONFIG_GET_USAGE_TEXT.contains("server.name    Server name"));
-    assert!(CONFIG_GET_USAGE_TEXT.contains("server.base_path  Server base path"));
-    assert!(CONFIG_GET_USAGE_TEXT.contains("server.debug      Server debug mode"));
-    assert!(CONFIG_GET_USAGE_TEXT.contains("db.dialect     Database dialect"));
-    assert!(CONFIG_GET_USAGE_TEXT.contains("db.dsn         Database DSN"));
+    assert!(config_get_usage.starts_with(CONFIG_GET_USAGE_HEADER));
+    assert!(config_get_usage.contains("server.port    Server port number"));
+    assert!(config_get_usage.contains("server.name    Server name"));
+    assert!(config_get_usage.contains("server.base_path    Server base path"));
+    assert!(config_get_usage.contains("server.debug    Server debug mode"));
+    assert!(config_get_usage.contains("server.api.auth.allow_no_auth    Allow unauthenticated API access"));
+    assert!(config_get_usage.contains("db.dialect    Database dialect (sqlite3, postgres/postgresql, mysql; TiDB/Neon stay on legacy Go)"));
+    assert!(config_get_usage.contains("db.dsn    Database DSN"));
+    assert!(config_get_usage.contains("metrics.exporter.type    Metrics exporter type (stdout, otlpgrpc, otlphttp)"));
+    assert!(config_get_usage.contains("cache.default_expiration    Legacy alias for cache.memory.expiration (canonical: cache.memory.expiration)"));
 }
 
 #[test]
@@ -2914,6 +3374,936 @@ async fn sqlite_backed_openapi_graphql_route_rejects_missing_or_invalid_service_
     let invalid_json = serde_json::from_slice::<serde_json::Value>(&invalid_body).unwrap();
     assert_eq!(invalid_json["error"]["type"], "Unauthorized");
     assert_eq!(invalid_json["error"]["message"], "Invalid API key");
+
+    std::fs::remove_file(db_path).ok();
+}
+
+#[tokio::test]
+async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundaries() {
+    let db_path = temp_sqlite_path("sqlite-admin-graphql-rbac");
+    let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+    let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+    bootstrap
+        .initialize(&InitializeSystemRequest {
+            owner_email: "owner@example.com".to_owned(),
+            owner_password: "password123".to_owned(),
+            owner_first_name: "System".to_owned(),
+            owner_last_name: "Owner".to_owned(),
+            brand_name: "AxonHub".to_owned(),
+        })
+        .unwrap();
+
+    let system_user_id = insert_sqlite_user(
+        &foundation,
+        "system-reader@example.com",
+        "password123",
+        &["read_channels"],
+    );
+    let no_scope_user_id = insert_sqlite_user(
+        &foundation,
+        "no-scope@example.com",
+        "password123",
+        &[],
+    );
+    let owner_user_id = insert_sqlite_user(
+        &foundation,
+        "owner-ops@example.com",
+        "password123",
+        &[],
+    );
+
+    let connection = foundation.open_connection(true).unwrap();
+    connection
+        .execute("UPDATE users SET is_owner = 1 WHERE id = ?1", rusqlite::params![owner_user_id])
+        .unwrap();
+
+    insert_sqlite_project_membership(&foundation, system_user_id, 1, false, &[]);
+    insert_sqlite_project_membership(&foundation, no_scope_user_id, 1, false, &[]);
+    insert_sqlite_project_membership(&foundation, owner_user_id, 1, false, &[]);
+
+    connection
+        .execute(
+            "INSERT INTO models (developer, model_id, type, name, icon, \"group\", model_card, settings, status, remark, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '{}', 'enabled', '', 0)",
+            rusqlite::params![
+                "openai",
+                "gpt-4o",
+                "chat",
+                "GPT-4o",
+                "icon",
+                "openai",
+                "{}"
+            ],
+        )
+        .unwrap();
+
+    let state = HttpState {
+        service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: build_system_bootstrap_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+            "v0.9.20",
+        ),
+        identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
+        request_context: build_request_context_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+            false,
+        ),
+        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+        admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+        openapi_graphql: build_openapi_graphql_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+        ),
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        allow_no_auth: false,
+        trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },
+    };
+
+    let app = router(state);
+
+    let system_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "system-reader@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+    let no_scope_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "no-scope@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+    let owner_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "owner-ops@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+
+    let allowed_system = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {system_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"query Models($input: QueryModelsInput!) { queryModels(input: $input) { id status } }","variables":{"input":{}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed_system.status(), StatusCode::OK);
+    let allowed_system_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(allowed_system).await).unwrap();
+    assert!(allowed_system_json["errors"].is_null() || allowed_system_json.get("errors").is_none());
+    assert_eq!(allowed_system_json["data"]["queryModels"][0]["id"], "gid://axonhub/model/1");
+
+    let denied_no_scope = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {no_scope_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"query Models($input: QueryModelsInput!) { queryModels(input: $input) { id status } }","variables":{"input":{}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied_no_scope.status(), StatusCode::OK);
+    let denied_no_scope_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(denied_no_scope).await).unwrap();
+    assert!(denied_no_scope_json["data"]["queryModels"].is_null());
+    assert_eq!(denied_no_scope_json["errors"][0]["message"], "permission denied");
+
+    let unsupported_owner = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {owner_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"query":"{ allScopes { scope description levels } }"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unsupported_owner.status(), StatusCode::NOT_IMPLEMENTED);
+    let unsupported_owner_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(unsupported_owner).await).unwrap();
+    assert_eq!(unsupported_owner_json["error"], "not_implemented");
+    assert_eq!(unsupported_owner_json["route_family"], "/admin/graphql");
+    assert!(unsupported_owner_json["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("allScopes")));
+
+    let model_count: i64 = foundation
+        .open_connection(true)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM models", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(model_count, 1);
+
+    let invalid_token = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", "Bearer invalid-token")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"query":"{ queryModels(input: {}) { id } }"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_token.status(), StatusCode::UNAUTHORIZED);
+    let invalid_token_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(invalid_token).await).unwrap();
+    assert_eq!(invalid_token_json["error"]["message"], "Invalid token");
+
+    std::fs::remove_file(db_path).ok();
+}
+
+#[tokio::test]
+async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truthful_501_boundaries() {
+    let db_path = temp_sqlite_path("sqlite-admin-storage-management-writes");
+    let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+    let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+    bootstrap
+        .initialize(&InitializeSystemRequest {
+            owner_email: "owner@example.com".to_owned(),
+            owner_password: "password123".to_owned(),
+            owner_first_name: "System".to_owned(),
+            owner_last_name: "Owner".to_owned(),
+            brand_name: "AxonHub".to_owned(),
+        })
+        .unwrap();
+
+    insert_sqlite_user(
+        &foundation,
+        "settings-admin@example.com",
+        "password123",
+        &["read_settings", "write_settings"],
+    );
+    insert_sqlite_user(
+        &foundation,
+        "settings-viewer@example.com",
+        "password123",
+        &[],
+    );
+    let owner_id = insert_sqlite_user(
+        &foundation,
+        "backup-owner@example.com",
+        "password123",
+        &[],
+    );
+    let connection = foundation.open_connection(true).unwrap();
+    connection
+        .execute("UPDATE users SET is_owner = 1 WHERE id = ?1", [owner_id])
+        .unwrap();
+
+    let backup_root = std::env::temp_dir().join(format!(
+        "axonhub-task10-storage-management-{}",
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir_all(&backup_root).unwrap();
+    let storage_id = connection
+        .query_row("SELECT COALESCE(MAX(id), 0) + 1 FROM data_storages", [], |row| row.get::<_, i64>(0))
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at)
+             VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+            rusqlite::params![
+                storage_id,
+                "Task10 Backup FS",
+                "task10 backup",
+                serde_json::json!({"directory": backup_root.to_string_lossy()}).to_string(),
+            ],
+        )
+        .unwrap();
+    drop(connection);
+
+    let state = HttpState {
+        service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: build_system_bootstrap_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+            "v0.9.20",
+        ),
+        identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
+        request_context: build_request_context_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+            false,
+        ),
+        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+        admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+        openapi_graphql: build_openapi_graphql_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+        ),
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        allow_no_auth: false,
+        trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },
+    };
+
+    let app = router(state);
+    let settings_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "settings-admin@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+    let no_scope_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "settings-viewer@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+    let owner_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "backup-owner@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+
+    let update_storage_policy = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation UpdateStoragePolicy($input: UpdateStoragePolicyInput!) { updateStoragePolicy(input: $input) }","variables":{"input":{"storeChunks":true,"storeRequestBody":false,"cleanupOptions":[{"resourceType":"requests","enabled":true,"cleanupDays":7}]}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(update_storage_policy.status(), StatusCode::OK);
+    let update_storage_policy_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(update_storage_policy).await).unwrap();
+    assert_eq!(update_storage_policy_json["data"]["updateStoragePolicy"], true);
+
+    let storage_policy_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"{ storagePolicy { storeChunks storeRequestBody storeResponseBody cleanupOptions { resourceType enabled cleanupDays } } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let storage_policy_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(storage_policy_query).await).unwrap();
+    assert_eq!(storage_policy_json["data"]["storagePolicy"]["storeChunks"], true);
+    assert_eq!(storage_policy_json["data"]["storagePolicy"]["storeRequestBody"], false);
+
+    let denied_storage_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {no_scope_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation UpdateStoragePolicy($input: UpdateStoragePolicyInput!) { updateStoragePolicy(input: $input) }","variables":{"input":{"storeChunks":false}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let denied_storage_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(denied_storage_update).await).unwrap();
+    assert_eq!(
+        denied_storage_json["data"]["updateStoragePolicy"],
+        serde_json::Value::Null
+    );
+    assert_eq!(denied_storage_json["errors"][0]["message"], "permission denied");
+
+    let invalid_auto_backup = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {owner_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation UpdateAutoBackupSettings($input: UpdateAutoBackupSettingsInput!) { updateAutoBackupSettings(input: $input) }","variables":{"input":{"enabled":true,"dataStorageID":0}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let invalid_auto_backup_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(invalid_auto_backup).await).unwrap();
+    assert_eq!(
+        invalid_auto_backup_json["data"]["updateAutoBackupSettings"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        invalid_auto_backup_json["errors"][0]["message"],
+        "dataStorageID is required when auto backup is enabled"
+    );
+
+    let update_auto_backup = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {owner_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"query":"mutation UpdateAutoBackupSettings($input: UpdateAutoBackupSettingsInput!) {{ updateAutoBackupSettings(input: $input) }}","variables":{{"input":{{"enabled":true,"frequency":"daily","dataStorageID":{},"includeChannels":true,"includeModels":false,"includeAPIKeys":false,"includeModelPrices":false,"retentionDays":2}}}}}}"#,
+                    storage_id
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let update_auto_backup_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(update_auto_backup).await).unwrap();
+    assert_eq!(update_auto_backup_json["data"]["updateAutoBackupSettings"], true);
+
+    let auto_backup_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"{ autoBackupSettings { enabled dataStorageID retentionDays } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let auto_backup_query_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(auto_backup_query).await).unwrap();
+    assert_eq!(auto_backup_query_json["data"]["autoBackupSettings"]["enabled"], true);
+    assert_eq!(auto_backup_query_json["data"]["autoBackupSettings"]["dataStorageID"], storage_id);
+
+    let update_channel_settings = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }","variables":{"input":{"probe":{"enabled":false,"frequency":"ONE_HOUR"}}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let update_channel_settings_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(update_channel_settings).await).unwrap();
+    assert_eq!(update_channel_settings_json["data"]["updateSystemChannelSettings"], true);
+
+    let channel_settings_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"{ systemChannelSettings { probe { enabled frequency } } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let channel_settings_query_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(channel_settings_query).await).unwrap();
+    assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["enabled"], false);
+    assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["frequency"], "ONE_HOUR");
+
+    let unsupported_trigger_backup = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {owner_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"query":"mutation { triggerAutoBackup { success message } }"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unsupported_trigger_backup.status(), StatusCode::NOT_IMPLEMENTED);
+    let unsupported_trigger_backup_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(unsupported_trigger_backup).await).unwrap();
+    assert_eq!(unsupported_trigger_backup_json["error"], "not_implemented");
+    assert_eq!(unsupported_trigger_backup_json["route_family"], "/admin/graphql");
+
+    let systems_connection = foundation.open_connection(true).unwrap();
+    let storage_policy_value: String = systems_connection
+        .query_row(
+            "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+            ["storage_policy"],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(storage_policy_value.contains("\"store_chunks\":true"));
+    let auto_backup_value: String = systems_connection
+        .query_row(
+            "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+            ["system_auto_backup_settings"],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(auto_backup_value.contains(&format!("\"data_storage_id\":{storage_id}")));
+    let channel_settings_value: String = systems_connection
+        .query_row(
+            "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+            ["system_channel_settings"],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(channel_settings_value.contains("OneHour"));
+
+    std::fs::remove_dir_all(backup_root).ok();
+    std::fs::remove_file(db_path).ok();
+}
+
+#[tokio::test]
+async fn sqlite_admin_request_content_route_enforces_project_scope_and_wrong_project_denial() {
+    let db_path = temp_sqlite_path("sqlite-admin-request-content-rbac");
+    let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+    let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+    bootstrap
+        .initialize(&InitializeSystemRequest {
+            owner_email: "owner@example.com".to_owned(),
+            owner_password: "password123".to_owned(),
+            owner_first_name: "System".to_owned(),
+            owner_last_name: "Owner".to_owned(),
+            brand_name: "AxonHub".to_owned(),
+        })
+        .unwrap();
+
+    let project_reader_id = insert_sqlite_user(
+        &foundation,
+        "project-reader@example.com",
+        "password123",
+        &[],
+    );
+    let outsider_id = insert_sqlite_user(
+        &foundation,
+        "outsider@example.com",
+        "password123",
+        &[],
+    );
+    let owner_reader_id = insert_sqlite_user(
+        &foundation,
+        "project-owner@example.com",
+        "password123",
+        &[],
+    );
+
+    insert_sqlite_project_membership(&foundation, project_reader_id, 1, false, &[]);
+    insert_sqlite_project_membership(&foundation, outsider_id, 1, false, &[]);
+    insert_sqlite_project_membership(&foundation, owner_reader_id, 1, true, &[]);
+
+    let project_role_id = insert_sqlite_role(
+        &foundation,
+        "Project Request Reader",
+        "project",
+        1,
+        &["read_requests"],
+    );
+    attach_sqlite_role(&foundation, project_reader_id, project_role_id);
+
+    let (request_id, content_dir) = seed_sqlite_request_content(&foundation, 1);
+
+    let state = HttpState {
+        service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: build_system_bootstrap_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+            "v0.9.20",
+        ),
+        identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
+        request_context: build_request_context_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+            false,
+        ),
+        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+        admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+        openapi_graphql: build_openapi_graphql_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+        ),
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        allow_no_auth: false,
+        trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },
+    };
+
+    let app = router(state);
+
+    let project_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "project-reader@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+    let outsider_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "outsider@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+    let owner_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "project-owner@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+
+    let allowed_project = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/requests/{request_id}/content"))
+                .method(Method::GET.as_str())
+                .header("Authorization", format!("Bearer {project_token}"))
+                .header("X-Project-ID", "gid://axonhub/project/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed_project.status(), StatusCode::OK);
+    let allowed_project_body = read_body(allowed_project).await;
+    assert_eq!(allowed_project_body, br#"{"content":"sqlite-request-content"}"#.to_vec());
+
+    let allowed_owner = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/requests/{request_id}/content"))
+                .method(Method::GET.as_str())
+                .header("Authorization", format!("Bearer {owner_token}"))
+                .header("X-Project-ID", "gid://axonhub/project/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed_owner.status(), StatusCode::OK);
+
+    let denied_outsider = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/requests/{request_id}/content"))
+                .method(Method::GET.as_str())
+                .header("Authorization", format!("Bearer {outsider_token}"))
+                .header("X-Project-ID", "gid://axonhub/project/1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied_outsider.status(), StatusCode::NOT_FOUND);
+    let denied_outsider_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(denied_outsider).await).unwrap();
+    assert_eq!(denied_outsider_json["error"]["message"], "Request not found");
+
+    let wrong_project = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/admin/requests/{request_id}/content"))
+                .method(Method::GET.as_str())
+                .header("Authorization", format!("Bearer {project_token}"))
+                .header("X-Project-ID", "gid://axonhub/project/999")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_project.status(), StatusCode::BAD_REQUEST);
+    let wrong_project_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(wrong_project).await).unwrap();
+    assert_eq!(wrong_project_json["error"]["message"], "Project ID not found in context");
+
+    std::fs::remove_file(db_path).ok();
+    std::fs::remove_dir_all(content_dir).ok();
+}
+
+#[tokio::test]
+async fn sqlite_openapi_graphql_route_enforces_api_key_scope_and_service_account_context() {
+    let db_path = temp_sqlite_path("sqlite-openapi-graphql-rbac");
+    let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+    let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+    bootstrap
+        .initialize(&InitializeSystemRequest {
+            owner_email: "owner@example.com".to_owned(),
+            owner_password: "password123".to_owned(),
+            owner_first_name: "System".to_owned(),
+            owner_last_name: "Owner".to_owned(),
+            brand_name: "AxonHub".to_owned(),
+        })
+        .unwrap();
+
+    let state = HttpState {
+        service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: build_system_bootstrap_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+            "v0.9.20",
+        ),
+        identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
+        request_context: build_request_context_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+            false,
+        ),
+        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+        admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+        openapi_graphql: build_openapi_graphql_capability(
+            "sqlite3",
+            &db_path.display().to_string(),
+        ),
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        allow_no_auth: false,
+        trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },
+    };
+
+    let app = router(state);
+
+    let allowed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/openapi/v1/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {DEFAULT_SERVICE_API_KEY_VALUE}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation { createLLMAPIKey(name: \"Scoped SDK Key\") { name scopes } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), StatusCode::OK);
+    let allowed_json = serde_json::from_slice::<serde_json::Value>(&read_body(allowed).await).unwrap();
+    assert_eq!(allowed_json["data"]["createLLMAPIKey"]["name"], "Scoped SDK Key");
+
+    let user_key_rejected = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/openapi/v1/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {DEFAULT_USER_API_KEY_VALUE}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation { createLLMAPIKey(name: \"Wrong Type Key\") { name } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(user_key_rejected.status(), StatusCode::UNAUTHORIZED);
+    let user_key_rejected_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(user_key_rejected).await).unwrap();
+    assert_eq!(user_key_rejected_json["error"]["message"], "Invalid API key");
+
+    let invalid_bearer = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/openapi/v1/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Token {DEFAULT_SERVICE_API_KEY_VALUE}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation { createLLMAPIKey(name: \"Wrong Prefix\") { name } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_bearer.status(), StatusCode::UNAUTHORIZED);
+    let invalid_bearer_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(invalid_bearer).await).unwrap();
+    assert_eq!(
+        invalid_bearer_json["error"]["message"],
+        "invalid token: Authorization header must start with 'Bearer '"
+    );
+
+    let invalid_key = app
+        .oneshot(
+            Request::builder()
+                .uri("/openapi/v1/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", "Bearer invalid-key")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation { createLLMAPIKey(name: \"Invalid Key\") { name } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_key.status(), StatusCode::UNAUTHORIZED);
+    let invalid_key_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(invalid_key).await).unwrap();
+    assert_eq!(invalid_key_json["error"]["message"], "Invalid API key");
+
+    let api_key_count_before_unsupported: i64 = foundation
+        .open_connection(true)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM api_keys WHERE deleted_at = 0", [], |row| row.get(0))
+        .unwrap();
+
+    let unsupported_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/openapi/v1/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {DEFAULT_SERVICE_API_KEY_VALUE}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"{ sdkCapabilities { name } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unsupported_query.status(), StatusCode::NOT_IMPLEMENTED);
+    let unsupported_query_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(unsupported_query).await).unwrap();
+    assert_eq!(unsupported_query_json["error"], "not_implemented");
+    assert_eq!(unsupported_query_json["route_family"], "/openapi/v1/graphql");
+    assert!(unsupported_query_json["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("sdkCapabilities")));
+
+    let api_key_count_after_unsupported: i64 = foundation
+        .open_connection(true)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM api_keys WHERE deleted_at = 0", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(api_key_count_after_unsupported, api_key_count_before_unsupported);
 
     std::fs::remove_file(db_path).ok();
 }

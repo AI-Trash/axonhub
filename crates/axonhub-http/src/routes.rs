@@ -81,6 +81,10 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
             web::resource("/embeddings").route(web::post().to(handlers::openai_v1::openai_embeddings)),
         )
         .service(
+            web::resource("/images/generations")
+                .route(web::post().to(handlers::openai_v1::openai_images_generations)),
+        )
+        .service(
             web::resource("/videos").route(web::post().to(handlers::openai_v1::openai_videos_create)),
         )
         .service(
