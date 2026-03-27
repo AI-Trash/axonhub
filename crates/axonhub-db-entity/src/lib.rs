@@ -125,6 +125,89 @@ pub mod channel_probes {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+pub mod channel_model_price_versions {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "channel_model_price_versions")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub created_at: String,
+        pub updated_at: String,
+        pub channel_id: i64,
+        pub model_id: String,
+        pub channel_model_price_id: i64,
+        pub price: String,
+        pub status: String,
+        pub effective_start_at: String,
+        pub effective_end_at: Option<String>,
+        pub reference_id: String,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::channel_model_prices::Entity",
+            from = "Column::ChannelModelPriceId",
+            to = "super::channel_model_prices::Column::Id"
+        )]
+        ChannelModelPrices,
+    }
+
+    impl Related<super::channel_model_prices::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::ChannelModelPrices.def()
+        }
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod channel_model_prices {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "channel_model_prices")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub created_at: String,
+        pub updated_at: String,
+        pub channel_id: i64,
+        pub model_id: String,
+        pub price: String,
+        pub reference_id: String,
+        pub deleted_at: i64,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::channels::Entity",
+            from = "Column::ChannelId",
+            to = "super::channels::Column::Id"
+        )]
+        Channels,
+        #[sea_orm(has_many = "super::channel_model_price_versions::Entity")]
+        ChannelModelPriceVersions,
+    }
+
+    impl Related<super::channels::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Channels.def()
+        }
+    }
+
+    impl Related<super::channel_model_price_versions::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::ChannelModelPriceVersions.def()
+        }
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 pub mod channels {
     use sea_orm::{entity::prelude::*, FromQueryResult};
 
@@ -160,6 +243,8 @@ pub mod channels {
     pub enum Relation {
         #[sea_orm(has_many = "super::channel_probes::Entity")]
         ChannelProbes,
+        #[sea_orm(has_many = "super::channel_model_prices::Entity")]
+        ChannelModelPrices,
         #[sea_orm(has_many = "super::provider_quota_statuses::Entity")]
         ProviderQuotaStatuses,
         #[sea_orm(has_many = "super::request_executions::Entity")]
@@ -173,6 +258,12 @@ pub mod channels {
     impl Related<super::channel_probes::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::ChannelProbes.def()
+        }
+    }
+
+    impl Related<super::channel_model_prices::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::ChannelModelPrices.def()
         }
     }
 
@@ -211,6 +302,45 @@ pub mod channels {
         #[sea_orm(from_col = "type_field")]
         pub channel_type: String,
         pub status: String,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod channel_override_templates {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "channel_override_templates")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub created_at: String,
+        pub updated_at: String,
+        pub user_id: i64,
+        pub name: String,
+        pub description: Option<String>,
+        pub override_parameters: String,
+        pub override_headers: String,
+        pub header_override_operations: String,
+        pub body_override_operations: String,
+        pub deleted_at: i64,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::users::Entity",
+            from = "Column::UserId",
+            to = "super::users::Column::Id"
+        )]
+        Users,
+    }
+
+    impl Related<super::users::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Users.def()
+        }
     }
 
     impl ActiveModelBehavior for ActiveModel {}
@@ -344,6 +474,8 @@ pub mod projects {
     pub enum Relation {
         #[sea_orm(has_many = "super::api_keys::Entity")]
         ApiKeys,
+        #[sea_orm(has_many = "super::prompts::Entity")]
+        Prompts,
         #[sea_orm(has_many = "super::request_executions::Entity")]
         RequestExecutions,
         #[sea_orm(has_many = "super::requests::Entity")]
@@ -363,6 +495,12 @@ pub mod projects {
     impl Related<super::api_keys::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::ApiKeys.def()
+        }
+    }
+
+    impl Related<super::prompts::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Prompts.def()
         }
     }
 
@@ -421,6 +559,70 @@ pub mod projects {
     pub struct MembershipSummary {
         pub id: i64,
         pub name: String,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod prompt_protection_rules {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "prompt_protection_rules")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub created_at: String,
+        pub updated_at: String,
+        pub name: String,
+        pub description: String,
+        pub pattern: String,
+        pub status: String,
+        pub settings: String,
+        pub deleted_at: i64,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod prompts {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "prompts")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub created_at: String,
+        pub updated_at: String,
+        pub project_id: i64,
+        pub name: String,
+        pub description: String,
+        pub role: String,
+        pub content: String,
+        pub status: String,
+        pub order: i32,
+        pub settings: String,
+        pub deleted_at: i64,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::projects::Entity",
+            from = "Column::ProjectId",
+            to = "super::projects::Column::Id"
+        )]
+        Projects,
+    }
+
+    impl Related<super::projects::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Projects.def()
+        }
     }
 
     impl ActiveModelBehavior for ActiveModel {}
@@ -1136,6 +1338,8 @@ pub mod users {
     pub enum Relation {
         #[sea_orm(has_many = "super::api_keys::Entity")]
         ApiKeys,
+        #[sea_orm(has_many = "super::channel_override_templates::Entity")]
+        ChannelOverrideTemplates,
         #[sea_orm(has_many = "super::user_projects::Entity")]
         UserProjects,
         #[sea_orm(has_many = "super::user_roles::Entity")]
@@ -1145,6 +1349,12 @@ pub mod users {
     impl Related<super::api_keys::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::ApiKeys.def()
+        }
+    }
+
+    impl Related<super::channel_override_templates::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::ChannelOverrideTemplates.def()
         }
     }
 
@@ -1280,6 +1490,50 @@ mod tests {
             channels::Relation::ChannelProbes.def().to_tbl,
             channel_probes::Entity.table_ref()
         );
+        assert_eq!(
+            channels::Relation::ChannelModelPrices.def().to_tbl,
+            channel_model_prices::Entity.table_ref()
+        );
+    }
+
+    #[test]
+    fn prompt_and_override_relations_target_expected_tables() {
+        assert_eq!(
+            prompts::Relation::Projects.def().to_tbl,
+            projects::Entity.table_ref()
+        );
+        assert_eq!(
+            <projects::Entity as Related<prompts::Entity>>::to().to_tbl,
+            prompts::Entity.table_ref()
+        );
+        assert_eq!(
+            channel_override_templates::Relation::Users.def().to_tbl,
+            users::Entity.table_ref()
+        );
+        assert_eq!(
+            <users::Entity as Related<channel_override_templates::Entity>>::to().to_tbl,
+            channel_override_templates::Entity.table_ref()
+        );
+    }
+
+    #[test]
+    fn channel_price_relations_connect_parent_and_versions() {
+        assert_eq!(
+            channel_model_prices::Relation::Channels.def().to_tbl,
+            channels::Entity.table_ref()
+        );
+        assert_eq!(
+            channel_model_prices::Relation::ChannelModelPriceVersions
+                .def()
+                .to_tbl,
+            channel_model_price_versions::Entity.table_ref()
+        );
+        assert_eq!(
+            channel_model_price_versions::Relation::ChannelModelPrices
+                .def()
+                .to_tbl,
+            channel_model_prices::Entity.table_ref()
+        );
     }
 
     #[test]
@@ -1291,5 +1545,13 @@ mod tests {
         assert_eq!(data_storages::Column::TypeField.to_string(), "type");
         assert_eq!(api_keys::Column::TypeField.to_string(), "type");
         assert_eq!(models::Column::TypeField.to_string(), "type");
+        assert_eq!(
+            channel_override_templates::Column::BodyOverrideOperations.to_string(),
+            "body_override_operations"
+        );
+        assert_eq!(
+            channel_model_price_versions::Column::EffectiveStartAt.to_string(),
+            "effective_start_at"
+        );
     }
 }

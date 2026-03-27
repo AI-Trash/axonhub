@@ -1,4 +1,6 @@
 {
+  "schema_version": 1,
+  "emitter": "openapi_graphql_create_llm_api_key",
   "request": {
     "method": "POST",
     "path": "/openapi/v1/graphql",

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use serde_json::{Map, Value};
 
 use crate::contract::canonical_key_for_get;
 use crate::types::Config;
@@ -31,10 +32,42 @@ impl Config {
 
     pub fn get(&self, key: &str) -> Option<serde_json::Value> {
         let canonical_key = canonical_key_for_get(key)?;
-        let value = serde_json::to_value(self).ok()?;
+        let value = self.operator_view_json();
         canonical_key
             .split('.')
             .try_fold(&value, |current, segment| current.get(segment))
             .cloned()
+    }
+
+    fn operator_view_json(&self) -> Value {
+        let mut value = serde_json::to_value(self).expect("config is serializable");
+
+        let Some(root) = value.as_object_mut() else {
+            return value;
+        };
+
+        let Some(cache) = root.get_mut("cache").and_then(Value::as_object_mut) else {
+            return value;
+        };
+
+        let Some(memory) = cache.get("memory").and_then(Value::as_object).cloned() else {
+            return value;
+        };
+
+        inject_cache_memory_alias(cache, &memory, "expiration", "default_expiration");
+        inject_cache_memory_alias(cache, &memory, "cleanup_interval", "cleanup_interval");
+
+        value
+    }
+}
+
+fn inject_cache_memory_alias(
+    cache: &mut Map<String, Value>,
+    memory: &Map<String, Value>,
+    memory_key: &str,
+    cache_key: &str,
+) {
+    if let Some(value) = memory.get(memory_key).cloned() {
+        cache.insert(cache_key.to_owned(), value);
     }
 }

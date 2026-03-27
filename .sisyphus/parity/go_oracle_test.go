@@ -26,14 +26,16 @@ import (
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/xcache"
 	api "github.com/looplj/axonhub/internal/server/api"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/internal/server/gql/openapi"
-	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/llm/httpclient"
 )
 
 type oracleFixture struct {
+	SchemaVersion         int           `json:"schema_version"`
+	Emitter               string        `json:"emitter,omitempty"`
 	Request               oracleRequest `json:"request"`
 	Model                 *oracleModel  `json:"model,omitempty"`
 	NormalizeGeneratedKey bool          `json:"normalize_generated_key,omitempty"`
@@ -91,6 +93,9 @@ func loadFixture(t *testing.T, fixturePath string) oracleFixture {
 	if err := json.Unmarshal(bytes, &fixture); err != nil {
 		t.Fatalf("unmarshal fixture: %v", err)
 	}
+	if fixture.SchemaVersion != 1 {
+		t.Fatalf("unsupported fixture schema version %d", fixture.SchemaVersion)
+	}
 	return fixture
 }
 
@@ -98,7 +103,12 @@ func emitSuite(t *testing.T, suite string, fixture oracleFixture) oracleOutput {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	switch suite {
+	emitter := fixture.Emitter
+	if emitter == "" {
+		emitter = suite
+	}
+
+	switch emitter {
 	case "admin_system_status_initial":
 		return emitAdminSystemStatusInitial(t, fixture)
 	case "v1_models_basic":
@@ -106,7 +116,7 @@ func emitSuite(t *testing.T, suite string, fixture oracleFixture) oracleOutput {
 	case "openapi_graphql_create_llm_api_key":
 		return emitOpenApiGraphqlCreateLLMAPIKey(t, fixture)
 	default:
-		t.Fatalf("unsupported parity suite %q", suite)
+		t.Fatalf("unsupported parity emitter %q for suite %q", emitter, suite)
 		return oracleOutput{}
 	}
 }

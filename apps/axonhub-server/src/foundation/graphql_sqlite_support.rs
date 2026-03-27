@@ -199,9 +199,8 @@ async fn list_traces_by_project_graphql(
 impl AdminGraphqlQueryRoot {
     async fn system_status(
         &self,
-        ctx: &Context<'_>,
+        _ctx: &Context<'_>,
     ) -> async_graphql::Result<AdminGraphqlSystemStatus> {
-        require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
         let is_initialized = self
             .foundation
             .system_settings()

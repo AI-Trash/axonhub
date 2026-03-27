@@ -1,6 +1,6 @@
 use crate::errors::{
-    already_initialized_response, auth_unsupported_response, error_response,
-    internal_error_response, invalid_initialize_request_response, not_implemented_response,
+    already_initialized_response, error_response, internal_error_response,
+    invalid_initialize_request_response, not_implemented_response,
 };
 use crate::handlers::{execute_openai_request_with_body, parse_json_body};
 use crate::models::{
@@ -106,7 +106,13 @@ pub(crate) async fn sign_in(state: web::Data<HttpState>, body: Bytes) -> HttpRes
     };
 
     let identity = match &state.identity {
-        IdentityCapability::Unsupported { message } => return auth_unsupported_response(message),
+        IdentityCapability::Unsupported { message: _ } => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error",
+                "Internal server error",
+            )
+        }
         IdentityCapability::Available { identity } => identity,
     };
 
@@ -314,8 +320,21 @@ fn apply_playground_project_context(
     };
 
     let request_context = match &state.request_context {
-        crate::state::RequestContextCapability::Unsupported { message } => {
-            return Some(auth_unsupported_response(message))
+        crate::state::RequestContextCapability::Unsupported { .. } => {
+            // When request context is unsupported but project_id is provided and valid,
+            // inject minimal project context with just the ID and continue (Go parity)
+            let mut context = request
+                .extensions()
+                .get::<RequestContextState>()
+                .cloned()
+                .unwrap_or_default();
+            context.project = Some(ProjectContext {
+                id: project_id,
+                name: String::new(),
+                status: String::new(),
+            });
+            request.extensions_mut().insert(context);
+            return None;
         }
         crate::state::RequestContextCapability::Available { request_context } => request_context,
     };

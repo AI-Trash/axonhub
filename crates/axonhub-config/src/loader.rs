@@ -42,6 +42,7 @@ impl LoadedConfig {
         }
 
         apply_env_overrides(&mut merged)?;
+        normalize_legacy_aliases(&mut merged);
 
         let config: Config = serde_yaml::from_value(merged)?;
         config.ensure_loadable()?;

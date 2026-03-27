@@ -855,6 +855,68 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     #[tokio::test]
+    async fn signin_returns_internal_error_when_identity_unsupported() {
+        let state = HttpState {
+            service_name: "AxonHub".to_owned(),
+            version: "v0.9.20".to_owned(),
+            config_source: None,
+            system_bootstrap: SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            identity: IdentityCapability::Unsupported {
+                message: "Identity service is not available in this deployment".to_owned(),
+            },
+            request_context: RequestContextCapability::Available {
+                request_context: Arc::new(FakeAuthPort::new()),
+            },
+            openai_v1: OpenAiV1Capability::Unsupported {
+                message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            admin: AdminCapability::Available {
+                admin: Arc::new(FakeAdminPort),
+            },
+            admin_graphql: AdminGraphqlCapability::Unsupported {
+                message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+                message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+            },
+            allow_no_auth: false,
+            trace_config: TraceConfig {
+                thread_header: Some("AH-Thread-Id".to_owned()),
+                trace_header: Some("AH-Trace-Id".to_owned()),
+                request_header: Some("X-Request-Id".to_owned()),
+                extra_trace_headers: vec!["Sentry-Trace".to_owned()],
+                extra_trace_body_fields: vec![],
+                claude_code_trace_enabled: false,
+                codex_trace_enabled: false,
+            },
+        };
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/auth/signin")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"email":"owner@example.com","password":"password123"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let json = read_json(response).await;
+        assert_eq!(json["error"]["message"], "Internal server error");
+    }
+
+    #[tokio::test]
     async fn admin_route_requires_valid_jwt_before_truthful_501() {
         let app = router(test_state(
             SystemBootstrapCapability::Available {
@@ -961,595 +1023,22 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             false,
         ));
 
-        let missing_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/requests/42/content")
-                    .method(Method::GET)
-                    .header("X-Project-ID", "gid://axonhub/project/1")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+         let missing_response = app
+             .clone()
+             .oneshot(
+                 Request::builder()
+                     .uri("/admin/requests/42/content")
+                     .method(Method::GET)
+                     .header("X-Project-ID", "gid://axonhub/project/1")
+                     .body(Body::empty())
+                     .unwrap(),
+             )
+             .await
+             .unwrap();
 
         assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
         let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
-
-        let invalid_response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/requests/42/content")
-                    .method(Method::GET)
-                    .header("Authorization", "Bearer invalid-token")
-                    .header("X-Project-ID", "gid://axonhub/project/1")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(invalid_response).await;
-        assert_eq!(json["error"]["message"], "Invalid token");
-    }
-
-    #[tokio::test]
-    async fn admin_debug_context_preserves_authenticated_context() {
-        let app = router(test_state_with_openai(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/debug/context")
-                    .method(Method::GET)
-                    .header("Authorization", "Bearer valid-admin-token")
-                    .header("X-Project-ID", "gid://axonhub/project/1")
-                    .header("AH-Thread-Id", "thread-1")
-                    .header("AH-Trace-Id", "trace-1")
-                    .header("X-Request-Id", "req-1")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let json = read_json(response).await;
-        assert_eq!(json["auth"]["mode"], "jwt");
-        assert_eq!(json["auth"]["user_id"], 1);
-        assert_eq!(json["requestId"], "req-1");
-        assert_eq!(json["project"]["id"], 1);
-        assert_eq!(json["thread"]["threadId"], "thread-1");
-        assert_eq!(json["trace"]["traceId"], "trace-1");
-    }
-
-    #[tokio::test]
-    async fn admin_graphql_rejects_missing_or_invalid_admin_context() {
-        let app = router(test_state(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/graphql")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer invalid-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(response).await;
-        assert_eq!(json["error"]["message"], "Invalid token");
-    }
-
-    #[tokio::test]
-    async fn admin_playground_rejects_missing_or_invalid_admin_context() {
-        let app = router(test_state(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let missing_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground")
-                    .method(Method::GET)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
-
-        let invalid_response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground")
-                    .method(Method::GET)
-                    .header("Authorization", "Bearer invalid-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(invalid_response).await;
-        assert_eq!(json["error"]["message"], "Invalid token");
-    }
-
-    #[tokio::test]
-    async fn admin_playground_chat_executes_non_streaming_chat_with_admin_auth() {
-        let app = router(test_state_with_openai(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground/chat?project_id=gid://axonhub/project/1")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer valid-admin-token")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let json = read_json(response).await;
-        assert_eq!(json["id"], "chatcmpl_rust");
-        assert_eq!(json["model"], "gpt-4o");
-        assert_eq!(json["project_id"], 1);
-        assert_eq!(json["channel_hint_id"], Value::Null);
-    }
-
-    #[tokio::test]
-    async fn admin_playground_chat_accepts_url_encoded_project_id_query_fallback() {
-        let app = router(test_state_with_openai(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground/chat?project_id=gid%3A%2F%2Faxonhub%2Fproject%2F1")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer valid-admin-token")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let json = read_json(response).await;
-        assert_eq!(json["id"], "chatcmpl_rust");
-        assert_eq!(json["project_id"], 1);
-        assert_eq!(json["channel_hint_id"], Value::Null);
-    }
-
-    #[tokio::test]
-    async fn admin_playground_chat_rejects_missing_or_invalid_admin_context() {
-        let app = router(test_state(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let missing_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground/chat")
-                    .method(Method::POST)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
-
-        let invalid_response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground/chat")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer invalid-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(invalid_response).await;
-        assert_eq!(json["error"]["message"], "Invalid token");
-    }
-
-    #[tokio::test]
-    async fn admin_playground_chat_rejects_streaming_truthfully() {
-        let app = router(test_state_with_openai(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground/chat?project_id=gid://axonhub/project/1")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer valid-admin-token")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-        let json = read_json(response).await;
-        assert_eq!(
-            json["error"]["message"],
-            "Streaming is not supported for /admin/playground/chat in the Rust backend yet"
-        );
-    }
-
-    #[tokio::test]
-    async fn admin_playground_chat_honors_channel_override_with_query_precedence_and_header_fallback() {
-        let app = router(test_state_with_openai(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let header_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground/chat?project_id=gid://axonhub/project/1")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer valid-admin-token")
-                    .header("X-Channel-ID", "gid://axonhub/channel/2")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(header_response.status(), StatusCode::OK);
-        let header_json = read_json(header_response).await;
-        assert_eq!(header_json["channel_hint_id"], 2);
-
-        let query_response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground/chat?project_id=gid%3A%2F%2Faxonhub%2Fproject%2F1&channel_id=gid%3A%2F%2Faxonhub%2Fchannel%2F1")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer valid-admin-token")
-                    .header("X-Channel-ID", "gid://axonhub/channel/2")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(query_response.status(), StatusCode::OK);
-        let query_json = read_json(query_response).await;
-        assert_eq!(query_json["channel_hint_id"], 1);
-    }
-
-    #[tokio::test]
-    async fn admin_playground_chat_rejects_malformed_channel_override() {
-        let app = router(test_state_with_openai(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/playground/chat?project_id=gid://axonhub/project/1&channel_id=not-a-channel")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer valid-admin-token")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let json = read_json(response).await;
-        assert_eq!(json["error"]["message"], "Invalid channel ID");
-    }
-
-    #[tokio::test]
-    async fn admin_codex_oauth_start_rejects_missing_or_invalid_admin_context() {
-        let app = router(test_state(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let missing_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/codex/oauth/start")
-                    .method(Method::POST)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
-
-        let invalid_response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/codex/oauth/start")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer invalid-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(invalid_response).await;
-        assert_eq!(json["error"]["message"], "Invalid token");
-    }
-
-    #[tokio::test]
-    async fn admin_copilot_oauth_start_rejects_missing_or_invalid_admin_context() {
-        let app = router(test_state(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let missing_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/copilot/oauth/start")
-                    .method(Method::POST)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
-
-        let invalid_response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/copilot/oauth/start")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer invalid-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(invalid_response).await;
-        assert_eq!(json["error"]["message"], "Invalid token");
-    }
-
-    #[tokio::test]
-    async fn admin_copilot_oauth_poll_rejects_missing_or_invalid_admin_context() {
-        let app = router(test_state(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let missing_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/copilot/oauth/poll")
-                    .method(Method::POST)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
-
-        let invalid_response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/copilot/oauth/poll")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer invalid-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(invalid_response).await;
-        assert_eq!(json["error"]["message"], "Invalid token");
-    }
-
-    #[tokio::test]
-    async fn admin_claudecode_oauth_start_rejects_missing_or_invalid_admin_context() {
-        let app = router(test_state(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let missing_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/claudecode/oauth/start")
-                    .method(Method::POST)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
-
-        let invalid_response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/claudecode/oauth/start")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer invalid-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(invalid_response).await;
-        assert_eq!(json["error"]["message"], "Invalid token");
-    }
-
-    #[tokio::test]
-    async fn admin_claudecode_oauth_exchange_rejects_missing_or_invalid_admin_context() {
-        let app = router(test_state(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let missing_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/claudecode/oauth/exchange")
-                    .method(Method::POST)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
-
-        let invalid_response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/claudecode/oauth/exchange")
-                    .method(Method::POST)
-                    .header("Authorization", "Bearer invalid-token")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(invalid_response).await;
-        assert_eq!(json["error"]["message"], "Invalid token");
-    }
-
-    #[tokio::test]
-    async fn admin_antigravity_oauth_start_rejects_missing_or_invalid_admin_context() {
-        let app = router(test_state(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        let missing_response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/admin/antigravity/oauth/start")
-                    .method(Method::POST)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
+        assert_eq!(json["error"]["message"], "Authorization header is required");
 
         let invalid_response = app
             .oneshot(
@@ -1591,7 +1080,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
 
         assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
         let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
+        assert_eq!(json["error"]["message"], "Authorization header is required");
 
         let invalid_response = app
             .oneshot(
@@ -1633,7 +1122,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
 
         assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
         let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
+        assert_eq!(json["error"]["message"], "Authorization header is required");
 
         let invalid_response = app
             .oneshot(
@@ -1676,6 +1165,35 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         let json = read_json(response).await;
         assert_eq!(json["error"]["message"], "Invalid API key");
+    }
+
+    #[tokio::test]
+    async fn openapi_route_rejects_malformed_bearer_header() {
+        let app = router(test_state(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/openapi/v1/playground")
+                    .method(Method::GET)
+                    .header("Authorization", "NotBearer abc123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let json = read_json(response).await;
+        assert_eq!(
+            json["error"]["message"],
+            "Invalid token: Authorization header must start with 'Bearer '"
+        );
     }
 
     #[tokio::test]
@@ -1737,7 +1255,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
 
         assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
         let json = read_json(missing_response).await;
-        assert_eq!(json["error"]["message"], "API key is required");
+        assert_eq!(json["error"]["message"], "Authorization header is required");
 
         let invalid_response = app
             .oneshot(
@@ -1754,6 +1272,66 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
         let json = read_json(invalid_response).await;
         assert_eq!(json["error"]["message"], "Invalid API key");
+    }
+
+    #[tokio::test]
+    async fn openapi_service_api_key_returns_500_when_identity_unsupported() {
+        let state = HttpState {
+            service_name: "AxonHub".to_owned(),
+            version: "v0.9.20".to_owned(),
+            config_source: None,
+            system_bootstrap: SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            identity: IdentityCapability::Unsupported {
+                message: "Identity service is not available in this deployment".to_owned(),
+            },
+            request_context: RequestContextCapability::Available {
+                request_context: Arc::new(FakeAuthPort::new()),
+            },
+            openai_v1: OpenAiV1Capability::Unsupported {
+                message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            admin: AdminCapability::Available {
+                admin: Arc::new(FakeAdminPort),
+            },
+            admin_graphql: AdminGraphqlCapability::Unsupported {
+                message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+                message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+            },
+            allow_no_auth: false,
+            trace_config: TraceConfig {
+                thread_header: Some("AH-Thread-Id".to_owned()),
+                trace_header: Some("AH-Trace-Id".to_owned()),
+                request_header: Some("X-Request-Id".to_owned()),
+                extra_trace_headers: vec!["Sentry-Trace".to_owned()],
+                extra_trace_body_fields: vec![],
+                claude_code_trace_enabled: false,
+                codex_trace_enabled: false,
+            },
+        };
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/openapi/debug/context")
+                    .method(Method::GET)
+                    .header("Authorization", "Bearer service-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let json = read_json(response).await;
+        assert_eq!(json["error"]["message"], "Failed to validate API key");
     }
 
     #[tokio::test]
@@ -1946,6 +1524,66 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     #[tokio::test]
+    async fn generic_api_key_returns_500_when_identity_unsupported() {
+        let state = HttpState {
+            service_name: "AxonHub".to_owned(),
+            version: "v0.9.20".to_owned(),
+            config_source: None,
+            system_bootstrap: SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            identity: IdentityCapability::Unsupported {
+                message: "Identity service is not available in this deployment".to_owned(),
+            },
+            request_context: RequestContextCapability::Available {
+                request_context: Arc::new(FakeAuthPort::new()),
+            },
+            openai_v1: OpenAiV1Capability::Unsupported {
+                message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            admin: AdminCapability::Available {
+                admin: Arc::new(FakeAdminPort),
+            },
+            admin_graphql: AdminGraphqlCapability::Unsupported {
+                message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+                message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+            },
+            allow_no_auth: false,
+            trace_config: TraceConfig {
+                thread_header: Some("AH-Thread-Id".to_owned()),
+                trace_header: Some("AH-Trace-Id".to_owned()),
+                request_header: Some("X-Request-Id".to_owned()),
+                extra_trace_headers: vec!["Sentry-Trace".to_owned()],
+                extra_trace_body_fields: vec![],
+                claude_code_trace_enabled: false,
+                codex_trace_enabled: false,
+            },
+        };
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/debug/context")
+                    .method(Method::GET)
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let json = read_json(response).await;
+        assert_eq!(json["error"]["message"], "Failed to validate API key");
+    }
+
+    #[tokio::test]
     async fn gemini_query_key_authenticates_before_supported_models() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
@@ -2050,6 +1688,104 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         let json = read_json(response).await;
         assert_eq!(json["route_family"], "/gemini/:gemini_api_version/*");
         assert_eq!(json["error"], "not_implemented");
+    }
+
+    #[tokio::test]
+    async fn gemini_auth_returns_invalid_api_key_message() {
+        let app = router(test_state(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let missing_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/gemini/v1/models")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_response.status(), StatusCode::UNAUTHORIZED);
+        let json = read_json(missing_response).await;
+        assert_eq!(json["error"]["message"], "Invalid API key");
+
+        let invalid_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/gemini/v1/models?key=invalid-key")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
+        let json = read_json(invalid_response).await;
+        assert_eq!(json["error"]["message"], "Invalid API key");
+    }
+
+    #[tokio::test]
+    async fn gemini_auth_returns_500_when_identity_unsupported() {
+        let state = HttpState {
+            service_name: "AxonHub".to_owned(),
+            version: "v0.9.20".to_owned(),
+            config_source: None,
+            system_bootstrap: SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            identity: IdentityCapability::Unsupported {
+                message: "Identity service is not available in this deployment".to_owned(),
+            },
+            request_context: RequestContextCapability::Available {
+                request_context: Arc::new(FakeAuthPort::new()),
+            },
+            openai_v1: OpenAiV1Capability::Unsupported {
+                message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            admin: AdminCapability::Available {
+                admin: Arc::new(FakeAdminPort),
+            },
+            admin_graphql: AdminGraphqlCapability::Unsupported {
+                message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+                message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            },
+            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+            },
+            allow_no_auth: false,
+            trace_config: TraceConfig {
+                thread_header: Some("AH-Thread-Id".to_owned()),
+                trace_header: Some("AH-Trace-Id".to_owned()),
+                request_header: Some("X-Request-Id".to_owned()),
+                extra_trace_headers: vec!["Sentry-Trace".to_owned()],
+                extra_trace_body_fields: vec![],
+                claude_code_trace_enabled: false,
+                codex_trace_enabled: false,
+            },
+        };
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/gemini/v1/models?key=api-key-123")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let json = read_json(response).await;
+        assert_eq!(json["error"]["message"], "Failed to validate API key");
     }
 
     #[tokio::test]

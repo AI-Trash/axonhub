@@ -425,6 +425,14 @@ async fn execute_admin_graphql_seaorm_request(
         });
     }
 
+    if query.contains("systemStatus") {
+        let is_initialized = repository.query_is_initialized()?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: serde_json::json!({"data": {"systemStatus": {"isInitialized": is_initialized}}}),
+        });
+    }
+
     if let Some(field) = first_graphql_field_name(query) {
         return graphql_not_implemented_for_route("/admin/graphql", field.as_str());
     }

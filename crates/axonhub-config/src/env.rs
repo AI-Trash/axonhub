@@ -396,12 +396,12 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
     },
     EnvOverride {
         env: "AXONHUB_CACHE_DEFAULT_EXPIRATION",
-        path: &["cache", "memory", "expiration"],
+        path: &["cache", "default_expiration"],
         kind: EnvValueKind::String,
     },
     EnvOverride {
         env: "AXONHUB_CACHE_CLEANUP_INTERVAL",
-        path: &["cache", "memory", "cleanup_interval"],
+        path: &["cache", "cleanup_interval"],
         kind: EnvValueKind::String,
     },
     EnvOverride {

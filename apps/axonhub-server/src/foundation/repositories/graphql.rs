@@ -44,6 +44,7 @@ pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
         &self,
     ) -> Result<Option<GraphqlSystemChannelSettingsRecord>, String>;
     fn upsert_system_channel_settings(&self, value: &str) -> Result<(), String>;
+    fn query_is_initialized(&self) -> Result<bool, String>;
 }
 
 pub(crate) trait OpenApiGraphqlMutationRepository: Send + Sync {
@@ -146,6 +147,18 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
             upsert_system_json_setting_seaorm(&connection, "system_channel_settings", &value).await
+        })
+    }
+
+    fn query_is_initialized(&self) -> Result<bool, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            let backend = db.backend();
+            query_system_json_setting_seaorm(&connection, "initialized")
+                .await
+                .map(|value| value.map_or(false, |v| v.eq_ignore_ascii_case("true")))
+                .map_err(|error| error.to_string())
         })
     }
 }

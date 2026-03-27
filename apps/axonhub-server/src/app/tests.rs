@@ -6,8 +6,9 @@ use super::capabilities::{
     build_system_bootstrap_capability,
 };
 use super::cli::{
-    config_get_usage_text, parse_config_command, parse_top_level_command, ConfigCommand,
-    TopLevelCommand, CONFIG_GET_USAGE_HEADER, CONFIG_USAGE_TEXT, HELP_TEXT,
+    config_get_usage_text, parse_config_command, parse_top_level_command, AxonhubCliContract,
+    AxonhubConfigCliContract, ConfigCommand, TopLevelCommand, CONFIG_GET_USAGE_HEADER,
+    CONFIG_USAGE_TEXT, HELP_TEXT,
 };
 use super::server::startup_messages;
 use crate::foundation::{
@@ -33,6 +34,7 @@ use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::ServiceResponse;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
+use clap::CommandFactory;
 use pg_embed::pg_enums::PgAuthMethod;
 use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
 use pg_embed::postgres::{PgEmbed, PgSettings};
@@ -2496,6 +2498,12 @@ fn help_and_config_usage_texts_list_current_cli_contract() {
     assert!(config_get_usage.contains("db.dsn    Database DSN"));
     assert!(config_get_usage.contains("metrics.exporter.type    Metrics exporter type (stdout, otlpgrpc, otlphttp)"));
     assert!(config_get_usage.contains("cache.default_expiration    Legacy alias for cache.memory.expiration (canonical: cache.memory.expiration)"));
+}
+
+#[test]
+fn clap_contract_debug_asserts_cleanly() {
+    AxonhubCliContract::command().debug_assert();
+    AxonhubConfigCliContract::command().debug_assert();
 }
 
 #[test]

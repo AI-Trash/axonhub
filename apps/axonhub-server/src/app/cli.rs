@@ -2,6 +2,7 @@ use std::process;
 
 use anyhow::Result;
 use axonhub_config::{load, supported_config_aliases, supported_config_keys, PreviewFormat};
+use clap::{ArgAction, Args, Command, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use super::build_info::{show_build_info, show_version};
 use super::server::start_server;
@@ -40,6 +41,82 @@ pub(crate) enum ConfigCommand {
     Preview,
     Validate,
     Get,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    name = "axonhub",
+    bin_name = "axonhub",
+    disable_help_flag = true,
+    disable_help_subcommand = true,
+    disable_version_flag = true
+)]
+pub(crate) struct AxonhubCliContract {
+    #[arg(short = 'h', long = "help", action = ArgAction::SetTrue)]
+    help: bool,
+    #[arg(short = 'v', long = "version", action = ArgAction::SetTrue)]
+    version: bool,
+    #[command(subcommand)]
+    command: Option<AxonhubTopLevelVerb>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum AxonhubTopLevelVerb {
+    Config(ConfigArgs),
+    Version,
+    Help,
+    BuildInfo,
+    #[allow(dead_code)]
+    #[command(external_subcommand)]
+    External(Vec<String>),
+}
+
+#[derive(Debug, Clone, Args)]
+struct ConfigArgs {
+    #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    _tail: Vec<String>,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    name = "axonhub config",
+    bin_name = "axonhub config",
+    no_binary_name = true,
+    disable_help_flag = true,
+    disable_help_subcommand = true,
+    disable_version_flag = true
+)]
+pub(crate) struct AxonhubConfigCliContract {
+    #[command(subcommand)]
+    command: Option<AxonhubConfigVerb>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum AxonhubConfigVerb {
+    Preview(ConfigPreviewArgs),
+    Validate(ConfigValidateArgs),
+    Get(ConfigGetArgs),
+    #[allow(dead_code)]
+    #[command(external_subcommand)]
+    External(Vec<String>),
+}
+
+#[derive(Debug, Clone, Args)]
+struct ConfigPreviewArgs {
+    #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    _tail: Vec<String>,
+}
+
+#[derive(Debug, Clone, Args)]
+struct ConfigValidateArgs {
+    #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    _tail: Vec<String>,
+}
+
+#[derive(Debug, Clone, Args)]
+struct ConfigGetArgs {
+    #[arg(hide = true, trailing_var_arg = true, allow_hyphen_values = true)]
+    _tail: Vec<String>,
 }
 
 pub(crate) async fn run(args: &[String]) -> Result<()> {
@@ -153,6 +230,14 @@ fn show_help() {
     print!("{HELP_TEXT}");
 }
 
+pub(crate) fn axonhub_cli_command() -> Command {
+    AxonhubCliContract::command().ignore_errors(true)
+}
+
+pub(crate) fn axonhub_config_cli_command() -> Command {
+    AxonhubConfigCliContract::command().ignore_errors(true)
+}
+
 fn print_config_usage() {
     print!("{CONFIG_USAGE_TEXT}");
 }
@@ -186,22 +271,69 @@ pub(crate) fn config_get_usage_text() -> String {
 }
 
 pub(crate) fn parse_top_level_command(args: &[String]) -> TopLevelCommand {
-    match args.get(1).map(String::as_str) {
-        Some("config") => TopLevelCommand::Config,
-        Some("version" | "--version" | "-v") => TopLevelCommand::Version,
-        Some("help" | "--help" | "-h") => TopLevelCommand::Help,
-        Some("build-info") => TopLevelCommand::BuildInfo,
-        _ => TopLevelCommand::StartServer,
+    match parse_axonhub_cli(args) {
+        Some(AxonhubCliContract { help: true, .. }) => TopLevelCommand::Help,
+        Some(AxonhubCliContract { version: true, .. }) => TopLevelCommand::Version,
+        Some(AxonhubCliContract {
+            command: Some(AxonhubTopLevelVerb::Config(_)),
+            ..
+        }) => TopLevelCommand::Config,
+        Some(AxonhubCliContract {
+            command: Some(AxonhubTopLevelVerb::Version),
+            ..
+        }) => TopLevelCommand::Version,
+        Some(AxonhubCliContract {
+            command: Some(AxonhubTopLevelVerb::Help),
+            ..
+        }) => TopLevelCommand::Help,
+        Some(AxonhubCliContract {
+            command: Some(AxonhubTopLevelVerb::BuildInfo),
+            ..
+        }) => TopLevelCommand::BuildInfo,
+        Some(AxonhubCliContract {
+            command: Some(AxonhubTopLevelVerb::External(_)),
+            ..
+        })
+        | Some(AxonhubCliContract { command: None, .. })
+        | None => TopLevelCommand::StartServer,
     }
 }
 
 pub(crate) fn parse_config_command(args: &[String]) -> Option<ConfigCommand> {
-    match args.get(2).map(String::as_str) {
-        Some("preview") => Some(ConfigCommand::Preview),
-        Some("validate") => Some(ConfigCommand::Validate),
-        Some("get") => Some(ConfigCommand::Get),
-        _ => None,
+    let config_args = args.get(2..)?;
+
+    match parse_axonhub_config_cli(config_args) {
+        Some(AxonhubConfigCliContract {
+            command: Some(AxonhubConfigVerb::Preview(_)),
+        }) => Some(ConfigCommand::Preview),
+        Some(AxonhubConfigCliContract {
+            command: Some(AxonhubConfigVerb::Validate(_)),
+        }) => Some(ConfigCommand::Validate),
+        Some(AxonhubConfigCliContract {
+            command: Some(AxonhubConfigVerb::Get(_)),
+        }) => Some(ConfigCommand::Get),
+        Some(AxonhubConfigCliContract {
+            command: Some(AxonhubConfigVerb::External(_)),
+        })
+        | Some(AxonhubConfigCliContract { command: None })
+        | None => None,
     }
+}
+
+fn parse_axonhub_cli(args: &[String]) -> Option<AxonhubCliContract> {
+    parse_command(axonhub_cli_command(), args)
+}
+
+fn parse_axonhub_config_cli(args: &[String]) -> Option<AxonhubConfigCliContract> {
+    parse_command(axonhub_config_cli_command(), args)
+}
+
+fn parse_command<T>(mut command: Command, args: &[String]) -> Option<T>
+where
+    T: FromArgMatches,
+{
+    let matches = command.try_get_matches_from_mut(args).ok()?;
+    T::from_arg_matches(&matches).ok()
 }
 
 fn format_json_value(value: &serde_json::Value) -> Result<String> {

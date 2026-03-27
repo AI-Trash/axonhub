@@ -21,12 +21,36 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(ChannelProbes::ChannelId).big_integer().not_null())
-                    .col(ColumnDef::new(ChannelProbes::TotalRequestCount).integer().not_null())
-                    .col(ColumnDef::new(ChannelProbes::SuccessRequestCount).integer().not_null())
-                    .col(ColumnDef::new(ChannelProbes::AvgTokensPerSecond).double().null())
-                    .col(ColumnDef::new(ChannelProbes::AvgTimeToFirstTokenMs).double().null())
-                    .col(ColumnDef::new(ChannelProbes::Timestamp).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(ChannelProbes::ChannelId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(ChannelProbes::TotalRequestCount)
+                            .integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(ChannelProbes::SuccessRequestCount)
+                            .integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(ChannelProbes::AvgTokensPerSecond)
+                            .double()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(ChannelProbes::AvgTimeToFirstTokenMs)
+                            .double()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(ChannelProbes::Timestamp)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_channel_probes_channel_id")
@@ -51,8 +75,12 @@ impl MigrationTrait for Migration {
 
         let mut provider_quota_statuses_created_at = ColumnDef::new(General::CreatedAt);
         match backend {
-            DatabaseBackend::Sqlite => provider_quota_statuses_created_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => provider_quota_statuses_created_at.timestamp_with_time_zone(),
+            DatabaseBackend::Sqlite => {
+                provider_quota_statuses_created_at.custom(Alias::new("TEXT"))
+            }
+            DatabaseBackend::Postgres => {
+                provider_quota_statuses_created_at.timestamp_with_time_zone()
+            }
             DatabaseBackend::MySql => provider_quota_statuses_created_at.timestamp(),
         };
         provider_quota_statuses_created_at
@@ -61,8 +89,12 @@ impl MigrationTrait for Migration {
 
         let mut provider_quota_statuses_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
-            DatabaseBackend::Sqlite => provider_quota_statuses_updated_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => provider_quota_statuses_updated_at.timestamp_with_time_zone(),
+            DatabaseBackend::Sqlite => {
+                provider_quota_statuses_updated_at.custom(Alias::new("TEXT"))
+            }
+            DatabaseBackend::Postgres => {
+                provider_quota_statuses_updated_at.timestamp_with_time_zone()
+            }
             DatabaseBackend::MySql => provider_quota_statuses_updated_at.timestamp(),
         };
         provider_quota_statuses_updated_at
@@ -72,18 +104,28 @@ impl MigrationTrait for Migration {
             provider_quota_statuses_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
 
-        let mut provider_quota_statuses_next_reset_at = ColumnDef::new(ProviderQuotaStatuses::NextResetAt);
+        let mut provider_quota_statuses_next_reset_at =
+            ColumnDef::new(ProviderQuotaStatuses::NextResetAt);
         match backend {
-            DatabaseBackend::Sqlite => provider_quota_statuses_next_reset_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => provider_quota_statuses_next_reset_at.timestamp_with_time_zone(),
+            DatabaseBackend::Sqlite => {
+                provider_quota_statuses_next_reset_at.custom(Alias::new("TEXT"))
+            }
+            DatabaseBackend::Postgres => {
+                provider_quota_statuses_next_reset_at.timestamp_with_time_zone()
+            }
             DatabaseBackend::MySql => provider_quota_statuses_next_reset_at.timestamp(),
         };
         provider_quota_statuses_next_reset_at.null();
 
-        let mut provider_quota_statuses_next_check_at = ColumnDef::new(ProviderQuotaStatuses::NextCheckAt);
+        let mut provider_quota_statuses_next_check_at =
+            ColumnDef::new(ProviderQuotaStatuses::NextCheckAt);
         match backend {
-            DatabaseBackend::Sqlite => provider_quota_statuses_next_check_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => provider_quota_statuses_next_check_at.timestamp_with_time_zone(),
+            DatabaseBackend::Sqlite => {
+                provider_quota_statuses_next_check_at.custom(Alias::new("TEXT"))
+            }
+            DatabaseBackend::Postgres => {
+                provider_quota_statuses_next_check_at.timestamp_with_time_zone()
+            }
             DatabaseBackend::MySql => provider_quota_statuses_next_check_at.timestamp(),
         };
         provider_quota_statuses_next_check_at.not_null();
@@ -108,10 +150,26 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(0),
                     )
-                    .col(ColumnDef::new(ProviderQuotaStatuses::ChannelId).big_integer().not_null())
-                    .col(ColumnDef::new(ProviderQuotaStatuses::ProviderType).text().not_null())
-                    .col(ColumnDef::new(ProviderQuotaStatuses::Status).text().not_null())
-                    .col(ColumnDef::new(ProviderQuotaStatuses::QuotaData).text().not_null())
+                    .col(
+                        ColumnDef::new(ProviderQuotaStatuses::ChannelId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(ProviderQuotaStatuses::ProviderType)
+                            .text()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(ProviderQuotaStatuses::Status)
+                            .text()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(ProviderQuotaStatuses::QuotaData)
+                            .text()
+                            .not_null(),
+                    )
                     .col(provider_quota_statuses_next_reset_at)
                     .col(
                         ColumnDef::new(ProviderQuotaStatuses::Ready)
@@ -123,7 +181,10 @@ impl MigrationTrait for Migration {
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_provider_quota_statuses_channel_id")
-                            .from(ProviderQuotaStatuses::Table, ProviderQuotaStatuses::ChannelId)
+                            .from(
+                                ProviderQuotaStatuses::Table,
+                                ProviderQuotaStatuses::ChannelId,
+                            )
                             .to(Channels::Table, Channels::Id),
                     )
                     .to_owned(),
@@ -166,7 +227,12 @@ impl MigrationTrait for Migration {
             )
             .await?;
         manager
-            .drop_table(Table::drop().table(ChannelProbes::Table).if_exists().to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(ChannelProbes::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
             .await
     }
 }

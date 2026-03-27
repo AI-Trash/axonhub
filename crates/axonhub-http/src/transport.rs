@@ -1,5 +1,6 @@
 use crate::models::{
-    ApiKeyType, CompatibilityRoute, ErrorDetail, ErrorResponse, NotImplementedResponse, TraceConfig,
+    ApiKeyType, CompatibilityRoute, ErrorDetail, ErrorResponse, NotImplementedResponse,
+    ProjectContext, TraceConfig,
 };
 use crate::ports::{
     AdminAuthError, ApiKeyAuthError, ContextResolveError, OpenAiV1Error, ProviderEdgeAdminError,
@@ -111,18 +112,6 @@ impl NotImplementedRoute {
         }
     }
 
-    pub fn auth_context(message: impl Into<String>) -> Self {
-        Self {
-            route_family: "/auth/context",
-            method: "UNKNOWN".to_owned(),
-            path: "/".to_owned(),
-            message: message.into(),
-            migration_status: MIGRATION_STATUS,
-            legacy_go_backend_present: false,
-            gemini_api_version: None,
-        }
-    }
-
     pub fn into_body(self) -> NotImplementedResponse {
         NotImplementedResponse {
             error: "not_implemented",
@@ -183,7 +172,18 @@ pub(crate) fn authenticate_admin_request(
     context: RequestContextState,
 ) -> Result<RequestContextState, HttpRejection> {
     let token = extract_required_bearer_token(headers).map_err(HttpRejection::Error)?;
-    let identity = identity_port(identity)?;
+
+    let identity = match identity {
+        IdentityCapability::Unsupported { .. } => {
+            return Err(ErrorResponseSpec::new(
+                500,
+                "Internal Server Error",
+                "Failed to validate token",
+            )
+            .into())
+        }
+        IdentityCapability::Available { identity } => identity,
+    };
 
     let user = match identity.authenticate_admin_jwt(token.as_str()) {
         Ok(user) => user,
@@ -209,7 +209,17 @@ pub(crate) fn authenticate_api_key_request(
     allow_no_auth: bool,
     context: RequestContextState,
 ) -> Result<RequestContextState, HttpRejection> {
-    let identity = identity_port(identity)?;
+    let identity = match identity {
+        IdentityCapability::Unsupported { .. } => {
+            return Err(ErrorResponseSpec::new(
+                500,
+                "Internal Server Error",
+                "Failed to validate API key",
+            )
+            .into())
+        }
+        IdentityCapability::Available { identity } => identity,
+    };
     let header_key = extract_api_key_from_headers(headers);
 
     let api_key = match identity.authenticate_api_key(header_key.as_deref(), allow_no_auth) {
@@ -235,7 +245,17 @@ pub(crate) fn authenticate_service_api_key_request(
     headers: &TransportHeaders,
     context: RequestContextState,
 ) -> Result<RequestContextState, HttpRejection> {
-    let identity = identity_port(identity)?;
+    let identity = match identity {
+        IdentityCapability::Unsupported { .. } => {
+            return Err(ErrorResponseSpec::new(
+                500,
+                "Internal Server Error",
+                "Failed to validate API key",
+            )
+            .into())
+        }
+        IdentityCapability::Available { identity } => identity,
+    };
     let token = extract_required_bearer_token(headers).map_err(HttpRejection::Error)?;
 
     let api_key = match identity.authenticate_api_key(Some(token.as_str()), false) {
@@ -262,13 +282,23 @@ pub(crate) fn authenticate_gemini_request(
     query_key: Option<&str>,
     context: RequestContextState,
 ) -> Result<RequestContextState, HttpRejection> {
-    let identity = identity_port(identity)?;
+    let identity = match identity {
+        IdentityCapability::Unsupported { .. } => {
+            return Err(ErrorResponseSpec::new(
+                500,
+                "Internal Server Error",
+                "Failed to validate API key",
+            )
+            .into())
+        }
+        IdentityCapability::Available { identity } => identity,
+    };
     let header_key = extract_api_key_from_headers(headers);
 
     let api_key = match identity.authenticate_gemini_key(query_key, header_key.as_deref()) {
         Ok(api_key) => api_key,
         Err(ApiKeyAuthError::Missing | ApiKeyAuthError::Invalid) => {
-            return Err(ErrorResponseSpec::new(401, "Unauthorized", "invalid api key").into())
+            return Err(ErrorResponseSpec::new(401, "Unauthorized", "Invalid API key").into())
         }
         Err(ApiKeyAuthError::Internal) => {
             return Err(ErrorResponseSpec::new(
@@ -289,25 +319,33 @@ pub(crate) fn enrich_request_context(
     trace_config: &TraceConfig,
     mut context: RequestContextState,
 ) -> Result<RequestContextState, HttpRejection> {
-    let request_context = match capability {
-        RequestContextCapability::Unsupported { .. } => return Ok(RequestContextState::default()),
-        RequestContextCapability::Available { request_context } => request_context,
-    };
-
     let request_header = trace_request_header_name(trace_config);
     context.request_id = request_header_value(headers, &request_header).map(ToOwned::to_owned);
 
     let auth_project = context.auth.as_ref().and_then(RequestAuthContext::project);
     let header_project = match parse_project_header(headers) {
-        Ok(Some(id)) => match request_context.resolve_project(id) {
-            Ok(project) => project,
-            Err(ContextResolveError::Internal) => {
-                return Err(ErrorResponseSpec::new(
-                    500,
-                    "Internal Server Error",
-                    "Failed to resolve project context",
-                )
-                .into())
+        Ok(Some(id)) => match capability {
+            RequestContextCapability::Available { request_context } => {
+                match request_context.resolve_project(id) {
+                    Ok(project) => project,
+                    Err(ContextResolveError::Internal) => {
+                        return Err(ErrorResponseSpec::new(
+                            500,
+                            "Internal Server Error",
+                            "Failed to resolve project context",
+                        )
+                        .into())
+                    }
+                }
+            }
+            RequestContextCapability::Unsupported { .. } => {
+                // When request-context capability is unsupported, preserve header-derived project ID
+                // without DB-backed resolution (minimal context for admin routes)
+                Some(ProjectContext {
+                    id,
+                    name: String::new(),
+                    status: String::new(),
+                })
             }
         },
         Ok(None) => None,
@@ -316,37 +354,40 @@ pub(crate) fn enrich_request_context(
 
     context.project = header_project.or(auth_project);
 
-    if let Some(project) = context.project.as_ref() {
-        let thread_header = trace_thread_header_name(trace_config);
-        if let Some(thread_id) = request_header_value(headers, &thread_header) {
-            match request_context.resolve_thread(project.id, thread_id) {
-                Ok(thread) => {
-                    context.thread = thread;
-                }
-                Err(ContextResolveError::Internal) => {
-                    return Err(ErrorResponseSpec::new(
-                        500,
-                        "Internal Server Error",
-                        "Failed to resolve thread context",
-                    )
-                    .into())
+    // Resolve thread and trace only when request-context capability is available (requires DB)
+    if let RequestContextCapability::Available { request_context } = capability {
+        if let Some(project) = context.project.as_ref() {
+            let thread_header = trace_thread_header_name(trace_config);
+            if let Some(thread_id) = request_header_value(headers, &thread_header) {
+                match request_context.resolve_thread(project.id, thread_id) {
+                    Ok(thread) => {
+                        context.thread = thread;
+                    }
+                    Err(ContextResolveError::Internal) => {
+                        return Err(ErrorResponseSpec::new(
+                            500,
+                            "Internal Server Error",
+                            "Failed to resolve thread context",
+                        )
+                        .into())
+                    }
                 }
             }
-        }
 
-        if let Some(trace_id) = extract_trace_id(headers, trace_config) {
-            let thread_db_id = context.thread.as_ref().map(|thread| thread.id);
-            match request_context.resolve_trace(project.id, trace_id.as_str(), thread_db_id) {
-                Ok(trace) => {
-                    context.trace = trace;
-                }
-                Err(ContextResolveError::Internal) => {
-                    return Err(ErrorResponseSpec::new(
-                        500,
-                        "Internal Server Error",
-                        "Failed to resolve trace context",
-                    )
-                    .into())
+            if let Some(trace_id) = extract_trace_id(headers, trace_config) {
+                let thread_db_id = context.thread.as_ref().map(|thread| thread.id);
+                match request_context.resolve_trace(project.id, trace_id.as_str(), thread_db_id) {
+                    Ok(trace) => {
+                        context.trace = trace;
+                    }
+                    Err(ContextResolveError::Internal) => {
+                        return Err(ErrorResponseSpec::new(
+                            500,
+                            "Internal Server Error",
+                            "Failed to resolve trace context",
+                        )
+                        .into())
+                    }
                 }
             }
         }
@@ -410,8 +451,9 @@ pub(crate) fn parse_project_guid(raw: &str) -> Option<i64> {
 pub(crate) fn extract_required_bearer_token(
     headers: &TransportHeaders,
 ) -> Result<String, ErrorResponseSpec> {
-    let value = request_header_value(headers, "Authorization")
-        .ok_or_else(|| ErrorResponseSpec::new(401, "Unauthorized", "API key is required"))?;
+    let value = request_header_value(headers, "Authorization").ok_or_else(|| {
+        ErrorResponseSpec::new(401, "Unauthorized", "Authorization header is required")
+    })?;
 
     value
         .strip_prefix("Bearer ")
@@ -420,7 +462,7 @@ pub(crate) fn extract_required_bearer_token(
             ErrorResponseSpec::new(
                 401,
                 "Unauthorized",
-                "invalid token: Authorization header must start with 'Bearer '",
+                "Invalid token: Authorization header must start with 'Bearer '",
             )
         })
 }
@@ -501,17 +543,6 @@ pub(crate) fn translate_compatibility_error(
         CompatibilityRoute::DoubaoCreateTask
         | CompatibilityRoute::DoubaoGetTask
         | CompatibilityRoute::DoubaoDeleteTask => translate_openai_error(error),
-    }
-}
-
-fn identity_port(
-    identity: &IdentityCapability,
-) -> Result<&std::sync::Arc<dyn crate::ports::IdentityPort>, HttpRejection> {
-    match identity {
-        IdentityCapability::Unsupported { message } => {
-            Err(NotImplementedRoute::auth_context(message.clone()).into())
-        }
-        IdentityCapability::Available { identity } => Ok(identity),
     }
 }
 

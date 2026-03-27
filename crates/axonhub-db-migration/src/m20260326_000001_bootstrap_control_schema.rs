@@ -15,7 +15,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => systems_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => systems_created_at.timestamp(),
         };
-        systems_created_at.not_null().default(Expr::current_timestamp());
+        systems_created_at
+            .not_null()
+            .default(Expr::current_timestamp());
 
         let mut systems_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -23,7 +25,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => systems_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => systems_updated_at.timestamp(),
         };
-        systems_updated_at.not_null().default(Expr::current_timestamp());
+        systems_updated_at
+            .not_null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             systems_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -152,7 +156,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => users_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => users_created_at.timestamp(),
         };
-        users_created_at.not_null().default(Expr::current_timestamp());
+        users_created_at
+            .not_null()
+            .default(Expr::current_timestamp());
 
         let mut users_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -160,7 +166,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => users_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => users_updated_at.timestamp(),
         };
-        users_updated_at.not_null().default(Expr::current_timestamp());
+        users_updated_at
+            .not_null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             users_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -260,7 +268,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => projects_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => projects_created_at.timestamp(),
         };
-        projects_created_at.not_null().default(Expr::current_timestamp());
+        projects_created_at
+            .not_null()
+            .default(Expr::current_timestamp());
 
         let mut projects_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -268,7 +278,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => projects_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => projects_updated_at.timestamp(),
         };
-        projects_updated_at.not_null().default(Expr::current_timestamp());
+        projects_updated_at
+            .not_null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             projects_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -368,8 +380,16 @@ impl MigrationTrait for Migration {
                     )
                     .col(user_projects_created_at)
                     .col(user_projects_updated_at)
-                    .col(ColumnDef::new(UserProjects::UserId).big_integer().not_null())
-                    .col(ColumnDef::new(UserProjects::ProjectId).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(UserProjects::UserId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(UserProjects::ProjectId)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .col(
                         ColumnDef::new(UserProjects::IsOwner)
                             .boolean()
@@ -412,7 +432,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => roles_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => roles_created_at.timestamp(),
         };
-        roles_created_at.not_null().default(Expr::current_timestamp());
+        roles_created_at
+            .not_null()
+            .default(Expr::current_timestamp());
 
         let mut roles_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -420,7 +442,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => roles_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => roles_updated_at.timestamp(),
         };
-        roles_updated_at.not_null().default(Expr::current_timestamp());
+        roles_updated_at
+            .not_null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             roles_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -503,7 +527,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => user_roles_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => user_roles_created_at.timestamp(),
         };
-        user_roles_created_at.null().default(Expr::current_timestamp());
+        user_roles_created_at
+            .null()
+            .default(Expr::current_timestamp());
 
         let mut user_roles_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -511,7 +537,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => user_roles_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => user_roles_updated_at.timestamp(),
         };
-        user_roles_updated_at.null().default(Expr::current_timestamp());
+        user_roles_updated_at
+            .null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             user_roles_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -578,7 +606,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => api_keys_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => api_keys_created_at.timestamp(),
         };
-        api_keys_created_at.not_null().default(Expr::current_timestamp());
+        api_keys_created_at
+            .not_null()
+            .default(Expr::current_timestamp());
 
         let mut api_keys_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -586,7 +616,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => api_keys_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => api_keys_updated_at.timestamp(),
         };
-        api_keys_updated_at.not_null().default(Expr::current_timestamp());
+        api_keys_updated_at
+            .not_null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             api_keys_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -724,7 +756,12 @@ impl MigrationTrait for Migration {
             .drop_table(Table::drop().table(Roles::Table).if_exists().to_owned())
             .await?;
         manager
-            .drop_table(Table::drop().table(UserProjects::Table).if_exists().to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(UserProjects::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
             .await?;
         manager
             .drop_table(Table::drop().table(Projects::Table).if_exists().to_owned())
@@ -733,7 +770,12 @@ impl MigrationTrait for Migration {
             .drop_table(Table::drop().table(Users::Table).if_exists().to_owned())
             .await?;
         manager
-            .drop_table(Table::drop().table(DataStorages::Table).if_exists().to_owned())
+            .drop_table(
+                Table::drop()
+                    .table(DataStorages::Table)
+                    .if_exists()
+                    .to_owned(),
+            )
             .await?;
         manager
             .drop_table(Table::drop().table(Systems::Table).if_exists().to_owned())

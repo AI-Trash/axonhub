@@ -35,7 +35,7 @@ impl Default for ServerConfig {
             port: 8090,
             name: "AxonHub".to_owned(),
             base_path: String::new(),
-            read_timeout: String::new(),
+            read_timeout: "30s".to_owned(),
             request_timeout: "30s".to_owned(),
             llm_request_timeout: "600s".to_owned(),
             trace: TraceConfig::default(),

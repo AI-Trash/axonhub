@@ -22,10 +22,6 @@ pub(crate) fn not_implemented_response(
     ))
 }
 
-pub(crate) fn auth_unsupported_response(message: &str) -> HttpResponse {
-    NotImplementedJsonResponse::from_route(NotImplementedRoute::auth_context(message)).into_response()
-}
-
 pub(crate) fn error_response(status: StatusCode, kind: &'static str, message: &str) -> HttpResponse {
     response_from_json(ErrorResponseSpec::new(status.as_u16(), kind, message).into_json())
 }

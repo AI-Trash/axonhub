@@ -105,6 +105,7 @@ pub(crate) struct SchemaOwnershipContract {
     pub(crate) production_schema_sync_policy: ProductionSchemaSyncPolicy,
     pub(crate) repository_structure: RepositoryStructure,
     pub(crate) supported_runtime_dialects: &'static [&'static str],
+    pub(crate) verified_runtime_dialects: &'static [&'static str],
     pub(crate) future_runtime_dialects: &'static [&'static str],
     pub(crate) table_groups: &'static [TableGroupOwnership],
     pub(crate) bootstrap: BootstrapSemanticsContract,
@@ -125,6 +126,13 @@ const REQUEST_CONTEXT_TABLES: &[&str] = &["threads", "traces"];
 const CATALOG_TABLES: &[&str] = &["channels", "models"];
 const REQUEST_LEDGER_TABLES: &[&str] = &["requests", "request_executions", "usage_logs"];
 const OPERATIONAL_TABLES: &[&str] = &["channel_probes", "provider_quota_statuses"];
+const PERSISTENCE_EXTENSION_TABLES: &[&str] = &[
+    "prompts",
+    "prompt_protection_rules",
+    "channel_model_prices",
+    "channel_model_price_versions",
+    "channel_override_templates",
+];
 
 const PRESERVED_SYSTEM_KEYS: &[&str] = &[
     SYSTEM_KEY_INITIALIZED,
@@ -206,6 +214,13 @@ const CURRENT_TABLE_GROUPS: &[TableGroupOwnership] = &[
         postgres_legacy_source_path: POSTGRES_LEGACY_DDL_SOURCE_PATH,
         canonical_owner: CanonicalSchemaOwner::SeaOrmMigrations,
     },
+    TableGroupOwnership {
+        group: "persistence_extension",
+        tables: PERSISTENCE_EXTENSION_TABLES,
+        sqlite_legacy_source_path: SQLITE_LEGACY_DDL_SOURCE_PATH,
+        postgres_legacy_source_path: POSTGRES_LEGACY_DDL_SOURCE_PATH,
+        canonical_owner: CanonicalSchemaOwner::SeaOrmMigrations,
+    },
 ];
 
 const CURRENT_BOOTSTRAP_CONTRACT: BootstrapSemanticsContract = BootstrapSemanticsContract {
@@ -226,7 +241,7 @@ const RAW_SQL_BOUNDARY_RULES: &[RawSqlBoundaryRule] = &[
     RawSqlBoundaryRule {
         location: CANONICAL_SEAORM_MIGRATION_CRATE_PATH,
         usage: RawSqlUsage::MigrationDialectStep,
-        purpose: "Dialect-specific DDL or data backfill that SeaORM cannot express consistently across sqlite, postgres, and future mysql.",
+        purpose: "Dialect-specific DDL or data backfill that SeaORM cannot express consistently across sqlite, postgres, and mysql.",
         allowed: true,
     },
     RawSqlBoundaryRule {
@@ -252,8 +267,9 @@ const CURRENT_SCHEMA_OWNERSHIP_CONTRACT: SchemaOwnershipContract = SchemaOwnersh
         entity_crate_path: CANONICAL_SEAORM_ENTITY_CRATE_PATH,
         current_repository_adapter_path: CURRENT_PERSISTENCE_ADAPTER_PATH,
     },
-    supported_runtime_dialects: &["sqlite", "postgres"],
-    future_runtime_dialects: &["mysql"],
+    supported_runtime_dialects: &["sqlite", "postgres", "mysql"],
+    verified_runtime_dialects: &["sqlite", "postgres"],
+    future_runtime_dialects: &[],
     table_groups: CURRENT_TABLE_GROUPS,
     bootstrap: CURRENT_BOOTSTRAP_CONTRACT,
     raw_sql_boundaries: RAW_SQL_BOUNDARY_RULES,
@@ -278,11 +294,13 @@ mod tests {
     };
     use crate::foundation::{
         authz::scope_strings,
+        seaorm::SeaOrmConnectionFactory,
         shared::{SqliteFoundation, SYSTEM_KEY_INITIALIZED},
         system::SqliteBootstrapService,
     };
     use axonhub_http::{InitializeSystemRequest, SystemBootstrapPort};
     use rusqlite::{params, OptionalExtension};
+    use sea_orm::DatabaseBackend;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -319,8 +337,28 @@ mod tests {
             contract.repository_structure.entity_crate_path,
             "crates/axonhub-db-entity"
         );
-        assert_eq!(contract.supported_runtime_dialects, ["sqlite", "postgres"]);
-        assert_eq!(contract.future_runtime_dialects, ["mysql"]);
+        assert_eq!(
+            contract.supported_runtime_dialects,
+            ["sqlite", "postgres", "mysql"]
+        );
+        assert_eq!(contract.verified_runtime_dialects, ["sqlite", "postgres"]);
+        assert!(contract.future_runtime_dialects.is_empty());
+    }
+
+    #[test]
+    fn schema_ownership_runtime_contract_matches_connection_factory_variants() {
+        assert_eq!(
+            SeaOrmConnectionFactory::sqlite(":memory:".to_owned()).backend(),
+            DatabaseBackend::Sqlite
+        );
+        assert_eq!(
+            SeaOrmConnectionFactory::postgres("postgres://localhost/axonhub".to_owned()).backend(),
+            DatabaseBackend::Postgres
+        );
+        assert_eq!(
+            SeaOrmConnectionFactory::mysql("mysql://localhost:3306/axonhub".to_owned()).backend(),
+            DatabaseBackend::MySql
+        );
     }
 
     #[test]
@@ -330,6 +368,8 @@ mod tests {
         let catalog = table_group("catalog").expect("catalog group");
         let request_ledger = table_group("request_ledger").expect("request_ledger group");
         let operational = table_group("operational").expect("operational group");
+        let persistence_extension =
+            table_group("persistence_extension").expect("persistence_extension group");
 
         assert_eq!(
             bootstrap.tables,
@@ -354,6 +394,16 @@ mod tests {
             operational.tables,
             ["channel_probes", "provider_quota_statuses"]
         );
+        assert_eq!(
+            persistence_extension.tables,
+            [
+                "prompts",
+                "prompt_protection_rules",
+                "channel_model_prices",
+                "channel_model_price_versions",
+                "channel_override_templates",
+            ]
+        );
 
         for group in [
             bootstrap,
@@ -361,6 +411,7 @@ mod tests {
             catalog,
             request_ledger,
             operational,
+            persistence_extension,
         ] {
             assert_eq!(
                 group.sqlite_legacy_source_path,
@@ -531,6 +582,79 @@ mod tests {
             )
             .unwrap();
         assert_eq!(owner_membership_count, 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn sqlite_legacy_bootstrap_upgrades_to_persistence_extension_schema() {
+        let db_path = temp_sqlite_path("schema-ownership-upgrade");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let pre_upgrade_connection = foundation.open_connection(false).unwrap();
+        let pre_upgrade_prompts_count: i64 = pre_upgrade_connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                ["prompts"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pre_upgrade_prompts_count, 0);
+        drop(pre_upgrade_connection);
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime
+            .block_on(
+                SeaOrmConnectionFactory::sqlite(db_path.display().to_string()).connect_migrated(),
+            )
+            .unwrap();
+
+        let post_upgrade_connection = foundation.open_connection(false).unwrap();
+        for table in [
+            "prompts",
+            "prompt_protection_rules",
+            "channel_model_prices",
+            "channel_model_price_versions",
+            "channel_override_templates",
+        ] {
+            let table_count: i64 = post_upgrade_connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(table_count, 1, "missing upgraded table {table}");
+        }
+
+        let initialized_value: String = post_upgrade_connection
+            .query_row(
+                "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0 LIMIT 1",
+                [SYSTEM_KEY_INITIALIZED],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(initialized_value, "true");
+
+        let default_project_count: i64 = post_upgrade_connection
+            .query_row(
+                "SELECT COUNT(*) FROM projects WHERE name = 'Default Project' AND deleted_at = 0",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(default_project_count, 1);
 
         std::fs::remove_file(db_path).ok();
     }

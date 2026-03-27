@@ -1,4 +1,6 @@
 {
+  "manifest_version": 1,
+  "fixture_schema_version": 1,
   "suite_sets": {
     "stable-core": [
       "cli_version",
@@ -25,42 +27,42 @@
       "family": "cli_config",
       "expected_parity": true,
       "fixture": "fixtures/cli_version.json",
-      "description": "Compare top-level version output"
+      "description": "Compare top-level version output via versioned fixture"
     },
     "config_get_server_name": {
       "kind": "cli",
       "family": "cli_config",
       "expected_parity": true,
       "fixture": "fixtures/config_get_server_name.json",
-      "description": "Compare config get for server.name"
+      "description": "Compare config get for server.name via versioned fixture"
     },
     "config_get_cache_default_expiration_alias": {
       "kind": "cli",
       "family": "cli_config",
       "expected_parity": false,
       "fixture": "fixtures/config_get_cache_default_expiration_alias.json",
-      "description": "Capture current Go-vs-Rust cache alias mismatch"
+      "description": "Capture current Go-vs-Rust cache alias mismatch via versioned fixture"
     },
     "admin_system_status_initial": {
       "kind": "oracle_test",
       "family": "admin",
       "expected_parity": true,
       "fixture": "fixtures/admin_system_status_initial.json",
-      "description": "Compare fresh /admin/system/status responses"
+      "description": "Compare fresh /admin/system/status responses via reusable oracle emitter fixture"
     },
     "v1_models_basic": {
       "kind": "oracle_test",
       "family": "v1",
       "expected_parity": true,
       "fixture": "fixtures/v1_models_basic.json",
-      "description": "Compare representative /v1/models responses"
+      "description": "Compare representative /v1/models responses via reusable oracle emitter fixture"
     },
     "openapi_graphql_create_llm_api_key": {
       "kind": "oracle_test",
       "family": "graphql",
       "expected_parity": true,
       "fixture": "fixtures/openapi_graphql_create_llm_api_key.json",
-      "description": "Compare representative GraphQL createLLMAPIKey behavior"
+      "description": "Compare representative OpenAPI GraphQL createLLMAPIKey current-subset behavior via reusable oracle emitter fixture"
     }
   }
 }

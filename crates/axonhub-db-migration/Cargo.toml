@@ -12,3 +12,6 @@ path = "src/lib.rs"
 [dependencies]
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

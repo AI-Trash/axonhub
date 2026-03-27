@@ -146,11 +146,20 @@ server:
     assert_eq!(loaded.config.server.name, "Root Config");
     assert_eq!(loaded.config.server.port, 8090);
     assert_eq!(loaded.config.db.dialect, "sqlite3");
+    assert_eq!(loaded.config.server.read_timeout, "30s");
     assert_eq!(loaded.config.cache.memory.expiration, "15m");
     assert_eq!(loaded.config.cache.memory.cleanup_interval, "45m");
     assert_eq!(
         loaded.get("server.name"),
         Some(serde_json::json!("Root Config"))
+    );
+    assert_eq!(
+        loaded.get("cache.default_expiration"),
+        Some(serde_json::json!("15m"))
+    );
+    assert_eq!(
+        loaded.get("cache.cleanup_interval"),
+        Some(serde_json::json!("45m"))
     );
 }
 
@@ -212,6 +221,8 @@ db:
     fixture.set_env("AXONHUB_DB_DIALECT", "postgresql");
     fixture.set_env("AXONHUB_DB_DSN", "file:from-env.db");
     fixture.set_env("AXONHUB_DB_DEBUG", "true");
+    fixture.set_env("AXONHUB_CACHE_DEFAULT_EXPIRATION", "25m");
+    fixture.set_env("AXONHUB_CACHE_CLEANUP_INTERVAL", "55m");
 
     let loaded = LoadedConfig::load().unwrap();
 
@@ -226,6 +237,16 @@ db:
     assert_eq!(loaded.config.db.dialect, "postgresql");
     assert_eq!(loaded.config.db.dsn, "file:from-env.db");
     assert!(loaded.config.db.debug);
+    assert_eq!(loaded.config.cache.memory.expiration, "25m");
+    assert_eq!(loaded.config.cache.memory.cleanup_interval, "55m");
+    assert_eq!(
+        loaded.get("cache.default_expiration"),
+        Some(serde_json::json!("25m"))
+    );
+    assert_eq!(
+        loaded.get("cache.cleanup_interval"),
+        Some(serde_json::json!("55m"))
+    );
 }
 
 #[test]
@@ -240,10 +261,14 @@ fn preview_parse_get_and_validation_keep_current_contract() {
     let yaml_preview = config.preview(PreviewFormat::Yaml).unwrap();
     assert!(!yaml_preview.starts_with("---\n"));
     assert!(yaml_preview.contains("port: 8090"));
+    assert!(yaml_preview.contains("memory:"));
+    assert!(yaml_preview.contains("expiration: 5m"));
+    assert!(yaml_preview.contains("cleanup_interval: 10m"));
 
     let json_preview = config.preview(PreviewFormat::Json).unwrap();
     let json: serde_json::Value = serde_json::from_str(&json_preview).unwrap();
     assert_eq!(json["server"]["name"], "AxonHub");
+    assert_eq!(json["server"]["read_timeout"], "30s");
     assert_eq!(config.get("server.port"), Some(serde_json::json!(8090)));
     assert_eq!(
         config.get("server.trace.request_header"),
@@ -259,7 +284,7 @@ fn preview_parse_get_and_validation_keep_current_contract() {
     let mut invalid = Config::default();
     invalid.server.port = 0;
     invalid.db.dsn = " ".to_owned();
-    invalid.db.dialect = "tidb".to_owned();
+    invalid.db.dialect = "oracle".to_owned();
     invalid.log.name = " ".to_owned();
     invalid.log.encoding = "xml".to_owned();
     invalid.log.output = "stderr".to_owned();
@@ -274,7 +299,7 @@ fn preview_parse_get_and_validation_keep_current_contract() {
         vec![
             "server.port must be between 1 and 65535".to_owned(),
             "db.dsn cannot be empty".to_owned(),
-            "unsupported db.dialect 'tidb': Rust config/CLI currently supports sqlite3, postgres/postgresql, and mysql. TiDB/Neon remain legacy-Go-only".to_owned(),
+            "unsupported db.dialect 'oracle': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb, mysql, tidb, neon".to_owned(),
             "log.name cannot be empty".to_owned(),
             "log.encoding must be one of: json, console".to_owned(),
             "log.output must be one of: stdio, file".to_owned(),
@@ -293,11 +318,14 @@ fn supported_key_tables_document_current_config_surface() {
         .any(|entry| entry.key == "server.api.auth.allow_no_auth"));
     assert!(supported_config_keys()
         .iter()
+        .any(|entry| entry.key == "cache.default_expiration"));
+    assert!(supported_config_keys()
+        .iter()
         .any(|entry| entry.key == "metrics.exporter.type"));
     assert!(supported_config_aliases()
         .iter()
-        .any(|entry| entry.key == "cache.default_expiration"
-            && entry.canonical_key == "cache.memory.expiration"));
+        .any(|entry| entry.key == "cache.memory.expiration"
+            && entry.canonical_key == "cache.default_expiration"));
 }
 
 #[test]
@@ -318,11 +346,13 @@ provider_edge:
 
     assert!(error.contains("failed to validate config file contract: ./config.yml"));
     assert!(error.contains("unsupported config key 'provider_edge'"));
-    assert!(error.contains("legacy Go backend"));
+    assert!(error.contains("conf/conf.go"));
+    assert!(!error.contains("legacy Go backend"));
+    assert!(!error.contains("migration-slice"));
 }
 
 #[test]
-fn load_rejects_legacy_only_and_unknown_dialects() {
+fn load_accepts_go_owned_and_rejects_unknown_dialects() {
     let _lock = test_guard();
     let fixture = TestFixture::new("unsupported-dialects");
     fixture.write_workspace_file(
@@ -334,9 +364,12 @@ db:
 "#,
     );
 
-    let tidb_error = LoadedConfig::load().unwrap_err().to_string();
-    assert!(tidb_error.contains("unsupported db.dialect 'tidb'"));
-    assert!(tidb_error.contains("TiDB/Neon remain legacy-Go-only"));
+    let tidb_loaded = LoadedConfig::load().unwrap();
+    assert_eq!(tidb_loaded.config.db.dialect, "tidb");
+    assert_eq!(
+        tidb_loaded.get("db.dialect"),
+        Some(serde_json::json!("tidb"))
+    );
 
     fixture.write_workspace_file(
         "config.yml",
@@ -350,22 +383,26 @@ db:
     let unknown_error = LoadedConfig::load().unwrap_err().to_string();
     assert!(unknown_error.contains("unsupported db.dialect 'oracle'"));
     assert!(!unknown_error.contains("legacy-Go-only"));
+    assert!(!unknown_error.contains("migration-slice"));
 }
 
 #[test]
-fn load_rejects_legacy_only_dialect_from_env_override() {
+fn load_accepts_go_owned_dialect_from_env_override() {
     let _lock = test_guard();
     let fixture = TestFixture::new("unsupported-env-dialect");
     fixture.set_env("AXONHUB_DB_DIALECT", "neon");
+    fixture.set_env(
+        "AXONHUB_DB_DSN",
+        "postgres://axonhub:secret@localhost/axonhub?sslmode=disable",
+    );
 
-    let error = LoadedConfig::load().unwrap_err().to_string();
+    let loaded = LoadedConfig::load().unwrap();
 
-    assert!(error.contains("unsupported db.dialect 'neon'"));
-    assert!(error.contains("TiDB/Neon remain legacy-Go-only"));
+    assert_eq!(loaded.config.db.dialect, "neon");
 }
 
 #[test]
-fn load_accepts_supported_postgres_and_mysql_dialects() {
+fn load_accepts_supported_postgres_mysql_tidb_and_neon_dialects() {
     let _lock = test_guard();
     let fixture = TestFixture::new("supported-dialects");
 
@@ -384,6 +421,55 @@ fn load_accepts_supported_postgres_and_mysql_dialects() {
     );
     let mysql_loaded = LoadedConfig::load().unwrap();
     assert_eq!(mysql_loaded.config.db.dialect, "mysql");
+
+    fixture.set_env("AXONHUB_DB_DIALECT", "tidb");
+    fixture.set_env("AXONHUB_DB_DSN", "mysql://root:root@127.0.0.1:4000/axonhub");
+    let tidb_loaded = LoadedConfig::load().unwrap();
+    assert_eq!(tidb_loaded.config.db.dialect, "tidb");
+
+    fixture.set_env("AXONHUB_DB_DIALECT", "neon");
+    fixture.set_env(
+        "AXONHUB_DB_DSN",
+        "postgres://axonhub:secret@localhost/axonhub?sslmode=require",
+    );
+    let neon_loaded = LoadedConfig::load().unwrap();
+    assert_eq!(neon_loaded.config.db.dialect, "neon");
+}
+
+#[test]
+fn load_accepts_nested_cache_aliases_and_prefers_flat_go_keys() {
+    let _lock = test_guard();
+    let fixture = TestFixture::new("cache-aliases");
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+cache:
+  memory:
+    expiration: "11m"
+    cleanup_interval: "22m"
+"#,
+    );
+
+    let loaded = LoadedConfig::load().unwrap();
+
+    assert_eq!(loaded.config.cache.memory.expiration, "11m");
+    assert_eq!(loaded.config.cache.memory.cleanup_interval, "22m");
+    assert_eq!(
+        loaded.get("cache.default_expiration"),
+        Some(serde_json::json!("11m"))
+    );
+    assert_eq!(
+        loaded.get("cache.cleanup_interval"),
+        Some(serde_json::json!("22m"))
+    );
+    assert_eq!(
+        loaded.get("cache.memory.expiration"),
+        Some(serde_json::json!("11m"))
+    );
+    assert_eq!(
+        loaded.get("cache.memory.cleanup_interval"),
+        Some(serde_json::json!("22m"))
+    );
 }
 
 #[test]

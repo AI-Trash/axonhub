@@ -11,7 +11,7 @@ mod tests;
 
 pub use contract::{
     supported_config_aliases, supported_config_keys, SupportedConfigAlias, SupportedConfigKey,
-    LEGACY_ONLY_DB_DIALECTS, SUPPORTED_DB_DIALECTS,
+    SUPPORTED_DB_DIALECTS,
 };
 pub use loader::{config_search_paths, load, LoadedConfig};
 pub use preview::PreviewFormat;

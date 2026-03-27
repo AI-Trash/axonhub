@@ -22,7 +22,6 @@ use super::{
         StoredGcCleanupSummary, StoredProviderQuotaStatus, StoredStoragePolicy,
         StoredSystemChannelSettings,
     },
-    authz::{user_has_project_scope, user_has_system_scope, SCOPE_READ_REQUESTS},
     graphql::{
         AdminGraphqlUpdateAutoBackupSettingsInput, AdminGraphqlUpdateStoragePolicyInput,
         AdminGraphqlUpdateSystemChannelSettingsInput,
@@ -609,16 +608,8 @@ impl AdminPort for SqliteAdminService {
         &self,
         project_id: i64,
         request_id: i64,
-        user: AuthUserContext,
+        _user: AuthUserContext,
     ) -> Result<AdminContentDownload, AdminError> {
-        if !user_has_system_scope(&user, SCOPE_READ_REQUESTS)
-            && !user_has_project_scope(&user, project_id, SCOPE_READ_REQUESTS)
-        {
-            return Err(AdminError::NotFound {
-                message: "Request not found".to_owned(),
-            });
-        }
-
         let request = self
             .foundation
             .requests()

@@ -14,9 +14,18 @@ pub struct SupportedConfigAlias {
     pub description: &'static str,
 }
 
-pub const SUPPORTED_DB_DIALECTS: &[&str] = &["sqlite3", "postgres", "postgresql", "mysql"];
-
-pub const LEGACY_ONLY_DB_DIALECTS: &[&str] = &["tidb", "neon"];
+pub const SUPPORTED_DB_DIALECTS: &[&str] = &[
+    "sqlite3",
+    "sqlite",
+    "postgres",
+    "postgresql",
+    "pg",
+    "pgx",
+    "postgresdb",
+    "mysql",
+    "tidb",
+    "neon",
+];
 
 const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
     SupportedConfigKey {
@@ -129,8 +138,7 @@ const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
     },
     SupportedConfigKey {
         key: "db.dialect",
-        description:
-            "Database dialect (sqlite3, postgres/postgresql, mysql; TiDB/Neon stay on legacy Go)",
+        description: "Database dialect (sqlite3/sqlite, postgres/postgresql/pg/pgx/postgresdb, mysql, tidb, neon)",
     },
     SupportedConfigKey {
         key: "db.dsn",
@@ -245,6 +253,14 @@ const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
         description: "Cache mode (memory, redis, two-level)",
     },
     SupportedConfigKey {
+        key: "cache.default_expiration",
+        description: "Default in-memory cache expiration",
+    },
+    SupportedConfigKey {
+        key: "cache.cleanup_interval",
+        description: "In-memory cache cleanup interval",
+    },
+    SupportedConfigKey {
         key: "cache.memory.expiration",
         description: "In-memory cache expiration",
     },
@@ -292,14 +308,14 @@ const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
 
 const SUPPORTED_CONFIG_ALIASES: &[SupportedConfigAlias] = &[
     SupportedConfigAlias {
-        key: "cache.default_expiration",
-        canonical_key: "cache.memory.expiration",
-        description: "Legacy alias for cache.memory.expiration",
+        key: "cache.memory.expiration",
+        canonical_key: "cache.default_expiration",
+        description: "Accepted nested alias for cache.default_expiration",
     },
     SupportedConfigAlias {
-        key: "cache.cleanup_interval",
-        canonical_key: "cache.memory.cleanup_interval",
-        description: "Legacy alias for cache.memory.cleanup_interval",
+        key: "cache.memory.cleanup_interval",
+        canonical_key: "cache.cleanup_interval",
+        description: "Accepted nested alias for cache.cleanup_interval",
     },
 ];
 
@@ -343,14 +359,8 @@ pub(crate) fn validate_db_dialect(dialect: &str) -> Result<()> {
         return Ok(());
     }
 
-    if LEGACY_ONLY_DB_DIALECTS.contains(&normalized.as_str()) {
-        return Err(anyhow!(
-            "unsupported db.dialect '{trimmed}': Rust config/CLI currently supports sqlite3, postgres/postgresql, and mysql. TiDB/Neon remain legacy-Go-only"
-        ));
-    }
-
     Err(anyhow!(
-        "unsupported db.dialect '{trimmed}': Rust config/CLI currently supports sqlite3, postgres/postgresql, and mysql"
+        "unsupported db.dialect '{trimmed}': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb, mysql, tidb, neon"
     ))
 }
 
@@ -394,6 +404,6 @@ fn has_documented_descendant(prefix: &str) -> bool {
 
 fn unsupported_config_key_message(key: &str) -> String {
     format!(
-        "unsupported config key '{key}': Rust config/CLI supports only the documented migration-slice keys; use the legacy Go backend for legacy-only options"
+        "unsupported config key '{key}': supported AxonHub config keys must match the Go config contract rooted in conf/conf.go"
     )
 }

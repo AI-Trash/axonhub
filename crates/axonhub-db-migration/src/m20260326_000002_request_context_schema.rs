@@ -151,7 +151,9 @@ impl MigrationTrait for Migration {
         } else {
             traces_trace_id_index.col(Traces::TraceId);
         }
-        manager.create_index(traces_trace_id_index.to_owned()).await?;
+        manager
+            .create_index(traces_trace_id_index.to_owned())
+            .await?;
 
         manager
             .create_index(

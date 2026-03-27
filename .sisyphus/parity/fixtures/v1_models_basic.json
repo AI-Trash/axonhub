@@ -1,4 +1,6 @@
 {
+  "schema_version": 1,
+  "emitter": "v1_models_basic",
   "request": {
     "method": "GET",
     "path": "/v1/models",

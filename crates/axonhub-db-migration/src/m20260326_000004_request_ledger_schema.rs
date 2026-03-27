@@ -15,7 +15,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => requests_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => requests_created_at.timestamp(),
         };
-        requests_created_at.not_null().default(Expr::current_timestamp());
+        requests_created_at
+            .not_null()
+            .default(Expr::current_timestamp());
 
         let mut requests_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -23,7 +25,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => requests_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => requests_updated_at.timestamp(),
         };
-        requests_updated_at.not_null().default(Expr::current_timestamp());
+        requests_updated_at
+            .not_null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             requests_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -127,7 +131,11 @@ impl MigrationTrait for Migration {
                             .default(false),
                     )
                     .col(requests_client_ip)
-                    .col(ColumnDef::new(Requests::MetricsLatencyMs).big_integer().null())
+                    .col(
+                        ColumnDef::new(Requests::MetricsLatencyMs)
+                            .big_integer()
+                            .null(),
+                    )
                     .col(
                         ColumnDef::new(Requests::MetricsFirstTokenLatencyMs)
                             .big_integer()
@@ -139,7 +147,11 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(false),
                     )
-                    .col(ColumnDef::new(Requests::ContentStorageId).big_integer().null())
+                    .col(
+                        ColumnDef::new(Requests::ContentStorageId)
+                            .big_integer()
+                            .null(),
+                    )
                     .col(ColumnDef::new(Requests::ContentStorageKey).text().null())
                     .col(requests_content_saved_at)
                     .foreign_key(
@@ -281,7 +293,8 @@ impl MigrationTrait for Migration {
         }
         request_executions_response_body.null();
 
-        let mut request_executions_response_chunks = ColumnDef::new(RequestExecutions::ResponseChunks);
+        let mut request_executions_response_chunks =
+            ColumnDef::new(RequestExecutions::ResponseChunks);
         if matches!(backend, DatabaseBackend::MySql) {
             request_executions_response_chunks.custom(Alias::new("LONGTEXT"));
         } else {
@@ -292,7 +305,8 @@ impl MigrationTrait for Migration {
         let mut request_executions_error_message = ColumnDef::new(RequestExecutions::ErrorMessage);
         request_executions_error_message.text().null();
 
-        let mut request_executions_request_headers = ColumnDef::new(RequestExecutions::RequestHeaders);
+        let mut request_executions_request_headers =
+            ColumnDef::new(RequestExecutions::RequestHeaders);
         if matches!(backend, DatabaseBackend::MySql) {
             request_executions_request_headers.custom(Alias::new("LONGTEXT"));
         } else {
@@ -320,9 +334,21 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(1),
                     )
-                    .col(ColumnDef::new(RequestExecutions::RequestId).big_integer().not_null())
-                    .col(ColumnDef::new(RequestExecutions::ChannelId).big_integer().null())
-                    .col(ColumnDef::new(RequestExecutions::DataStorageId).big_integer().null())
+                    .col(
+                        ColumnDef::new(RequestExecutions::RequestId)
+                            .big_integer()
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(RequestExecutions::ChannelId)
+                            .big_integer()
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(RequestExecutions::DataStorageId)
+                            .big_integer()
+                            .null(),
+                    )
                     .col(ColumnDef::new(RequestExecutions::ExternalId).text().null())
                     .col(ColumnDef::new(RequestExecutions::ModelId).text().not_null())
                     .col(request_executions_format)
@@ -330,7 +356,11 @@ impl MigrationTrait for Migration {
                     .col(request_executions_response_body)
                     .col(request_executions_response_chunks)
                     .col(request_executions_error_message)
-                    .col(ColumnDef::new(RequestExecutions::ResponseStatusCode).big_integer().null())
+                    .col(
+                        ColumnDef::new(RequestExecutions::ResponseStatusCode)
+                            .big_integer()
+                            .null(),
+                    )
                     .col(ColumnDef::new(RequestExecutions::Status).text().not_null())
                     .col(
                         ColumnDef::new(RequestExecutions::Stream)
@@ -401,7 +431,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => usage_logs_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => usage_logs_created_at.timestamp(),
         };
-        usage_logs_created_at.not_null().default(Expr::current_timestamp());
+        usage_logs_created_at
+            .not_null()
+            .default(Expr::current_timestamp());
 
         let mut usage_logs_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -409,7 +441,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => usage_logs_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => usage_logs_updated_at.timestamp(),
         };
-        usage_logs_updated_at.not_null().default(Expr::current_timestamp());
+        usage_logs_updated_at
+            .not_null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             usage_logs_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -435,7 +469,8 @@ impl MigrationTrait for Migration {
         }
         usage_logs_cost_items.not_null();
 
-        let mut usage_logs_cost_price_reference_id = ColumnDef::new(UsageLogs::CostPriceReferenceId);
+        let mut usage_logs_cost_price_reference_id =
+            ColumnDef::new(UsageLogs::CostPriceReferenceId);
         usage_logs_cost_price_reference_id.text().null();
 
         manager
@@ -452,7 +487,11 @@ impl MigrationTrait for Migration {
                     )
                     .col(usage_logs_created_at)
                     .col(usage_logs_updated_at)
-                    .col(ColumnDef::new(UsageLogs::RequestId).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(UsageLogs::RequestId)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(UsageLogs::ApiKeyId).big_integer().null())
                     .col(
                         ColumnDef::new(UsageLogs::ProjectId)

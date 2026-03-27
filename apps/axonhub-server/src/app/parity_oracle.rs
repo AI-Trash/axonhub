@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use actix_web::body::BoxBody;
@@ -23,6 +22,8 @@ use crate::foundation::shared::{DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_
 
 #[derive(Deserialize)]
 struct OracleFixture {
+    schema_version: u32,
+    emitter: Option<String>,
     request: OracleRequest,
     model: Option<OracleModel>,
     normalize_generated_key: Option<bool>,
@@ -66,7 +67,10 @@ impl TestApp {
         Self { state }
     }
 
-    async fn oneshot(&self, request: OracleRequest) -> Result<ServiceResponse<BoxBody>, actix_web::Error> {
+    async fn oneshot(
+        &self,
+        request: OracleRequest,
+    ) -> Result<ServiceResponse<BoxBody>, actix_web::Error> {
         let app = actix_test::init_service(http_router(self.state.clone())).await;
         let mut actix_request = actix_test::TestRequest::default()
             .method(Method::from_bytes(request.method.as_bytes()).expect("valid method"))
@@ -94,14 +98,15 @@ async fn parity_oracle_emit_suite() {
     let fixture_path = env::var("AXONHUB_PARITY_FIXTURE").expect("fixture path env");
     let capture_path = env::var("AXONHUB_PARITY_CAPTURE").expect("capture path env");
     let fixture = load_fixture(Path::new(&fixture_path));
+    let emitter = fixture.emitter.clone().unwrap_or_else(|| suite.clone());
 
-    let output = match suite.as_str() {
+    let output = match emitter.as_str() {
         "admin_system_status_initial" => emit_admin_system_status_initial(&suite, fixture).await,
         "v1_models_basic" => emit_v1_models_basic(&suite, fixture).await,
         "openapi_graphql_create_llm_api_key" => {
             emit_openapi_graphql_create_llm_api_key(&suite, fixture).await
         }
-        _ => panic!("unsupported parity suite {suite}"),
+        _ => panic!("unsupported parity emitter {emitter} for suite {suite}"),
     };
 
     fs::write(
@@ -112,7 +117,14 @@ async fn parity_oracle_emit_suite() {
 }
 
 fn load_fixture(path: &Path) -> OracleFixture {
-    serde_json::from_str(&fs::read_to_string(path).expect("read fixture")).expect("parse fixture")
+    let fixture =
+        serde_json::from_str::<OracleFixture>(&fs::read_to_string(path).expect("read fixture"))
+            .expect("parse fixture");
+    assert_eq!(
+        fixture.schema_version, 1,
+        "unsupported parity fixture schema version"
+    );
+    fixture
 }
 
 fn temp_sqlite_path(name: &str) -> PathBuf {
@@ -258,14 +270,16 @@ async fn response_to_output(
     let status = response.status().as_u16();
     let content_type = normalize_content_type(
         response
-        .headers()
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_owned()
-        .as_str(),
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_owned()
+            .as_str(),
     );
-    let body_bytes = actix_web::body::to_bytes(response.into_body()).await.unwrap();
+    let body_bytes = actix_web::body::to_bytes(response.into_body())
+        .await
+        .unwrap();
     let mut body = if body_bytes.is_empty() {
         Value::String(String::new())
     } else {

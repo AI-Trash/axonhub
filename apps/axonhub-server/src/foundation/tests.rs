@@ -1861,6 +1861,121 @@ struct TestHttpRequest {
         std::fs::remove_file(db_path).ok();
     }
 
+    #[test]
+    fn admin_request_content_download_allows_user_without_read_requests_scope() {
+        let db_path = temp_sqlite_path("task13-request-content-noscope");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let admin = SqliteAdminService::new(foundation.clone());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let content_dir = std::env::temp_dir().join(format!(
+            "axonhub-task13-content-noscope-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&content_dir).unwrap();
+
+        let storage_id = foundation
+            .data_storages()
+            .find_primary_active_storage()
+            .unwrap()
+            .unwrap()
+            .id
+            + 100;
+        let connection = foundation.open_connection(true).unwrap();
+        connection
+            .execute(
+                "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at)
+                 VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+                params![
+                    storage_id,
+                    "Task13 FS NoScope",
+                    "task13 noscope",
+                    serde_json::json!({"directory": content_dir.to_string_lossy()}).to_string(),
+                ],
+            )
+            .unwrap();
+
+        let request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id,
+                trace_id: None,
+                data_storage_id: Some(storage_id),
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: None,
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: true,
+                content_storage_id: Some(storage_id),
+                content_storage_key: Some("/placeholder"),
+                content_saved_at: Some("2026-03-23T00:00:00Z"),
+            })
+            .unwrap();
+
+        let real_key = format!("/{project_id}/requests/{request_id}/test.txt");
+        connection
+            .execute(
+                "UPDATE requests SET content_storage_key = ?2 WHERE id = ?1",
+                params![request_id, real_key],
+            )
+            .unwrap();
+        let full_path = content_dir.join(format!("{project_id}/requests/{request_id}/test.txt"));
+        fs::create_dir_all(full_path.parent().unwrap()).unwrap();
+        fs::write(&full_path, b"test-content").unwrap();
+
+        let user_without_read_requests = AuthUserContext {
+            id: 2,
+            email: "admin@example.com".to_owned(),
+            first_name: "Admin".to_owned(),
+            last_name: "User".to_owned(),
+            is_owner: false,
+            prefer_language: "en".to_owned(),
+            avatar: None,
+            scopes: scope_strings(&[
+                SCOPE_READ_SETTINGS,
+                SCOPE_READ_CHANNELS,
+            ]),
+            roles: Vec::new(),
+            projects: Vec::new(),
+        };
+
+        let downloaded = admin
+            .download_request_content(project_id, request_id, user_without_read_requests.clone())
+            .unwrap();
+        assert_eq!(downloaded.filename, "test.txt");
+        assert_eq!(downloaded.bytes, b"test-content");
+
+        let wrong_project = admin
+            .download_request_content(project_id + 1, request_id, user_without_read_requests.clone())
+            .unwrap_err();
+        assert!(matches!(wrong_project, AdminError::NotFound { .. }));
+
+        fs::remove_dir_all(content_dir).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
     #[tokio::test]
     async fn openai_v1_routes_complete_persistence_and_keep_residual_501() {
         let db_path = temp_sqlite_path("task7-openai-runtime");
@@ -4035,6 +4150,75 @@ struct TestHttpRequest {
         let denied_requests_json = read_json_response(denied_requests).await;
         assert_eq!(denied_requests_json["data"]["requests"], Value::Null);
         assert_eq!(denied_requests_json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_system_status_allows_no_scope_user_but_channels_requires_scope() {
+        let db_path = temp_sqlite_path("task6-system-status-no-scope");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        // Create a user with NO scopes at all
+        let _no_scope_user_id = insert_test_user(
+            &connection,
+            "no_scope@example.com",
+            "password123",
+            &[],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let no_scope_token = signin_token(foundation.clone(), "no_scope@example.com", "password123");
+
+        // Query systemStatus - should succeed even without any scopes
+        let system_status_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {no_scope_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ systemStatus { isInitialized } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let system_status_json = read_json_response(system_status_response).await;
+        assert_eq!(system_status_json["data"]["systemStatus"]["isInitialized"], true);
+        assert!(system_status_json.get("errors").is_none_or(|v| v.is_null()));
+
+        // Query channels - should fail with permission denied
+        let channels_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {no_scope_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ channels { id } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let channels_json = read_json_response(channels_response).await;
+        assert_eq!(channels_json["data"]["channels"], Value::Null);
+        assert_eq!(channels_json["errors"][0]["message"], "permission denied");
 
         std::fs::remove_file(db_path).ok();
     }

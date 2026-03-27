@@ -16,10 +16,18 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 PARITY_DIR = ROOT / ".sisyphus" / "parity"
 SUITES_PATH = PARITY_DIR / "suites.json"
+MANIFEST_VERSION = 1
+FIXTURE_SCHEMA_VERSION = 1
 
 
 def load_manifest() -> dict[str, Any]:
-    return json.loads(SUITES_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(SUITES_PATH.read_text(encoding="utf-8"))
+    actual_version = manifest.get("manifest_version")
+    if actual_version != MANIFEST_VERSION:
+        raise SystemExit(
+            f"unsupported parity manifest version: expected {MANIFEST_VERSION}, got {actual_version!r}"
+        )
+    return manifest
 
 
 def suite_config(manifest: dict[str, Any], suite_name: str) -> dict[str, Any]:
@@ -33,7 +41,13 @@ def suite_config(manifest: dict[str, Any], suite_name: str) -> dict[str, Any]:
 
 
 def load_fixture(config: dict[str, Any]) -> dict[str, Any]:
-    return json.loads(Path(config["fixture_path"]).read_text(encoding="utf-8"))
+    fixture = json.loads(Path(config["fixture_path"]).read_text(encoding="utf-8"))
+    actual_version = fixture.get("schema_version")
+    if actual_version != FIXTURE_SCHEMA_VERSION:
+        raise SystemExit(
+            f"unsupported fixture schema version for {config['name']}: expected {FIXTURE_SCHEMA_VERSION}, got {actual_version!r}"
+        )
+    return fixture
 
 
 def canonical_json(value: Any) -> str:

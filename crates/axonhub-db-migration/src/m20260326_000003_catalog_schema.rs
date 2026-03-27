@@ -15,7 +15,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => channels_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => channels_created_at.timestamp(),
         };
-        channels_created_at.not_null().default(Expr::current_timestamp());
+        channels_created_at
+            .not_null()
+            .default(Expr::current_timestamp());
 
         let mut channels_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -23,7 +25,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => channels_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => channels_updated_at.timestamp(),
         };
-        channels_updated_at.not_null().default(Expr::current_timestamp());
+        channels_updated_at
+            .not_null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             channels_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -132,7 +136,9 @@ impl MigrationTrait for Migration {
                 .col((Channels::Name, 255))
                 .col(Channels::DeletedAt);
         } else {
-            channels_name_index.col(Channels::Name).col(Channels::DeletedAt);
+            channels_name_index
+                .col(Channels::Name)
+                .col(Channels::DeletedAt);
         }
         manager.create_index(channels_name_index.to_owned()).await?;
 
@@ -142,7 +148,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => models_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => models_created_at.timestamp(),
         };
-        models_created_at.not_null().default(Expr::current_timestamp());
+        models_created_at
+            .not_null()
+            .default(Expr::current_timestamp());
 
         let mut models_updated_at = ColumnDef::new(General::UpdatedAt);
         match backend {
@@ -150,7 +158,9 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Postgres => models_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => models_updated_at.timestamp(),
         };
-        models_updated_at.not_null().default(Expr::current_timestamp());
+        models_updated_at
+            .not_null()
+            .default(Expr::current_timestamp());
         if matches!(backend, DatabaseBackend::MySql) {
             models_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
         }
@@ -208,7 +218,9 @@ impl MigrationTrait for Migration {
             .unique()
             .if_not_exists();
         if matches!(backend, DatabaseBackend::MySql) {
-            models_name_index.col((Models::Name, 255)).col(Models::DeletedAt);
+            models_name_index
+                .col((Models::Name, 255))
+                .col(Models::DeletedAt);
         } else {
             models_name_index.col(Models::Name).col(Models::DeletedAt);
         }
@@ -229,7 +241,9 @@ impl MigrationTrait for Migration {
                 .col(Models::ModelId)
                 .col(Models::DeletedAt);
         }
-        manager.create_index(models_model_id_index.to_owned()).await?;
+        manager
+            .create_index(models_model_id_index.to_owned())
+            .await?;
 
         Ok(())
     }
