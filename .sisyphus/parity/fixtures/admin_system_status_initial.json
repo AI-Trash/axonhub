@@ -1,8 +1,0 @@
-{
-  "schema_version": 1,
-  "emitter": "admin_system_status_initial",
-  "request": {
-    "method": "GET",
-    "path": "/admin/system/status"
-  }
-}

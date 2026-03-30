@@ -1,3 +1,0 @@
-stable suite set: stable-core
-suite count: 5
-result: byte-stable across two consecutive runs
