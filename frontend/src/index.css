@@ -561,8 +561,8 @@
 
 /* 胶囊滚动条隐藏 */
 .hide-scroll {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
 }
 
 .hide-scroll::-webkit-scrollbar {
@@ -1471,12 +1471,12 @@
 
 /* Range start date - cell background and rounded corners */
 .rdp-custom-day.rdp-custom-range-start {
-  @apply bg-primary/10 rounded-l-full dark:bg-primary/20;
+  @apply bg-primary/10 dark:bg-primary/20 rounded-l-full;
 }
 
 /* Range end date - cell background and rounded corners */
 .rdp-custom-day.rdp-custom-range-end {
-  @apply bg-primary/10 rounded-r-full dark:bg-primary/20;
+  @apply bg-primary/10 dark:bg-primary/20 rounded-r-full;
 }
 
 /* Range start and end on the same day */
@@ -1487,12 +1487,12 @@
 /* Range start/end date - button styles */
 .rdp-custom-day.rdp-custom-range-start > .rdp-custom-day-button,
 .rdp-custom-day.rdp-custom-range-end > .rdp-custom-day-button {
-  @apply bg-primary text-white hover:bg-primary;
+  @apply bg-primary hover:bg-primary text-white;
 }
 
 /* Today's date style */
 .rdp-custom-day.rdp-custom-today > .rdp-custom-day-button {
-  @apply ring-1 ring-inset ring-primary/40;
+  @apply ring-primary/40 ring-1 ring-inset;
 }
 
 /* Outside dates (prev/next month) */

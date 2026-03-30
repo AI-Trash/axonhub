@@ -1,4 +1,3 @@
-import React, { useState } from 'react';
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -11,10 +10,13 @@ import {
   getFacetedUniqueValues,
   useReactTable,
 } from '@tanstack/react-table';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableSkeleton } from '@/components/ui/table-skeleton';
-import { ServerSidePagination } from '@/components/server-side-pagination';
+
 import { User, UserConnection } from '../data/schema';
 import { DataTableToolbar } from './data-table-toolbar';
 

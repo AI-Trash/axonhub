@@ -1,9 +1,10 @@
-import { useEffect } from 'react';
 import { useRouter } from '@tanstack/react-router';
-import { isAuthError } from '@/gql/graphql';
-import { useAuthStore } from '@/stores/authStore';
+import { useEffect } from 'react';
+
 import { Skeleton } from '@/components/ui/skeleton';
 import { useMe } from '@/features/auth/data/auth';
+import { isAuthError } from '@/gql/graphql';
+import { useAuthStore } from '@/stores/authStore';
 
 interface AuthGuardProps {
   children: React.ReactNode;

@@ -2,9 +2,11 @@
 
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
 import { useTranslation } from 'react-i18next';
+
+import LongText from '@/components/long-text';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import LongText from '@/components/long-text';
+
 import { User } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
 

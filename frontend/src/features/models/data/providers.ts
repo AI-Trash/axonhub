@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+
 import providersDataRaw from './providers.json';
 import { providersDataSchema, type ProvidersData } from './providers.schema';
 

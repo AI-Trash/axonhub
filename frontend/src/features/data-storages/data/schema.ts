@@ -1,4 +1,5 @@
 import { z } from 'zod';
+
 import { pageInfoSchema } from '@/gql/pagination';
 
 // S3 Settings schema (without sensitive credentials for list queries)

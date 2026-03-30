@@ -1,16 +1,17 @@
-import { HTMLAttributes, useState } from 'react';
-import { z } from 'zod';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from '@tanstack/react-router';
+import { HTMLAttributes, useState } from 'react';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
-import { cn } from '@/lib/utils';
-import { passwordSchema } from '@/lib/validation';
+import { z } from 'zod';
+
+import { PasswordInput } from '@/components/password-input';
 import { Button } from '@/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { PasswordInput } from '@/components/password-input';
 import { useSignIn } from '@/features/auth/data/auth';
+import { cn } from '@/lib/utils';
+import { passwordSchema } from '@/lib/validation';
 
 type UserAuthFormProps = HTMLAttributes<HTMLFormElement>;
 

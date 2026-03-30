@@ -1,7 +1,9 @@
-import { memo } from 'react';
 import { format } from 'date-fns';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Badge } from '@/components/ui/badge';
+
 import { CHANNEL_CONFIGS } from '../data/config_channels';
 import { Channel } from '../data/schema';
 
@@ -16,7 +18,7 @@ export const ChannelExpandedRow = memo(({ channel, columnsLength, getApiFormatLa
   const config = CHANNEL_CONFIGS[channel.type];
 
   return (
-    <div className='bg-muted/30 p-6 hover:bg-muted/50'>
+    <div className='bg-muted/30 hover:bg-muted/50 p-6'>
       <div className='space-y-6'>
         <div className='grid grid-cols-1 gap-6 md:grid-cols-2'>
           <div className='space-y-3'>
@@ -77,7 +79,6 @@ export const ChannelExpandedRow = memo(({ channel, columnsLength, getApiFormatLa
                 </div>
               </div>
             </div>
-
           </div>
         </div>
 

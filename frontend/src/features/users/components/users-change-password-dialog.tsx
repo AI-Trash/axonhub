@@ -1,15 +1,17 @@
 'use client';
 
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { graphqlRequest } from '@/gql/graphql';
-import { UPDATE_USER_MUTATION } from '@/gql/users';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { graphqlRequest } from '@/gql/graphql';
+import { UPDATE_USER_MUTATION } from '@/gql/users';
+
 import { User, changePasswordFormSchema } from '../data/schema';
 
 interface Props {
@@ -46,8 +48,8 @@ export function UsersChangePasswordDialog({ currentRow, open, onOpenChange }: Pr
       form.reset();
       onOpenChange(false);
     } catch (error) {
-          toast.error(t('users.messages.passwordChangeError'));
-        }
+      toast.error(t('users.messages.passwordChangeError'));
+    }
   };
 
   return (

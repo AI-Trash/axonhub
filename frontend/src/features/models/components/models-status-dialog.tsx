@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -9,6 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
 import { useUpdateModel } from '../data/models';
 import { Model } from '../data/schema';
 
@@ -32,8 +34,7 @@ export function ModelsStatusDialog({ open, onOpenChange, currentRow }: ModelsSta
         input: { status: newStatus },
       });
       onOpenChange(false);
-    } catch (error) {
-    }
+    } catch (error) {}
   };
 
   return (

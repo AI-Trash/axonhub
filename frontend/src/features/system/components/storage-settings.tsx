@@ -1,13 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
 import { Loader2, Save } from 'lucide-react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useDataStorages } from '@/features/data-storages/data/data-storages';
+
 import { useSystemContext } from '../context/system-context';
 import { useDefaultDataStorageID, useUpdateDefaultDataStorage } from '../data/system';
 import { StoragePolicySettings } from './storage-policy-settings';
@@ -104,7 +106,6 @@ export function StorageSettings() {
       <StoragePolicySettings />
 
       <VideoStorageSettings />
-
     </div>
   );
 }

@@ -1,11 +1,13 @@
-import { useMemo, useEffect } from 'react';
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { Table } from '@tanstack/react-table';
-import { useQueryModels } from '@/gql/models';
+import { useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { DataTableFacetedFilter } from '@/components/data-table-faceted-filter';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { DataTableFacetedFilter } from '@/components/data-table-faceted-filter';
+import { useQueryModels } from '@/gql/models';
+
 import { useAllChannelTags } from '../data/channels';
 import { CHANNEL_CONFIGS } from '../data/config_channels';
 import { DataTableViewOptions } from './data-table-view-options';
@@ -112,11 +114,7 @@ export function DataTableToolbar<TData>({
         <DataTableFacetedFilter column={table.getColumn('model')} title={t('channels.filters.model')} options={modelOptions} singleSelect />
       )}
       {isFiltered && (
-        <Button
-          variant='ghost'
-          onClick={() => table.resetColumnFilters()}
-          className='h-8 px-2 lg:px-3'
-        >
+        <Button variant='ghost' onClick={() => table.resetColumnFilters()} className='h-8 px-2 lg:px-3'>
           {t('common.filters.reset')}
           <Cross2Icon className='ml-2 h-4 w-4' />
         </Button>

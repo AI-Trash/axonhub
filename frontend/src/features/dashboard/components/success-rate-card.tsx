@@ -1,9 +1,11 @@
 import { ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { formatNumber } from '@/utils/format-number';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatNumber } from '@/utils/format-number';
+
 import { useDashboardStats } from '../data/dashboard';
 
 export function SuccessRateCard() {

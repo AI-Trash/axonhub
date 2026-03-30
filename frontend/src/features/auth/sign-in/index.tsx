@@ -1,8 +1,10 @@
 import { useTranslation } from 'react-i18next';
+
 import AuthLayout from '../auth-layout';
 import TwoColumnAuth from '../components/two-column-auth';
 import AnimatedLineBackground from './components/animated-line-background';
 import { UserAuthForm } from './components/user-auth-form';
+
 import './login-styles.css';
 
 export default function SignIn() {

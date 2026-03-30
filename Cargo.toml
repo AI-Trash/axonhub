@@ -34,6 +34,7 @@ opentelemetry_sdk = { version = "0.31", features = ["metrics"] }
 pg-embed = { version = "1.0.0", default-features = false, features = ["rt_tokio"] }
 postgres = "0.19.12"
 reqwest = { version = "0.12.15", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rust-embed = "8.8.0"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 sea-orm = { version = "1.1.14", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-mysql", "sqlx-postgres", "sqlx-sqlite"] }
 sea-orm-migration = { version = "1.1.14", default-features = false, features = ["runtime-tokio-rustls", "sqlx-mysql", "sqlx-postgres", "sqlx-sqlite"] }

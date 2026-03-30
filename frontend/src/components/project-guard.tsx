@@ -1,11 +1,12 @@
-import { useEffect } from 'react';
-import { useRouter } from '@tanstack/react-router';
 import { IconFolderOff, IconFolderPlus } from '@tabler/icons-react';
+import { useRouter } from '@tanstack/react-router';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSelectedProjectId } from '@/stores/projectStore';
+
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { useMyProjects } from '@/features/projects/data/projects';
+import { useSelectedProjectId } from '@/stores/projectStore';
 
 interface ProjectGuardProps {
   children: React.ReactNode;

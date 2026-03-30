@@ -1,7 +1,9 @@
 import { FolderIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { formatNumber } from '@/utils/format-number';
+
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatNumber } from '@/utils/format-number';
+
 import { useTopProjects } from '../data/dashboard';
 
 export function TopProjects() {

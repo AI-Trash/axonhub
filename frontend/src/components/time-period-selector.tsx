@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 export type TimePeriod = 'allTime' | 'month' | 'week' | 'day';
@@ -13,7 +14,7 @@ interface TimePeriodSelectorProps<T extends string = TimePeriod> {
 }
 
 export function TimePeriodSelector<T extends string>({ value, onChange, periods }: TimePeriodSelectorProps<T>) {
-  const effectivePeriods = periods ?? DEFAULT_PERIODS as readonly T[];
+  const effectivePeriods = periods ?? (DEFAULT_PERIODS as readonly T[]);
   const { t } = useTranslation();
 
   return (

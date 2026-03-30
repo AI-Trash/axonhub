@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
-import { ZodError } from 'zod';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { ZodError } from 'zod';
 
 export function useErrorHandler() {
   const { t } = useTranslation();

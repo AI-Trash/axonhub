@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
 import { IconCheck, IconX } from '@tabler/icons-react';
-import { showSubmittedData } from '@/utils/show-submitted-data';
+import { useEffect, useState } from 'react';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { showSubmittedData } from '@/utils/show-submitted-data';
+
 import { ChatUser } from '../data/chat-types';
 
 type User = Omit<ChatUser, 'messages'>;

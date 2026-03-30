@@ -1,29 +1,27 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CartesianGrid, ResponsiveContainer, XAxis, YAxis, Tooltip, AreaChart, Area } from 'recharts';
-import { formatNumber } from '@/utils/format-number';
-import { formatDuration } from '@/utils/format-duration';
+
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { formatDuration } from '@/utils/format-duration';
+import { formatNumber } from '@/utils/format-number';
+
 import { useGeneralSettings } from '../../system/data/system';
 
 function groupBy<T>(array: T[], key: keyof T): Record<string, T[]> {
-  return array.reduce((acc, item) => {
-    const k = String(item[key]);
-    if (!acc[k]) acc[k] = [];
-    acc[k].push(item);
-    return acc;
-  }, {} as Record<string, T[]>);
+  return array.reduce(
+    (acc, item) => {
+      const k = String(item[key]);
+      if (!acc[k]) acc[k] = [];
+      acc[k].push(item);
+      return acc;
+    },
+    {} as Record<string, T[]>
+  );
 }
 
-const COLORS = [
-  'var(--chart-1)',
-  'var(--chart-2)',
-  'var(--chart-3)',
-  'var(--chart-4)',
-  'var(--chart-5)',
-  'var(--chart-6)',
-];
+const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)'];
 
 const MAX_CHART_THROUGHPUT = 1000;
 const MAX_CHART_TTFT_MS = 60000;
@@ -81,20 +79,25 @@ function PerformanceTooltip({ active, payload, label, displayMode }: Performance
   const dataPoint = payload[0]?.payload as Record<string, string | number | null> | undefined;
   if (!dataPoint) return null;
 
-  const filteredPayload = displayMode === 'throughput'
-    ? payload.filter((item) => item.dataKey.toString().includes('-capped') && !item.dataKey.toString().includes('-ttft') && item.value != null && item.value > 0)
-    : payload.filter((item) => item.dataKey.toString().includes('-ttft-capped') && item.value != null && item.value > 0);
+  const filteredPayload =
+    displayMode === 'throughput'
+      ? payload.filter(
+          (item) =>
+            item.dataKey.toString().includes('-capped') &&
+            !item.dataKey.toString().includes('-ttft') &&
+            item.value != null &&
+            item.value > 0
+        )
+      : payload.filter((item) => item.dataKey.toString().includes('-ttft-capped') && item.value != null && item.value > 0);
 
   const itemData = filteredPayload
     .map((item) => {
       const dataKey = item.dataKey.toString();
       // Extract base ID by removing capped suffixes
-      const id = displayMode === 'throughput'
-        ? dataKey.replace('-capped', '')
-        : dataKey.replace('-ttft-capped', '');
+      const id = displayMode === 'throughput' ? dataKey.replace('-capped', '') : dataKey.replace('-ttft-capped', '');
       // Read actual values (not capped) from original data keys
-      const throughputValue = dataPoint[id] as number ?? 0;
-      const ttftValue = dataPoint[`${id}-ttft`] as number ?? 0;
+      const throughputValue = (dataPoint[id] as number) ?? 0;
+      const ttftValue = (dataPoint[`${id}-ttft`] as number) ?? 0;
       return {
         id,
         name: item.name,
@@ -103,33 +106,29 @@ function PerformanceTooltip({ active, payload, label, displayMode }: Performance
         color: item.color,
       };
     })
-    .sort((a, b) => displayMode === 'throughput' ? b.throughput - a.throughput : a.ttft - b.ttft);
+    .sort((a, b) => (displayMode === 'throughput' ? b.throughput - a.throughput : a.ttft - b.ttft));
 
   if (itemData.length === 0) return null;
 
   return (
-    <div
-      className='rounded-md border bg-background p-3 shadow-md'
-      style={{ fontSize: '12px' }}
-    >
-      <div className='mb-2 font-medium text-foreground'>{label}</div>
+    <div className='bg-background rounded-md border p-3 shadow-md' style={{ fontSize: '12px' }}>
+      <div className='text-foreground mb-2 font-medium'>{label}</div>
       <div className='space-y-2'>
         {itemData.map((item) => (
           <div key={item.id}>
             <div className='flex items-center gap-2'>
-              <span
-                className='h-2 w-2 rounded-full'
-                style={{ backgroundColor: item.color }}
-              />
-              <span className='truncate font-medium text-foreground'>
-                {item.name}
-              </span>
+              <span className='h-2 w-2 rounded-full' style={{ backgroundColor: item.color }} />
+              <span className='text-foreground truncate font-medium'>{item.name}</span>
             </div>
-            <div className='ml-4 text-muted-foreground'>
+            <div className='text-muted-foreground ml-4'>
               {displayMode === 'throughput' ? (
-                <>{formatNumber(item.throughput, { digits: 0 })} {t('dashboard.stats.throughput')}</>
+                <>
+                  {formatNumber(item.throughput, { digits: 0 })} {t('dashboard.stats.throughput')}
+                </>
               ) : (
-                <>{t('dashboard.stats.ttft')} {formatDuration(item.ttft)}</>
+                <>
+                  {t('dashboard.stats.ttft')} {formatDuration(item.ttft)}
+                </>
               )}
             </div>
           </div>
@@ -170,16 +169,12 @@ export function PerformanceChart({
 
     const lItems = uniqueIds.map((id, index) => {
       const itemStatsList = groupedById[id] ?? [];
-      const name = nameField && itemStatsList[0]?.name
-        ? itemStatsList[0].name
-        : id;
+      const name = nameField && itemStatsList[0]?.name ? itemStatsList[0].name : id;
       const totalRequests = itemStatsList.reduce((sum, s) => sum + s.requestCount, 0);
-      const weightedThroughput = totalRequests > 0
-        ? itemStatsList.reduce((sum, s) => sum + (s.throughput ?? 0) * s.requestCount, 0) / totalRequests
-        : 0;
-      const weightedTtft = totalRequests > 0
-        ? itemStatsList.reduce((sum, s) => sum + (s.ttftMs ?? 0) * s.requestCount, 0) / totalRequests
-        : 0;
+      const weightedThroughput =
+        totalRequests > 0 ? itemStatsList.reduce((sum, s) => sum + (s.throughput ?? 0) * s.requestCount, 0) / totalRequests : 0;
+      const weightedTtft =
+        totalRequests > 0 ? itemStatsList.reduce((sum, s) => sum + (s.ttftMs ?? 0) * s.requestCount, 0) / totalRequests : 0;
 
       return {
         id,
@@ -202,28 +197,33 @@ export function PerformanceChart({
   }, [totalRequests, onTotalRequestsChange]);
 
   const statsMap = useMemo(() => {
-    return memoizedSafeData.reduce((acc, stat) => {
-      if (!acc[stat.date]) acc[stat.date] = {};
-      acc[stat.date][stat.id] = stat;
-      return acc;
-    }, {} as Record<string, Record<string, typeof memoizedSafeData[0]>>);
+    return memoizedSafeData.reduce(
+      (acc, stat) => {
+        if (!acc[stat.date]) acc[stat.date] = {};
+        acc[stat.date][stat.id] = stat;
+        return acc;
+      },
+      {} as Record<string, Record<string, (typeof memoizedSafeData)[0]>>
+    );
   }, [memoizedSafeData]);
 
   const seriesDateRanges = useMemo(() => {
-    const ranges: Record<string, {
-      throughput: { first: string | null; last: string | null };
-      ttft: { first: string | null; last: string | null };
-    }> = {};
+    const ranges: Record<
+      string,
+      {
+        throughput: { first: string | null; last: string | null };
+        ttft: { first: string | null; last: string | null };
+      }
+    > = {};
     topItems.forEach((id) => {
       const throughputDates = dates.filter((date) => statsMap[date]?.[id]?.throughput != null);
       const ttftDates = dates.filter((date) => statsMap[date]?.[id]?.ttftMs != null);
       ranges[id] = {
-        throughput: throughputDates.length > 0
-          ? { first: throughputDates[0], last: throughputDates[throughputDates.length - 1] }
-          : { first: null, last: null },
-        ttft: ttftDates.length > 0
-          ? { first: ttftDates[0], last: ttftDates[ttftDates.length - 1] }
-          : { first: null, last: null },
+        throughput:
+          throughputDates.length > 0
+            ? { first: throughputDates[0], last: throughputDates[throughputDates.length - 1] }
+            : { first: null, last: null },
+        ttft: ttftDates.length > 0 ? { first: ttftDates[0], last: ttftDates[ttftDates.length - 1] } : { first: null, last: null },
       };
     });
     return ranges;
@@ -253,11 +253,7 @@ export function PerformanceChart({
   }
 
   if (!data || data.length === 0 || topItems.length === 0) {
-    return (
-      <div className='flex h-[350px] items-center justify-center text-muted-foreground'>
-        {emptyMessage}
-      </div>
-    );
+    return <div className='text-muted-foreground flex h-[350px] items-center justify-center'>{emptyMessage}</div>;
   }
 
   const chartData = dates.map((date) => {
@@ -301,11 +297,12 @@ export function PerformanceChart({
     .map((s) => s.throughput!)
     .sort((a, b) => a - b);
 
-  const maxThroughput = throughputValues.length > 10
-    ? throughputValues[Math.floor(throughputValues.length * 0.9)] || throughputValues[throughputValues.length - 1]
-    : throughputValues.length > 0
-      ? throughputValues[throughputValues.length - 1]
-      : 0;
+  const maxThroughput =
+    throughputValues.length > 10
+      ? throughputValues[Math.floor(throughputValues.length * 0.9)] || throughputValues[throughputValues.length - 1]
+      : throughputValues.length > 0
+        ? throughputValues[throughputValues.length - 1]
+        : 0;
   const throughputMax = Math.max(10, Math.ceil(maxThroughput * 1.1));
 
   const maxTtft = memoizedSafeData
@@ -316,12 +313,10 @@ export function PerformanceChart({
   const visibleItems = activeSeries ? [activeSeries] : topItems;
 
   // Dynamic Y-axis: use actual max if below cap, otherwise use cap
-  const yAxisDomain = displayMode === 'throughput'
-    ? [0, Math.min(throughputMax, MAX_CHART_THROUGHPUT)]
-    : [0, Math.min(ttftMax, MAX_CHART_TTFT_MS)];
-  const yAxisTickFormatter = displayMode === 'throughput'
-    ? (value: number) => formatNumber(value, { digits: 0 })
-    : (value: number) => formatDuration(value);
+  const yAxisDomain =
+    displayMode === 'throughput' ? [0, Math.min(throughputMax, MAX_CHART_THROUGHPUT)] : [0, Math.min(ttftMax, MAX_CHART_TTFT_MS)];
+  const yAxisTickFormatter =
+    displayMode === 'throughput' ? (value: number) => formatNumber(value, { digits: 0 }) : (value: number) => formatDuration(value);
 
   const gradientPrefix = idField === 'modelId' ? 'model' : 'channel';
 
@@ -350,14 +345,7 @@ export function PerformanceChart({
             ))}
           </defs>
           <CartesianGrid strokeDasharray='3 3' stroke='var(--border)' vertical={false} />
-          <XAxis
-            dataKey='name'
-            stroke='var(--muted-foreground)'
-            fontSize={12}
-            tickLine={true}
-            axisLine={true}
-            padding={{ right: 24 }}
-          />
+          <XAxis dataKey='name' stroke='var(--muted-foreground)' fontSize={12} tickLine={true} axisLine={true} padding={{ right: 24 }} />
           <YAxis
             stroke='var(--muted-foreground)'
             fontSize={12}
@@ -412,8 +400,9 @@ export function PerformanceChart({
                 <span className='h-2.5 w-2.5 rounded-full' style={{ backgroundColor: item.color }} />
                 <span className='font-medium'>{item.name}</span>
               </span>
-              <span className='text-xs text-muted-foreground tabular-nums 2xl:text-right'>
-                {formatNumber(item.avgThroughput, { digits: 0 })} {t('dashboard.stats.throughput')} · {t('dashboard.stats.ttft')} {formatDuration(item.avgTtft)}
+              <span className='text-muted-foreground text-xs tabular-nums 2xl:text-right'>
+                {formatNumber(item.avgThroughput, { digits: 0 })} {t('dashboard.stats.throughput')} · {t('dashboard.stats.ttft')}{' '}
+                {formatDuration(item.avgTtft)}
               </span>
             </button>
           );

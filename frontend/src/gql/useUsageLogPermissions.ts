@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { useAuthStore } from '@/stores/authStore';
+
 import { useMe } from '@/features/auth/data/auth';
+import { useAuthStore } from '@/stores/authStore';
 
 export interface UsageLogPermissions {
   canViewUsers: boolean;

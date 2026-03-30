@@ -1,7 +1,9 @@
-import { z } from 'zod';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { z } from 'zod';
+
 import { useErrorHandler } from '@/hooks/use-error-handler';
+
 import { graphqlRequest } from './graphql';
 
 // Scope Info schema

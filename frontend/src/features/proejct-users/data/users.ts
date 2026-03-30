@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { graphqlRequest } from '@/gql/graphql';
-import { USERS_QUERY, CREATE_USER_MUTATION, UPDATE_USER_MUTATION, UPDATE_USER_STATUS_MUTATION } from '@/gql/users';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { useSelectedProjectId } from '@/stores/projectStore';
+
+import { graphqlRequest } from '@/gql/graphql';
+import { USERS_QUERY, CREATE_USER_MUTATION, UPDATE_USER_MUTATION, UPDATE_USER_STATUS_MUTATION } from '@/gql/users';
 import { useErrorHandler } from '@/hooks/use-error-handler';
 import { useRequestPermissions } from '@/hooks/useRequestPermissions';
+import { useSelectedProjectId } from '@/stores/projectStore';
+
 import { User, UserConnection, ProjectUser, CreateUserInput, UpdateUserInput, userSchema, projectUserSchema } from './schema';
 
 // Dynamic GraphQL query builder for project-level users

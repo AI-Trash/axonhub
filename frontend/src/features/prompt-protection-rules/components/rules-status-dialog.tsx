@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,8 +11,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { PromptProtectionRule } from '../data/schema';
+
 import { useUpdatePromptProtectionRuleStatus } from '../data/rules';
+import { PromptProtectionRule } from '../data/schema';
 
 interface RulesStatusDialogProps {
   open: boolean;

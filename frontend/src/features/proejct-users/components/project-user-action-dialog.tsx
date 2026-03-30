@@ -1,24 +1,26 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { z } from 'zod';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { graphqlRequest } from '@/gql/graphql';
-import { ROLES_QUERY } from '@/gql/roles';
 import { Search } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { useAuthStore } from '@/stores/authStore';
-import { useSelectedProjectId } from '@/stores/projectStore';
-import { canEditUserPermissions } from '@/lib/permission-utils';
+import { z } from 'zod';
+
+import { ScopesSelect } from '@/components/scopes-select';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ScopesSelect } from '@/components/scopes-select';
+import { graphqlRequest } from '@/gql/graphql';
+import { ROLES_QUERY } from '@/gql/roles';
+import { canEditUserPermissions } from '@/lib/permission-utils';
+import { useAuthStore } from '@/stores/authStore';
+import { useSelectedProjectId } from '@/stores/projectStore';
+
 import { User } from '../data/schema';
 import { useAddUserToProject, useUpdateProjectUser, useAllUsers } from '../data/users';
 
@@ -189,15 +191,9 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
     >
       <DialogContent className='sm:max-w-2xl' ref={setDialogContent}>
         <DialogHeader className='text-left'>
-          <DialogTitle>
-            {isEdit
-              ? t('users.dialogs.edit.title')
-              : t('users.dialogs.addToProject.title')}
-          </DialogTitle>
+          <DialogTitle>{isEdit ? t('users.dialogs.edit.title') : t('users.dialogs.addToProject.title')}</DialogTitle>
           <DialogDescription>
-            {isEdit
-              ? t('users.dialogs.edit.description')
-              : t('users.dialogs.addToProject.description')}
+            {isEdit ? t('users.dialogs.edit.description') : t('users.dialogs.addToProject.description')}
           </DialogDescription>
         </DialogHeader>
 

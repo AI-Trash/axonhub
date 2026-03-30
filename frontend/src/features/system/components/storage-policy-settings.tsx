@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
 import { Loader2, Save, Play } from 'lucide-react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,13 +20,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+
 import { useSystemContext } from '../context/system-context';
-import {
-  useStoragePolicy,
-  useUpdateStoragePolicy,
-  useTriggerGcCleanup,
-  CleanupOption,
-} from '../data/system';
+import { useStoragePolicy, useUpdateStoragePolicy, useTriggerGcCleanup, CleanupOption } from '../data/system';
 
 export function StoragePolicySettings() {
   const { t } = useTranslation();
@@ -109,25 +106,15 @@ export function StoragePolicySettings() {
           </div>
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button
-                variant='outline'
-                size='sm'
-                disabled={triggerGcCleanup.isPending || isLoading}
-              >
-                {triggerGcCleanup.isPending ? (
-                  <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                ) : (
-                  <Play className='mr-2 h-4 w-4' />
-                )}
+              <Button variant='outline' size='sm' disabled={triggerGcCleanup.isPending || isLoading}>
+                {triggerGcCleanup.isPending ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Play className='mr-2 h-4 w-4' />}
                 {t('system.storage.policy.runCleanupNow')}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>{t('system.storage.policy.runCleanupConfirmTitle')}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {t('system.storage.policy.runCleanupConfirmDescription')}
-                </AlertDialogDescription>
+                <AlertDialogDescription>{t('system.storage.policy.runCleanupConfirmDescription')}</AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>{t('system.storage.policy.runCleanupCancel')}</AlertDialogCancel>

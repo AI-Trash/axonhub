@@ -1,7 +1,7 @@
-import * as React from 'react';
 import { ChevronsUpDown, FolderKanban } from 'lucide-react';
+import * as React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useProjectStore } from '@/stores/projectStore';
+
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useMyProjects } from '@/features/projects/data/projects';
+import { useProjectStore } from '@/stores/projectStore';
 
 export function ProjectSwitcher() {
   const { data: myProjects, isLoading: isLoadingProjects } = useMyProjects();

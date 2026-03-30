@@ -1,9 +1,9 @@
-import React from 'react';
 import { DotsHorizontalIcon } from '@radix-ui/react-icons';
-import { Row } from '@tanstack/react-table';
 import { IconEdit, IconTrash } from '@tabler/icons-react';
+import { Row } from '@tanstack/react-table';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { usePermissions } from '@/hooks/usePermissions';
+
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -12,6 +12,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { usePermissions } from '@/hooks/usePermissions';
+
 import { useRolesContext } from '../context/roles-context';
 import { Role } from '../data/schema';
 

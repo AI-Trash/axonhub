@@ -1,4 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
+
 import { graphqlRequest } from './graphql';
 
 export interface Model {

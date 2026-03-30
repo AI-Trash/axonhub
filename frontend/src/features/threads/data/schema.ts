@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { pageInfoSchema } from '@/gql/pagination';
+
 import { traceConnectionSchema, usageMetadataSchema } from '@/features/traces/data/schema';
+import { pageInfoSchema } from '@/gql/pagination';
 
 const projectSchema = z
   .object({

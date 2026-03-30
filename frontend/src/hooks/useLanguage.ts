@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { graphqlRequest } from '@/gql/graphql';
-import { UPDATE_ME_MUTATION } from '@/gql/users';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+
+import { graphqlRequest } from '@/gql/graphql';
+import { UPDATE_ME_MUTATION } from '@/gql/users';
 import { useAuthStore } from '@/stores/authStore';
 
 export function useLanguage() {

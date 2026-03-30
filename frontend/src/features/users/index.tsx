@@ -1,10 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { Header } from '@/components/layout/header';
+import { Main } from '@/components/layout/main';
 import { useDebounce } from '@/hooks/use-debounce';
 import { usePaginationSearch } from '@/hooks/use-pagination-search';
 import { usePermissions } from '@/hooks/usePermissions';
-import { Header } from '@/components/layout/header';
-import { Main } from '@/components/layout/main';
+
 import { createColumns } from './components/users-columns';
 import { UsersDialogs } from './components/users-dialogs';
 import { UsersPrimaryButtons } from './components/users-primary-buttons';
@@ -108,7 +110,7 @@ export default function UsersManagement() {
         <div className='flex flex-1 items-center justify-between'>
           <div>
             <h2 className='text-xl font-bold tracking-tight'>{t('users.title')}</h2>
-            <p className='text-sm text-muted-foreground'>{t('users.description')}</p>
+            <p className='text-muted-foreground text-sm'>{t('users.description')}</p>
           </div>
           <UsersPrimaryButtons />
         </div>

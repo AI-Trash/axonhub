@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from 'react';
 import { useNavigate, useRouterState } from '@tanstack/react-router';
+import { useCallback, useMemo } from 'react';
 
 interface UsePaginationSearchOptions {
   defaultPageSize?: number;
@@ -134,7 +134,6 @@ export function usePaginationSearch(options: UsePaginationSearchOptions = {}): U
       cursorDirection: parsedDirection,
       cursorHistory: parsedCursorHistory,
     };
-     
   }, [rawStartCursor, rawEndCursor, rawPageSize, rawDirection, rawCursorHistory, defaultPageSize, defaultDirection, pageSizeStorageKey]);
 
   const updateSearch = useCallback(

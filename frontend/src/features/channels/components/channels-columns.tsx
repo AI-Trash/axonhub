@@ -1,7 +1,4 @@
-import { useCallback, useState, memo, useRef, useEffect } from 'react';
-import { format } from 'date-fns';
 import { DotsHorizontalIcon } from '@radix-ui/react-icons';
-import { ColumnDef, Row, Table } from '@tanstack/react-table';
 import {
   IconPlayerPlay,
   IconChevronDown,
@@ -21,13 +18,15 @@ import {
   IconLoader2,
   IconKeyOff,
 } from '@tabler/icons-react';
+import { ColumnDef, Row, Table } from '@tanstack/react-table';
+import { format } from 'date-fns';
+import { useCallback, useState, memo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { cn } from '@/lib/utils';
-import { usePermissions } from '@/hooks/usePermissions';
+
+import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,9 +34,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { DataTableColumnHeader } from '@/components/data-table-column-header';
+import { usePermissions } from '@/hooks/usePermissions';
+import { cn } from '@/lib/utils';
+
 import { useChannels } from '../context/channels-context';
 import { useTestChannel, useUpdateChannel } from '../data/channels';
 import { CHANNEL_CONFIGS, getProvider } from '../data/config_channels';
@@ -316,9 +318,7 @@ const NameCell = memo(({ row }: { row: Row<Channel> }) => {
       <Tooltip>
         <TooltipTrigger asChild>{content}</TooltipTrigger>
         <TooltipContent>
-          <p className='text-sm text-amber-500'>
-            {t('channels.actions.disabledAPIKeys', { count: disabledKeysCount })}
-          </p>
+          <p className='text-sm text-amber-500'>{t('channels.actions.disabledAPIKeys', { count: disabledKeysCount })}</p>
         </TooltipContent>
       </Tooltip>
     );
@@ -484,11 +484,9 @@ const OrderingWeightCell = memo(({ row }: { row: Row<Channel> }) => {
   }
 
   return (
-    <div className='flex items-center justify-center gap-2 group cursor-pointer' onDoubleClick={handleDoubleClick}>
-      <span className={cn('font-mono text-sm', initialWeight == null && 'text-muted-foreground')}>
-        {initialWeight ?? '-'}
-      </span>
-      {updateChannel.isPending && <IconLoader2 className='h-3 w-3 animate-spin text-muted-foreground' />}
+    <div className='group flex cursor-pointer items-center justify-center gap-2' onDoubleClick={handleDoubleClick}>
+      <span className={cn('font-mono text-sm', initialWeight == null && 'text-muted-foreground')}>{initialWeight ?? '-'}</span>
+      {updateChannel.isPending && <IconLoader2 className='text-muted-foreground h-3 w-3 animate-spin' />}
     </div>
   );
 });

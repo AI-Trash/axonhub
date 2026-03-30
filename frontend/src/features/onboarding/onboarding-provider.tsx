@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+
 import { useOnboardingInfo } from '@/features/system/data/system';
 import { useAuthStore } from '@/stores/authStore';
+
 import { AutoDisableChannelOnboardingFlow } from './auto-disable-channel-onboarding-flow';
 import { OnboardingFlow } from './onboarding-flow';
 

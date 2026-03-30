@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { pageInfoSchema } from '@/gql/pagination';
+
 import { channelSchema } from '@/features/channels/data';
+import { pageInfoSchema } from '@/gql/pagination';
 
 // Usage Log Source
 export const usageLogSourceSchema = z.enum(['api', 'playground', 'test']);

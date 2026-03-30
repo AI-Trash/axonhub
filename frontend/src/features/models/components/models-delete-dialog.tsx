@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -9,6 +10,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
 import { useModels } from '../context/models-context';
 import { useDeleteModel } from '../data/models';
 
@@ -27,8 +29,7 @@ export function ModelsDeleteDialog() {
         await deleteModel.mutateAsync(model.id);
       }
       setOpen(null);
-    } catch (error) {
-    }
+    } catch (error) {}
   };
 
   const handleClose = () => {

@@ -1,11 +1,13 @@
 import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { buildDateRangeWhereClause, type DateTimeRangeValue } from '@/utils/date-range';
+
+import { Header } from '@/components/layout/header';
+import { Main } from '@/components/layout/main';
 import { useDebounce } from '@/hooks/use-debounce';
 import { usePaginationSearch } from '@/hooks/use-pagination-search';
 import useInterval from '@/hooks/useInterval';
-import { Header } from '@/components/layout/header';
-import { Main } from '@/components/layout/main';
+import { buildDateRangeWhereClause, type DateTimeRangeValue } from '@/utils/date-range';
+
 import { ThreadsTable } from './components/threads-table';
 import type { Thread } from './data/schema';
 import { useThreads } from './data/threads';
@@ -120,7 +122,7 @@ export default function ThreadsManagement() {
         <div className='flex flex-1 items-center justify-between'>
           <div>
             <h2 className='text-xl font-bold tracking-tight'>{t('threads.title')}</h2>
-            <p className='text-sm text-muted-foreground'>{t('threads.description')}</p>
+            <p className='text-muted-foreground text-sm'>{t('threads.description')}</p>
           </div>
         </div>
       </Header>

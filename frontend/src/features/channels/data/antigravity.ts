@@ -1,22 +1,26 @@
-import { apiRequest } from '@/lib/api-client'
-import { ProxyConfig } from '../hooks/use-oauth-flow'
+import { apiRequest } from '@/lib/api-client';
 
-export async function antigravityOAuthStart(headers?: Record<string, string>, projectId?: string): Promise<{ session_id: string; auth_url: string }> {
+import { ProxyConfig } from '../hooks/use-oauth-flow';
+
+export async function antigravityOAuthStart(
+  headers?: Record<string, string>,
+  projectId?: string
+): Promise<{ session_id: string; auth_url: string }> {
   return apiRequest('/admin/antigravity/oauth/start', {
     method: 'POST',
     body: {
-        project_id: projectId
+      project_id: projectId,
     },
     headers,
     requireAuth: true,
-  })
+  });
 }
 
 export async function antigravityOAuthExchange(
   input: {
-    session_id: string
-    callback_url: string
-    proxy?: ProxyConfig
+    session_id: string;
+    callback_url: string;
+    proxy?: ProxyConfig;
   },
   headers?: Record<string, string>
 ): Promise<{ credentials: string }> {
@@ -25,5 +29,5 @@ export async function antigravityOAuthExchange(
     body: input,
     headers,
     requireAuth: true,
-  })
+  });
 }

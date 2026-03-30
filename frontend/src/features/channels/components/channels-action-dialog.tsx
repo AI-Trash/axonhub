@@ -1,14 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
-import { z } from 'zod';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { X, RefreshCw, Search, ChevronLeft, ChevronRight, PanelLeft, Plus, Trash2, Eye, EyeOff, Copy, Play, Info } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { useVirtualizer } from '@tanstack/react-virtual';
-import { useSelectedProjectId } from '@/stores/projectStore';
+import { z } from 'zod';
+
+import { AutoCompleteSelect } from '@/components/auto-complete-select';
+import { SelectDropdown } from '@/components/select-dropdown';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -23,8 +25,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TagsAutocompleteInput } from '@/components/ui/tags-autocomplete-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { AutoCompleteSelect } from '@/components/auto-complete-select';
-import { SelectDropdown } from '@/components/select-dropdown';
+import { useProxyPresets, useSaveProxyPreset } from '@/features/system/data/system';
+import { useSelectedProjectId } from '@/stores/projectStore';
+
 import { antigravityOAuthExchange, antigravityOAuthStart } from '../data/antigravity';
 import {
   useCreateChannel,
@@ -54,12 +57,11 @@ import {
 } from '../data/config_providers';
 import { Channel, ChannelType, ApiFormat, createChannelInputSchema, updateChannelInputSchema } from '../data/schema';
 import { ProxyConfig, useOAuthFlow } from '../hooks/use-oauth-flow';
-import { ManualModelBadge } from './manual-model-badge';
-import { CopilotDeviceFlow } from './copilot-device-flow';
-import { ProxyType } from './channels-proxy-dialog';
-import { useProxyPresets, useSaveProxyPreset } from '@/features/system/data/system';
 import { mergeChannelSettingsForUpdate } from '../utils/merge';
 import { matchesModelPattern } from '../utils/pattern';
+import { ProxyType } from './channels-proxy-dialog';
+import { CopilotDeviceFlow } from './copilot-device-flow';
+import { ManualModelBadge } from './manual-model-badge';
 
 interface Props {
   currentRow?: Channel;
@@ -91,68 +93,59 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 // Memoized FetchedModelItem component
-const FetchedModelItem = memo(({
-  model,
-  isAdded,
-  isSelected,
-  onToggle,
-  addedLabel,
-  willRemoveLabel
-}: {
-  model: string;
-  isAdded: boolean;
-  isSelected: boolean;
-  onToggle: () => void;
-  addedLabel: string;
-  willRemoveLabel: string;
-}) => (
-  <div
-    className={`flex items-center gap-2 rounded-md p-2 text-sm transition-colors ${
-      isAdded && !isSelected
-        ? 'bg-muted/50 text-muted-foreground'
-        : isSelected
-          ? 'bg-primary/10 border-primary/30 border'
-          : 'hover:bg-accent cursor-pointer'
-    }`}
-  >
-    <Checkbox checked={isSelected} onCheckedChange={onToggle} />
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className='flex-1 cursor-pointer truncate'
-          onClick={onToggle}
-        >
-          {model}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>
-        <p className='max-w-xs break-all'>{model}</p>
-      </TooltipContent>
-    </Tooltip>
-    {isAdded && !isSelected && (
-      <Badge variant='secondary' className='shrink-0 text-xs'>
-        {addedLabel}
-      </Badge>
-    )}
-    {isAdded && isSelected && (
-      <Badge variant='destructive' className='shrink-0 text-xs'>
-        {willRemoveLabel}
-      </Badge>
-    )}
-  </div>
-));
+const FetchedModelItem = memo(
+  ({
+    model,
+    isAdded,
+    isSelected,
+    onToggle,
+    addedLabel,
+    willRemoveLabel,
+  }: {
+    model: string;
+    isAdded: boolean;
+    isSelected: boolean;
+    onToggle: () => void;
+    addedLabel: string;
+    willRemoveLabel: string;
+  }) => (
+    <div
+      className={`flex items-center gap-2 rounded-md p-2 text-sm transition-colors ${
+        isAdded && !isSelected
+          ? 'bg-muted/50 text-muted-foreground'
+          : isSelected
+            ? 'bg-primary/10 border-primary/30 border'
+            : 'hover:bg-accent cursor-pointer'
+      }`}
+    >
+      <Checkbox checked={isSelected} onCheckedChange={onToggle} />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className='flex-1 cursor-pointer truncate' onClick={onToggle}>
+            {model}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className='max-w-xs break-all'>{model}</p>
+        </TooltipContent>
+      </Tooltip>
+      {isAdded && !isSelected && (
+        <Badge variant='secondary' className='shrink-0 text-xs'>
+          {addedLabel}
+        </Badge>
+      )}
+      {isAdded && isSelected && (
+        <Badge variant='destructive' className='shrink-0 text-xs'>
+          {willRemoveLabel}
+        </Badge>
+      )}
+    </div>
+  )
+);
 FetchedModelItem.displayName = 'FetchedModelItem';
 
 // Memoized SupportedModelItem component
-const SupportedModelItem = memo(({
-  model,
-  isManual,
-  onRemove
-}: {
-  model: string;
-  isManual: boolean;
-  onRemove: () => void;
-}) => (
+const SupportedModelItem = memo(({ model, isManual, onRemove }: { model: string; isManual: boolean; onRemove: () => void }) => (
   <div className='hover:bg-accent flex items-center gap-2 rounded-md p-2 text-sm'>
     <Tooltip>
       <TooltipTrigger asChild>
@@ -163,13 +156,7 @@ const SupportedModelItem = memo(({
       </TooltipContent>
     </Tooltip>
     <ManualModelBadge isManual={isManual} />
-    <Button
-      type='button'
-      variant='ghost'
-      size='sm'
-      className='hover:text-destructive h-6 w-6 shrink-0 p-0'
-      onClick={onRemove}
-    >
+    <Button type='button' variant='ghost' size='sm' className='hover:text-destructive h-6 w-6 shrink-0 p-0' onClick={onRemove}>
       <X className='h-3 w-3' />
     </Button>
   </div>
@@ -586,8 +573,6 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
   const isClaudeCodeType = (selectedType || derivedChannelType) === 'claudecode';
   const isCopilotType = (selectedType || derivedChannelType) === 'github_copilot';
 
-
-
   // OAuth providers cannot have their provider/API format changed during edit.
   // Derived from currentRow credentials so it stays stable across re-renders
   // and is not affected by mutable authMode state.
@@ -859,7 +844,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
             </Button>
           </div>
 
-          <p className='text-amber-600 dark:text-amber-400 mt-2 text-xs'>{t('channels.dialogs.proxy.oauthHint')}</p>
+          <p className='mt-2 text-xs text-amber-600 dark:text-amber-400'>{t('channels.dialogs.proxy.oauthHint')}</p>
           <p className='text-muted-foreground mt-2 text-xs'>{description}</p>
         </div>
       </div>
@@ -1158,7 +1143,15 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
       models = models.filter((model) => model.toLowerCase().includes(search));
     }
     return models;
-  }, [fetchedModels, debouncedFetchedModelsSearch, showNotAddedModelsOnly, supportedModels, applyPatternFilter, watchedAutoSyncPattern, patternError]);
+  }, [
+    fetchedModels,
+    debouncedFetchedModelsSearch,
+    showNotAddedModelsOnly,
+    supportedModels,
+    applyPatternFilter,
+    watchedAutoSyncPattern,
+    patternError,
+  ]);
 
   // Toggle selection for fetched model
   const toggleFetchedModelSelection = useCallback((model: string) => {
@@ -1248,13 +1241,9 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
     const fetchedModelsSet = new Set(fetchedModels);
     const manualModelsSet = new Set(manualModels);
     // Deprecated = not fetched AND not manual
-    const deprecatedModels = supportedModels.filter(
-      (model) => !fetchedModelsSet.has(model) && !manualModelsSet.has(model)
-    );
+    const deprecatedModels = supportedModels.filter((model) => !fetchedModelsSet.has(model) && !manualModelsSet.has(model));
     // Keep fetched models and manual models in supportedModels
-    setSupportedModels((prev) =>
-      prev.filter((model) => fetchedModelsSet.has(model) || manualModelsSet.has(model))
-    );
+    setSupportedModels((prev) => prev.filter((model) => fetchedModelsSet.has(model) || manualModelsSet.has(model)));
     // Remove deprecated models from manualModels (should be none, but for consistency)
     setManualModels((prev) => prev.filter((model) => !deprecatedModels.includes(model)));
   }, [fetchedModels, supportedModels, manualModels]);
@@ -1264,9 +1253,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
     const fetchedModelsSet = new Set(fetchedModels);
     const manualModelsSet = new Set(manualModels);
     // Count only models that are neither fetched nor manual
-    return supportedModels.filter(
-      (model) => !fetchedModelsSet.has(model) && !manualModelsSet.has(model)
-    ).length;
+    return supportedModels.filter((model) => !fetchedModelsSet.has(model) && !manualModelsSet.has(model)).length;
   }, [supportedModels, fetchedModels, manualModels]);
 
   // Models to display (limited to MAX_MODELS_DISPLAY unless expanded)
@@ -1379,11 +1366,17 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                           ref={providerListRef}
                           className={`flex-1 overflow-y-auto pr-2 ${isOAuthChannel ? 'cursor-not-allowed opacity-60' : ''}`}
                         >
-                          <RadioGroup value={selectedProvider} onValueChange={handleProviderChange} disabled={!!isOAuthChannel} className='space-y-2'>
+                          <RadioGroup
+                            value={selectedProvider}
+                            onValueChange={handleProviderChange}
+                            disabled={!!isOAuthChannel}
+                            className='space-y-2'
+                          >
                             {availableProviders.map((provider) => {
                               const Icon = provider.icon;
                               const isSelected = provider.key === selectedProvider;
-                              const isProviderDisabled = isOAuthChannel || (isEdit && !isOAuthChannel && alwaysOAuthProviderKeys.includes(provider.key));
+                              const isProviderDisabled =
+                                isOAuthChannel || (isEdit && !isOAuthChannel && alwaysOAuthProviderKeys.includes(provider.key));
                               return (
                                 <div
                                   key={provider.key}
@@ -1562,9 +1555,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                   </Button>
                                 </div>
 
-                                <p className='text-amber-600 dark:text-amber-400 mt-2 text-xs'>
-                                  {t('channels.dialogs.proxy.oauthHint')}
-                                </p>
+                                <p className='mt-2 text-xs text-amber-600 dark:text-amber-400'>{t('channels.dialogs.proxy.oauthHint')}</p>
                                 <p className='text-muted-foreground mt-2 text-xs'>
                                   {t('channels.dialogs.fields.apiFormat.antigravity.description')}
                                 </p>
@@ -1980,9 +1971,9 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                 size='sm'
                                 className='h-6 px-2 text-xs'
                                 onClick={() => {
-                                  setShowSupportedModelsPanel(true)
-                                  setShowFetchedModelsPanel(false)
-                                  setShowApiKeysPanel(false)
+                                  setShowSupportedModelsPanel(true);
+                                  setShowFetchedModelsPanel(false);
+                                  setShowApiKeysPanel(false);
                                 }}
                               >
                                 <ChevronRight className='mr-1 h-3 w-3' />
@@ -1999,7 +1990,9 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                               control={form.control}
                               name='autoSyncSupportedModels'
                               render={({ field }) => (
-                                <FormItem className={`flex items-center gap-2 ${isCodexType || isClaudeCodeType || isCopilotType ? 'opacity-60' : ''}`}>
+                                <FormItem
+                                  className={`flex items-center gap-2 ${isCodexType || isClaudeCodeType || isCopilotType ? 'opacity-60' : ''}`}
+                                >
                                   {wrapUnsupported(
                                     isCodexType || isClaudeCodeType || isCopilotType,
                                     <Checkbox
@@ -2089,9 +2082,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                     <p className='text-muted-foreground text-xs'>
                                       {t('channels.dialogs.fields.autoSyncModelPattern.description')}
                                     </p>
-                                    {patternError && (
-                                      <p className='text-destructive text-xs'>{patternError}</p>
-                                    )}
+                                    {patternError && <p className='text-destructive text-xs'>{patternError}</p>}
                                   </FormItem>
                                 )}
                               />
@@ -2254,7 +2245,10 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                 <div className='mb-3 flex items-center justify-between gap-2'>
                   <div className='flex flex-col gap-1.5'>
                     <label className='flex cursor-pointer items-center gap-2 text-xs'>
-                      <Checkbox checked={showNotAddedModelsOnly} onCheckedChange={(checked) => setShowNotAddedModelsOnly(checked === true)} />
+                      <Checkbox
+                        checked={showNotAddedModelsOnly}
+                        onCheckedChange={(checked) => setShowNotAddedModelsOnly(checked === true)}
+                      />
                       {t('channels.dialogs.fields.supportedModels.showNotAddedOnly')}
                     </label>
                     {watchedAutoSync && watchedAutoSyncPattern && !patternError && (
@@ -2373,89 +2367,98 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                       const validKeys = (apiKeys || []).map((k) => k.trim()).filter((k) => k.length > 0);
                       const isLastKey = validKeys.length <= 1;
                       return validKeys
-                      .filter((k) => {
-                        if (!apiKeysSearch.trim()) return true;
-                        const search = apiKeysSearch.trim().toLowerCase();
-                        return k.toLowerCase().includes(search) || k.slice(-4).toLowerCase().includes(search);
-                      })
-                      .map((key) => {
-                        const isSelected = selectedKeysToRemove.has(key);
-                        const isDisabled = disabledKeySet.has(key);
-                        const masked = key.length > 8 ? `${key.slice(0, 4)}****${key.slice(-4)}` : `****${key.slice(-4)}`;
+                        .filter((k) => {
+                          if (!apiKeysSearch.trim()) return true;
+                          const search = apiKeysSearch.trim().toLowerCase();
+                          return k.toLowerCase().includes(search) || k.slice(-4).toLowerCase().includes(search);
+                        })
+                        .map((key) => {
+                          const isSelected = selectedKeysToRemove.has(key);
+                          const isDisabled = disabledKeySet.has(key);
+                          const masked = key.length > 8 ? `${key.slice(0, 4)}****${key.slice(-4)}` : `****${key.slice(-4)}`;
 
-                        return (
-                          <div key={key} className='hover:bg-accent flex items-center justify-between gap-2 rounded-md p-2 text-sm'>
-                            <div className='flex min-w-0 items-center gap-2'>
-                              <Checkbox
-                                checked={isSelected}
-                                disabled={isLastKey}
-                                onCheckedChange={(checked) => {
-                                  setSelectedKeysToRemove((prev) => {
-                                    const next = new Set(prev);
-                                    if (checked) {
-                                      next.add(key);
-                                    } else {
-                                      next.delete(key);
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                aria-label={t('common.columns.selectRow')}
-                              />
+                          return (
+                            <div key={key} className='hover:bg-accent flex items-center justify-between gap-2 rounded-md p-2 text-sm'>
+                              <div className='flex min-w-0 items-center gap-2'>
+                                <Checkbox
+                                  checked={isSelected}
+                                  disabled={isLastKey}
+                                  onCheckedChange={(checked) => {
+                                    setSelectedKeysToRemove((prev) => {
+                                      const next = new Set(prev);
+                                      if (checked) {
+                                        next.add(key);
+                                      } else {
+                                        next.delete(key);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                  aria-label={t('common.columns.selectRow')}
+                                />
 
-                              <div className='min-w-0'>
-                                <div className='flex min-w-0 items-center gap-2'>
-                                  <code className='bg-muted shrink-0 rounded px-2 py-0.5 font-mono text-xs'>{masked}</code>
+                                <div className='min-w-0'>
+                                  <div className='flex min-w-0 items-center gap-2'>
+                                    <code className='bg-muted shrink-0 rounded px-2 py-0.5 font-mono text-xs'>{masked}</code>
+                                    {isDisabled && (
+                                      <Badge variant='destructive' className='h-5 px-2 text-[10px]'>
+                                        {t('channels.dialogs.fields.apiKey.disabled')}
+                                      </Badge>
+                                    )}
+                                  </div>
                                   {isDisabled && (
-                                    <Badge variant='destructive' className='h-5 px-2 text-[10px]'>
-                                      {t('channels.dialogs.fields.apiKey.disabled')}
-                                    </Badge>
+                                    <p className='text-muted-foreground mt-1 text-xs'>{t('channels.dialogs.fields.apiKey.disabledHint')}</p>
                                   )}
                                 </div>
-                                {isDisabled && (
-                                  <p className='text-muted-foreground mt-1 text-xs'>{t('channels.dialogs.fields.apiKey.disabledHint')}</p>
-                                )}
                               </div>
-                            </div>
 
-                            {isLastKey ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className='inline-flex'>
-                                    <Button type='button' variant='ghost' size='sm' className='text-muted-foreground h-7 w-7 p-0' disabled>
+                              {isLastKey ? (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className='inline-flex'>
+                                      <Button
+                                        type='button'
+                                        variant='ghost'
+                                        size='sm'
+                                        className='text-muted-foreground h-7 w-7 p-0'
+                                        disabled
+                                      >
+                                        <Trash2 className='h-4 w-4' />
+                                      </Button>
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>{t('channels.dialogs.fields.apiKey.mustKeepOne')}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              ) : (
+                                <Popover
+                                  open={confirmRemoveKey === key}
+                                  onOpenChange={(isOpen) => setConfirmRemoveKey(isOpen ? key : null)}
+                                >
+                                  <PopoverTrigger asChild>
+                                    <Button type='button' variant='ghost' size='sm' className='text-destructive h-7 w-7 p-0'>
                                       <Trash2 className='h-4 w-4' />
                                     </Button>
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>{t('channels.dialogs.fields.apiKey.mustKeepOne')}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : (
-                              <Popover open={confirmRemoveKey === key} onOpenChange={(isOpen) => setConfirmRemoveKey(isOpen ? key : null)}>
-                                <PopoverTrigger asChild>
-                                  <Button type='button' variant='ghost' size='sm' className='text-destructive h-7 w-7 p-0'>
-                                    <Trash2 className='h-4 w-4' />
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className='w-72'>
-                                  <div className='flex flex-col gap-3'>
-                                    <p className='text-sm'>{t('channels.dialogs.fields.apiKey.confirmRemoveSingle')}</p>
-                                    <div className='flex justify-end gap-2'>
-                                      <Button size='sm' variant='outline' onClick={() => setConfirmRemoveKey(null)}>
-                                        {t('common.buttons.cancel')}
-                                      </Button>
-                                      <Button size='sm' variant='destructive' onClick={() => removeApiKeys([key])}>
-                                        {t('common.buttons.confirm')}
-                                      </Button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className='w-72'>
+                                    <div className='flex flex-col gap-3'>
+                                      <p className='text-sm'>{t('channels.dialogs.fields.apiKey.confirmRemoveSingle')}</p>
+                                      <div className='flex justify-end gap-2'>
+                                        <Button size='sm' variant='outline' onClick={() => setConfirmRemoveKey(null)}>
+                                          {t('common.buttons.cancel')}
+                                        </Button>
+                                        <Button size='sm' variant='destructive' onClick={() => removeApiKeys([key])}>
+                                          {t('common.buttons.confirm')}
+                                        </Button>
+                                      </div>
                                     </div>
-                                  </div>
-                                </PopoverContent>
-                              </Popover>
-                            )}
-                          </div>
-                        );
-                      });
+                                  </PopoverContent>
+                                </Popover>
+                              )}
+                            </div>
+                          );
+                        });
                     })()}
                   </div>
                 </ScrollArea>
@@ -2590,11 +2593,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                             transform: `translateY(${virtualItem.start}px)`,
                           }}
                         >
-                          <SupportedModelItem
-                            model={model}
-                            isManual={isModelManual(model)}
-                            onRemove={() => removeModel(model)}
-                          />
+                          <SupportedModelItem model={model} isManual={isModelManual(model)} onRemove={() => removeModel(model)} />
                         </div>
                       );
                     })}

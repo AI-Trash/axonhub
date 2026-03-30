@@ -1,7 +1,9 @@
 import { IconSearch } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
-import { cn } from '@/lib/utils';
+
 import { useSearch } from '@/context/search-context';
+import { cn } from '@/lib/utils';
+
 import { Button } from './ui/button';
 
 interface Props {

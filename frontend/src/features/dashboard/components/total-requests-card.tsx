@@ -1,8 +1,10 @@
 import { Database } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { formatNumber } from '@/utils/format-number';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatNumber } from '@/utils/format-number';
+
 import { useDashboardStats } from '../data/dashboard';
 
 export function TotalRequestsCard() {

@@ -1,6 +1,7 @@
-import { ReactNode } from 'react';
 import { Link, useLocation } from '@tanstack/react-router';
 import { ChevronRight } from 'lucide-react';
+import { ReactNode } from 'react';
+
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   SidebarGroup,
@@ -13,6 +14,7 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from '@/components/ui/sidebar';
+
 import { Badge } from '../ui/badge';
 import {
   DropdownMenu,

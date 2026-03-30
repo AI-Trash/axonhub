@@ -1,4 +1,3 @@
-use crate::errors::not_implemented_response;
 use crate::handlers;
 use crate::middleware::{
     admin_auth, api_key_auth, gemini_auth, http_metrics, request_context, service_api_key_auth,
@@ -112,7 +111,8 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
 fn configure_jina(cfg: &mut ServiceConfig) {
     cfg.service(web::resource("/debug/context").route(web::to(handlers::debug_context)))
         .service(web::resource("/embeddings").route(web::post().to(handlers::jina::jina_embeddings)))
-        .service(web::resource("/rerank").route(web::post().to(handlers::jina::jina_rerank)));
+        .service(web::resource("/rerank").route(web::post().to(handlers::jina::jina_rerank)))
+        .default_service(web::route().to(handlers::not_found));
 }
 
 fn configure_anthropic(cfg: &mut ServiceConfig) {
@@ -122,7 +122,8 @@ fn configure_anthropic(cfg: &mut ServiceConfig) {
         )
         .service(
             web::resource("/models").route(web::get().to(handlers::anthropic::list_anthropic_models)),
-        );
+        )
+        .default_service(web::route().to(handlers::not_found));
 }
 
 fn configure_v1beta(cfg: &mut ServiceConfig) {
@@ -142,7 +143,8 @@ fn configure_openapi(cfg: &mut ServiceConfig) {
         )
         .service(
             web::resource("/v1/graphql").route(web::post().to(handlers::graphql::openapi_graphql)),
-        );
+        )
+        .default_service(web::route().to(handlers::not_found));
 }
 
 fn configure_doubao(cfg: &mut ServiceConfig) {
@@ -166,7 +168,18 @@ fn configure_doubao(cfg: &mut ServiceConfig) {
                     .wrap(api_key_auth())
                     .route(web::get().to(handlers::doubao::doubao_get_task))
                     .route(web::delete().to(handlers::doubao::doubao_delete_task)),
-            ),
+            )
+            .default_service(web::route().wrap(request_context()).wrap(api_key_auth()).to(
+                |req: HttpRequest| async move {
+                    crate::errors::not_implemented_response(
+                        "/*",
+                        Method::from(req.method().clone()),
+                        req.uri().clone(),
+                        None,
+                    )
+                    .into_response()
+                },
+            )),
     );
 }
 
@@ -201,7 +214,8 @@ fn configure_gemini(cfg: &mut ServiceConfig) {
 }
 
 fn configure_http_routes(cfg: &mut ServiceConfig) {
-    cfg.service(web::resource("/health").route(web::get().to(handlers::health)))
+    cfg.service(web::resource("/favicon").route(web::get().to(handlers::static_files::favicon)))
+        .service(web::resource("/health").route(web::get().to(handlers::health)))
         .service(
             web::scope("/admin")
                 .configure(configure_admin_public)
@@ -243,7 +257,8 @@ fn configure_http_routes(cfg: &mut ServiceConfig) {
                 .wrap(request_context())
                 .wrap(service_api_key_auth())
                 .configure(configure_openapi),
-        );
+        )
+        .default_service(web::route().to(handlers::static_files::serve_embedded_or_not_implemented));
 }
 
 pub fn router(
@@ -290,9 +305,17 @@ pub fn router_with_metrics_and_base_path(
 > {
     let normalized = base_path.trim();
     let prefixed = format!("/{}", normalized.trim_matches('/'));
+    let static_files_config = web::Data::new(handlers::static_files::StaticFilesConfig {
+        base_path: if normalized.is_empty() {
+            "/".to_owned()
+        } else {
+            prefixed.clone()
+        },
+    });
 
     App::new()
         .app_data(web::Data::new(state))
+        .app_data(static_files_config)
         .wrap(http_metrics(http_metrics_capability))
         .configure(move |cfg| {
             if normalized.is_empty() || normalized == "/" {
@@ -301,8 +324,4 @@ pub fn router_with_metrics_and_base_path(
                 cfg.service(web::scope(&prefixed).configure(configure_http_routes));
             }
         })
-        .default_service(web::to(|request: actix_web::HttpRequest| async move {
-            not_implemented_response("/*", request.method().clone(), request.uri().clone(), None)
-                .into_response()
-        }))
 }

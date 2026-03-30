@@ -2,10 +2,12 @@
 
 import { ExternalLink, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+
 import { useSystemVersion, useCheckForUpdate } from '../data/system';
 
 export function AboutSettings() {

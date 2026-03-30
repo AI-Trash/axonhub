@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next';
+
 import type { Span } from '../data/schema';
 
 const DEFAULT_SPAN_TYPE_KEY = 'default';

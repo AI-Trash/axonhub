@@ -1,12 +1,14 @@
 'use client';
 
 import { ColumnDef, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import type { PageInfo } from '@/gql/pagination';
 import { useTranslation } from 'react-i18next';
+
+import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableSkeleton } from '@/components/ui/table-skeleton';
-import { ServerSidePagination } from '@/components/server-side-pagination';
+import type { PageInfo } from '@/gql/pagination';
+
 import { DataStorage } from '../data/data-storages';
 
 interface DataStoragesTableProps {

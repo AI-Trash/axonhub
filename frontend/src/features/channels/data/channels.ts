@@ -1,10 +1,12 @@
-import { z } from 'zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { graphqlRequest } from '@/gql/graphql';
-import { pageInfoSchema } from '@/gql/pagination';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { z } from 'zod';
+
+import { graphqlRequest } from '@/gql/graphql';
+import { pageInfoSchema } from '@/gql/pagination';
 import { useErrorHandler } from '@/hooks/use-error-handler';
+
 import {
   Channel,
   ChannelConnection,
@@ -1343,10 +1345,10 @@ export function useEnableSelectedChannelAPIKeys() {
 
   return useMutation({
     mutationFn: async ({ channelID, keys }: { channelID: string; keys: string[] }) => {
-      const data = await graphqlRequest<{ enableSelectedChannelAPIKeys: boolean }>(
-        ENABLE_SELECTED_CHANNEL_API_KEYS_MUTATION,
-        { channelID, keys }
-      );
+      const data = await graphqlRequest<{ enableSelectedChannelAPIKeys: boolean }>(ENABLE_SELECTED_CHANNEL_API_KEYS_MUTATION, {
+        channelID,
+        keys,
+      });
       return data.enableSelectedChannelAPIKeys;
     },
     onSuccess: (_data, variables) => {
@@ -1375,7 +1377,7 @@ export function useDeleteDisabledChannelAPIKeys() {
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['channelDisabledAPIKeys', variables.channelID] });
       queryClient.invalidateQueries({ queryKey: ['channels'] });
-      
+
       // Show appropriate message based on the result
       if (data.message === 'ONE_KEY_PRESERVED') {
         toast.success(t('channels.messages.deleteDisabledAPIKeysPreserved'));

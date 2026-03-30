@@ -1,10 +1,12 @@
 'use client';
 
-import { format } from 'date-fns';
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
+import { format } from 'date-fns';
 import { useTranslation } from 'react-i18next';
+
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+
 import { Project } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
 
@@ -74,26 +76,26 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
       },
     },
     {
-          accessorKey: 'createdAt',
-          header: t('common.columns.createdAt'),
-          cell: ({ row }) => {
-            const date = row.getValue('createdAt') as Date;
-            return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
-          },
-        },
-        {
-          accessorKey: 'updatedAt',
-          header: t('common.columns.updatedAt'),
-          cell: ({ row }) => {
-            const date = row.getValue('updatedAt') as Date;
-            return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
-          },
-        },
-        {
-          id: 'actions',
-          header: t('common.columns.actions'),
-          cell: ({ row }) => <DataTableRowActions row={row} />,
-        }
+      accessorKey: 'createdAt',
+      header: t('common.columns.createdAt'),
+      cell: ({ row }) => {
+        const date = row.getValue('createdAt') as Date;
+        return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
+      },
+    },
+    {
+      accessorKey: 'updatedAt',
+      header: t('common.columns.updatedAt'),
+      cell: ({ row }) => {
+        const date = row.getValue('updatedAt') as Date;
+        return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
+      },
+    },
+    {
+      id: 'actions',
+      header: t('common.columns.actions'),
+      cell: ({ row }) => <DataTableRowActions row={row} />,
+    }
   );
 
   return columns;

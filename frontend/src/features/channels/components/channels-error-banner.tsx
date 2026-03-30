@@ -1,6 +1,7 @@
-import { memo } from 'react';
 import { AlertCircle, Filter } from 'lucide-react';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
@@ -11,7 +12,12 @@ interface ChannelsErrorBannerProps {
   onExitErrorOnlyMode?: () => void;
 }
 
-export const ChannelsErrorBanner = memo(function ChannelsErrorBanner({ errorCount, onFilterErrorChannels, showErrorOnly, onExitErrorOnlyMode }: ChannelsErrorBannerProps) {
+export const ChannelsErrorBanner = memo(function ChannelsErrorBanner({
+  errorCount,
+  onFilterErrorChannels,
+  showErrorOnly,
+  onExitErrorOnlyMode,
+}: ChannelsErrorBannerProps) {
   const { t } = useTranslation();
 
   if (errorCount === 0) {

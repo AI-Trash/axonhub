@@ -1,10 +1,11 @@
 'use client';
 
+import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 
 interface ScopesCellProps {
   scopes: string[];
@@ -35,7 +36,7 @@ export function ScopesCell({ scopes }: ScopesCellProps) {
           variant='ghost'
           size='sm'
           onClick={() => setIsExpanded(!isExpanded)}
-          className='h-6 px-2 text-xs text-muted-foreground hover:text-foreground'
+          className='text-muted-foreground hover:text-foreground h-6 px-2 text-xs'
         >
           {isExpanded ? (
             <>
@@ -44,8 +45,7 @@ export function ScopesCell({ scopes }: ScopesCellProps) {
             </>
           ) : (
             <>
-              <IconChevronDown className='mr-1 h-3 w-3' />
-              +{scopes.length - 3} {t('roles.columns.moreScopes')}
+              <IconChevronDown className='mr-1 h-3 w-3' />+{scopes.length - 3} {t('roles.columns.moreScopes')}
             </>
           )}
         </Button>

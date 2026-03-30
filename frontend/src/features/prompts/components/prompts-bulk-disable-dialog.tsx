@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
 import { usePrompts } from '../context/prompts-context';
 import { useBulkDisablePrompts } from '../data/prompts';
 
@@ -30,9 +32,7 @@ export function PromptsBulkDisableDialog() {
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{t('prompts.dialogs.bulkDisable.title')}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {t('prompts.dialogs.bulkDisable.description', { count: selectedPrompts.length })}
-          </AlertDialogDescription>
+          <AlertDialogDescription>{t('prompts.dialogs.bulkDisable.description', { count: selectedPrompts.length })}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{t('common.buttons.cancel')}</AlertDialogCancel>

@@ -1,22 +1,24 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { z } from 'zod';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { graphqlRequest } from '@/gql/graphql';
-import { ROLES_QUERY } from '@/gql/roles';
+import { useState, useEffect, useCallback } from 'react';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { useAuthStore } from '@/stores/authStore';
-import { filterGrantableRoles, canEditUserPermissions } from '@/lib/permission-utils';
-import { passwordConfirmationSchema } from '@/lib/validation';
+import { z } from 'zod';
+
+import { ScopesSelect } from '@/components/scopes-select';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { ScopesSelect } from '@/components/scopes-select';
+import { graphqlRequest } from '@/gql/graphql';
+import { ROLES_QUERY } from '@/gql/roles';
+import { filterGrantableRoles, canEditUserPermissions } from '@/lib/permission-utils';
+import { passwordConfirmationSchema } from '@/lib/validation';
+import { useAuthStore } from '@/stores/authStore';
+
 import { User, CreateUserInput, UpdateUserInput } from '../data/schema';
 import { useCreateUser, useUpdateUser } from '../data/users';
 
@@ -378,11 +380,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
 
         <DialogFooter>
           {isEdit && !canEdit && <p className='text-destructive mr-auto text-sm'>{t('users.errors.insufficientPermissions')}</p>}
-          <Button
-            type='button'
-            variant='outline'
-            onClick={() => onOpenChange(false)}
-          >
+          <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
             {t('common.buttons.cancel')}
           </Button>
           <Button type='submit' form='user-form' disabled={createUser.isPending || updateUser.isPending || (isEdit && !canEdit)}>

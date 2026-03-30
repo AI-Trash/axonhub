@@ -1,4 +1,5 @@
 import { z } from 'zod';
+
 import { pageInfoSchema } from '@/gql/pagination';
 
 // Project schema based on GraphQL schema

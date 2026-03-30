@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { graphqlRequest } from '@/gql/graphql';
 import { toast } from 'sonner';
-import { useSelectedProjectId } from '@/stores/projectStore';
-import i18n from '@/lib/i18n';
+
+import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
+import i18n from '@/lib/i18n';
+import { useSelectedProjectId } from '@/stores/projectStore';
+
 import { Role, RoleConnection, CreateRoleInput, UpdateRoleInput, roleConnectionSchema, roleSchema } from './schema';
 
 // GraphQL queries and mutations

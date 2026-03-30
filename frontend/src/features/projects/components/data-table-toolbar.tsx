@@ -1,6 +1,7 @@
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { Table } from '@tanstack/react-table';
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -22,11 +23,7 @@ export function DataTableToolbar<TData>({ table }: DataTableToolbarProps<TData>)
           className='h-8 w-[150px] lg:w-[300px]'
         />
         {isFiltered && (
-          <Button
-            variant='ghost'
-            onClick={() => table.resetColumnFilters()}
-            className='h-8 px-2 lg:px-3'
-          >
+          <Button variant='ghost' onClick={() => table.resetColumnFilters()} className='h-8 px-2 lg:px-3'>
             {t('common.filters.reset')}
             <Cross2Icon className='ml-2 h-4 w-4' />
           </Button>

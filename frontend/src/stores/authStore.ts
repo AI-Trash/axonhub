@@ -43,23 +43,21 @@ interface AuthState {
 export const getTokenFromStorage = (): string => {
   try {
     return localStorage.getItem(ACCESS_TOKEN) || '';
-    } catch (error) {
-      return '';
-    }
-  };
+  } catch (error) {
+    return '';
+  }
+};
 
 export const setTokenToStorage = (token: string): void => {
   try {
     localStorage.setItem(ACCESS_TOKEN, token);
-  } catch (error) {
-  }
+  } catch (error) {}
 };
 
 export const removeTokenFromStorage = (): void => {
   try {
     localStorage.removeItem(ACCESS_TOKEN);
-  } catch (error) {
-  }
+  } catch (error) {}
 };
 
 const getUserFromStorage = (): AuthUser | null => {
@@ -78,15 +76,13 @@ const setUserToStorage = (user: AuthUser | null): void => {
     } else {
       localStorage.removeItem(USER_INFO);
     }
-  } catch (error) {
-  }
+  } catch (error) {}
 };
 
 const removeUserFromStorage = (): void => {
   try {
     localStorage.removeItem(USER_INFO);
-  } catch (error) {
-  }
+  } catch (error) {}
 };
 
 export const useAuthStore = create<AuthState>()((set) => {

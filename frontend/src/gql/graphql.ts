@@ -1,6 +1,7 @@
 import { toast } from 'sonner';
-import { getTokenFromStorage, removeTokenFromStorage } from '@/stores/authStore';
+
 import i18n from '@/lib/i18n';
+import { getTokenFromStorage, removeTokenFromStorage } from '@/stores/authStore';
 
 export class GraphQLRequestError extends Error {
   status?: number;

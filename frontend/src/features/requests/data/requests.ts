@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { graphqlRequest } from '@/gql/graphql';
 import { useTranslation } from 'react-i18next';
-import { useSelectedProjectId } from '@/stores/projectStore';
+
+import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
+import { useSelectedProjectId } from '@/stores/projectStore';
+
 import { useRequestPermissions } from '../../../hooks/useRequestPermissions';
 import {
   Request,
@@ -307,9 +309,7 @@ export async function fetchAdjacentRequestPage(params: {
 }): Promise<{ requests: Request[]; pageInfo: RequestConnection['pageInfo'] }> {
   const query = buildRequestsQuery(params.permissions);
   const variables =
-    params.direction === 'older'
-      ? { first: params.pageSize, after: params.cursor }
-      : { last: params.pageSize, before: params.cursor };
+    params.direction === 'older' ? { first: params.pageSize, after: params.cursor } : { last: params.pageSize, before: params.cursor };
 
   const where: Record<string, any> = { ...params.where };
   if (params.projectId) where.projectID = params.projectId;

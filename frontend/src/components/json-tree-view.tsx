@@ -1,9 +1,10 @@
 'use client';
 
-import * as React from 'react';
 import { ChevronRight, ChevronDown, Copy, Check, MoreHorizontal, ChevronUp } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import * as React from 'react';
+
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 /*
 MIT License
@@ -65,7 +66,7 @@ export function JsonViewer({
   return (
     <JsonExpandContext.Provider value={{ globalStringExpanded, hideArrayIndices, expandDepth }}>
       <TooltipProvider>
-        <div className={cn('w-full min-w-0 overflow-x-hidden [contain:inline-size] font-mono text-sm', className)}>
+        <div className={cn('w-full min-w-0 overflow-x-hidden font-mono text-sm [contain:inline-size]', className)}>
           <JsonNode name={rootName} data={data} isRoot={true} defaultExpanded={defaultExpanded} />
         </div>
       </TooltipProvider>
@@ -97,16 +98,10 @@ function JsonNode({ name, data, isRoot = false, isArrayItem = false, defaultExpa
   };
 
   const dataType = data === null ? 'null' : Array.isArray(data) ? 'array' : typeof data;
-  const isExpandable =
-    data !== null &&
-    data !== undefined &&
-    !(data instanceof Date) &&
-    (dataType === 'object' || dataType === 'array');
-  const itemCount =
-    isExpandable && data !== null && data !== undefined ? Object.keys(data).length : 0;
+  const isExpandable = data !== null && data !== undefined && !(data instanceof Date) && (dataType === 'object' || dataType === 'array');
+  const itemCount = isExpandable && data !== null && data !== undefined ? Object.keys(data).length : 0;
 
-  const childDefaultExpanded =
-    !defaultExpanded ? false : expandDepth === 'all' ? true : dataType === 'array' ? true : level < expandDepth;
+  const childDefaultExpanded = !defaultExpanded ? false : expandDepth === 'all' ? true : dataType === 'array' ? true : level < expandDepth;
   const hideArrayItemName = isArrayItem && hideArrayIndices;
   const showName = !hideArrayItemName && name !== '';
 
@@ -115,7 +110,7 @@ function JsonNode({ name, data, isRoot = false, isArrayItem = false, defaultExpa
       {/* Row: use items-start so the key stays top-aligned when a value expands */}
       <div
         className={cn(
-          'hover:bg-muted/50 group/property relative flex w-full min-w-0 max-w-full cursor-pointer items-start gap-1 rounded px-0.5 py-0.5 pr-6',
+          'hover:bg-muted/50 group/property relative flex w-full max-w-full min-w-0 cursor-pointer items-start gap-1 rounded px-0.5 py-0.5 pr-6',
           isRoot && 'text-primary font-semibold'
         )}
         onClick={isExpandable ? handleToggle : undefined}
@@ -164,11 +159,7 @@ function JsonNode({ name, data, isRoot = false, isArrayItem = false, defaultExpa
           className='hover:bg-muted absolute top-0.5 right-0.5 shrink-0 rounded p-1 opacity-0 transition-opacity group-hover/property:opacity-100'
           title='Copy to clipboard'
         >
-          {isCopied ? (
-            <Check className='h-3 w-3 text-green-500' />
-          ) : (
-            <Copy className='text-muted-foreground h-3 w-3' />
-          )}
+          {isCopied ? <Check className='h-3 w-3 text-green-500' /> : <Copy className='text-muted-foreground h-3 w-3' />}
         </button>
       </div>
 
@@ -184,9 +175,7 @@ function JsonNode({ name, data, isRoot = false, isArrayItem = false, defaultExpa
               defaultExpanded={childDefaultExpanded}
             />
           ))}
-          <div className='text-muted-foreground py-0.5 pl-2 text-xs'>
-            {dataType === 'array' ? ']' : '}'}
-          </div>
+          <div className='text-muted-foreground py-0.5 pl-2 text-xs'>{dataType === 'array' ? ']' : '}'}</div>
         </div>
       )}
     </div>
@@ -195,21 +184,13 @@ function JsonNode({ name, data, isRoot = false, isArrayItem = false, defaultExpa
 
 /** Unescape doubly-escaped JSON sequences (literal \n → newline, etc.). */
 function unescapeJsonString(str: string): string {
-  return str
-    .replace(/\\n/g, '\n')
-    .replace(/\\t/g, '\t')
-    .replace(/\\r/g, '\r')
-    .replace(/\\"/g, '"')
-    .replace(/\\\\/g, '\\');
+  return str.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
 }
 
 /** Try to parse a string as JSON. Returns parsed value or null. */
 function tryParseJson(str: string): any {
   const trimmed = str.trim();
-  if (
-    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-    (trimmed.startsWith('[') && trimmed.endsWith(']'))
-  ) {
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
     try {
       return JSON.parse(trimmed);
     } catch {
@@ -307,7 +288,7 @@ function JsonValue({ data }: { data: any }) {
 
       return (
         <div
-          className='group/str flex w-full min-w-0 max-w-full cursor-pointer items-start text-emerald-500'
+          className='group/str flex w-full max-w-full min-w-0 cursor-pointer items-start text-emerald-500'
           onClick={(e) => {
             e.stopPropagation();
             setLocalExpanded(!isExpanded);
@@ -315,7 +296,7 @@ function JsonValue({ data }: { data: any }) {
         >
           {isExpanded ? (
             <pre
-              className='m-0 block min-w-0 max-w-full flex-1 overflow-hidden font-inherit text-inherit'
+              className='font-inherit m-0 block max-w-full min-w-0 flex-1 overflow-hidden text-inherit'
               style={{
                 whiteSpace: 'pre-wrap',
                 overflowWrap: 'anywhere',
@@ -327,7 +308,7 @@ function JsonValue({ data }: { data: any }) {
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
                 <span
-                  className='block min-w-0 max-w-full flex-1'
+                  className='block max-w-full min-w-0 flex-1'
                   style={{
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
@@ -336,9 +317,7 @@ function JsonValue({ data }: { data: any }) {
                 >{`"${normalized}"`}</span>
               </TooltipTrigger>
               <TooltipContent side='bottom' className='max-w-md p-2 text-xs break-words'>
-                <span className='whitespace-pre-wrap'>
-                  {`"${normalized.substring(0, 300)}${normalized.length > 300 ? '…' : ''}"`}
-                </span>
+                <span className='whitespace-pre-wrap'>{`"${normalized.substring(0, 300)}${normalized.length > 300 ? '…' : ''}"`}</span>
               </TooltipContent>
             </Tooltip>
           )}

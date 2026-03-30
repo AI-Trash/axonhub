@@ -3,8 +3,10 @@
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CartesianGrid, ResponsiveContainer, XAxis, YAxis, Tooltip, Area, AreaChart, Legend } from 'recharts';
-import { formatNumber } from '@/utils/format-number';
+
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatNumber } from '@/utils/format-number';
+
 import { useGeneralSettings } from '../../system/data/system';
 import { useDailyRequestStats } from '../data/dashboard';
 
@@ -111,7 +113,7 @@ export function DailyRequestStats() {
           tickLine={true}
           axisLine={true}
           padding={{ right: 24 }}
-        // padding={{ left: 16, right: 16 }}
+          // padding={{ left: 16, right: 16 }}
         />
         <YAxis
           yAxisId='left'

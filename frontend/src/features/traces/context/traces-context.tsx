@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, ReactNode } from 'react';
+
 import { Trace, RequestTrace, Span } from '../data/schema';
 
 interface TracesContextType {

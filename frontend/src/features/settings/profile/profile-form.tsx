@@ -1,20 +1,21 @@
-import { useRef } from 'react';
-import { z } from 'zod';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { graphqlRequest } from '@/gql/graphql';
-import { UPDATE_ME_MUTATION } from '@/gql/users';
 import { User, Upload } from 'lucide-react';
+import { useRef } from 'react';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { useAuthStore } from '@/stores/authStore';
+import { z } from 'zod';
+
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useMe } from '@/features/auth/data/auth';
+import { graphqlRequest } from '@/gql/graphql';
+import { UPDATE_ME_MUTATION } from '@/gql/users';
+import { useAuthStore } from '@/stores/authStore';
 
 type ProfileFormValues = {
   firstName: string;

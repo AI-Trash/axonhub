@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
 import { IconAlertCircle, IconSearch } from '@tabler/icons-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDebounce } from '@/hooks/use-debounce';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { useDebounce } from '@/hooks/use-debounce';
+
 import { useModels } from '../context/models-context';
 import { useQueryUnassociatedChannels } from '../data/models';
 import { ChannelModelsList } from './channel-models-list';
@@ -90,9 +92,7 @@ export function ModelsUnassociatedDialog() {
                 <ChannelModelsList
                   channels={channelsForList}
                   emptyMessage={
-                    debouncedSearchQuery.trim()
-                      ? t('models.unassociated.noSearchResults')
-                      : t('models.unassociated.noUnassociated')
+                    debouncedSearchQuery.trim() ? t('models.unassociated.noSearchResults') : t('models.unassociated.noUnassociated')
                   }
                 />
               </ScrollArea>

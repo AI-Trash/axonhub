@@ -6,6 +6,7 @@ pub(crate) mod graphql;
 pub(crate) mod jina;
 pub(crate) mod openai_v1;
 pub(crate) mod provider_edge;
+pub(crate) mod static_files;
 
 use crate::errors::{
     compatibility_bad_request_response, compatibility_error_response,

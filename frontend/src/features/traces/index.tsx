@@ -1,11 +1,13 @@
 import { useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { buildDateRangeWhereClause, type DateTimeRangeValue } from '@/utils/date-range';
+
+import { Header } from '@/components/layout/header';
+import { Main } from '@/components/layout/main';
 import { useDebounce } from '@/hooks/use-debounce';
 import { usePaginationSearch } from '@/hooks/use-pagination-search';
 import useInterval from '@/hooks/useInterval';
-import { Header } from '@/components/layout/header';
-import { Main } from '@/components/layout/main';
+import { buildDateRangeWhereClause, type DateTimeRangeValue } from '@/utils/date-range';
+
 import { TracesTable } from './components';
 import { TracesProvider } from './context';
 import { useTraces } from './data';
@@ -121,7 +123,7 @@ export default function TracesManagement() {
         <div className='flex flex-1 items-center justify-between'>
           <div>
             <h2 className='text-xl font-bold tracking-tight'>{t('traces.title')}</h2>
-            <p className='text-sm text-muted-foreground'>{t('traces.description')}</p>
+            <p className='text-muted-foreground text-sm'>{t('traces.description')}</p>
           </div>
         </div>
       </Header>

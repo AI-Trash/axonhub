@@ -1,11 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
+
 import useInterval from './useInterval';
 
 const MAX_ITEMS = 50;
 const parsedInterval = parseInt(import.meta.env.VITE_REQUESTS_ANIMATION_INTERVAL, 10);
 const ANIMATION_INTERVAL = !isNaN(parsedInterval) && parsedInterval > 0 ? parsedInterval : 500;
 
-export function useAnimatedList<T extends { id: string; createdAt: Date | string }>(data: T[], autoRefresh: boolean, pageSize: number = MAX_ITEMS) {
+export function useAnimatedList<T extends { id: string; createdAt: Date | string }>(
+  data: T[],
+  autoRefresh: boolean,
+  pageSize: number = MAX_ITEMS
+) {
   const [displayedData, setDisplayedData] = useState<T[]>(data);
   const queueRef = useRef<T[]>([]);
   const prevDataLengthRef = useRef<number>(data.length);
@@ -27,8 +32,7 @@ export function useAnimatedList<T extends { id: string; createdAt: Date | string
       const newDataMap = new Map(data.map((r) => [r.id, r]));
 
       // Compute the minimum timestamp from incoming data to establish the time window
-      const minTimestampOfNewData =
-        data.length > 0 ? Math.min(...data.map((item) => getTimestamp(item.createdAt))) : 0;
+      const minTimestampOfNewData = data.length > 0 ? Math.min(...data.map((item) => getTimestamp(item.createdAt))) : 0;
 
       // Only flag removals when the removed item is still within the new data's time window
       // Items pushed off by pagination (older than minTimestampOfNewData) should not trigger a reset

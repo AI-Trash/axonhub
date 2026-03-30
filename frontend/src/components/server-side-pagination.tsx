@@ -1,11 +1,12 @@
 'use client';
 
 import { ChevronLeftIcon, ChevronRightIcon, DoubleArrowLeftIcon } from '@radix-ui/react-icons';
-import type { PageInfo } from '@/gql/pagination';
 import { useTranslation } from 'react-i18next';
-import { usePaginationSearch } from '@/hooks/use-pagination-search';
+
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import type { PageInfo } from '@/gql/pagination';
+import { usePaginationSearch } from '@/hooks/use-pagination-search';
 
 interface ServerSidePaginationProps {
   pageInfo?: PageInfo;

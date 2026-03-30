@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
+
 import { Project } from '../data/schema';
 
 interface ProjectsContextType {

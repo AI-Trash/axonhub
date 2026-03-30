@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+
 import { gotoAndEnsureAuth } from './auth.utils';
 
 /**
@@ -17,7 +18,10 @@ test.describe('Mobile Header Layout', () => {
 
     test('shows all controls in header', async ({ page }) => {
       // Check if we're on an error page first
-      const errorPage = await page.getByRole('heading', { name: /system error/i }).isVisible().catch(() => false);
+      const errorPage = await page
+        .getByRole('heading', { name: /system error/i })
+        .isVisible()
+        .catch(() => false);
       if (errorPage) {
         test.skip();
         return;
@@ -51,7 +55,10 @@ test.describe('Mobile Header Layout', () => {
 
     test('hides controls from header', async ({ page }) => {
       // Check if we're on an error page first
-      const errorPage = await page.getByRole('heading', { name: /system error/i }).isVisible().catch(() => false);
+      const errorPage = await page
+        .getByRole('heading', { name: /system error/i })
+        .isVisible()
+        .catch(() => false);
       if (errorPage) {
         test.skip();
         return;
@@ -75,7 +82,10 @@ test.describe('Mobile Header Layout', () => {
 
     test('shows controls in sidebar', async ({ page }) => {
       // Check if we're on an error page first
-      const errorPage = await page.getByRole('heading', { name: /system error/i }).isVisible().catch(() => false);
+      const errorPage = await page
+        .getByRole('heading', { name: /system error/i })
+        .isVisible()
+        .catch(() => false);
       if (errorPage) {
         test.skip();
         return;
@@ -93,11 +103,17 @@ test.describe('Mobile Header Layout', () => {
       await expect(sidebarSettings).toBeVisible();
 
       // Language switch should be visible in sidebar
-      const sidebarLanguageSwitch = page.getByRole('button').filter({ has: page.locator('svg').first() }).first();
+      const sidebarLanguageSwitch = page
+        .getByRole('button')
+        .filter({ has: page.locator('svg').first() })
+        .first();
       await expect(sidebarLanguageSwitch).toBeVisible();
 
       // Theme switch should be visible in sidebar
-      const sidebarThemeSwitch = page.getByRole('button').filter({ has: page.locator('svg').first() }).nth(1);
+      const sidebarThemeSwitch = page
+        .getByRole('button')
+        .filter({ has: page.locator('svg').first() })
+        .nth(1);
       await expect(sidebarThemeSwitch).toBeVisible();
     });
   });
@@ -113,7 +129,10 @@ test.describe('Mobile Header Layout', () => {
 
     test('settings button navigates to /system', async ({ page }) => {
       // Check if we're on an error page first
-      const errorPage = await page.getByRole('heading', { name: /system error/i }).isVisible().catch(() => false);
+      const errorPage = await page
+        .getByRole('heading', { name: /system error/i })
+        .isVisible()
+        .catch(() => false);
       if (errorPage) {
         test.skip();
         return;
@@ -139,7 +158,10 @@ test.describe('Mobile Header Layout', () => {
 
     test('language switch is clickable in sidebar', async ({ page }) => {
       // Check if we're on an error page first
-      const errorPage = await page.getByRole('heading', { name: /system error/i }).isVisible().catch(() => false);
+      const errorPage = await page
+        .getByRole('heading', { name: /system error/i })
+        .isVisible()
+        .catch(() => false);
       if (errorPage) {
         test.skip();
         return;
@@ -153,7 +175,10 @@ test.describe('Mobile Header Layout', () => {
       }
 
       // Find and click language switch
-      const languageSwitch = page.getByRole('button').filter({ has: page.locator('svg').first() }).first();
+      const languageSwitch = page
+        .getByRole('button')
+        .filter({ has: page.locator('svg').first() })
+        .first();
 
       // Verify it's visible and enabled
       await expect(languageSwitch).toBeVisible();
@@ -166,7 +191,10 @@ test.describe('Mobile Header Layout', () => {
 
     test('theme switch is clickable in sidebar', async ({ page }) => {
       // Check if we're on an error page first
-      const errorPage = await page.getByRole('heading', { name: /system error/i }).isVisible().catch(() => false);
+      const errorPage = await page
+        .getByRole('heading', { name: /system error/i })
+        .isVisible()
+        .catch(() => false);
       if (errorPage) {
         test.skip();
         return;
@@ -180,7 +208,10 @@ test.describe('Mobile Header Layout', () => {
       }
 
       // Find and click theme switch
-      const themeSwitch = page.getByRole('button').filter({ has: page.locator('svg').first() }).nth(1);
+      const themeSwitch = page
+        .getByRole('button')
+        .filter({ has: page.locator('svg').first() })
+        .nth(1);
 
       // Verify it's visible and enabled
       await expect(themeSwitch).toBeVisible();
@@ -210,7 +241,10 @@ test.describe('Mobile Header Layout', () => {
 
     test('mobile header controls have proper ARIA attributes', async ({ page }) => {
       // Check if we're on an error page first
-      const errorPage = await page.getByRole('heading', { name: /system error/i }).isVisible().catch(() => false);
+      const errorPage = await page
+        .getByRole('heading', { name: /system error/i })
+        .isVisible()
+        .catch(() => false);
       if (errorPage) {
         test.skip();
         return;
@@ -223,7 +257,10 @@ test.describe('Mobile Header Layout', () => {
 
     test('mobile controls are keyboard navigable', async ({ page }) => {
       // Check if we're on an error page first
-      const errorPage = await page.getByRole('heading', { name: /system error/i }).isVisible().catch(() => false);
+      const errorPage = await page
+        .getByRole('heading', { name: /system error/i })
+        .isVisible()
+        .catch(() => false);
       if (errorPage) {
         test.skip();
         return;
@@ -248,7 +285,10 @@ test.describe('Mobile Header Layout', () => {
 
     test('language and theme switches have proper screen reader labels', async ({ page }) => {
       // Check if we're on an error page first
-      const errorPage = await page.getByRole('heading', { name: /system error/i }).isVisible().catch(() => false);
+      const errorPage = await page
+        .getByRole('heading', { name: /system error/i })
+        .isVisible()
+        .catch(() => false);
       if (errorPage) {
         test.skip();
         return;

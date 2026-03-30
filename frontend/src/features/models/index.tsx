@@ -1,14 +1,16 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
-import { SortingState } from '@tanstack/react-table';
 import { IconPlus, IconSettings, IconAlertCircle } from '@tabler/icons-react';
+import { SortingState } from '@tanstack/react-table';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDebounce } from '@/hooks/use-debounce';
-import { usePermissions } from '@/hooks/usePermissions';
-import { Button } from '@/components/ui/button';
+
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
 import { PermissionGuard } from '@/components/permission-guard';
+import { Button } from '@/components/ui/button';
 import { useOnboardingInfo } from '@/features/system/data/system';
+import { useDebounce } from '@/hooks/use-debounce';
+import { usePermissions } from '@/hooks/usePermissions';
+
 import { createColumns } from './components/models-columns';
 import { ModelsDialogs } from './components/models-dialogs';
 import { ModelsOnboardingFlow } from './components/models-onboarding-flow';

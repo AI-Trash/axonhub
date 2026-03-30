@@ -1,10 +1,12 @@
 'use client';
 
-import { forwardRef, useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { Check } from 'lucide-react';
 import { X } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { forwardRef, useCallback, useEffect, useRef, useState, useMemo } from 'react';
+
 import { TruncatedText } from '@/components/truncated-text';
+import { cn } from '@/lib/utils';
+
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 
 const MAX_DISPLAY = 100;
@@ -25,7 +27,6 @@ export const TagsAutocompleteInput = forwardRef<HTMLDivElement, TagsAutocomplete
     const [isComposing, setIsComposing] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-
 
     // Filter suggestions based on input and not already selected (capped for performance)
     const filteredSuggestions = useMemo(() => {

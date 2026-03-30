@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react';
-import { cn } from '@/lib/utils';
+
 import {
   Command,
   CommandDialog,
@@ -12,6 +12,7 @@ import {
   CommandShortcut,
 } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 
 export type ModelSelectorProps = ComponentProps<typeof Dialog>;
 

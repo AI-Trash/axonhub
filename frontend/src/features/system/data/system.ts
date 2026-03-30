@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { graphqlRequest } from '@/gql/graphql';
 import { toast } from 'sonner';
-import { getTokenFromStorage } from '@/stores/authStore';
-import i18n from '@/lib/i18n';
+
+import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
+import i18n from '@/lib/i18n';
+import { getTokenFromStorage } from '@/stores/authStore';
 
 // GraphQL queries and mutations
 const SYSTEM_VERSION_QUERY = `

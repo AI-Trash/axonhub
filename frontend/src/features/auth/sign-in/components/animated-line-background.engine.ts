@@ -100,7 +100,11 @@ export function isInFormArea(x: number, y: number, bounds: FormBounds): boolean 
   return x >= bounds.formLeft && x <= bounds.formRight && y >= bounds.formTop && y <= bounds.formBottom;
 }
 
-export function initParticles(canvasWidth: number, canvasHeight: number, bounds: FormBounds = getFormBounds(canvasWidth, canvasHeight)): Particle[] {
+export function initParticles(
+  canvasWidth: number,
+  canvasHeight: number,
+  bounds: FormBounds = getFormBounds(canvasWidth, canvasHeight)
+): Particle[] {
   const particles: Particle[] = [];
   const particleCount = 120;
   const leftSideCount = Math.floor(particleCount * 0.6);

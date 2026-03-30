@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+
 import { LanguageSwitch } from '@/components/language-switch';
 import { ThemeSwitch } from '@/components/theme-switch';
 

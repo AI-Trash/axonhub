@@ -1,12 +1,14 @@
-import Cookies from 'js-cookie';
 import { Outlet } from '@tanstack/react-router';
-import { cn } from '@/lib/utils';
-import { useVersionCheck } from '@/hooks/use-version-check';
-import { SidebarProvider } from '@/components/ui/sidebar';
+import Cookies from 'js-cookie';
+
 import { AppHeader } from '@/components/layout/app-header';
 import { AppSidebar } from '@/components/layout/app-sidebar';
 import SkipToMain from '@/components/skip-to-main';
+import { SidebarProvider } from '@/components/ui/sidebar';
 import { OnboardingProvider } from '@/features/onboarding';
+import { useVersionCheck } from '@/hooks/use-version-check';
+import { cn } from '@/lib/utils';
+
 import { useSidebarData } from './sidebar';
 
 interface Props {

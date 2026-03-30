@@ -1,11 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { driver } from 'driver.js';
+import { useCallback, useEffect, useState } from 'react';
+
 import 'driver.js/dist/driver.css';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCompleteOnboarding } from '@/features/system/data/system';

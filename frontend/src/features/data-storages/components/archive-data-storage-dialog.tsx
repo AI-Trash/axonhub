@@ -1,26 +1,16 @@
 'use client';
 
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
 import { useDataStoragesContext } from '../context/data-storages-context';
 import { useArchiveDataStorage } from '../data/data-storages';
 
 export function ArchiveDataStorageDialog() {
   const { t } = useTranslation();
-  const {
-    isArchiveDialogOpen,
-    setIsArchiveDialogOpen,
-    archiveDataStorage,
-    setArchiveDataStorage,
-  } = useDataStoragesContext();
+  const { isArchiveDialogOpen, setIsArchiveDialogOpen, archiveDataStorage, setArchiveDataStorage } = useDataStoragesContext();
   const archiveMutation = useArchiveDataStorage();
 
   const resetArchiveContext = () => {

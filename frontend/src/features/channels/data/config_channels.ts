@@ -1,9 +1,36 @@
+import {
+  OpenAI,
+  Anthropic,
+  Google,
+  DeepSeek,
+  Doubao,
+  Moonshot,
+  Zhipu,
+  OpenRouter,
+  XAI,
+  Volcengine,
+  SiliconCloud,
+  PPIO,
+  ZAI,
+  LongCat,
+  Minimax,
+  BurnCloud,
+  Vercel,
+  ModelScope,
+  Bailian,
+  Jina,
+  DeepInfra,
+  Github,
+  Claude,
+  Cerebras,
+  XiaomiMiMo,
+  Fireworks,
+} from '@lobehub/icons';
 import type { ComponentType } from 'react';
-import { OpenAI, Anthropic, Google, DeepSeek, Doubao, Moonshot, Zhipu, OpenRouter, XAI, Volcengine, SiliconCloud, PPIO, ZAI, LongCat, Minimax, BurnCloud, Vercel, ModelScope, Bailian, Jina, DeepInfra, Github, Claude, Cerebras, XiaomiMiMo, Fireworks } from '@lobehub/icons';
+
 import { NanoGPTIcon } from '../components/nanogpt-icon';
 import { BURNCLOUD_DEFAULT_MODELS } from './burncloud-models';
 import { ApiFormat, ChannelType } from './schema';
-
 
 export const OPENAI_CHAT_COMPLETIONS: ApiFormat = 'openai/chat_completions';
 export const OPENAI_RESPONSES: ApiFormat = 'openai/responses';
@@ -506,11 +533,7 @@ export const CHANNEL_CONFIGS: Record<ChannelType, ChannelConfig> = {
   fireworks: {
     channelType: 'fireworks',
     baseURL: 'https://api.fireworks.ai/inference/v1',
-    defaultModels: [
-      'accounts/fireworks/models/minimax-m2p5',
-      'accounts/fireworks/models/glm-5',
-      'accounts/fireworks/models/kimi-k2p5',
-    ],
+    defaultModels: ['accounts/fireworks/models/minimax-m2p5', 'accounts/fireworks/models/glm-5', 'accounts/fireworks/models/kimi-k2p5'],
     apiFormat: OPENAI_CHAT_COMPLETIONS,
     color: 'bg-orange-100 text-orange-800 border-orange-200',
     icon: Fireworks,

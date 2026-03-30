@@ -1,5 +1,7 @@
 import React, { useRef, useState } from 'react';
+
 import useDialogState from '@/hooks/use-dialog-state';
+
 import { Channel } from '../data/schema';
 
 type ChannelsDialogType =

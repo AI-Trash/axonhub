@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
 import { IconAlertTriangle } from '@tabler/icons-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ConfirmDialog } from '@/components/confirm-dialog';
+
 import { useDeleteChannel } from '../data/channels';
 import { Channel } from '../data/schema';
 
@@ -28,8 +30,7 @@ export function ChannelsDeleteDialog({ open, onOpenChange, currentRow }: Props) 
       await deleteChannel.mutateAsync(currentRow.id);
       onOpenChange(false);
       setValue('');
-    } catch (error) {
-    }
+    } catch (error) {}
   };
 
   return (
@@ -55,7 +56,8 @@ export function ChannelsDeleteDialog({ open, onOpenChange, currentRow }: Props) 
           </Alert>
           <div className='space-y-2'>
             <Label htmlFor='channel-name'>
-              {t('channels.dialogs.delete.confirmLabel')} <strong>{currentRow.name}</strong> {t('channels.dialogs.delete.confirmLabelStrong')}
+              {t('channels.dialogs.delete.confirmLabel')} <strong>{currentRow.name}</strong>{' '}
+              {t('channels.dialogs.delete.confirmLabelStrong')}
             </Label>
             <Input id='channel-name' placeholder={currentRow.name} value={value} onChange={(e) => setValue(e.target.value)} />
           </div>

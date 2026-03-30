@@ -1,9 +1,11 @@
 'use client';
 
-import { format } from 'date-fns';
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
+import { format } from 'date-fns';
 import { useTranslation } from 'react-i18next';
+
 import { Checkbox } from '@/components/ui/checkbox';
+
 import { Role } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
 import { ScopesCell } from './scopes-cell';

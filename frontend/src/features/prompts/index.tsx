@@ -1,14 +1,16 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
-import { SortingState } from '@tanstack/react-table';
 import { IconPlus } from '@tabler/icons-react';
+import { SortingState } from '@tanstack/react-table';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDebounce } from '@/hooks/use-debounce';
-import { usePaginationSearch } from '@/hooks/use-pagination-search';
-import { usePermissions } from '@/hooks/usePermissions';
-import { Button } from '@/components/ui/button';
+
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
 import { PermissionGuard } from '@/components/permission-guard';
+import { Button } from '@/components/ui/button';
+import { useDebounce } from '@/hooks/use-debounce';
+import { usePaginationSearch } from '@/hooks/use-pagination-search';
+import { usePermissions } from '@/hooks/usePermissions';
+
 import { createColumns } from './components/prompts-columns';
 import { PromptsDialogs } from './components/prompts-dialogs';
 import { PromptsTable } from './components/prompts-table';
@@ -157,7 +159,7 @@ export default function PromptsManagement() {
         <div className='flex flex-1 items-center justify-between'>
           <div>
             <h2 className='text-xl font-bold tracking-tight'>{t('prompts.title')}</h2>
-            <p className='text-sm text-muted-foreground'>{t('prompts.description')}</p>
+            <p className='text-muted-foreground text-sm'>{t('prompts.description')}</p>
           </div>
           <ActionButtons />
         </div>

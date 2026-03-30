@@ -1,8 +1,8 @@
 import { DotsHorizontalIcon } from '@radix-ui/react-icons';
-import { Row } from '@tanstack/react-table';
 import { IconEdit, IconUserOff, IconUserCheck, IconKey, IconUserPlus } from '@tabler/icons-react';
+import { Row } from '@tanstack/react-table';
 import { useTranslation } from 'react-i18next';
-import { usePermissions } from '@/hooks/usePermissions';
+
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -11,6 +11,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { usePermissions } from '@/hooks/usePermissions';
+
 import { useUsers } from '../context/users-context';
 import { User } from '../data/schema';
 

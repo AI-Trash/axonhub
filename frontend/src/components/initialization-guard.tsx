@@ -1,6 +1,7 @@
+import { useRouter } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { useState } from 'react';
-import { useRouter } from '@tanstack/react-router';
+
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSystemStatus } from '@/features/auth/data/initialization';
 

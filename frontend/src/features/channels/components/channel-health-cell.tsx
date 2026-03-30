@@ -1,9 +1,11 @@
-import { memo } from 'react';
 import { format } from 'date-fns';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '@/utils/format-duration';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
 import { ChannelProbePoint } from '../data/schema';
 
 interface ChannelHealthCellProps {
@@ -24,9 +26,7 @@ export const ChannelHealthCell = memo(({ points }: ChannelHealthCellProps) => {
     <div className='flex items-center gap-0.5'>
       {displayPoints.map((point, index) => {
         const hasRequests = point.totalRequestCount > 0;
-        const successRate = hasRequests
-          ? point.successRequestCount / point.totalRequestCount
-          : 0;
+        const successRate = hasRequests ? point.successRequestCount / point.totalRequestCount : 0;
 
         const isHealthy = hasRequests && successRate >= 0.9;
         const isWarning = hasRequests && successRate >= 0.5 && successRate < 0.9;
@@ -50,10 +50,20 @@ export const ChannelHealthCell = memo(({ points }: ChannelHealthCellProps) => {
             </TooltipTrigger>
             <TooltipContent>
               <div className='space-y-1 text-xs'>
-                <div>{t('channels.columns.healthTooltip.probeTime')}: {probeTime}</div>
-                <div>{t('channels.columns.healthTooltip.successRate')}: {point.successRequestCount}/{point.totalRequestCount}</div>
-                <div>{t('channels.columns.healthTooltip.firstTokenLatency')}: {point.avgTimeToFirstTokenMs != null ? formatDuration(point.avgTimeToFirstTokenMs) : '-'}</div>
-                <div>{t('channels.columns.healthTooltip.tokensPerSecond')}: {point.avgTokensPerSecond != null ? point.avgTokensPerSecond.toFixed(1) : '-'}</div>
+                <div>
+                  {t('channels.columns.healthTooltip.probeTime')}: {probeTime}
+                </div>
+                <div>
+                  {t('channels.columns.healthTooltip.successRate')}: {point.successRequestCount}/{point.totalRequestCount}
+                </div>
+                <div>
+                  {t('channels.columns.healthTooltip.firstTokenLatency')}:{' '}
+                  {point.avgTimeToFirstTokenMs != null ? formatDuration(point.avgTimeToFirstTokenMs) : '-'}
+                </div>
+                <div>
+                  {t('channels.columns.healthTooltip.tokensPerSecond')}:{' '}
+                  {point.avgTokensPerSecond != null ? point.avgTokensPerSecond.toFixed(1) : '-'}
+                </div>
               </div>
             </TooltipContent>
           </Tooltip>

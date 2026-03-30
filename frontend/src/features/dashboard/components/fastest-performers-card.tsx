@@ -1,14 +1,16 @@
 'use client';
 
+import type { UseQueryResult } from '@tanstack/react-query';
+import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { UseQueryResult } from '@tanstack/react-query';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell, type TooltipProps } from 'recharts';
+
+import { TimePeriodSelector, type FastestTimeWindow } from '@/components/time-period-selector';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Loader2 } from 'lucide-react';
 import { formatNumber } from '@/utils/format-number';
-import { TimePeriodSelector, type FastestTimeWindow } from '@/components/time-period-selector';
+
 import { safeNumber, safeToFixed, sanitizeChartData, type ChartData } from '../utils/chart-helpers';
 import { ChartLegend, type ChartLegendItem } from './chart-legend';
 
@@ -27,11 +29,7 @@ function HorizontalBarChart({ data, total, height = 280, noDataLabel }: Horizont
   const safeTotal = safeNumber(total);
 
   if (safeData.length === 0) {
-    return (
-      <div className='flex h-[250px] items-center justify-center text-muted-foreground text-sm'>
-        {noDataLabel}
-      </div>
-    );
+    return <div className='text-muted-foreground flex h-[250px] items-center justify-center text-sm'>{noDataLabel}</div>;
   }
 
   const tooltipContent = (props: TooltipProps<number, string>) => {
@@ -48,9 +46,7 @@ function HorizontalBarChart({ data, total, height = 280, noDataLabel }: Horizont
         <div className='text-muted-foreground'>
           {safeToFixed(safeThroughput, 0)} tokens/s ({safeToFixed(percent, 0)}%)
         </div>
-        <div className='text-muted-foreground text-xs'>
-          {safeNumber(item.requestCount)} requests
-        </div>
+        <div className='text-muted-foreground text-xs'>{safeNumber(item.requestCount)} requests</div>
       </div>
     );
   };
@@ -60,14 +56,7 @@ function HorizontalBarChart({ data, total, height = 280, noDataLabel }: Horizont
       <BarChart data={safeData} layout='vertical' barSize={32} margin={{ left: 20, right: 20, top: 10, bottom: 10 }}>
         <CartesianGrid strokeDasharray='3 3' stroke='var(--border)' horizontal={false} />
         <XAxis type='number' hide />
-        <YAxis
-          type='category'
-          dataKey='name'
-          width={10}
-          tick={false}
-          tickLine={false}
-          axisLine={false}
-        />
+        <YAxis type='category' dataKey='name' width={10} tick={false} tickLine={false} axisLine={false} />
         <Tooltip content={tooltipContent} cursor={{ fill: 'var(--muted)' }} />
         <Bar dataKey='throughput' radius={[0, 4, 4, 0]}>
           {safeData.map((_, index) => (
@@ -171,8 +160,8 @@ export function FastestPerformersCard<T extends ThroughputData>({
           <ChartLegend items={legendItems} columns={1} />
         </div>
         {isFetching && (
-          <div className='absolute inset-0 flex items-center justify-center bg-background/50'>
-            <Loader2 className='h-6 w-6 animate-spin text-muted-foreground' />
+          <div className='bg-background/50 absolute inset-0 flex items-center justify-center'>
+            <Loader2 className='text-muted-foreground h-6 w-6 animate-spin' />
           </div>
         )}
       </CardContent>

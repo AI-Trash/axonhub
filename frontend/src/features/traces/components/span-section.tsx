@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
 import { format } from 'date-fns';
 import { Activity } from 'lucide-react';
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { formatNumber } from '@/utils/format-number';
-import { Badge } from '@/components/ui/badge';
+
 import { JsonViewer } from '@/components/json-tree-view';
+import { Badge } from '@/components/ui/badge';
+import { formatNumber } from '@/utils/format-number';
+
 import type { Segment, Span } from '../data/schema';
 import { getSpanDisplayLabels, getLocalizedSpanType } from '../utils/span-display';
 
@@ -21,7 +23,18 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
     if (!selectedSpan?.value) return [];
 
     const sections: { title: string; content: React.ReactNode }[] = [];
-    const { userQuery: query, userImageUrl, userInputAudio, text, thinking, toolUse, toolResult, imageUrl, audio, systemInstruction } = selectedSpan.value;
+    const {
+      userQuery: query,
+      userImageUrl,
+      userInputAudio,
+      text,
+      thinking,
+      toolUse,
+      toolResult,
+      imageUrl,
+      audio,
+      systemInstruction,
+    } = selectedSpan.value;
 
     if (query?.text) {
       sections.push({
@@ -131,9 +144,7 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
 
     if (userInputAudio?.format || userInputAudio?.data) {
       const audioSrc =
-        userInputAudio.data && userInputAudio.format
-          ? `data:audio/${userInputAudio.format};base64,${userInputAudio.data}`
-          : undefined;
+        userInputAudio.data && userInputAudio.format ? `data:audio/${userInputAudio.format};base64,${userInputAudio.data}` : undefined;
 
       sections.push({
         title: t('traces.detail.userInputAudio'),
@@ -184,7 +195,9 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
             {audio.transcript ? (
               <div>
                 <p className='text-muted-foreground text-xs tracking-wide uppercase'>{t('traces.detail.transcriptLabel')}</p>
-                <pre className='bg-muted/40 mt-2 max-h-160 overflow-auto rounded-lg p-3 text-sm whitespace-pre-wrap'>{audio.transcript}</pre>
+                <pre className='bg-muted/40 mt-2 max-h-160 overflow-auto rounded-lg p-3 text-sm whitespace-pre-wrap'>
+                  {audio.transcript}
+                </pre>
               </div>
             ) : null}
           </div>

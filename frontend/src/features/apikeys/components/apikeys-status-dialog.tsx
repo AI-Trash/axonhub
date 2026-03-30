@@ -2,7 +2,9 @@
 
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
+
 import { ConfirmDialog } from '@/components/confirm-dialog';
+
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useUpdateApiKeyStatus } from '../data/apikeys';
 
@@ -23,8 +25,7 @@ export function ApiKeysStatusDialog() {
       });
       closeDialog('status');
       resetRowSelection(); // 清空选中的行
-    } catch (error) {
-    }
+    } catch (error) {}
   };
 
   const isDisabling = selectedApiKey.status === 'enabled';

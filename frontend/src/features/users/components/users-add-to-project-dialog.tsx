@@ -1,20 +1,22 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { z } from 'zod';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { graphqlRequest } from '@/gql/graphql';
-import { ROLES_QUERY } from '@/gql/roles';
+import { useState, useEffect, useCallback } from 'react';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { z } from 'zod';
+
+import { ScopesSelect } from '@/components/scopes-select';
+import { SelectDropdown } from '@/components/select-dropdown';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
-import { SelectDropdown } from '@/components/select-dropdown';
-import { ScopesSelect } from '@/components/scopes-select';
 import { useProjects } from '@/features/projects/data/projects';
+import { graphqlRequest } from '@/gql/graphql';
+import { ROLES_QUERY } from '@/gql/roles';
+
 import { User } from '../data/schema';
 
 // GraphQL query to get user's existing projects

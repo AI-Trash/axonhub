@@ -1,8 +1,9 @@
 'use client';
 
-import React from 'react';
 import { Loader2, Save } from 'lucide-react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -11,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { useDataStorages } from '@/features/data-storages/data/data-storages';
 import { extractNumberID } from '@/lib/utils';
+
 import { useSystemContext } from '../context/system-context';
 import { useUpdateVideoStorageSettings, useVideoStorageSettings } from '../data/system';
 
@@ -24,11 +26,7 @@ export function VideoStorageSettings() {
   const { data: dataStorages, isLoading: isLoadingStorages } = useDataStorages({ first: 100 });
 
   const externalStorages = React.useMemo(() => {
-    return (
-      dataStorages?.edges
-        ?.map((e) => e.node)
-        ?.filter((s) => s.status === 'active' && s.type !== 'database') ?? []
-    );
+    return dataStorages?.edges?.map((e) => e.node)?.filter((s) => s.status === 'active' && s.type !== 'database') ?? [];
   }, [dataStorages]);
 
   const [form, setForm] = React.useState({

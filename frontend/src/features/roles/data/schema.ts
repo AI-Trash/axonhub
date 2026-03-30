@@ -1,4 +1,5 @@
 import { z } from 'zod';
+
 import { pageInfoSchema } from '@/gql/pagination';
 
 // Role schema based on GraphQL schema

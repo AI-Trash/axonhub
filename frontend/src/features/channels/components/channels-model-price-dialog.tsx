@@ -1,12 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-import { z } from 'zod';
-import { useFieldArray, useForm, useWatch, type Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { IconPlus, IconTrash, IconCopy } from '@tabler/icons-react';
 import type { TFunction } from 'i18next';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { useFieldArray, useForm, useWatch, type Control } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { z } from 'zod';
+
 import { AutoCompleteSelect } from '@/components/auto-complete-select';
+import { ModelPriceEditor } from '@/components/model-price-editor';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -14,10 +16,10 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ModelPriceEditor } from '@/components/model-price-editor';
-import { type ProviderModel, type ProvidersData } from '@/features/models/data/providers.schema';
 import { useProvidersData } from '@/features/models/data/providers';
+import { type ProviderModel, type ProvidersData } from '@/features/models/data/providers.schema';
 import { useGeneralSettings } from '@/features/system/data/system';
+
 import { useChannels } from '../context/channels-context';
 import { useChannelModelPrices, useSaveChannelModelPrices } from '../data/channels';
 import { PricingMode, PriceItemCode } from '../data/schema';
@@ -419,13 +421,7 @@ const PriceCard = memo(function PriceCard({
               >
                 <IconCopy size={14} />
               </Button>
-              <Button
-                type='button'
-                variant='ghost'
-                size='icon-sm'
-                className='text-destructive'
-                onClick={() => onRemovePrice(priceIndex)}
-              >
+              <Button type='button' variant='ghost' size='icon-sm' className='text-destructive' onClick={() => onRemovePrice(priceIndex)}>
                 <IconTrash size={16} />
               </Button>
             </div>
@@ -494,13 +490,7 @@ const PriceCard = memo(function PriceCard({
           </div>
 
           <div className='flex items-start justify-end'>
-            <Button
-              type='button'
-              variant='ghost'
-              size='icon-sm'
-              className='text-destructive'
-              onClick={() => onRemovePrice(priceIndex)}
-            >
+            <Button type='button' variant='ghost' size='icon-sm' className='text-destructive' onClick={() => onRemovePrice(priceIndex)}>
               <IconTrash size={16} />
             </Button>
           </div>
@@ -750,8 +740,7 @@ export function ChannelsModelPriceDialog() {
   const onModelSelected = useCallback(
     (priceIndex: number, modelId: string) => {
       if (!modelId || !providersData) return;
-      const preferredProviderId =
-        defaultProviderId && providersData.providers[defaultProviderId] ? defaultProviderId : selectedProviderId;
+      const preferredProviderId = defaultProviderId && providersData.providers[defaultProviderId] ? defaultProviderId : selectedProviderId;
       const found = findProviderModelById(providersData, modelId, preferredProviderId);
       if (!found) return;
       applyProviderModelToIndex(priceIndex, found.model);
@@ -844,10 +833,7 @@ export function ChannelsModelPriceDialog() {
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent
-        ref={setDialogContent}
-        className='flex h-[85vh] max-h-[800px] flex-col overflow-hidden sm:max-w-4xl'
-      >
+      <DialogContent ref={setDialogContent} className='flex h-[85vh] max-h-[800px] flex-col overflow-hidden sm:max-w-4xl'>
         <DialogHeader>
           <DialogTitle>{t('price.title')}</DialogTitle>
           <DialogDescription>{t('price.description', { name: currentRow?.name })}</DialogDescription>
@@ -857,9 +843,7 @@ export function ChannelsModelPriceDialog() {
           <form onSubmit={form.handleSubmit(onSubmit)} className='flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'>
             <Card className='mb-4 max-h-[15vh] shrink-0 overflow-y-auto md:max-h-none md:overflow-visible'>
               <CardContent className='pt-0 md:pt-4'>
-                <div className='mb-3 text-xs text-muted-foreground'>
-                  {t('price.apply.usdHint')}
-                </div>
+                <div className='text-muted-foreground mb-3 text-xs'>{t('price.apply.usdHint')}</div>
                 <div className='grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_80px_auto] md:items-end'>
                   <div className='min-w-0'>
                     <FormLabel className='text-sm'>{t('price.apply.provider')}</FormLabel>
@@ -952,7 +936,7 @@ export function ChannelsModelPriceDialog() {
                 </div>
               </CardContent>
             </Card>
-            <ScrollArea className='min-h-40 min-w-0 w-full flex-1 md:min-h-0 [&>[data-slot=scroll-area-viewport]]:!overflow-x-hidden'>
+            <ScrollArea className='min-h-40 w-full min-w-0 flex-1 md:min-h-0 [&>[data-slot=scroll-area-viewport]]:!overflow-x-hidden'>
               <div className='space-y-4 py-4 pr-4'>
                 {fields.map((field, index) => (
                   <PriceCard

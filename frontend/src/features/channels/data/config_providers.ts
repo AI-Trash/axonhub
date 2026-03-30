@@ -1,4 +1,3 @@
-import type { ComponentType } from 'react';
 import {
   OpenAI,
   Anthropic,
@@ -26,8 +25,10 @@ import {
   Cerebras,
   Claude,
   XiaomiMiMo,
-  Fireworks
+  Fireworks,
 } from '@lobehub/icons';
+import type { ComponentType } from 'react';
+
 import { NanoGPTIcon } from '../components/nanogpt-icon';
 import { CHANNEL_CONFIGS } from './config_channels';
 import { ApiFormat, ChannelType } from './schema';

@@ -1,7 +1,7 @@
-import { format } from 'date-fns'
-import type { DayPickerProps } from 'react-day-picker'
+import { format } from 'date-fns';
+import type { DayPickerProps } from 'react-day-picker';
 
-const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 export const dayPickerClassNames: DayPickerProps['classNames'] = {
   nav: 'hidden',
@@ -20,12 +20,13 @@ export const dayPickerClassNames: DayPickerProps['classNames'] = {
   range_middle: 'rdp-custom-range-middle',
   today: 'rdp-custom-today',
   selected: '',
-  day_button: 'rdp-custom-day-button inline-flex h-8 w-8 items-center justify-center rounded-full text-sm transition-colors text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/5',
-}
+  day_button:
+    'rdp-custom-day-button inline-flex h-8 w-8 items-center justify-center rounded-full text-sm transition-colors text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/5',
+};
 
 export const dayPickerFormatters: DayPickerProps['formatters'] = {
   formatWeekdayName: (date) => WEEKDAYS[date.getDay()],
-}
+};
 
 export const dayPickerComponents: DayPickerProps['components'] = {
   MonthCaption: ({ calendarMonth, className, displayIndex: _displayIndex, ...monthProps }) => (
@@ -33,4 +34,4 @@ export const dayPickerComponents: DayPickerProps['components'] = {
       {format(calendarMonth.date, 'MMMM yyyy')}
     </div>
   ),
-}
+};

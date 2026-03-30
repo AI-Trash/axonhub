@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
 import { usePrompts } from '../context/prompts-context';
 import { useDeletePrompt } from '../data/prompts';
 
@@ -31,13 +33,15 @@ export function PromptsDeleteDialog() {
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{t('prompts.dialogs.delete.title')}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {t('prompts.dialogs.delete.description', { name: currentRow?.name })}
-          </AlertDialogDescription>
+          <AlertDialogDescription>{t('prompts.dialogs.delete.description', { name: currentRow?.name })}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{t('common.buttons.cancel')}</AlertDialogCancel>
-          <AlertDialogAction onClick={handleConfirm} disabled={deletePromptMutation.isPending} className='bg-destructive text-destructive-foreground hover:bg-destructive/90'>
+          <AlertDialogAction
+            onClick={handleConfirm}
+            disabled={deletePromptMutation.isPending}
+            className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
+          >
             {t('common.buttons.delete')}
           </AlertDialogAction>
         </AlertDialogFooter>

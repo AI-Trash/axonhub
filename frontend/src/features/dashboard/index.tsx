@@ -1,28 +1,30 @@
+import { motion, AnimatePresence } from 'framer-motion';
+import { BarChart3, Brain, Key, Zap, ChevronDown } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { BarChart3, Brain, Key, Zap, ChevronDown } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+
+import { Header } from '@/components/layout/header';
+import { TimePeriodSelector, type TimePeriod } from '@/components/time-period-selector';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Header } from '@/components/layout/header';
 import { formatNumber } from '@/utils/format-number';
-import { TimePeriodSelector, type TimePeriod } from '@/components/time-period-selector';
+
+import { ChannelPerformanceStats } from './components/channel-performance-stats';
 import { ChannelSuccessRate } from './components/channel-success-rate';
 import { DailyRequestStats } from './components/daily-requests-stats';
-import { RequestsByChannelChart } from './components/requests-by-channel-chart';
-import { RequestsByModelChart } from './components/requests-by-model-chart';
-import { RequestsByAPIKeyChart } from './components/requests-by-api-key-chart';
-import { TokensByAPIKeyChart } from './components/tokens-by-api-key-chart';
-import { TokensByChannelChart } from './components/tokens-by-channel-chart';
-import { TokensByModelChart } from './components/tokens-by-model-chart';
-import { SuccessRateCard } from './components/success-rate-card';
-import { TodayRequestsCard } from './components/today-requests-card';
-import { TokenStatsCard } from './components/token-stats-card';
-import { TotalRequestsCard } from './components/total-requests-card';
 import { FastestChannelsCard } from './components/fastest-channels-card';
 import { FastestModelsCard } from './components/fastest-models-card';
 import { ModelPerformanceStats } from './components/model-performance-stats';
-import { ChannelPerformanceStats } from './components/channel-performance-stats';
+import { RequestsByAPIKeyChart } from './components/requests-by-api-key-chart';
+import { RequestsByChannelChart } from './components/requests-by-channel-chart';
+import { RequestsByModelChart } from './components/requests-by-model-chart';
+import { SuccessRateCard } from './components/success-rate-card';
+import { TodayRequestsCard } from './components/today-requests-card';
+import { TokenStatsCard } from './components/token-stats-card';
+import { TokensByAPIKeyChart } from './components/tokens-by-api-key-chart';
+import { TokensByChannelChart } from './components/tokens-by-channel-chart';
+import { TokensByModelChart } from './components/tokens-by-model-chart';
+import { TotalRequestsCard } from './components/total-requests-card';
 import { useDashboardStats } from './data/dashboard';
 
 interface CollapsibleSectionProps {
@@ -54,21 +56,16 @@ function CollapsibleSection({ title, icon, children, storageKey, defaultOpen = f
   return (
     <div className='space-y-4'>
       <button
-        type="button"
+        type='button'
         onClick={() => setIsOpen(!isOpen)}
-        className='flex w-full items-center justify-between rounded-lg border bg-card p-4 text-left transition-colors hover:bg-accent/50'
+        className='bg-card hover:bg-accent/50 flex w-full items-center justify-between rounded-lg border p-4 text-left transition-colors'
       >
         <div className='flex items-center gap-3'>
-          <div className='flex h-8 w-8 items-center justify-center rounded-md bg-primary/10'>
-            {icon}
-          </div>
+          <div className='bg-primary/10 flex h-8 w-8 items-center justify-center rounded-md'>{icon}</div>
           <span className='text-lg font-semibold'>{title}</span>
         </div>
-        <motion.div
-          animate={{ rotate: isOpen ? 180 : 0 }}
-          transition={{ duration: 0.2, ease: 'easeInOut' }}
-        >
-          <ChevronDown className='h-5 w-5 text-muted-foreground' />
+        <motion.div animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.2, ease: 'easeInOut' }}>
+          <ChevronDown className='text-muted-foreground h-5 w-5' />
         </motion.div>
       </button>
       <AnimatePresence initial={false}>
@@ -177,7 +174,7 @@ export default function DashboardPage() {
       {/* 渠道分析 - 可折叠 */}
       <CollapsibleSection
         title={t('dashboard.sections.channels')}
-        icon={<BarChart3 className='h-4 w-4 text-primary' />}
+        icon={<BarChart3 className='text-primary h-4 w-4' />}
         storageKey='channels'
       >
         <div className='grid gap-4 md:grid-cols-2'>
@@ -209,11 +206,7 @@ export default function DashboardPage() {
       </CollapsibleSection>
 
       {/* 模型分析 - 可折叠 */}
-      <CollapsibleSection
-        title={t('dashboard.sections.models')}
-        icon={<Brain className='h-4 w-4 text-primary' />}
-        storageKey='models'
-      >
+      <CollapsibleSection title={t('dashboard.sections.models')} icon={<Brain className='text-primary h-4 w-4' />} storageKey='models'>
         <div className='grid gap-4 md:grid-cols-2'>
           <Card className='hover-card'>
             <CardHeader>
@@ -243,11 +236,7 @@ export default function DashboardPage() {
       </CollapsibleSection>
 
       {/* API密钥分析 - 可折叠 */}
-      <CollapsibleSection
-        title={t('dashboard.sections.apiKeys')}
-        icon={<Key className='h-4 w-4 text-primary' />}
-        storageKey='apiKeys'
-      >
+      <CollapsibleSection title={t('dashboard.sections.apiKeys')} icon={<Key className='text-primary h-4 w-4' />} storageKey='apiKeys'>
         <div className='grid gap-4 md:grid-cols-2'>
           <Card className='hover-card'>
             <CardHeader>
@@ -279,7 +268,7 @@ export default function DashboardPage() {
       {/* 性能分析 - 可折叠 */}
       <CollapsibleSection
         title={t('dashboard.sections.performance')}
-        icon={<Zap className='h-4 w-4 text-primary' />}
+        icon={<Zap className='text-primary h-4 w-4' />}
         storageKey='performance'
       >
         <div className='grid gap-4 md:grid-cols-1 lg:grid-cols-7'>

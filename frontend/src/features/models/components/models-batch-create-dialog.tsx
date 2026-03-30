@@ -1,14 +1,16 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
-import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { toc } from '@lobehub/icons';
+import { IconPlus, IconTrash } from '@tabler/icons-react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+
+import { AutoComplete } from '@/components/auto-complete';
+import { AutoCompleteSelect } from '@/components/auto-complete-select';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { AutoComplete } from '@/components/auto-complete';
-import { AutoCompleteSelect } from '@/components/auto-complete-select';
+
 import { useModels } from '../context/models-context';
 import { DEVELOPER_IDS, DEVELOPER_ICONS } from '../data/constants';
 import { useBulkCreateModels } from '../data/models';
@@ -174,9 +176,8 @@ export function ModelsBatchCreateDialog() {
               lastUpdated: selectedModel.last_updated,
             };
             const normalizedType = selectedModel.type?.replace(/-/g, '_');
-            const modelType = normalizedType && modelTypeSchema.safeParse(normalizedType).success
-              ? (normalizedType as ModelType)
-              : 'chat' as ModelType;
+            const modelType =
+              normalizedType && modelTypeSchema.safeParse(normalizedType).success ? (normalizedType as ModelType) : ('chat' as ModelType);
             return {
               ...row,
               modelId,

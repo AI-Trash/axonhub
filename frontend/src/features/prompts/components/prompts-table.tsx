@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { IconBan, IconCheck, IconX, IconTrash } from '@tabler/icons-react';
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -13,14 +13,16 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { IconBan, IconCheck, IconX, IconTrash } from '@tabler/icons-react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { PermissionGuard } from '@/components/permission-guard';
+import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableSkeleton } from '@/components/ui/table-skeleton';
-import { PermissionGuard } from '@/components/permission-guard';
-import { ServerSidePagination } from '@/components/server-side-pagination';
+
 import { usePrompts } from '../context/prompts-context';
 import { Prompt, PromptConnection } from '../data/schema';
 

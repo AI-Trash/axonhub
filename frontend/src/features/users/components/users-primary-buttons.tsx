@@ -1,7 +1,9 @@
 import { IconUserPlus } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@/components/ui/button';
+
 import { PermissionGuard } from '@/components/permission-guard';
+import { Button } from '@/components/ui/button';
+
 import { useUsers } from '../context/users-context';
 
 export function UsersPrimaryButtons() {

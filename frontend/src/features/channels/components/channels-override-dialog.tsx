@@ -1,10 +1,11 @@
-import { useEffect, useState, useCallback } from 'react';
-import { z } from 'zod';
-import { useForm, useFieldArray, useWatch, Control } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, Save, Download, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { useForm, useFieldArray, useWatch, Control } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { z } from 'zod';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
@@ -16,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useDebounce } from '@/hooks/use-debounce';
+
 import { useUpdateChannel } from '../data/channels';
 import { Channel, OverrideOperation, overrideOperationSchema } from '../data/schema';
 import { useChannelOverrideTemplates, useCreateChannelOverrideTemplate, useDeleteChannelOverrideTemplate } from '../data/templates';
@@ -156,10 +158,7 @@ function OperationRow({ index, control, fieldName, onUpdate, onRemove }: Operati
       <div className='flex items-center gap-3'>
         <div className='w-36'>
           <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.body.op')}</Label>
-          <Select
-            value={field.op}
-            onValueChange={(v) => onUpdate(index, { op: v as OpType })}
-          >
+          <Select value={field.op} onValueChange={(v) => onUpdate(index, { op: v as OpType })}>
             <SelectTrigger data-testid={`op-type-${index}`} className='mt-1'>
               <SelectValue />
             </SelectTrigger>
@@ -290,10 +289,7 @@ function HeaderOperationRow({ index, control, onUpdate, onRemove }: HeaderOperat
       <div className='flex items-center gap-3'>
         <div className='w-36'>
           <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.body.op')}</Label>
-          <Select
-            value={opType}
-            onValueChange={(v) => onUpdate(index, { op: v as OpType })}
-          >
+          <Select value={opType} onValueChange={(v) => onUpdate(index, { op: v as OpType })}>
             <SelectTrigger data-testid={`header-op-type-${index}`} className='mt-1'>
               <SelectValue />
             </SelectTrigger>

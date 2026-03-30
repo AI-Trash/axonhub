@@ -2,7 +2,9 @@
 
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
+
 import { ConfirmDialog } from '@/components/confirm-dialog';
+
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useBulkArchiveApiKeys } from '../data/apikeys';
 
@@ -20,8 +22,7 @@ export function ApiKeysBulkArchiveDialog() {
       resetRowSelection();
       setSelectedApiKeys([]);
       closeDialog();
-    } catch (error) {
-    }
+    } catch (error) {}
   };
 
   return (

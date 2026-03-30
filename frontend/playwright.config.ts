@@ -1,14 +1,14 @@
-import { defineConfig, devices } from '@playwright/test'
+import { defineConfig, devices } from '@playwright/test';
 
 // Set default test environment variables
-process.env.AXONHUB_ADMIN_EMAIL = process.env.AXONHUB_ADMIN_EMAIL || 'my@example.com'
-process.env.AXONHUB_ADMIN_PASSWORD = process.env.AXONHUB_ADMIN_PASSWORD || 'pwd123456'
-process.env.AXONHUB_API_URL = process.env.AXONHUB_API_URL || 'http://localhost:8099'
+process.env.AXONHUB_ADMIN_EMAIL = process.env.AXONHUB_ADMIN_EMAIL || 'my@example.com';
+process.env.AXONHUB_ADMIN_PASSWORD = process.env.AXONHUB_ADMIN_PASSWORD || 'pwd123456';
+process.env.AXONHUB_API_URL = process.env.AXONHUB_API_URL || 'http://localhost:8099';
 
 // Type declaration for process
 declare const process: {
-  env: Record<string, string | undefined>
-}
+  env: Record<string, string | undefined>;
+};
 
 /**
  * @see https://playwright.dev/docs/test-configuration
@@ -102,4 +102,4 @@ export default defineConfig({
       VITE_API_URL: process.env.AXONHUB_API_URL || 'http://localhost:8099',
     },
   },
-})
+});

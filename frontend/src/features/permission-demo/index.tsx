@@ -1,14 +1,15 @@
-import { useState, useEffect } from 'react';
 import { IconShield, IconEye, IconEyeOff, IconLock, IconLockOpen, IconRefresh } from '@tabler/icons-react';
-import { routeConfigs } from '@/config/route-permission';
-import { useAuthStore } from '@/stores/authStore';
-import { useRoutePermissions } from '@/hooks/useRoutePermissions';
+import { useState, useEffect } from 'react';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { routeConfigs } from '@/config/route-permission';
+import { useRoutePermissions } from '@/hooks/useRoutePermissions';
+import { useAuthStore } from '@/stores/authStore';
 
 // 演示用的本地存储键
 const DEMO_USER_KEY = 'axonhub_demo_user';

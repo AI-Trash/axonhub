@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { graphqlRequest } from '@/gql/graphql';
 import { toast } from 'sonner';
-import i18n from '@/lib/i18n';
+
+import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
+import i18n from '@/lib/i18n';
+
 import { Project, ProjectConnection, CreateProjectInput, UpdateProjectInput, projectConnectionSchema, projectSchema } from './schema';
 
 // GraphQL queries and mutations

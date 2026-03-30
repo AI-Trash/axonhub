@@ -1,6 +1,8 @@
-import { Row } from '@tanstack/react-table';
 import { IconDotsVertical, IconEdit, IconTrash } from '@tabler/icons-react';
+import { Row } from '@tanstack/react-table';
 import { useTranslation } from 'react-i18next';
+
+import { PermissionGuard } from '@/components/permission-guard';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -9,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { PermissionGuard } from '@/components/permission-guard';
+
 import { usePrompts } from '../context/prompts-context';
 import { Prompt } from '../data/schema';
 
@@ -25,7 +27,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant='ghost' className='flex h-8 w-8 p-0 data-[state=open]:bg-muted'>
+        <Button variant='ghost' className='data-[state=open]:bg-muted flex h-8 w-8 p-0'>
           <IconDotsVertical className='h-4 w-4' />
           <span className='sr-only'>{t('common.buttons.openMenu')}</span>
         </Button>

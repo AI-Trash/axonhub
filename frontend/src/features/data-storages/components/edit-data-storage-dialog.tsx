@@ -3,30 +3,20 @@
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+
 import { useDataStoragesContext } from '../context/data-storages-context';
 import { useUpdateDataStorage, UpdateDataStorageInput } from '../data/data-storages';
 import { DataStorageFormData } from './types';
 
 export function EditDataStorageDialog() {
   const { t } = useTranslation();
-  const {
-    isEditDialogOpen,
-    setIsEditDialogOpen,
-    editingDataStorage,
-    setEditingDataStorage,
-  } = useDataStoragesContext();
+  const { isEditDialogOpen, setIsEditDialogOpen, editingDataStorage, setEditingDataStorage } = useDataStoragesContext();
   const updateMutation = useUpdateDataStorage();
 
   const {
@@ -213,9 +203,7 @@ export function EditDataStorageDialog() {
                   })}
                   placeholder='/var/axonhub/data'
                 />
-                {errors.directory && (
-                  <span className='text-sm text-red-500'>{errors.directory.message}</span>
-                )}
+                {errors.directory && <span className='text-sm text-red-500'>{errors.directory.message}</span>}
               </div>
             )}
 
@@ -235,17 +223,11 @@ export function EditDataStorageDialog() {
                     })}
                     placeholder='my-bucket'
                   />
-                  {errors.s3BucketName && (
-                    <span className='text-sm text-red-500'>{errors.s3BucketName.message}</span>
-                  )}
+                  {errors.s3BucketName && <span className='text-sm text-red-500'>{errors.s3BucketName.message}</span>}
                 </div>
                 <div className='grid gap-2'>
                   <Label htmlFor='edit-s3-endpoint'>{t('dataStorages.fields.s3Endpoint')}</Label>
-                  <Input
-                    id='edit-s3-endpoint'
-                    {...register('s3Endpoint')}
-                    placeholder='https://s3.amazonaws.com'
-                  />
+                  <Input id='edit-s3-endpoint' {...register('s3Endpoint')} placeholder='https://s3.amazonaws.com' />
                 </div>
                 <div className='grid gap-2'>
                   <Label htmlFor='edit-s3-region'>{t('dataStorages.fields.s3Region')}</Label>
@@ -265,9 +247,7 @@ export function EditDataStorageDialog() {
                     })}
                     placeholder={t('dataStorages.dialogs.fields.s3AccessKey.editPlaceholder')}
                   />
-                  {errors.s3AccessKey && (
-                    <span className='text-sm text-red-500'>{errors.s3AccessKey.message}</span>
-                  )}
+                  {errors.s3AccessKey && <span className='text-sm text-red-500'>{errors.s3AccessKey.message}</span>}
                 </div>
                 <div className='grid gap-2'>
                   <Label htmlFor='edit-s3-secret-key'>{t('dataStorages.fields.s3SecretKey')}</Label>
@@ -284,9 +264,7 @@ export function EditDataStorageDialog() {
                     })}
                     placeholder={t('dataStorages.dialogs.fields.s3SecretKey.editPlaceholder')}
                   />
-                  {errors.s3SecretKey && (
-                    <span className='text-sm text-red-500'>{errors.s3SecretKey.message}</span>
-                  )}
+                  {errors.s3SecretKey && <span className='text-sm text-red-500'>{errors.s3SecretKey.message}</span>}
                 </div>
                 <div className='flex items-center space-x-2'>
                   <input
@@ -295,9 +273,7 @@ export function EditDataStorageDialog() {
                     {...register('s3PathStyle')}
                     className='h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600'
                   />
-                  <Label htmlFor='edit-s3-path-style'>
-                    {t('dataStorages.fields.s3PathStyle')}
-                  </Label>
+                  <Label htmlFor='edit-s3-path-style'>{t('dataStorages.fields.s3PathStyle')}</Label>
                 </div>
               </>
             )}
@@ -318,9 +294,7 @@ export function EditDataStorageDialog() {
                     })}
                     placeholder='my-bucket'
                   />
-                  {errors.gcsBucketName && (
-                    <span className='text-sm text-red-500'>{errors.gcsBucketName.message}</span>
-                  )}
+                  {errors.gcsBucketName && <span className='text-sm text-red-500'>{errors.gcsBucketName.message}</span>}
                 </div>
                 <div className='grid gap-2'>
                   <Label htmlFor='edit-gcs-credential'>{t('dataStorages.fields.gcsCredential')}</Label>
@@ -351,9 +325,7 @@ export function EditDataStorageDialog() {
                     rows={5}
                     placeholder={t('dataStorages.dialogs.fields.gcsCredential.editPlaceholder')}
                   />
-                  {errors.gcsCredential && (
-                    <span className='text-sm text-red-500'>{errors.gcsCredential.message}</span>
-                  )}
+                  {errors.gcsCredential && <span className='text-sm text-red-500'>{errors.gcsCredential.message}</span>}
                 </div>
               </>
             )}
@@ -374,24 +346,14 @@ export function EditDataStorageDialog() {
                     })}
                     placeholder='https://webdav.example.com'
                   />
-                  {errors.webdavURL && (
-                    <span className='text-sm text-red-500'>{errors.webdavURL.message}</span>
-                  )}
+                  {errors.webdavURL && <span className='text-sm text-red-500'>{errors.webdavURL.message}</span>}
                 </div>
                 <div className='grid gap-2'>
-                  <Label htmlFor='edit-webdav-username'>
-                    {t('dataStorages.fields.webdavUsername')}
-                  </Label>
-                  <Input
-                    id='edit-webdav-username'
-                    {...register('webdavUsername')}
-                    placeholder='username'
-                  />
+                  <Label htmlFor='edit-webdav-username'>{t('dataStorages.fields.webdavUsername')}</Label>
+                  <Input id='edit-webdav-username' {...register('webdavUsername')} placeholder='username' />
                 </div>
                 <div className='grid gap-2'>
-                  <Label htmlFor='edit-webdav-password'>
-                    {t('dataStorages.fields.webdavPassword')}
-                  </Label>
+                  <Label htmlFor='edit-webdav-password'>{t('dataStorages.fields.webdavPassword')}</Label>
                   <Input
                     id='edit-webdav-password'
                     type='password'
@@ -405,17 +367,11 @@ export function EditDataStorageDialog() {
                     })}
                     placeholder={t('dataStorages.dialogs.fields.webdavPassword.editPlaceholder')}
                   />
-                  {errors.webdavPassword && (
-                    <span className='text-sm text-red-500'>{errors.webdavPassword.message}</span>
-                  )}
+                  {errors.webdavPassword && <span className='text-sm text-red-500'>{errors.webdavPassword.message}</span>}
                 </div>
                 <div className='grid gap-2'>
                   <Label htmlFor='edit-webdav-path'>{t('dataStorages.fields.webdavPath')}</Label>
-                  <Input
-                    id='edit-webdav-path'
-                    {...register('webdavPath')}
-                    placeholder='/remote.php/dav/files/user/'
-                  />
+                  <Input id='edit-webdav-path' {...register('webdavPath')} placeholder='/remote.php/dav/files/user/' />
                 </div>
                 <div className='flex items-center space-x-2'>
                   <input
@@ -424,9 +380,7 @@ export function EditDataStorageDialog() {
                     {...register('webdavInsecureSkipTLS')}
                     className='h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600'
                   />
-                  <Label htmlFor='edit-webdav-insecure'>
-                    {t('dataStorages.fields.webdavInsecureSkipTLS')}
-                  </Label>
+                  <Label htmlFor='edit-webdav-insecure'>{t('dataStorages.fields.webdavInsecureSkipTLS')}</Label>
                 </div>
               </>
             )}

@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
 import { IconUserCheck, IconUserOff } from '@tabler/icons-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+
 import { ConfirmDialog } from '@/components/confirm-dialog';
+
 import { User } from '../data/schema';
 import { useUpdateUserStatus } from '../data/users';
 
@@ -29,8 +31,8 @@ export function UsersStatusDialog({ open, onOpenChange, currentRow }: Props) {
       });
       onOpenChange(false);
     } catch (error) {
-          toast.error(t('common.errors.somethingWentWrong'));
-        }
+      toast.error(t('common.errors.somethingWentWrong'));
+    }
   };
 
   return (

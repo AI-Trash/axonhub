@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
 import { usePrompts } from '../context/prompts-context';
 import { useBulkDeletePrompts } from '../data/prompts';
 
@@ -30,13 +32,15 @@ export function PromptsBulkDeleteDialog() {
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{t('prompts.dialogs.bulkDelete.title')}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {t('prompts.dialogs.bulkDelete.description', { count: selectedPrompts.length })}
-          </AlertDialogDescription>
+          <AlertDialogDescription>{t('prompts.dialogs.bulkDelete.description', { count: selectedPrompts.length })}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{t('common.buttons.cancel')}</AlertDialogCancel>
-          <AlertDialogAction onClick={handleConfirm} disabled={bulkDeleteMutation.isPending} className='bg-destructive text-destructive-foreground hover:bg-destructive/90'>
+          <AlertDialogAction
+            onClick={handleConfirm}
+            disabled={bulkDeleteMutation.isPending}
+            className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
+          >
             {t('common.buttons.delete')}
           </AlertDialogAction>
         </AlertDialogFooter>

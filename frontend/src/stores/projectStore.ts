@@ -13,22 +13,20 @@ export const getProjectIdFromStorage = (): string | null => {
   try {
     return localStorage.getItem(PROJECT_STORAGE_KEY);
   } catch (error) {
-        return null;
-      }
+    return null;
+  }
 };
 
 const setProjectIdToStorage = (projectId: string): void => {
   try {
     localStorage.setItem(PROJECT_STORAGE_KEY, projectId);
-  } catch (error) {
-  }
+  } catch (error) {}
 };
 
 const removeProjectIdFromStorage = (): void => {
   try {
     localStorage.removeItem(PROJECT_STORAGE_KEY);
-  } catch (error) {
-  }
+  } catch (error) {}
 };
 
 export const useProjectStore = create<ProjectState>()((set) => {

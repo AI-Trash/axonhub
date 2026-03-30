@@ -1,20 +1,15 @@
-import { useState, useMemo } from 'react';
-import { format } from 'date-fns';
-import { useTranslation } from 'react-i18next';
 import { IconRefresh, IconRefreshOff, IconKey, IconAlertTriangle, IconTrash } from '@tabler/icons-react';
+import { format } from 'date-fns';
+import { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
 import { useChannels } from '../context/channels-context';
 import {
   useChannelDisabledAPIKeys,
@@ -49,10 +44,7 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
   const deleteDisabledAPIKeys = useDeleteDisabledChannelAPIKeys();
 
   const isPending =
-    enableAPIKey.isPending ||
-    enableAllAPIKeys.isPending ||
-    enableSelectedAPIKeys.isPending ||
-    deleteDisabledAPIKeys.isPending;
+    enableAPIKey.isPending || enableAllAPIKeys.isPending || enableSelectedAPIKeys.isPending || deleteDisabledAPIKeys.isPending;
 
   const handleClose = () => {
     setOpen(null);
@@ -164,9 +156,7 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
             <IconKey className='h-5 w-5' />
             {t('channels.dialogs.disabledAPIKeys.title')}
           </DialogTitle>
-          <DialogDescription>
-            {t('channels.dialogs.disabledAPIKeys.description', { name: currentRow.name })}
-          </DialogDescription>
+          <DialogDescription>{t('channels.dialogs.disabledAPIKeys.description', { name: currentRow.name })}</DialogDescription>
         </DialogHeader>
 
         <div className='py-4'>
@@ -254,7 +244,7 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
               <ScrollArea className='h-[300px] rounded-md border'>
                 <div className='divide-y'>
                   {disabledKeys.map((dk) => (
-                    <div key={dk.key} className='flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/50'>
+                    <div key={dk.key} className='hover:bg-muted/50 flex items-center justify-between gap-3 px-4 py-3'>
                       <div className='flex items-center gap-3'>
                         <Checkbox
                           checked={selectedKeys.has(dk.key)}
@@ -340,12 +330,7 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
                                 <Button size='sm' variant='outline' onClick={() => setConfirmDeletePopoverKey(null)}>
                                   {t('common.buttons.cancel')}
                                 </Button>
-                                <Button
-                                  size='sm'
-                                  variant='destructive'
-                                  onClick={() => handleDeleteKey(dk.key)}
-                                  disabled={isPending}
-                                >
+                                <Button size='sm' variant='destructive' onClick={() => handleDeleteKey(dk.key)} disabled={isPending}>
                                   {isPending ? t('common.buttons.processing') : t('common.buttons.confirm')}
                                 </Button>
                               </div>
@@ -373,9 +358,7 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
                 </PopoverTrigger>
                 <PopoverContent className='w-80'>
                   <div className='flex flex-col gap-3'>
-                    <p className='text-sm'>
-                      {t('channels.dialogs.disabledAPIKeys.confirmEnableAll', { count: disabledKeys.length })}
-                    </p>
+                    <p className='text-sm'>{t('channels.dialogs.disabledAPIKeys.confirmEnableAll', { count: disabledKeys.length })}</p>
                     <div className='flex justify-end gap-2'>
                       <Button size='sm' variant='outline' onClick={() => setConfirmEnableAll(false)}>
                         {t('common.buttons.cancel')}

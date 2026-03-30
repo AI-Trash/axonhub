@@ -1,16 +1,16 @@
 {
   "name": "axonhub",
-  "private": false,
   "version": "0.1.0",
+  "private": false,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint . --fix",
     "preview": "vite preview",
-    "format:check": "prettier --check .",
-    "format": "prettier --write .",
+    "format:check": "oxfmt --check .",
+    "format": "oxfmt .",
     "prepare": "husky",
     "knip": "knip",
     "test:e2e": "../scripts/e2e/e2e-test.sh",
@@ -95,14 +95,12 @@
     "zustand": "catalog:"
   },
   "devDependencies": {
-    "@eslint/js": "catalog:",
     "@faker-js/faker": "catalog:",
     "@playwright/test": "catalog:",
     "@tanstack/eslint-plugin-query": "catalog:",
     "@tanstack/react-query-devtools": "catalog:",
     "@tanstack/react-router-devtools": "catalog:",
     "@tanstack/router-plugin": "catalog:",
-    "@trivago/prettier-plugin-sort-imports": "catalog:",
     "@types/js-cookie": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
@@ -110,26 +108,21 @@
     "@vitejs/plugin-react": "catalog:",
     "@vitejs/plugin-react-swc": "catalog:",
     "babel-plugin-react-compiler": "catalog:",
-    "eslint": "catalog:",
-    "eslint-plugin-react-hooks": "catalog:",
-    "eslint-plugin-react-refresh": "catalog:",
-    "globals": "catalog:",
     "husky": "catalog:",
     "knip": "catalog:",
     "lint-staged": "catalog:",
-    "prettier": "catalog:",
-    "prettier-plugin-tailwindcss": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
     "typescript": "catalog:",
-    "typescript-eslint": "catalog:",
     "vite": "catalog:"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
-      "eslint --fix --quiet",
-      "prettier --write"
+      "oxlint --fix --quiet",
+      "oxfmt"
     ],
     "*.{json,md,css}": [
-      "prettier --write"
+      "oxfmt"
     ]
   }
 }

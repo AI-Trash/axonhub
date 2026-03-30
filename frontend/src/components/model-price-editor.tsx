@@ -1,11 +1,12 @@
+import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { memo, useEffect, useMemo } from 'react';
 import { useFieldArray, useFormContext, useWatch, type Control, type FieldArrayPath, type FieldPath } from 'react-hook-form';
-import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
 import { FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
-import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 
@@ -172,10 +173,7 @@ const PriceItemRow = memo(function PriceItemRow({
     control,
     name: asFieldArrayPath(`prices.${priceIndex}.price.items.${itemIndex}.pricing.usageTiered.tiers`),
   });
-  const tiers = usePriceEditorWatch<Tier[] | undefined>(
-    control,
-    `prices.${priceIndex}.price.items.${itemIndex}.pricing.usageTiered.tiers`
-  );
+  const tiers = usePriceEditorWatch<Tier[] | undefined>(control, `prices.${priceIndex}.price.items.${itemIndex}.pricing.usageTiered.tiers`);
   const { setValue } = useFormContext<PriceEditorFormValues>();
   const requiredMessage = t('price.validation.priceRequired');
 
@@ -329,7 +327,7 @@ const PriceItemRow = memo(function PriceItemRow({
         </div>
 
         {pricingMode === 'usage_tiered' && (
-          <div className='col-span-full ml-4 mt-2 min-w-0 space-y-2 rounded-md border border-dashed p-3'>
+          <div className='col-span-full mt-2 ml-4 min-w-0 space-y-2 rounded-md border border-dashed p-3'>
             <div className='text-muted-foreground flex items-center justify-between text-xs'>
               <span>{t('price.tiers')}</span>
               <Button type='button' variant='outline' size='icon-sm' onClick={() => appendTier({ upTo: null, pricePerUnit: '0' })}>
@@ -349,11 +347,9 @@ const PriceItemRow = memo(function PriceItemRow({
                           <Input
                             type='number'
                             {...field}
-                            value={isLastTier ? '' : (field.value as unknown as number | null | undefined) ?? ''}
+                            value={isLastTier ? '' : ((field.value as unknown as number | null | undefined) ?? '')}
                             onChange={(e) =>
-                              isLastTier
-                                ? field.onChange(null)
-                                : field.onChange(e.target.value ? parseInt(e.target.value) : null)
+                              isLastTier ? field.onChange(null) : field.onChange(e.target.value ? parseInt(e.target.value) : null)
                             }
                             placeholder={isLastTier ? '∞' : t('price.upTo')}
                             disabled={isLastTier}
@@ -597,9 +593,7 @@ const PriceVariantRow = memo(function PriceVariantRow({
         {pricingMode === 'flat_fee' && (
           <FormField
             control={control}
-            name={asFieldPath(
-              `prices.${priceIndex}.price.items.${itemIndex}.promptWriteCacheVariants.${variantIndex}.pricing.flatFee`
-            )}
+            name={asFieldPath(`prices.${priceIndex}.price.items.${itemIndex}.promptWriteCacheVariants.${variantIndex}.pricing.flatFee`)}
             render={({ field }) => (
               <FormItem className='min-w-0 flex-1'>
                 <FormControl>
@@ -655,11 +649,9 @@ const PriceVariantRow = memo(function PriceVariantRow({
                         <Input
                           type='number'
                           {...field}
-                          value={isLastTier ? '' : (field.value as unknown as number | null | undefined) ?? ''}
+                          value={isLastTier ? '' : ((field.value as unknown as number | null | undefined) ?? '')}
                           onChange={(e) =>
-                            isLastTier
-                              ? field.onChange(null)
-                              : field.onChange(e.target.value ? parseInt(e.target.value) : null)
+                            isLastTier ? field.onChange(null) : field.onChange(e.target.value ? parseInt(e.target.value) : null)
                           }
                           placeholder={isLastTier ? '∞' : t('price.upTo')}
                           disabled={isLastTier}
@@ -705,12 +697,7 @@ const PriceVariantRow = memo(function PriceVariantRow({
                 )}
                 rules={{ required: requiredMessage }}
               />
-              <Button
-                type='button'
-                variant='ghost'
-                size='icon-sm'
-                onClick={() => removeTier(tierIndex)}
-              >
+              <Button type='button' variant='ghost' size='icon-sm' onClick={() => removeTier(tierIndex)}>
                 <IconTrash size={10} className='text-destructive' />
               </Button>
             </div>

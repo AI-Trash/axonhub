@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
-import { useRouter } from '@tanstack/react-router';
 import { IconShieldX, IconArrowLeft } from '@tabler/icons-react';
+import { useRouter } from '@tanstack/react-router';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useRoutePermissions } from '@/hooks/useRoutePermissions';
+
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { useRoutePermissions } from '@/hooks/useRoutePermissions';
 
 interface RouteGuardProps {
   children: React.ReactNode;

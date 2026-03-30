@@ -1,18 +1,20 @@
-import { useMemo, useState } from 'react';
-import { format } from 'date-fns';
 import { useParams, useNavigate } from '@tanstack/react-router';
+import { format } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
 import { ArrowLeft, Activity } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { extractNumberID } from '@/lib/utils';
-import { usePaginationSearch } from '@/hooks/use-pagination-search';
+
+import { Header } from '@/components/layout/header';
+import { Main } from '@/components/layout/main';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Header } from '@/components/layout/header';
-import { Main } from '@/components/layout/main';
-import type { Trace } from '@/features/traces/data/schema';
 import { useGeneralSettings } from '@/features/system/data/system';
+import type { Trace } from '@/features/traces/data/schema';
+import { usePaginationSearch } from '@/hooks/use-pagination-search';
+import { extractNumberID } from '@/lib/utils';
+
 import { useThreadDetail } from '../data/threads';
 import { TraceCard } from './trace-card';
 import { TraceDrawer } from './trace-drawer';

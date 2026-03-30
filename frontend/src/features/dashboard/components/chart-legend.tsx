@@ -1,5 +1,5 @@
-import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { cn } from '@/lib/utils';
 
 export interface ChartLegendItem {
   name: string;
@@ -35,15 +35,11 @@ export function ChartLegend({ items, columns, showIndex = true }: ChartLegendPro
               {item.index.toString().padStart(2, '0')}.
             </span>
           )}
-          {item.color && (
-            <span className='mt-1 h-2.5 w-2.5 rounded-full' style={{ backgroundColor: item.color }} />
-          )}
+          {item.color && <span className='mt-1 h-2.5 w-2.5 rounded-full' style={{ backgroundColor: item.color }} />}
           <span className='text-foreground min-w-0 text-sm font-medium break-words'>{item.name}</span>
           <div className='text-right leading-tight'>
             <div className='text-foreground text-sm font-medium tabular-nums'>{item.primaryValue}</div>
-            {item.secondaryValue && (
-              <div className='text-muted-foreground text-xs tabular-nums'>{item.secondaryValue}</div>
-            )}
+            {item.secondaryValue && <div className='text-muted-foreground text-xs tabular-nums'>{item.secondaryValue}</div>}
           </div>
         </div>
       ))}

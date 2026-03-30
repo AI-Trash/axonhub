@@ -1,28 +1,30 @@
-import { useEffect, useMemo, useCallback, useState, useRef } from 'react';
-import { z } from 'zod';
-import { useForm, useFieldArray, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { IconPlus, IconTrash, IconChevronDown, IconChevronUp } from '@tabler/icons-react';
-import { useQueryModels } from '@/gql/models';
+import { useEffect, useMemo, useCallback, useState, useRef } from 'react';
+import { useForm, useFieldArray, useWatch } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
-import { extractNumberIDAsNumber } from '@/lib/utils';
-import { useDebounce } from '@/hooks/use-debounce';
+import { toast } from 'sonner';
+import { z } from 'zod';
+
+import { AutoComplete } from '@/components/auto-complete';
+import { AutoCompleteSelect } from '@/components/auto-complete-select';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { TagsAutocompleteInput } from '@/components/ui/tags-autocomplete-input';
-import { AutoComplete } from '@/components/auto-complete';
-import { AutoCompleteSelect } from '@/components/auto-complete-select';
 import { useAllChannelsForOrdering, useAllChannelTags } from '@/features/channels/data/channels';
+import { useQueryModels } from '@/gql/models';
+import { useDebounce } from '@/hooks/use-debounce';
+import { extractNumberIDAsNumber } from '@/lib/utils';
+
 import { useModels } from '../context/models-context';
 import { useQueryModelChannelConnections, ModelAssociationInput, ModelChannelConnection } from '../data/models';
 import { useUpdateModel } from '../data/models';
 import { ModelAssociation } from '../data/schema';
-import { toast } from 'sonner';
 import { ChannelModelsList } from './channel-models-list';
 
 const associationFormSchema = z.object({
@@ -457,8 +459,7 @@ export function ModelsAssociationDialog() {
 
     // Get the priority of the last rule (highest priority)
     const currentAssociations = form.getValues('associations') || [];
-    const lastPriority =
-      currentAssociations.length > 0 ? Math.max(...currentAssociations.map((a) => a.priority ?? 0)) : 0;
+    const lastPriority = currentAssociations.length > 0 ? Math.max(...currentAssociations.map((a) => a.priority ?? 0)) : 0;
 
     append({
       type: 'channel_model',
@@ -503,7 +504,9 @@ export function ModelsAssociationDialog() {
                   {fields.length > 0 && (
                     <div className='grid grid-cols-[2.25rem_3rem_14rem_1fr_2.25rem] items-center gap-2 border-b px-[13px] pb-2'>
                       <div />
-                      <div className='text-muted-foreground text-center text-xs font-medium'>{t('models.dialogs.association.priority')}</div>
+                      <div className='text-muted-foreground text-center text-xs font-medium'>
+                        {t('models.dialogs.association.priority')}
+                      </div>
                       <div className='text-muted-foreground text-center text-xs font-medium'>{t('models.dialogs.association.type')}</div>
                       <div className='text-muted-foreground text-center text-xs font-medium'>{t('models.dialogs.association.rule')}</div>
                       <div />

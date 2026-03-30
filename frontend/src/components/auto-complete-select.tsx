@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
 import { Command as CommandPrimitive } from 'cmdk';
 import { Check } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+
 import { cn } from '@/lib/utils';
+
 import { TruncatedText } from './truncated-text';
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from './ui/command';
 import { Input } from './ui/input';
@@ -110,7 +112,7 @@ export function AutoCompleteSelect<T extends string>({
                 e.preventDefault();
               }
             }}
-            className='min-w-[var(--radix-popover-trigger-width)] w-max max-w-[min(400px,90vw)] p-0'
+            className='w-max max-w-[min(400px,90vw)] min-w-[var(--radix-popover-trigger-width)] p-0'
             container={portalContainer}
           >
             <CommandList>

@@ -1,8 +1,9 @@
 import { IconLanguage } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
-import { useLanguage } from '@/hooks/useLanguage';
+
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { useLanguage } from '@/hooks/useLanguage';
 
 const languages = [
   { code: 'en', name: 'English' },

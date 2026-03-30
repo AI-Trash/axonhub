@@ -1,8 +1,9 @@
+import { zodResolver } from '@hookform/resolvers/zod';
 import { useCallback, useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
-import { zodResolver } from '@hookform/resolvers/zod';
 import { useTranslation } from 'react-i18next';
+import { z } from 'zod';
+
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -10,6 +11,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+
 import { usePromptProtectionRules } from '../context/rules-context';
 import { useCreatePromptProtectionRule, useUpdatePromptProtectionRule } from '../data/rules';
 
@@ -128,7 +130,9 @@ export function RulesActionDialog() {
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent className='sm:max-w-[680px]'>
         <DialogHeader>
-          <DialogTitle>{isEdit ? t('promptProtectionRules.dialogs.edit.title') : t('promptProtectionRules.dialogs.create.title')}</DialogTitle>
+          <DialogTitle>
+            {isEdit ? t('promptProtectionRules.dialogs.edit.title') : t('promptProtectionRules.dialogs.create.title')}
+          </DialogTitle>
           <DialogDescription>
             {isEdit ? t('promptProtectionRules.dialogs.edit.description') : t('promptProtectionRules.dialogs.create.description')}
           </DialogDescription>
@@ -234,14 +238,14 @@ export function RulesActionDialog() {
                               <Checkbox
                                 checked={field.value?.includes(scope)}
                                 onCheckedChange={(checked) => {
-                                  const next = checked
-                                    ? [...field.value, scope]
-                                    : field.value.filter((value) => value !== scope);
+                                  const next = checked ? [...field.value, scope] : field.value.filter((value) => value !== scope);
                                   field.onChange(next);
                                 }}
                               />
                             </FormControl>
-                            <FormLabel className='m-0 cursor-pointer text-sm font-normal'>{t(`promptProtectionRules.scopes.${scope}`)}</FormLabel>
+                            <FormLabel className='m-0 cursor-pointer text-sm font-normal'>
+                              {t(`promptProtectionRules.scopes.${scope}`)}
+                            </FormLabel>
                           </FormItem>
                         )}
                       />

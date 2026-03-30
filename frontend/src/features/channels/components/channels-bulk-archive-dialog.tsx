@@ -2,7 +2,9 @@
 
 import { IconAlertTriangle, IconArchive } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
+
 import { ConfirmDialog } from '@/components/confirm-dialog';
+
 import { useChannels } from '../context/channels-context';
 import { useBulkArchiveChannels } from '../data/channels';
 
@@ -29,8 +31,7 @@ export function ChannelsBulkArchiveDialog() {
       resetRowSelection();
       setSelectedChannels([]);
       setOpen(null);
-    } catch (error) {
-    }
+    } catch (error) {}
   };
 
   return (

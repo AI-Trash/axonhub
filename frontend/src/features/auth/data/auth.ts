@@ -1,13 +1,14 @@
-import { useEffect } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRouter } from '@tanstack/react-router';
+import { useEffect } from 'react';
+import { toast } from 'sonner';
+
 import { graphqlRequest } from '@/gql/graphql';
 import { ME_QUERY } from '@/gql/users';
-import { toast } from 'sonner';
-import { useAuthStore, setTokenToStorage, removeTokenFromStorage } from '@/stores/authStore';
-import { AuthUser } from '@/stores/authStore';
 import { authApi } from '@/lib/api-client';
 import i18n from '@/lib/i18n';
+import { useAuthStore, setTokenToStorage, removeTokenFromStorage } from '@/stores/authStore';
+import { AuthUser } from '@/stores/authStore';
 
 export interface SignInInput {
   email: string;

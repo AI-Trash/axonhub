@@ -1,6 +1,8 @@
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
 import { useChannels } from '../context/channels-context';
 import { useClearChannelErrorMessage } from '../data/channels';
 
@@ -53,7 +55,9 @@ export function ChannelsErrorResolvedDialog({ open, onOpenChange }: ChannelsErro
         <div className='py-4'>
           <div className='bg-muted rounded-md p-3'>
             <p className='text-sm font-medium'>{t('channels.dialogs.errorResolved.currentError')}</p>
-            <p className='text-muted-foreground mt-1 text-sm'>{t(`channels.messages.${currentRow.errorMessage}`, { defaultValue: currentRow.errorMessage })}</p>
+            <p className='text-muted-foreground mt-1 text-sm'>
+              {t(`channels.messages.${currentRow.errorMessage}`, { defaultValue: currentRow.errorMessage })}
+            </p>
           </div>
         </div>
 

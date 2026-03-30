@@ -1,7 +1,9 @@
 import { IconPlus } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@/components/ui/button';
+
 import { PermissionGuard } from '@/components/permission-guard';
+import { Button } from '@/components/ui/button';
+
 import { useRolesContext } from '../context/roles-context';
 
 export function RolesPrimaryButtons() {

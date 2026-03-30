@@ -1,34 +1,27 @@
 'use client';
 
+import { ChevronLeft, ChevronRight, ExternalLink, FileText, ChevronsDownUp, ChevronsUpDown, Copy, Terminal } from 'lucide-react';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  ChevronLeft,
-  ChevronRight,
-  ExternalLink,
-  FileText,
-  ChevronsDownUp,
-  ChevronsUpDown,
-  Copy,
-  Terminal,
-} from 'lucide-react';
 import { toast } from 'sonner';
-import { extractNumberID } from '@/lib/utils';
-import { usePaginationSearch } from '@/hooks/use-pagination-search';
-import { useSelectedProjectId } from '@/stores/projectStore';
+
+import { JsonViewer } from '@/components/json-tree-view';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { JsonViewer } from '@/components/json-tree-view';
+import { usePaginationSearch } from '@/hooks/use-pagination-search';
+import { extractNumberID } from '@/lib/utils';
+import { useSelectedProjectId } from '@/stores/projectStore';
+
 import { useRequestPermissions } from '../../../hooks/useRequestPermissions';
 import { useRequest, fetchAdjacentRequestPage } from '../data';
 import { Request, RequestConnection } from '../data/schema';
+import { generateRequestCurl } from '../utils/curl-generator';
 import { CurlPreviewDialog } from './curl-preview-dialog';
 import { getStatusColor } from './help';
-import { generateRequestCurl } from '../utils/curl-generator';
 
 interface RequestBodyDrawerProps {
   open: boolean;
@@ -149,9 +142,7 @@ export function RequestBodyDrawer({
         return merged;
       });
       setNavPageInfo((p) =>
-        p
-          ? { ...p, hasNextPage: result.pageInfo.hasNextPage, endCursor: result.pageInfo.endCursor }
-          : result.pageInfo
+        p ? { ...p, hasNextPage: result.pageInfo.hasNextPage, endCursor: result.pageInfo.endCursor } : result.pageInfo
       );
     } finally {
       setIsLoadingMore(false);
@@ -183,9 +174,7 @@ export function RequestBodyDrawer({
         return merged;
       });
       setNavPageInfo((p) =>
-        p
-          ? { ...p, hasPreviousPage: result.pageInfo.hasPreviousPage, startCursor: result.pageInfo.startCursor }
-          : result.pageInfo
+        p ? { ...p, hasPreviousPage: result.pageInfo.hasPreviousPage, startCursor: result.pageInfo.startCursor } : result.pageInfo
       );
     } finally {
       setIsLoadingMore(false);
@@ -205,10 +194,7 @@ export function RequestBodyDrawer({
   // ── render ─────────────────────────────────────────────────────────────────
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side='right'
-        className='flex w-[50vw] min-w-[500px] max-w-[800px] flex-col gap-0 p-0 sm:max-w-[800px]'
-      >
+      <SheetContent side='right' className='flex w-[50vw] max-w-[800px] min-w-[500px] flex-col gap-0 p-0 sm:max-w-[800px]'>
         {/* Header */}
         <SheetHeader className='flex-shrink-0 border-b px-6 py-4'>
           <div className='flex items-center justify-between pr-6'>
@@ -247,12 +233,7 @@ export function RequestBodyDrawer({
               >
                 <ChevronRight className='h-4 w-4' />
               </Button>
-              <Button
-                variant='outline'
-                size='sm'
-                onClick={handleViewDetail}
-                className='ml-1 h-7 text-xs'
-              >
+              <Button variant='outline' size='sm' onClick={handleViewDetail} className='ml-1 h-7 text-xs'>
                 <ExternalLink className='mr-1 h-3.5 w-3.5' />
                 {t('requests.drawer.viewDetail')}
               </Button>
@@ -264,9 +245,7 @@ export function RequestBodyDrawer({
         <div className='flex min-h-0 flex-1 flex-col'>
           {displayedRequest ? (
             <div className='relative flex min-h-0 flex-1 flex-col'>
-              {isFetching && (
-                <div className='absolute inset-x-0 top-0 z-10 h-0.5 animate-pulse bg-primary/40' />
-              )}
+              {isFetching && <div className='bg-primary/40 absolute inset-x-0 top-0 z-10 h-0.5 animate-pulse' />}
               <Tabs value={activeTab} onValueChange={setActiveTab} className='flex h-full flex-col'>
                 {/* Tab bar + action buttons */}
                 <div className='mx-6 mt-4 flex flex-shrink-0 items-center gap-2'>
@@ -281,19 +260,13 @@ export function RequestBodyDrawer({
                     onClick={() => setGlobalExpanded((v) => !v)}
                     title={globalExpanded ? t('requests.drawer.collapseAll') : t('requests.drawer.expandAll')}
                   >
-                    {globalExpanded ? (
-                      <ChevronsDownUp className='h-4 w-4' />
-                    ) : (
-                      <ChevronsUpDown className='h-4 w-4' />
-                    )}
+                    {globalExpanded ? <ChevronsDownUp className='h-4 w-4' /> : <ChevronsUpDown className='h-4 w-4' />}
                   </Button>
                   <Button
                     variant='outline'
                     size='icon'
                     className='h-9 w-9 flex-shrink-0'
-                    onClick={() =>
-                      copyBody(activeTab === 'request' ? displayedRequest.requestBody : displayedRequest.responseBody)
-                    }
+                    onClick={() => copyBody(activeTab === 'request' ? displayedRequest.requestBody : displayedRequest.responseBody)}
                     title={t('requests.actions.copy')}
                   >
                     <Copy className='h-4 w-4' />
@@ -311,7 +284,7 @@ export function RequestBodyDrawer({
                   )}
                 </div>
 
-                <TabsContent value='request' className='m-0 min-h-0 flex-1 px-6 pb-6 pt-4'>
+                <TabsContent value='request' className='m-0 min-h-0 flex-1 px-6 pt-4 pb-6'>
                   <ScrollArea className='bg-muted/20 h-full w-full rounded-lg border p-4'>
                     {displayedRequest.requestBody ? (
                       <JsonViewer
@@ -332,7 +305,7 @@ export function RequestBodyDrawer({
                   </ScrollArea>
                 </TabsContent>
 
-                <TabsContent value='response' className='m-0 min-h-0 flex-1 px-6 pb-6 pt-4'>
+                <TabsContent value='response' className='m-0 min-h-0 flex-1 px-6 pt-4 pb-6'>
                   <ScrollArea className='bg-muted/20 h-full w-full rounded-lg border p-4'>
                     {displayedRequest.responseBody ? (
                       <JsonViewer

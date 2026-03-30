@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useRef, ReactNode } from 'react';
+
 import { Role } from '../data/schema';
 
 type RoleDialogType = 'create' | 'edit' | 'delete' | 'bulkDelete';

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+
 import { pageInfoSchema } from '@/gql/pagination';
 
 export const modelTypeSchema = z.enum(['chat', 'embedding', 'rerank', 'image_generation', 'video_generation']);

@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { graphqlRequest } from '@/gql/graphql';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { useSelectedProjectId } from '@/stores/projectStore';
+
+import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
+import { useSelectedProjectId } from '@/stores/projectStore';
+
 import { useRequestPermissions } from '../../../hooks/useRequestPermissions';
 import type {
   ApiKey,

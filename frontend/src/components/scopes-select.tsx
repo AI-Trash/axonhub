@@ -1,13 +1,14 @@
-import { useState } from 'react';
-import { useAllScopes } from '@/gql/scopes';
 import { Check, ChevronsUpDown } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { cn } from '@/lib/utils';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useAllScopes } from '@/gql/scopes';
 import { filterGrantableScopes } from '@/lib/permission-utils';
+import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { useSelectedProjectId } from '@/stores/projectStore';
 
@@ -48,9 +49,7 @@ export function ScopesSelect({ value, onChange, portalContainer, level = 'projec
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button variant='outline' role='combobox' aria-expanded={open} className='w-full justify-between'>
-            {value.length > 0
-              ? t('scopes.select.selectedCount', { count: value.length })
-              : t('scopes.select.selectPlaceholder')}
+            {value.length > 0 ? t('scopes.select.selectedCount', { count: value.length }) : t('scopes.select.selectPlaceholder')}
             <ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
           </Button>
         </PopoverTrigger>

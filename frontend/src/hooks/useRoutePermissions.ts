@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
+
+import { type NavGroup, type NavItem } from '@/components/layout/types';
 import { routeConfigs, type RouteConfig, type RouteGroup, type ScopeLevel } from '@/config/route-permission';
+import { useMe } from '@/features/auth/data/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useSelectedProjectId } from '@/stores/projectStore';
-import { type NavGroup, type NavItem } from '@/components/layout/types';
-import { useMe } from '@/features/auth/data/auth';
 
 export function useRoutePermissions() {
   const { user: authUser } = useAuthStore((state) => state.auth);

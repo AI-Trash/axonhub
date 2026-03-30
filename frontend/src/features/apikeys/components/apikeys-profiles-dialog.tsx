@@ -1,13 +1,12 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { IconPlus, IconTrash, IconSettings, IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { format, type Locale } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
-import { useQueryModels } from '@/gql/models';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useForm, useFieldArray } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
-import { extractNumberID } from '@/lib/utils';
-import { useDebounce } from '@/hooks/use-debounce';
+
+import { AutoComplete } from '@/components/auto-complete';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -16,11 +15,19 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { TagsAutocompleteInput } from '@/components/ui/tags-autocomplete-input';
-import { AutoComplete } from '@/components/auto-complete';
 import { useAllChannelsForOrdering } from '@/features/channels/data/channels';
+import { useQueryModels } from '@/gql/models';
+import { useDebounce } from '@/hooks/use-debounce';
+import { extractNumberID } from '@/lib/utils';
+
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useApiKeyQuotaUsages } from '../data/apikeys';
-import { updateApiKeyProfilesInputSchemaFactory, type ApiKeyProfile, type ApiKeyProfileQuotaUsage, type UpdateApiKeyProfilesInput } from '../data/schema';
+import {
+  updateApiKeyProfilesInputSchemaFactory,
+  type ApiKeyProfile,
+  type ApiKeyProfileQuotaUsage,
+  type UpdateApiKeyProfilesInput,
+} from '../data/schema';
 
 type ApiKeyQuotaPeriod = NonNullable<NonNullable<ApiKeyProfile['quota']>['period']>;
 
@@ -777,7 +784,8 @@ function ProfileCard({
                       <div>
                         <div className='text-muted-foreground text-xs'>{t('apikeys.profiles.quotaCost')}</div>
                         <div className='text-sm'>
-                          {(quotaUsage.usage.totalCost ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}/{currentQuota?.cost ?? '∞'}
+                          {(quotaUsage.usage.totalCost ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}/
+                          {currentQuota?.cost ?? '∞'}
                         </div>
                       </div>
                     </div>
@@ -787,8 +795,7 @@ function ProfileCard({
                         {quotaUsage.window.start ? format(quotaUsage.window.start, 'PPpp', { locale }) : '-'}
                       </div>
                       <div>
-                        {t('common.filters.endTime')}{' '}
-                        {quotaUsageEnd ? format(quotaUsageEnd, 'PPpp', { locale }) : '-'}
+                        {t('common.filters.endTime')} {quotaUsageEnd ? format(quotaUsageEnd, 'PPpp', { locale }) : '-'}
                       </div>
                     </div>
                   </div>
@@ -811,10 +818,10 @@ function ProfileCard({
                         {field.value === 'adaptive'
                           ? t('system.retry.loadBalancerStrategy.documentation.adaptive')
                           : field.value === 'failover'
-                          ? t('system.retry.loadBalancerStrategy.documentation.failover')
-                          : field.value === 'circuit-breaker'
-                          ? t('system.retry.loadBalancerStrategy.documentation.circuit-breaker')
-                          : t('apikeys.profiles.loadBalancerStrategyDescription')}
+                            ? t('system.retry.loadBalancerStrategy.documentation.failover')
+                            : field.value === 'circuit-breaker'
+                              ? t('system.retry.loadBalancerStrategy.documentation.circuit-breaker')
+                              : t('apikeys.profiles.loadBalancerStrategyDescription')}
                       </FormDescription>
                     </div>
                     <FormControl>

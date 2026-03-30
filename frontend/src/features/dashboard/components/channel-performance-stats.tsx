@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next';
+
+import { useChannelPerformanceStats } from '../data/dashboard';
 import { PerformanceChart } from './performance-chart';
 import type { PerformanceDataPoint } from './performance-chart';
-import { useChannelPerformanceStats } from '../data/dashboard';
 
 interface ChannelPerformanceStatsProps {
   onTotalRequestsChange?: (total: number) => void;
@@ -28,8 +29,8 @@ export function ChannelPerformanceStats({ onTotalRequestsChange }: ChannelPerfor
       onTotalRequestsChange={onTotalRequestsChange}
       emptyMessage={t('dashboard.charts.noChannelData')}
       errorMessage={t('dashboard.charts.errorLoadingChannelData')}
-      idField="channelId"
-      nameField="channelName"
+      idField='channelId'
+      nameField='channelName'
     />
   );
 }

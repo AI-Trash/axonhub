@@ -1,18 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { SortingState } from '@tanstack/react-table';
 import { IconPlus } from '@tabler/icons-react';
+import { SortingState } from '@tanstack/react-table';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDebounce } from '@/hooks/use-debounce';
-import { usePaginationSearch } from '@/hooks/use-pagination-search';
-import { usePermissions } from '@/hooks/usePermissions';
-import { Button } from '@/components/ui/button';
+
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
 import { PermissionGuard } from '@/components/permission-guard';
-import PromptProtectionRulesProvider, { usePromptProtectionRules } from './context/rules-context';
+import { Button } from '@/components/ui/button';
+import { useDebounce } from '@/hooks/use-debounce';
+import { usePaginationSearch } from '@/hooks/use-pagination-search';
+import { usePermissions } from '@/hooks/usePermissions';
+
 import { createColumns } from './components/rules-columns';
 import { RulesDialogs } from './components/rules-dialogs';
 import { RulesTable } from './components/rules-table';
+import PromptProtectionRulesProvider, { usePromptProtectionRules } from './context/rules-context';
 import { useQueryPromptProtectionRules } from './data/rules';
 
 function RulesContent() {
@@ -154,7 +156,7 @@ export default function PromptProtectionRulesManagement() {
         <div className='flex flex-1 items-center justify-between'>
           <div>
             <h2 className='text-xl font-bold tracking-tight'>{t('promptProtectionRules.title')}</h2>
-            <p className='text-sm text-muted-foreground'>{t('promptProtectionRules.description')}</p>
+            <p className='text-muted-foreground text-sm'>{t('promptProtectionRules.description')}</p>
           </div>
           <ActionButtons />
         </div>

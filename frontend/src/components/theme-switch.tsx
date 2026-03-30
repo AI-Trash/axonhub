@@ -1,8 +1,7 @@
-import { useEffect } from 'react';
 import { IconCheck, IconMoon, IconSun, IconPalette } from '@tabler/icons-react';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { cn } from '@/lib/utils';
-import { useTheme } from '@/context/theme-context';
+
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -14,6 +13,8 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useTheme } from '@/context/theme-context';
+import { cn } from '@/lib/utils';
 
 export function ThemeSwitch() {
   const { theme, setTheme, colorScheme, setColorScheme } = useTheme();

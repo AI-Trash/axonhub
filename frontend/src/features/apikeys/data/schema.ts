@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { pageInfoSchema } from '@/gql/pagination';
+
 import { userSchema } from '@/features/users/data/schema';
+import { pageInfoSchema } from '@/gql/pagination';
 
 // API Key Type
 export const apiKeyTypeSchema = z.enum(['user', 'service_account', 'noauth']);

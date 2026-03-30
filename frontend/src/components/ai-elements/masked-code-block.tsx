@@ -1,11 +1,12 @@
 'use client';
 
-import { type ComponentProps, createContext, type HTMLAttributes, useContext, useEffect, useRef, useState } from 'react';
 import type { Element } from 'hast';
 import { CheckIcon, CopyIcon } from 'lucide-react';
+import { type ComponentProps, createContext, type HTMLAttributes, useContext, useEffect, useRef, useState } from 'react';
 import { type BundledLanguage, codeToHtml, type ShikiTransformer } from 'shiki';
-import { cn } from '@/lib/utils';
+
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 type MaskedCodeBlockProps = HTMLAttributes<HTMLDivElement> & {
   displayCode: string;
@@ -59,7 +60,16 @@ export async function highlightMaskedCode(code: string, language: BundledLanguag
   ]);
 }
 
-export const MaskedCodeBlock = ({ displayCode, realCode, language, showLineNumbers = false, preRenderedHtml, className, children, ...props }: MaskedCodeBlockProps) => {
+export const MaskedCodeBlock = ({
+  displayCode,
+  realCode,
+  language,
+  showLineNumbers = false,
+  preRenderedHtml,
+  className,
+  children,
+  ...props
+}: MaskedCodeBlockProps) => {
   const [html, setHtml] = useState<string>(preRenderedHtml?.light || '');
   const [darkHtml, setDarkHtml] = useState<string>(preRenderedHtml?.dark || '');
   const [isLoading, setIsLoading] = useState(!preRenderedHtml);
@@ -94,7 +104,7 @@ export const MaskedCodeBlock = ({ displayCode, realCode, language, showLineNumbe
         <div className='relative'>
           {isLoading ? (
             <div className='flex items-center justify-center p-4'>
-              <div className='h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent' />
+              <div className='border-primary h-4 w-4 animate-spin rounded-full border-2 border-t-transparent' />
             </div>
           ) : (
             <>
@@ -121,7 +131,14 @@ export type MaskedCodeBlockCopyButtonProps = ComponentProps<typeof Button> & {
   timeout?: number;
 };
 
-export const MaskedCodeBlockCopyButton = ({ onCopy, onError, timeout = 2000, children, className, ...props }: MaskedCodeBlockCopyButtonProps) => {
+export const MaskedCodeBlockCopyButton = ({
+  onCopy,
+  onError,
+  timeout = 2000,
+  children,
+  className,
+  ...props
+}: MaskedCodeBlockCopyButtonProps) => {
   const [isCopied, setIsCopied] = useState(false);
   const { realCode } = useContext(MaskedCodeBlockContext);
 

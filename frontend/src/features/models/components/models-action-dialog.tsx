@@ -1,12 +1,13 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
-import { format } from 'date-fns';
-import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toc } from '@lobehub/icons';
+import { format } from 'date-fns';
 import { CalendarIcon } from 'lucide-react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
-import { cn } from '@/lib/utils';
-import { formatNumber } from '@/utils/format-number';
+
+import { AutoComplete } from '@/components/auto-complete';
+import { AutoCompleteSelect } from '@/components/auto-complete-select';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -16,14 +17,23 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { AutoComplete } from '@/components/auto-complete';
-import { AutoCompleteSelect } from '@/components/auto-complete-select';
+import { cn } from '@/lib/utils';
+import { formatNumber } from '@/utils/format-number';
+
 import { useModels } from '../context/models-context';
 import { DEVELOPER_IDS, DEVELOPER_ICONS } from '../data/constants';
 import { useCreateModel, useUpdateModel } from '../data/models';
 import { useDevelopersData } from '../data/providers';
 import { type Provider, type ProviderModel } from '../data/providers.schema';
-import { CreateModelInput, createModelInputSchema, UpdateModelInput, ModelCard, ModelType, modelTypeSchema, updateModelInputSchema } from '../data/schema';
+import {
+  CreateModelInput,
+  createModelInputSchema,
+  UpdateModelInput,
+  ModelCard,
+  ModelType,
+  modelTypeSchema,
+  updateModelInputSchema,
+} from '../data/schema';
 
 function isDeveloper(provider: string) {
   return DEVELOPER_IDS.includes(provider);
@@ -262,7 +272,7 @@ export function ModelsActionDialog() {
           <form id='model-form' onSubmit={form.handleSubmit(onSubmit)} className='flex min-h-0 flex-1 flex-col overflow-hidden'>
             <div className='flex min-h-0 flex-1 gap-6 overflow-x-auto overflow-y-hidden md:overflow-hidden'>
               {/* Left Panel - Basic Information */}
-              <div className='min-h-0 w-1/2 md:w-1/3 flex-shrink-0 overflow-y-auto pr-4'>
+              <div className='min-h-0 w-1/2 flex-shrink-0 overflow-y-auto pr-4 md:w-1/3'>
                 <div className='space-y-4'>
                   <FormField
                     control={form.control}
@@ -414,7 +424,7 @@ export function ModelsActionDialog() {
               </div>
 
               {/* Right Panel - Model Card Fields */}
-              <div className='min-h-0 min-w-full md:min-w-0 flex-1 overflow-y-auto border-l pl-6'>
+              <div className='min-h-0 min-w-full flex-1 overflow-y-auto border-l pl-6 md:min-w-0'>
                 <div className='space-y-4 pb-4'>
                   <h3 className='text-lg font-semibold'>{t('models.modelCard.title')}</h3>
 
@@ -564,7 +574,7 @@ export function ModelsActionDialog() {
 
                   <div className='space-y-2'>
                     <FormLabel>{t('models.modelCard.cost')} ($/M tokens)</FormLabel>
-                    <p className='text-xs text-muted-foreground'>{t('models.modelCard.costHint')}</p>
+                    <p className='text-muted-foreground text-xs'>{t('models.modelCard.costHint')}</p>
                     <div className='grid grid-cols-2 gap-2'>
                       <FormField
                         control={form.control}

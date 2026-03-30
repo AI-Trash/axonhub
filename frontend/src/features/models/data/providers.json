@@ -25,12 +25,8 @@
           "release_date": "2026-03-16",
           "last_updated": "2026-03-16",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -48,9 +44,7 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
-              "continuation": [
-                "thinking_blocks"
-              ],
+              "continuation": ["thinking_blocks"],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary"
@@ -74,12 +68,8 @@
           "release_date": "2026-02-11",
           "last_updated": "2026-02-11",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -100,9 +90,7 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
+              "continuation": ["thinking_blocks"]
             }
           }
         },
@@ -121,12 +109,8 @@
           "release_date": "2026-01-19",
           "last_updated": "2026-01-19",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -165,12 +149,8 @@
           "release_date": "2025-12-22",
           "last_updated": "2025-12-22",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -191,9 +171,7 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
+              "continuation": ["thinking_blocks"]
             }
           }
         },
@@ -212,14 +190,8 @@
           "release_date": "2025-12-08",
           "last_updated": "2025-12-08",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -248,12 +220,8 @@
           "release_date": "2025-09-30",
           "last_updated": "2025-09-30",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -289,14 +257,8 @@
           "release_date": "2025-08-11",
           "last_updated": "2025-08-11",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -325,12 +287,8 @@
           "release_date": "2025-07-28",
           "last_updated": "2025-07-28",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -361,12 +319,8 @@
           "release_date": "2025-07-28",
           "last_updated": "2025-07-28",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -397,12 +351,8 @@
           "release_date": "2025-07-28",
           "last_updated": "2025-07-28",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -445,16 +395,8 @@
           "release_date": "2026-03-18",
           "last_updated": "2026-03-18",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video", "pdf"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -474,9 +416,7 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
+              "continuation": ["thinking_blocks"]
             }
           }
         },
@@ -498,12 +438,8 @@
           "release_date": "2026-03-18",
           "last_updated": "2026-03-18",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -523,9 +459,7 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
+              "continuation": ["thinking_blocks"]
             }
           }
         },
@@ -547,12 +481,8 @@
           "release_date": "2025-12-16",
           "last_updated": "2026-02-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -572,9 +502,7 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
+              "continuation": ["thinking_blocks"]
             }
           }
         }
@@ -602,14 +530,8 @@
           "release_date": "2026-02-16",
           "last_updated": "2026-02-16",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -644,14 +566,8 @@
           "release_date": "2026-02-16",
           "last_updated": "2026-02-16",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -691,13 +607,8 @@
           "release_date": "2025-09-23",
           "last_updated": "2025-09-23",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -726,12 +637,8 @@
           "release_date": "2025-09-23",
           "last_updated": "2025-09-23",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -759,16 +666,8 @@
           "release_date": "2025-09-22",
           "last_updated": "2025-09-22",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text",
-              "audio"
-            ]
+            "input": ["text", "image", "audio", "video"],
+            "output": ["text", "audio"]
           },
           "open_weights": false,
           "cost": {
@@ -799,16 +698,8 @@
           "release_date": "2025-09-15",
           "last_updated": "2025-09-15",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text",
-              "audio"
-            ]
+            "input": ["text", "image", "audio", "video"],
+            "output": ["text", "audio"]
           },
           "open_weights": false,
           "cost": {
@@ -838,16 +729,8 @@
           "release_date": "2025-09-15",
           "last_updated": "2025-09-15",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text",
-              "audio"
-            ]
+            "input": ["text", "image", "audio", "video"],
+            "output": ["text", "audio"]
           },
           "open_weights": false,
           "cost": {
@@ -877,12 +760,8 @@
           "release_date": "2025-09-08",
           "last_updated": "2025-09-08",
           "modalities": {
-            "input": [
-              "audio"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["audio"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -916,12 +795,8 @@
           "release_date": "2025-09",
           "last_updated": "2025-09",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -954,12 +829,8 @@
           "release_date": "2025-09",
           "last_updated": "2025-09",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -987,12 +858,8 @@
           "release_date": "2025-07-28",
           "last_updated": "2025-07-28",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -1026,12 +893,8 @@
           "release_date": "2025-07-28",
           "last_updated": "2025-07-28",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -1065,12 +928,8 @@
           "release_date": "2025-07-23",
           "last_updated": "2025-07-23",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1098,15 +957,8 @@
           "release_date": "2025-05-08",
           "last_updated": "2025-05-08",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio"
-            ],
-            "output": [
-              "text",
-              "audio"
-            ]
+            "input": ["text", "image", "audio"],
+            "output": ["text", "audio"]
           },
           "open_weights": false,
           "cost": {
@@ -1136,12 +988,8 @@
           "release_date": "2025-04",
           "last_updated": "2025-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1175,12 +1023,8 @@
           "release_date": "2025-04",
           "last_updated": "2025-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1210,13 +1054,8 @@
           "release_date": "2025-04",
           "last_updated": "2025-04",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1251,12 +1090,8 @@
           "release_date": "2025-04",
           "last_updated": "2025-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1291,12 +1126,8 @@
           "release_date": "2025-04",
           "last_updated": "2025-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1331,12 +1162,8 @@
           "release_date": "2025-04",
           "last_updated": "2025-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1365,12 +1192,8 @@
           "release_date": "2025-04",
           "last_updated": "2025-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1399,13 +1222,8 @@
           "release_date": "2025-04",
           "last_updated": "2025-04",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1435,13 +1253,8 @@
           "release_date": "2025-03-25",
           "last_updated": "2025-03-25",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -1475,12 +1288,8 @@
           "release_date": "2025-03-05",
           "last_updated": "2025-03-05",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -1514,16 +1323,8 @@
           "release_date": "2025-01-19",
           "last_updated": "2025-03-26",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text",
-              "audio"
-            ]
+            "input": ["text", "image", "audio", "video"],
+            "output": ["text", "audio"]
           },
           "open_weights": false,
           "cost": {
@@ -1553,12 +1354,8 @@
           "release_date": "2025-01",
           "last_updated": "2025-01",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -1586,12 +1383,8 @@
           "release_date": "2025-01",
           "last_updated": "2025-01",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -1619,16 +1412,8 @@
           "release_date": "2024-12",
           "last_updated": "2024-12",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text",
-              "audio"
-            ]
+            "input": ["text", "image", "audio", "video"],
+            "output": ["text", "audio"]
           },
           "open_weights": true,
           "cost": {
@@ -1663,12 +1448,8 @@
           "release_date": "2024-11-01",
           "last_updated": "2025-04-28",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -1703,13 +1484,8 @@
           "release_date": "2024-10-28",
           "last_updated": "2025-04-13",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -1737,12 +1513,8 @@
           "release_date": "2024-09",
           "last_updated": "2024-09",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1770,13 +1542,8 @@
           "release_date": "2024-09",
           "last_updated": "2024-09",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1804,12 +1571,8 @@
           "release_date": "2024-09",
           "last_updated": "2024-09",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1837,13 +1600,8 @@
           "release_date": "2024-09",
           "last_updated": "2024-09",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1871,12 +1629,8 @@
           "release_date": "2024-09",
           "last_updated": "2024-09",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1904,12 +1658,8 @@
           "release_date": "2024-09",
           "last_updated": "2024-09",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -1937,13 +1687,8 @@
           "release_date": "2024-04-08",
           "last_updated": "2025-08-13",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -1971,12 +1716,8 @@
           "release_date": "2024-04-03",
           "last_updated": "2025-01-25",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -2010,13 +1751,8 @@
           "release_date": "2024-01-25",
           "last_updated": "2025-08-15",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -2050,12 +1786,8 @@
           "release_date": "2024-01-25",
           "last_updated": "2025-09-11",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -2090,12 +1822,8 @@
           "release_date": "2024-01",
           "last_updated": "2024-01",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -2117,12 +1845,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 1000000,
@@ -2141,12 +1865,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 1000000,
@@ -2165,13 +1885,8 @@
           "attachment": false,
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 34096,
@@ -2190,13 +1905,8 @@
           "attachment": false,
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2221,12 +1931,8 @@
           "attachment": false,
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 1000000,
@@ -2245,12 +1951,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2281,12 +1983,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2305,12 +2003,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 1000000,
@@ -2341,12 +2035,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 1000000,
@@ -2377,12 +2067,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2401,12 +2087,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2437,12 +2119,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 1000000,
@@ -2473,12 +2151,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2503,12 +2177,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 32768,
@@ -2533,12 +2203,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 8000,
@@ -2557,12 +2223,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 8000,
@@ -2581,12 +2243,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2611,12 +2269,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 262144,
@@ -2641,12 +2295,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 262144,
@@ -2671,12 +2321,8 @@
           "attachment": false,
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2706,12 +2352,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2730,12 +2372,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2754,12 +2392,8 @@
           "attachment": false,
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2784,12 +2418,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2814,12 +2444,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2844,12 +2470,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 32768,
@@ -2874,12 +2496,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 32768,
@@ -2904,13 +2522,8 @@
           "attachment": false,
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 262144,
@@ -2935,12 +2548,8 @@
           "attachment": false,
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 131072,
@@ -2970,10 +2579,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -2986,13 +2592,8 @@
           },
           "metadata": {
             "description": "Qwen-Image is a foundational image generation model in the Qwen series, achieving significant progress in complex text rendering and precise image editing. Experiments show that the model has strong general capabilities in image generation and editing, especially excelling in Chinese text rendering.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,
@@ -3012,10 +2613,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -3028,13 +2626,8 @@
           },
           "metadata": {
             "description": "Qwen-Image-Edit is the image editing version of Qwen-Image. Based on the 20B Qwen-Image model, Qwen-Image-Edit successfully extends Qwen-Image's unique text rendering capabilities to image editing tasks, achieving precise text editing. Additionally, Qwen-Image-Edit can input the same image into Qwen2.5-VL (for visual semantic control) and the VAE encoder (for visual appearance control), enabling both semantic and appearance editing functionalities.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,
@@ -3054,10 +2647,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -3070,13 +2660,8 @@
           },
           "metadata": {
             "description": "Qwen-Image is a foundational image generation model in the Qwen series, achieving significant progress in complex text rendering and precise image editing. Experiments show that the model has strong general capabilities in image generation and editing, especially excelling in Chinese text rendering.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,
@@ -3108,13 +2693,8 @@
           "release_date": "2025-12-09",
           "last_updated": "2025-12-09",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3142,12 +2722,8 @@
           "release_date": "2025-12-09",
           "last_updated": "2025-12-09",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3175,12 +2751,8 @@
           "release_date": "2025-12-02",
           "last_updated": "2025-12-02",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3208,13 +2780,8 @@
           "release_date": "2025-08-12",
           "last_updated": "2025-08-12",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -3242,12 +2809,8 @@
           "release_date": "2025-07-10",
           "last_updated": "2025-07-10",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3275,12 +2838,8 @@
           "release_date": "2025-07-10",
           "last_updated": "2025-07-10",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3308,13 +2867,8 @@
           "release_date": "2025-06-20",
           "last_updated": "2025-06-20",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3342,13 +2896,8 @@
           "release_date": "2025-05-07",
           "last_updated": "2025-05-07",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -3376,12 +2925,8 @@
           "release_date": "2025-05-07",
           "last_updated": "2025-05-07",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3409,13 +2954,8 @@
           "release_date": "2025-05-07",
           "last_updated": "2025-05-10",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3444,12 +2984,8 @@
           "release_date": "2025-03-17",
           "last_updated": "2025-03-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3478,12 +3014,8 @@
           "release_date": "2025-03-17",
           "last_updated": "2025-03-20",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3511,13 +3043,8 @@
           "release_date": "2024-11-01",
           "last_updated": "2025-12-02",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3545,13 +3072,8 @@
           "release_date": "2024-11-01",
           "last_updated": "2024-11-04",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3579,13 +3101,8 @@
           "release_date": "2024-11-01",
           "last_updated": "2025-12-02",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3613,12 +3130,8 @@
           "release_date": "2024-11-01",
           "last_updated": "2024-11-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3646,12 +3159,8 @@
           "release_date": "2024-10-01",
           "last_updated": "2024-10-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3679,12 +3188,8 @@
           "release_date": "2024-10-01",
           "last_updated": "2024-10-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3712,13 +3217,8 @@
           "release_date": "2024-09-01",
           "last_updated": "2024-09-01",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3746,13 +3246,8 @@
           "release_date": "2024-09-01",
           "last_updated": "2024-09-04",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3780,12 +3275,8 @@
           "release_date": "2024-07-01",
           "last_updated": "2024-07-01",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3813,12 +3304,8 @@
           "release_date": "2024-05-29",
           "last_updated": "2025-01-04",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3846,12 +3333,8 @@
           "release_date": "2024-04-17",
           "last_updated": "2024-04-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3878,12 +3361,8 @@
           "release_date": "2023-12-11",
           "last_updated": "2023-12-11",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -3911,12 +3390,8 @@
           "release_date": "2023-12-11",
           "last_updated": "2023-12-11",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3944,12 +3419,8 @@
           "release_date": "2023-09-27",
           "last_updated": "2023-09-27",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -3990,12 +3461,8 @@
           "release_date": "2025-01-20",
           "last_updated": "2025-08-21",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4014,9 +3481,7 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
+              "continuation": ["thinking_blocks"]
             }
           },
           "type": "chat"
@@ -4035,12 +3500,8 @@
           "release_date": "2024-12-26",
           "last_updated": "2025-08-21",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4079,16 +3540,8 @@
           "release_date": "2026-03-03",
           "last_updated": "2026-03-03",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video",
-              "audio",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video", "audio", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4124,15 +3577,8 @@
           "release_date": "2026-02-26",
           "last_updated": "2026-02-26",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text", "image"]
           },
           "open_weights": false,
           "cost": {
@@ -4167,16 +3613,8 @@
           "release_date": "2026-02-19",
           "last_updated": "2026-02-19",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video",
-              "audio",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video", "audio", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4200,15 +3638,10 @@
               "default_enabled": true,
               "mode": "level",
               "level": "high",
-              "level_options": [
-                "low",
-                "high"
-              ],
+              "level_options": ["low", "high"],
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -4229,16 +3662,8 @@
           "release_date": "2026-02-19",
           "last_updated": "2026-02-19",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video",
-              "audio",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video", "audio", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4262,15 +3687,10 @@
               "default_enabled": true,
               "mode": "level",
               "level": "high",
-              "level_options": [
-                "low",
-                "high"
-              ],
+              "level_options": ["low", "high"],
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -4291,16 +3711,8 @@
           "release_date": "2025-12-17",
           "last_updated": "2025-12-17",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video",
-              "audio",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video", "audio", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4324,17 +3736,10 @@
               "default_enabled": true,
               "mode": "level",
               "level": "high",
-              "level_options": [
-                "minimal",
-                "low",
-                "medium",
-                "high"
-              ],
+              "level_options": ["minimal", "low", "medium", "high"],
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -4355,16 +3760,8 @@
           "release_date": "2025-11-18",
           "last_updated": "2025-11-18",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video",
-              "audio",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video", "audio", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4388,15 +3785,10 @@
               "default_enabled": true,
               "mode": "level",
               "level": "high",
-              "level_options": [
-                "low",
-                "high"
-              ],
+              "level_options": ["low", "high"],
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -4422,13 +3814,8 @@
           "release_date": "2025-09-25",
           "last_updated": "2025-09-25",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4455,9 +3842,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "search": {
@@ -4487,13 +3872,8 @@
           "release_date": "2025-09-25",
           "last_updated": "2025-09-25",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4522,9 +3902,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "search": {
@@ -4549,16 +3927,8 @@
           "release_date": "2025-09-25",
           "last_updated": "2025-09-25",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4590,16 +3960,8 @@
           "release_date": "2025-09-25",
           "last_updated": "2025-09-25",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4629,16 +3991,8 @@
           "release_date": "2025-09-01",
           "last_updated": "2025-09-01",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text",
-              "audio"
-            ]
+            "input": ["text", "image", "audio", "video"],
+            "output": ["text", "audio"]
           },
           "open_weights": false,
           "cost": {
@@ -4668,14 +4022,8 @@
           "release_date": "2025-08-26",
           "last_updated": "2025-08-26",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"],
+            "output": ["text", "image"]
           },
           "open_weights": false,
           "cost": {
@@ -4704,14 +4052,8 @@
           "release_date": "2025-08-26",
           "last_updated": "2025-08-26",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"],
+            "output": ["text", "image"]
           },
           "open_weights": false,
           "cost": {
@@ -4741,15 +4083,8 @@
           "release_date": "2025-06-17",
           "last_updated": "2025-09-18",
           "modalities": {
-            "input": [
-              "text",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text",
-              "audio"
-            ]
+            "input": ["text", "audio", "video"],
+            "output": ["text", "audio"]
           },
           "open_weights": false,
           "cost": {
@@ -4786,13 +4121,8 @@
           "release_date": "2025-06-17",
           "last_updated": "2025-06-17",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4819,9 +4149,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "search": {
@@ -4845,16 +4173,8 @@
           "release_date": "2025-06-17",
           "last_updated": "2025-06-17",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4882,9 +4202,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -4905,16 +4223,8 @@
           "release_date": "2025-06-05",
           "last_updated": "2025-06-05",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4941,9 +4251,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -4962,12 +4270,8 @@
           "release_date": "2025-05-20",
           "last_updated": "2025-05-20",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -4997,16 +4301,8 @@
           "release_date": "2025-05-20",
           "last_updated": "2025-05-20",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5034,9 +4330,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -5057,16 +4351,8 @@
           "release_date": "2025-05-06",
           "last_updated": "2025-05-06",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5093,9 +4379,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -5114,12 +4398,8 @@
           "release_date": "2025-05-01",
           "last_updated": "2025-05-01",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "audio"
-            ]
+            "input": ["text"],
+            "output": ["audio"]
           },
           "open_weights": false,
           "cost": {
@@ -5147,12 +4427,8 @@
           "release_date": "2025-05-01",
           "last_updated": "2025-05-01",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "audio"
-            ]
+            "input": ["text"],
+            "output": ["audio"]
           },
           "open_weights": false,
           "cost": {
@@ -5178,9 +4454,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -5200,16 +4474,8 @@
           "release_date": "2025-04-17",
           "last_updated": "2025-04-17",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5237,9 +4503,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "type": "chat"
@@ -5265,13 +4529,8 @@
           "release_date": "2025-03-20",
           "last_updated": "2025-06-05",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5300,9 +4559,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "search": {
@@ -5332,13 +4589,8 @@
           "release_date": "2025-03-20",
           "last_updated": "2025-06-05",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5365,9 +4617,7 @@
               },
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thought_signatures"
-              ]
+              "continuation": ["thought_signatures"]
             }
           },
           "search": {
@@ -5391,13 +4641,8 @@
           "release_date": "2024-12-11",
           "last_updated": "2024-12-11",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5430,13 +4675,8 @@
           "release_date": "2024-12-11",
           "last_updated": "2024-12-11",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5469,15 +4709,8 @@
           "release_date": "2024-10-03",
           "last_updated": "2024-10-03",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5506,15 +4739,8 @@
           "release_date": "2024-05-14",
           "last_updated": "2024-05-14",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5543,15 +4769,8 @@
           "release_date": "2024-02-15",
           "last_updated": "2024-02-15",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "audio",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "audio", "video"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -5574,14 +4793,8 @@
           "attachment": true,
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"],
+            "output": ["text", "image"]
           },
           "limit": {
             "context": 32000,
@@ -5605,10 +4818,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5621,13 +4831,8 @@
           },
           "metadata": {
             "description": "Gemini-3-Pro-Image-Preview (Nano Banana Pro) is a high-performance image generation and editing model built on Gemini 3 Pro. It delivers enhanced multimodal understanding and real-world semantic reasoning, enabling fast creation of well-structured visual content such as infographics, product sketches, and multi-subject scenes. It can also leverage real-time knowledge through Search grounding. The model excels in text rendering, consistent multi-image blending, and identity preservation, while offering fine-grained creative controls like localized edits, lighting and focus adjustments, camera transformations, and flexible aspect ratios. It’s ideal for rapid design, concept previews, product visualization, and everyday image generation workflows.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 2,
               "input": 2,
@@ -5647,10 +4852,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5663,13 +4865,8 @@
           },
           "metadata": {
             "description": "Imagen 4 is a high-quality text-to-image model developed by Google, designed for strong visual fidelity, diverse artistic styles, and precise controllability. It delivers near photographic realism with sharp details and natural lighting while significantly reducing common artifacts such as distorted hands. The model supports a wide range of styles including photorealistic, illustration, anime, oil painting, and pixel art, and offers flexible aspect ratios for use cases from content covers to mobile wallpapers. It also enables image editing and secondary creation on existing images, provides fast and stable generation, and offers strong commercial usability with high visual quality and reliable content safety.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,
@@ -5689,10 +4886,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5704,13 +4898,8 @@
           },
           "metadata": {
             "description": "Imagen 4 is a new-generation image generation model designed to balance high-quality output, inference efficiency, and content safety. It supports image generation, digital watermarking with authenticity verification, user-configurable safety settings, and prompt enhancement via the Prompt Rewriter, while also delivering reliable person generation capabilities. The model ID is imagen-4.0-generate-001, making it suitable for professional creation, design workflows, and various generative AI applications.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "input": 2,
               "output": 2
@@ -5729,10 +4918,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5743,13 +4929,8 @@
             "output": 8192
           },
           "metadata": {
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "input": 2,
               "output": 2
@@ -5768,10 +4949,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5783,13 +4961,8 @@
           },
           "metadata": {
             "description": "Imagen 4 is a new-generation image generation model designed to balance high-quality output, inference efficiency, and content safety. It supports image generation, digital watermarking with authenticity verification, user-configurable safety settings, and prompt enhancement via the Prompt Rewriter, while also delivering reliable person generation capabilities. The model ID is imagen-4.0-generate-001, making it suitable for professional creation, design workflows, and various generative AI applications.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "input": 2,
               "output": 2
@@ -5808,10 +4981,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5822,13 +4992,8 @@
             "output": 8192
           },
           "metadata": {
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "input": 2,
               "output": 2
@@ -5847,10 +5012,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5862,13 +5024,8 @@
             "output": 8192
           },
           "metadata": {
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,
@@ -5888,10 +5045,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5904,13 +5058,8 @@
           },
           "metadata": {
             "description": "Image 4.0 Beta version, for testing purposes only. For production environment, it is recommended to use imagen-4.0-generate-preview-05-20.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,
@@ -5930,10 +5079,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5946,13 +5092,8 @@
           },
           "metadata": {
             "description": "Imagen 3.0 is Google's latest text-to-image generation model, capable of creating high-quality images from natural language prompts. Compared to its predecessors, Imagen 3.0 offers significant improvements in detail, lighting, and reduced visual artifacts. It supports rendering in various artistic styles, from photorealism to impressionism, as well as abstract and anime styles.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,
@@ -5972,10 +5113,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -5988,13 +5126,8 @@
           },
           "metadata": {
             "description": "Google's latest raw image model",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,
@@ -6032,14 +5165,8 @@
           "release_date": "2026-01",
           "last_updated": "2026-01",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "video"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "video"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -6059,9 +5186,7 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
+              "continuation": ["thinking_blocks"]
             }
           }
         },
@@ -6083,12 +5208,8 @@
           "release_date": "2025-11-06",
           "last_updated": "2025-11-06",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -6108,9 +5229,7 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
+              "continuation": ["thinking_blocks"]
             }
           }
         },
@@ -6132,12 +5251,8 @@
           "release_date": "2025-11-06",
           "last_updated": "2025-11-06",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -6157,9 +5272,7 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ]
+              "continuation": ["thinking_blocks"]
             }
           }
         },
@@ -6177,12 +5290,8 @@
           "release_date": "2025-09-05",
           "last_updated": "2025-09-05",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -6211,12 +5320,8 @@
           "release_date": "2025-09-05",
           "last_updated": "2025-09-05",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -6245,12 +5350,8 @@
           "release_date": "2025-07-14",
           "last_updated": "2025-07-14",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -6289,13 +5390,8 @@
           "release_date": "2026-03-17",
           "last_updated": "2026-03-17",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6332,13 +5428,8 @@
           "release_date": "2026-03-17",
           "last_updated": "2026-03-17",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6370,14 +5461,8 @@
           "release_date": "2026-03-05",
           "last_updated": "2026-03-05",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6419,13 +5504,8 @@
           "release_date": "2026-03-05",
           "last_updated": "2026-03-05",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6465,14 +5545,8 @@
           "release_date": "2026-02-05",
           "last_updated": "2026-02-05",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6509,14 +5583,8 @@
           "release_date": "2026-02-05",
           "last_updated": "2026-02-05",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6548,13 +5616,8 @@
           "release_date": "2025-12-11",
           "last_updated": "2025-12-11",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6585,14 +5648,8 @@
           "release_date": "2025-12-11",
           "last_updated": "2025-12-11",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6629,13 +5686,8 @@
           "release_date": "2025-12-11",
           "last_updated": "2025-12-11",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6672,13 +5724,8 @@
           "release_date": "2025-12-11",
           "last_updated": "2025-12-11",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6714,13 +5761,8 @@
           "release_date": "2025-11-13",
           "last_updated": "2025-11-13",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6741,18 +5783,9 @@
               "default_enabled": false,
               "mode": "effort",
               "effort": "none",
-              "effort_options": [
-                "none",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["none", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -6773,13 +5806,8 @@
           "release_date": "2025-11-13",
           "last_updated": "2025-11-13",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6800,18 +5828,9 @@
               "default_enabled": false,
               "mode": "effort",
               "effort": "none",
-              "effort_options": [
-                "none",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["none", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -6832,13 +5851,8 @@
           "release_date": "2025-11-13",
           "last_updated": "2025-11-13",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6859,18 +5873,9 @@
               "default_enabled": false,
               "mode": "effort",
               "effort": "none",
-              "effort_options": [
-                "none",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["none", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -6891,13 +5896,8 @@
           "release_date": "2025-11-13",
           "last_updated": "2025-11-13",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6918,18 +5918,9 @@
               "default_enabled": false,
               "mode": "effort",
               "effort": "none",
-              "effort_options": [
-                "none",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["none", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -6950,13 +5941,8 @@
           "release_date": "2025-11-13",
           "last_updated": "2025-11-13",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -6976,18 +5962,9 @@
               "default_enabled": false,
               "mode": "effort",
               "effort": "none",
-              "effort_options": [
-                "none",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["none", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -7008,13 +5985,8 @@
           "release_date": "2025-10-06",
           "last_updated": "2025-10-06",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7035,11 +6007,7 @@
               "mode": "fixed",
               "effort": "high",
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -7060,13 +6028,8 @@
           "release_date": "2025-09-15",
           "last_updated": "2025-09-15",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7087,18 +6050,9 @@
               "default_enabled": true,
               "mode": "effort",
               "effort": "medium",
-              "effort_options": [
-                "minimal",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["minimal", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -7119,13 +6073,8 @@
           "release_date": "2025-08-07",
           "last_updated": "2025-08-07",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7145,18 +6094,9 @@
               "default_enabled": true,
               "mode": "effort",
               "effort": "medium",
-              "effort_options": [
-                "minimal",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["minimal", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -7177,13 +6117,8 @@
           "release_date": "2025-08-07",
           "last_updated": "2025-08-07",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7204,18 +6139,9 @@
               "default_enabled": true,
               "mode": "effort",
               "effort": "medium",
-              "effort_options": [
-                "minimal",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["minimal", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -7236,13 +6162,8 @@
           "release_date": "2025-08-07",
           "last_updated": "2025-08-07",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7263,18 +6184,9 @@
               "default_enabled": true,
               "mode": "effort",
               "effort": "medium",
-              "effort_options": [
-                "minimal",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["minimal", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -7295,13 +6207,8 @@
           "release_date": "2025-08-07",
           "last_updated": "2025-08-07",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7322,18 +6229,9 @@
               "default_enabled": true,
               "mode": "effort",
               "effort": "medium",
-              "effort_options": [
-                "minimal",
-                "low",
-                "medium",
-                "high"
-              ],
+              "effort_options": ["minimal", "low", "medium", "high"],
               "verbosity": "medium",
-              "verbosity_options": [
-                "low",
-                "medium",
-                "high"
-              ],
+              "verbosity_options": ["low", "medium", "high"],
               "visibility": "hidden"
             }
           }
@@ -7351,12 +6249,8 @@
           "release_date": "2025-08-05",
           "last_updated": "2025-08-05",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "limit": {
@@ -7378,12 +6272,8 @@
           "release_date": "2025-08-05",
           "last_updated": "2025-08-05",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "limit": {
@@ -7408,13 +6298,8 @@
           "release_date": "2025-06-10",
           "last_updated": "2025-06-10",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7452,12 +6337,8 @@
           "release_date": "2025-05-16",
           "last_updated": "2025-05-16",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7488,13 +6369,8 @@
           "release_date": "2025-04-16",
           "last_updated": "2025-04-16",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7534,13 +6410,8 @@
           "release_date": "2025-04-16",
           "last_updated": "2025-04-16",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7579,13 +6450,8 @@
           "release_date": "2025-04-14",
           "last_updated": "2025-04-14",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7615,13 +6481,8 @@
           "release_date": "2025-04-14",
           "last_updated": "2025-04-14",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7651,13 +6512,8 @@
           "release_date": "2025-04-14",
           "last_updated": "2025-04-14",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7688,13 +6544,8 @@
           "release_date": "2025-03-19",
           "last_updated": "2025-03-19",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7729,12 +6580,8 @@
           "release_date": "2024-12-20",
           "last_updated": "2025-01-29",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7774,13 +6621,8 @@
           "release_date": "2024-12-05",
           "last_updated": "2024-12-05",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7815,13 +6657,8 @@
           "release_date": "2024-11-20",
           "last_updated": "2024-11-20",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7851,12 +6688,8 @@
           "release_date": "2024-09-12",
           "last_updated": "2024-09-12",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7892,12 +6725,8 @@
           "release_date": "2024-09-12",
           "last_updated": "2024-09-12",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7927,13 +6756,8 @@
           "release_date": "2024-08-06",
           "last_updated": "2024-08-06",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7963,13 +6787,8 @@
           "release_date": "2024-07-18",
           "last_updated": "2024-07-18",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -7999,13 +6818,8 @@
           "release_date": "2024-06-26",
           "last_updated": "2024-06-26",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8044,13 +6858,8 @@
           "release_date": "2024-06-26",
           "last_updated": "2024-06-26",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8089,13 +6898,8 @@
           "release_date": "2024-05-13",
           "last_updated": "2024-05-13",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8124,13 +6928,8 @@
           "release_date": "2024-05-13",
           "last_updated": "2024-08-06",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8159,12 +6958,8 @@
           "release_date": "2024-01-25",
           "last_updated": "2024-01-25",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8192,12 +6987,8 @@
           "release_date": "2024-01-25",
           "last_updated": "2024-01-25",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8226,13 +7017,8 @@
           "release_date": "2023-11-06",
           "last_updated": "2024-04-09",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8261,12 +7047,8 @@
           "release_date": "2023-11-06",
           "last_updated": "2024-04-09",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8295,12 +7077,8 @@
           "release_date": "2023-03-01",
           "last_updated": "2023-11-06",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8329,12 +7107,8 @@
           "release_date": "2022-12-15",
           "last_updated": "2022-12-15",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8358,10 +7132,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 5,
@@ -8374,13 +7145,8 @@
           },
           "metadata": {
             "description": "GPT Image 1.5 is a new image generation model powered by OpenAI’s flagship visual capabilities, comprehensively upgraded for high-quality creative and production workflows. It delivers significant improvements in instruction understanding, fine-grained image editing, and detail preservation, while achieving up to 4× faster generation compared to previous versions — reducing latency without compromising quality.\n\nGPT Image 1.5 is well suited for image generation, precise visual editing, and professional content creation, balancing performance with efficiency.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 5,
               "input": 5,
@@ -8400,10 +7166,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 5,
@@ -8416,13 +7179,8 @@
           },
           "metadata": {
             "description": "Azure OpenAI’s gpt-image-1 image generation API offers both text-to-image generation and image-to-image editing with text guidance capabilities.\nBefore using this API, please ensure you have the latest OpenAI package installed by running pip install -U openai.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 5,
               "input": 5,
@@ -8442,10 +7200,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 5,
@@ -8458,13 +7213,8 @@
           },
           "metadata": {
             "description": "OpenAI image generation model gpt-image-1-mini\nBefore use, please run pip install -U openai to upgrade to the latest openai package.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 5,
               "input": 5,
@@ -8484,10 +7234,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 3,
@@ -8500,13 +7247,8 @@
           },
           "metadata": {
             "description": "First Taste of GPT-4o's Image Generation API: Perfectly mirrors the web version's raw image creation capabilities, supporting both text-to-image and image+text-to-image generation. Each creation costs as little as $0.005.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 3,
@@ -8526,10 +7268,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 40,
@@ -8541,13 +7280,8 @@
           },
           "metadata": {
             "description": "dall-e-3 is an AI image generation model that converts natural language prompts into realistic visuals and artistic content. It delivers accurate semantic understanding, supports customizable output resolutions, and produces high-quality images across a wide range of styles, making it well-suited for concept design, creative prototyping, and professional content workflows.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "input": 40,
               "output": 40
@@ -8566,10 +7300,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 16,
@@ -8580,13 +7311,8 @@
             "output": 8192
           },
           "metadata": {
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "input": 16,
               "output": 16
@@ -8618,12 +7344,8 @@
           "release_date": "2026-03-18",
           "last_updated": "2026-03-18",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -8653,12 +7375,8 @@
           "release_date": "2026-03-18",
           "last_updated": "2026-03-18",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -8688,12 +7406,8 @@
           "release_date": "2026-02-13",
           "last_updated": "2026-02-13",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -8728,12 +7442,8 @@
           "release_date": "2026-02-12",
           "last_updated": "2026-02-12",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -8768,12 +7478,8 @@
           "release_date": "2025-12-23",
           "last_updated": "2025-12-23",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -8806,12 +7512,8 @@
           "release_date": "2025-10-27",
           "last_updated": "2025-10-27",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": true,
           "cost": {
@@ -8853,14 +7555,8 @@
           "release_date": "2026-02-17",
           "last_updated": "2026-03-13",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8887,12 +7583,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -8911,14 +7603,8 @@
           "release_date": "2026-02-05",
           "last_updated": "2026-03-13",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -8945,12 +7631,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -8969,14 +7651,8 @@
           "release_date": "2025-11-24",
           "last_updated": "2025-11-24",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9003,12 +7679,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9027,14 +7699,8 @@
           "release_date": "2025-11-01",
           "last_updated": "2025-11-01",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9061,12 +7727,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9085,14 +7747,8 @@
           "release_date": "2025-10-15",
           "last_updated": "2025-10-15",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9123,14 +7779,8 @@
           "release_date": "2025-10-15",
           "last_updated": "2025-10-15",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9166,14 +7816,8 @@
           "release_date": "2025-09-29",
           "last_updated": "2025-09-29",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9200,12 +7844,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9224,14 +7864,8 @@
           "release_date": "2025-09-29",
           "last_updated": "2025-09-29",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9258,12 +7892,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9282,14 +7912,8 @@
           "release_date": "2025-08-05",
           "last_updated": "2025-08-05",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9316,12 +7940,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9340,14 +7960,8 @@
           "release_date": "2025-08-05",
           "last_updated": "2025-08-05",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9374,12 +7988,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9398,14 +8008,8 @@
           "release_date": "2025-05-22",
           "last_updated": "2025-05-22",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9432,12 +8036,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9456,14 +8056,8 @@
           "release_date": "2025-05-22",
           "last_updated": "2025-05-22",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9490,12 +8084,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9514,14 +8104,8 @@
           "release_date": "2025-05-22",
           "last_updated": "2025-05-22",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9548,12 +8132,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9572,14 +8152,8 @@
           "release_date": "2025-05-22",
           "last_updated": "2025-05-22",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9606,12 +8180,8 @@
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9630,14 +8200,8 @@
           "release_date": "2025-02-19",
           "last_updated": "2025-02-19",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9664,12 +8228,8 @@
               "interleaved": false,
               "summaries": false,
               "visibility": "full",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9688,14 +8248,8 @@
           "release_date": "2025-02-19",
           "last_updated": "2025-02-19",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9722,12 +8276,8 @@
               "interleaved": false,
               "summaries": false,
               "visibility": "full",
-              "continuation": [
-                "thinking_blocks"
-              ],
-              "notes": [
-                "Anthropic uses thinking budget tokens"
-              ]
+              "continuation": ["thinking_blocks"],
+              "notes": ["Anthropic uses thinking budget tokens"]
             }
           }
         },
@@ -9745,14 +8295,8 @@
           "release_date": "2024-10-22",
           "last_updated": "2024-10-22",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9782,14 +8326,8 @@
           "release_date": "2024-10-22",
           "last_updated": "2024-10-22",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9819,14 +8357,8 @@
           "release_date": "2024-10-22",
           "last_updated": "2024-10-22",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9856,14 +8388,8 @@
           "release_date": "2024-06-20",
           "last_updated": "2024-06-20",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9893,14 +8419,8 @@
           "release_date": "2024-03-13",
           "last_updated": "2024-03-13",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9930,14 +8450,8 @@
           "release_date": "2024-03-04",
           "last_updated": "2024-03-04",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -9967,14 +8481,8 @@
           "release_date": "2024-02-29",
           "last_updated": "2024-02-29",
           "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image", "pdf"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10012,13 +8520,8 @@
           "release_date": "2026-03-09",
           "last_updated": "2026-03-09",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10052,13 +8555,8 @@
           "release_date": "2026-03-09",
           "last_updated": "2026-03-09",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10091,13 +8589,8 @@
           "release_date": "2026-03-09",
           "last_updated": "2026-03-09",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10131,13 +8624,8 @@
           "release_date": "2025-11-19",
           "last_updated": "2025-11-19",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10167,13 +8655,8 @@
           "release_date": "2025-11-19",
           "last_updated": "2025-11-19",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10203,13 +8686,8 @@
           "release_date": "2025-09-19",
           "last_updated": "2025-09-19",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10238,13 +8716,8 @@
           "release_date": "2025-09-19",
           "last_updated": "2025-09-19",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10274,12 +8747,8 @@
           "release_date": "2025-08-28",
           "last_updated": "2025-08-28",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10314,12 +8783,8 @@
           "release_date": "2025-07-09",
           "last_updated": "2025-07-09",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10354,12 +8819,8 @@
           "release_date": "2025-02-17",
           "last_updated": "2025-02-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10388,12 +8849,8 @@
           "release_date": "2025-02-17",
           "last_updated": "2025-02-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10423,12 +8880,8 @@
           "release_date": "2025-02-17",
           "last_updated": "2025-02-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10458,12 +8911,8 @@
           "release_date": "2025-02-17",
           "last_updated": "2025-02-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10493,12 +8942,8 @@
           "release_date": "2025-02-17",
           "last_updated": "2025-02-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10529,12 +8974,8 @@
           "release_date": "2025-02-17",
           "last_updated": "2025-02-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10565,12 +9006,8 @@
           "release_date": "2025-02-17",
           "last_updated": "2025-02-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10600,12 +9037,8 @@
           "release_date": "2025-02-17",
           "last_updated": "2025-02-17",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10634,12 +9067,8 @@
           "release_date": "2024-12-12",
           "last_updated": "2024-12-12",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10671,12 +9100,8 @@
           "release_date": "2024-11-01",
           "last_updated": "2024-11-01",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10705,13 +9130,8 @@
           "release_date": "2024-11-01",
           "last_updated": "2024-11-01",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10740,12 +9160,8 @@
           "release_date": "2024-08-20",
           "last_updated": "2024-08-20",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10774,13 +9190,8 @@
           "release_date": "2024-08-20",
           "last_updated": "2024-08-20",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10809,13 +9220,8 @@
           "release_date": "2024-08-20",
           "last_updated": "2024-12-12",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10847,13 +9253,8 @@
           "release_date": "2024-08-20",
           "last_updated": "2024-12-12",
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10882,12 +9283,8 @@
           "release_date": "2024-08-20",
           "last_updated": "2024-12-12",
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "open_weights": false,
           "cost": {
@@ -10910,12 +9307,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 120000,
@@ -10939,12 +9332,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 120000,
@@ -10968,12 +9357,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 120000,
@@ -10995,13 +9380,8 @@
           "attachment": false,
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text", "image"],
+            "output": ["text"]
           },
           "limit": {
             "context": 130000,
@@ -11023,12 +9403,8 @@
           "attachment": false,
           "tool_call": true,
           "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
+            "input": ["text"],
+            "output": ["text"]
           },
           "limit": {
             "context": 120000,
@@ -11176,10 +9552,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -11192,13 +9565,8 @@
           },
           "metadata": {
             "description": "Seedream 4.5 is ByteDance's latest multimodal image model, integrating capabilities such as text-to-image, image-to-image, and multi-image output, along with incorporating common sense and reasoning abilities. Compared to the previous 4.0 model, it significantly improves generation quality, offering better editing consistency and multi-image fusion effects, with more precise control over image details. The generation of small text and small faces is more natural.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,
@@ -11218,10 +9586,7 @@
           },
           "tool_call": false,
           "modalities": {
-            "input": [
-              "text",
-              "image"
-            ]
+            "input": ["text", "image"]
           },
           "cost": {
             "input": 2,
@@ -11234,13 +9599,8 @@
           },
           "metadata": {
             "description": "Seedream 4.0 is a SOTA-level multimodal image creation model based on leading architecture. It breaks the creative boundaries of traditional text-to-image models by natively supporting text, single image, and multiple image inputs. Users can freely combine text and images to achieve various creative styles within the same model, such as multi-image fusion creation based on subject consistency, image editing, and set image generation, making image creation more flexible and controllable.\nSeedream 4.0 supports composite editing with up to 10 images in a single input. Through deep reasoning of prompt words, it automatically adapts the optimal image aspect ratio and generation quantity, enabling continuous output of up to 15 content-related images at one time. Additionally, the model significantly improves the accuracy and content diversity of Chinese generation, supports 4K ultra-high-definition output, and provides a one-stop solution from generation to editing for professional image creation.",
-            "typeHints": [
-              "image_generation"
-            ],
-            "inputModalities": [
-              "text",
-              "image"
-            ],
+            "typeHints": ["image_generation"],
+            "inputModalities": ["text", "image"],
             "pricing": {
               "cache_read": 0,
               "input": 2,

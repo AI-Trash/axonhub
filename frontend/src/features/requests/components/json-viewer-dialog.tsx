@@ -1,6 +1,7 @@
-import { useState } from 'react';
 import { Copy, Check, Download } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -57,7 +58,12 @@ export function JsonViewerDialog({ open, onOpenChange, title, jsonData }: JsonVi
               {copied ? <Check className='mr-2 h-4 w-4' /> : <Copy className='mr-2 h-4 w-4' />}
               {copied ? t('requests.dialogs.jsonViewer.copied') : t('requests.dialogs.jsonViewer.copy')}
             </Button>
-            <Button className={'ml-2'} variant='outline' size='sm' onClick={() => downloadFile(formattedJson, `${title.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.json`)}>
+            <Button
+              className={'ml-2'}
+              variant='outline'
+              size='sm'
+              onClick={() => downloadFile(formattedJson, `${title.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.json`)}
+            >
               <Download className='mr-2 h-4 w-4' />
               {t('requests.dialogs.jsonViewer.download')}
             </Button>

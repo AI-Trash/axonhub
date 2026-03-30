@@ -27,6 +27,6 @@ export function formatNumber(value: number | null | undefined, options?: { digit
   const num = parseFloat(value.toFixed(digits));
   return num.toLocaleString(undefined, {
     maximumFractionDigits: digits,
-    minimumFractionDigits: 0
+    minimumFractionDigits: 0,
   });
 }

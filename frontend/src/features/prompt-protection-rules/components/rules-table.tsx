@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { IconBan, IconCheck, IconTrash, IconX } from '@tabler/icons-react';
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -13,14 +13,16 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { IconBan, IconCheck, IconTrash, IconX } from '@tabler/icons-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { PermissionGuard } from '@/components/permission-guard';
+import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableSkeleton } from '@/components/ui/table-skeleton';
-import { ServerSidePagination } from '@/components/server-side-pagination';
-import { PermissionGuard } from '@/components/permission-guard';
+
 import { usePromptProtectionRules } from '../context/rules-context';
 import { PromptProtectionRule, PromptProtectionRuleConnection } from '../data/schema';
 
@@ -161,7 +163,11 @@ export function RulesTable({
               <TableSkeleton rows={pageSize} columns={columns.length} />
             ) : table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'} className='group/row table-row-hover rounded-xl border-0 !bg-[var(--table-background)] transition-all duration-200 ease-in-out'>
+                <TableRow
+                  key={row.id}
+                  data-state={row.getIsSelected() && 'selected'}
+                  className='group/row table-row-hover rounded-xl border-0 !bg-[var(--table-background)] transition-all duration-200 ease-in-out'
+                >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id} className={`${cell.column.columnDef.meta?.className ?? ''} border-0 bg-inherit px-4 py-3`}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -209,13 +215,31 @@ export function RulesTable({
             <div className='bg-border mx-2 h-6 w-px' />
             <PermissionGuard requiredScope='write_channels'>
               <>
-                <Button variant='ghost' size='icon' className='h-8 w-8 text-green-600 hover:bg-green-100 hover:text-green-700' onClick={() => setOpen('bulkEnable')} title={t('common.buttons.enable')}>
+                <Button
+                  variant='ghost'
+                  size='icon'
+                  className='h-8 w-8 text-green-600 hover:bg-green-100 hover:text-green-700'
+                  onClick={() => setOpen('bulkEnable')}
+                  title={t('common.buttons.enable')}
+                >
                   <IconCheck className='h-4 w-4' />
                 </Button>
-                <Button variant='ghost' size='icon' className='h-8 w-8 text-amber-600 hover:bg-amber-100 hover:text-amber-700' onClick={() => setOpen('bulkDisable')} title={t('common.buttons.disable')}>
+                <Button
+                  variant='ghost'
+                  size='icon'
+                  className='h-8 w-8 text-amber-600 hover:bg-amber-100 hover:text-amber-700'
+                  onClick={() => setOpen('bulkDisable')}
+                  title={t('common.buttons.disable')}
+                >
                   <IconBan className='h-4 w-4' />
                 </Button>
-                <Button variant='ghost' size='icon' className='text-destructive h-8 w-8 hover:bg-red-100 hover:text-red-700' onClick={() => setOpen('bulkDelete')} title={t('common.buttons.delete')}>
+                <Button
+                  variant='ghost'
+                  size='icon'
+                  className='text-destructive h-8 w-8 hover:bg-red-100 hover:text-red-700'
+                  onClick={() => setOpen('bulkDelete')}
+                  title={t('common.buttons.delete')}
+                >
                   <IconTrash className='h-4 w-4' />
                 </Button>
               </>

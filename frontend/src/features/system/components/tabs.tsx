@@ -2,15 +2,17 @@
 
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { usePermissions } from '@/hooks/usePermissions';
+
 import { AboutSettings } from './about-settings';
+import { BackupSettings } from './backup-settings';
 import { BrandSettings } from './brand-settings';
 import { GeneralSettings } from './general-settings';
+import { ProxyPresetsSettings } from './proxy-presets-settings';
 import { RetrySettings } from './retry-settings';
 import { StorageSettings } from './storage-settings';
-import { BackupSettings } from './backup-settings';
-import { ProxyPresetsSettings } from './proxy-presets-settings';
-import { usePermissions } from '@/hooks/usePermissions';
 
 type SystemTabKey = 'general' | 'brand' | 'storage' | 'retry' | 'proxy' | 'backup' | 'about';
 
@@ -31,7 +33,9 @@ export function SystemSettingsTabs({ initialTab }: SystemSettingsTabsProps) {
 
   return (
     <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as SystemTabKey)} className='w-full'>
-      <TabsList className={`shadow-soft border-border bg-background grid w-full rounded-2xl border ${isOwner ? 'grid-cols-7' : 'grid-cols-6'}`}>
+      <TabsList
+        className={`shadow-soft border-border bg-background grid w-full rounded-2xl border ${isOwner ? 'grid-cols-7' : 'grid-cols-6'}`}
+      >
         <TabsTrigger value='general' data-value='general'>
           {t('system.tabs.general')}
         </TabsTrigger>

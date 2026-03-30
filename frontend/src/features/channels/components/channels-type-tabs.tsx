@@ -1,6 +1,8 @@
 import { useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { cn } from '@/lib/utils';
+
 import type { ChannelTypeCount } from '../data/channels';
 import { CHANNEL_CONFIGS } from '../data/config_channels';
 
@@ -73,7 +75,9 @@ export const ChannelsTypeTabs = memo(function ChannelsTypeTabs({ typeCounts, sel
     <div className='mb-6 w-full overflow-hidden'>
       <div
         className='hide-scroll flex flex-nowrap items-center gap-2 overflow-x-auto scroll-smooth'
-        onWheel={(e) => { e.currentTarget.scrollLeft += e.deltaY; }}
+        onWheel={(e) => {
+          e.currentTarget.scrollLeft += e.deltaY;
+        }}
       >
         {/* All tab */}
         <button

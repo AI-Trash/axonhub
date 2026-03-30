@@ -1,15 +1,17 @@
-import { useState, useEffect, memo, useCallback } from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, ArrowUpToLine, ArrowDownToLine } from 'lucide-react';
+import { useState, useEffect, memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+
 import { useAllChannelsForOrdering, useBulkUpdateChannelOrdering } from '../data/channels';
 import { ChannelOrderingItem } from '../data/schema';
 

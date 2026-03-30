@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useState } from 'react';
 import { Loader2, Save } from 'lucide-react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { AutoCompleteSelect } from '@/components/auto-complete-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { AutoCompleteSelect } from '@/components/auto-complete-select';
+
 import { useSystemContext } from '../context/system-context';
 import { currencyCodes } from '../data/currencies';
 import { useGeneralSettings, useUpdateGeneralSettings } from '../data/system';

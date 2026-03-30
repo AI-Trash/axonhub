@@ -1,8 +1,10 @@
 'use client';
 
 import { useTranslation } from 'react-i18next';
+
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
+
 import { SystemSettingsTabs } from './components/tabs';
 import SystemProvider from './context/system-context';
 

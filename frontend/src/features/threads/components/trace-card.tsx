@@ -1,4 +1,5 @@
 import { ThumbsUp, ThumbsDown } from 'lucide-react';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import type { Trace } from '@/features/traces/data/schema';

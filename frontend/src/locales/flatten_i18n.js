@@ -40,7 +40,7 @@ function processDirectory(dir) {
 
 // Process en and zh-CN directories
 const subDirs = ['en', 'zh-CN'];
-subDirs.forEach(subDir => {
+subDirs.forEach((subDir) => {
   const fullPath = path.join(localesDir, subDir);
   if (fs.existsSync(fullPath)) {
     processDirectory(fullPath);

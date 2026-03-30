@@ -1,13 +1,15 @@
 'use client';
 
-import React, { useCallback } from 'react';
 import { Loader2, Settings2, RefreshCcw, Layers } from 'lucide-react';
+import React, { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { useModelSettings, useUpdateModelSettings, type UpdateModelSettingsInput } from '@/features/system/data/system';
+
 import { useModels } from '../context/models-context';
 
 export function ModelSettingsDialog() {

@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import { BadgeCheck, ChevronsUpDown, LogOut } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -74,7 +75,7 @@ export function NavUser({
               </DropdownMenuItem>
             </DropdownMenuGroup> */}
             <DropdownMenuSeparator />
-              <DropdownMenuGroup>
+            <DropdownMenuGroup>
               <DropdownMenuItem asChild>
                 <Link to='/settings/profile'>
                   <BadgeCheck />

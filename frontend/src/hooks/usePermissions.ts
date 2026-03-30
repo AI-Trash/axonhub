@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react';
+
+import { useMe } from '@/features/auth/data/auth';
 import { useAuthStore } from '@/stores/authStore';
 import { useSelectedProjectId } from '@/stores/projectStore';
-import { useMe } from '@/features/auth/data/auth';
 
 /**
  * Hook for checking user permissions based on scopes

@@ -1,6 +1,8 @@
 import { ColumnDef } from '@tanstack/react-table';
 import { TFunction } from 'i18next';
+
 import { Badge } from '@/components/ui/badge';
+
 import { DataStorage } from '../data/data-storages';
 import { DataStorageActions } from './data-storage-actions';
 

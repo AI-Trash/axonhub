@@ -12,17 +12,17 @@ export function formatErrorMessage(error: string): {
 
   const requestIDs: string[] = [];
   const requestIdRegex = /\(request id: ([^)]+)\)/g;
-  
+
   let match;
   let cleanedMessage = error;
-  
+
   while ((match = requestIdRegex.exec(error)) !== null) {
     requestIDs.push(match[1]);
   }
-  
+
   // Remove the (request id: ...) parts from the message
   cleanedMessage = error.replace(requestIdRegex, '').trim();
-  
+
   // Clean up trailing commas or spaces that might remain
   cleanedMessage = cleanedMessage.replace(/,\s*$/, '').trim();
 
@@ -42,11 +42,11 @@ interface ErrorDisplayProps {
   requestIdClassName?: string;
 }
 
-export function ErrorDisplay({ 
-  error, 
-  className = '', 
+export function ErrorDisplay({
+  error,
+  className = '',
   messageClassName = 'text-sm font-medium',
-  requestIdClassName = 'text-xs text-muted-foreground mt-1 opacity-70'
+  requestIdClassName = 'text-xs text-muted-foreground mt-1 opacity-70',
 }: ErrorDisplayProps) {
   const { message, requestIDs } = formatErrorMessage(error);
 
@@ -56,7 +56,7 @@ export function ErrorDisplay({
     <div className={className}>
       <div className={messageClassName}>{message}</div>
       {requestIDs.length > 0 && (
-        <div className="mt-1 space-y-0.5">
+        <div className='mt-1 space-y-0.5'>
           {requestIDs.map((id, index) => (
             <div key={`${id}-${index}`} className={requestIdClassName}>
               Request ID: {id}

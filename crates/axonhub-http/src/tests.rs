@@ -2402,7 +2402,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     #[tokio::test]
-    async fn root_unmatched_routes_keep_structured_truthful_501_payloads() {
+    async fn root_spa_routes_serve_embedded_index_html() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -2421,12 +2421,205 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(
+            response.headers().get("cache-control").unwrap(),
+            "no-cache, no-store, must-revalidate"
+        );
+        let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
+        let payload = String::from_utf8(body.to_vec()).unwrap();
+        assert!(payload.contains("<div id=\"root\"></div>"));
+        assert!(payload.contains("/assets/"));
+    }
+
+    #[tokio::test]
+    async fn root_dotted_spa_routes_follow_go_fallback_behavior() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/totally-unported-surface.json")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(
+            response.headers().get("cache-control").unwrap(),
+            "no-cache, no-store, must-revalidate"
+        );
+    }
+
+    #[tokio::test]
+    async fn root_static_assets_serve_embedded_files() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/favicon.ico")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("content-type").unwrap(), "image/x-icon");
+        let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
+        assert!(!body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn public_favicon_route_serves_embedded_icon_with_cache_headers() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/favicon")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("content-type").unwrap(), "image/x-icon");
+        assert_eq!(response.headers().get("cache-control").unwrap(), "public, max-age=3600");
+    }
+
+    #[tokio::test]
+    async fn api_like_paths_do_not_fall_back_to_spa() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/unknown")
+                    .method(Method::GET)
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let json = read_json(response).await;
-        assert_eq!(json["error"], "not_implemented");
-        assert_eq!(json["route_family"], "/*");
-        assert_eq!(json["method"], "GET");
-        assert_eq!(json["path"], "/totally-unported-surface");
-        assert_eq!(json["migration_status"], "progressive cutover");
-        assert_eq!(json["legacy_go_backend_present"], false);
+        assert_eq!(json["error"], "not_found");
+        assert_eq!(json["status"], 404);
+        assert_eq!(json["message"], "The requested endpoint does not exist");
+    }
+
+    #[tokio::test]
+    async fn base_path_spa_routes_strip_prefix_before_embedded_lookup() {
+        let app = actix_test::init_service(router_with_metrics_and_base_path(
+            test_state_with_openai(
+                SystemBootstrapCapability::Available {
+                    system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+                },
+                false,
+            ),
+            HttpMetricsCapability::Disabled,
+            "/console",
+        ))
+        .await;
+
+        let response = actix_test::call_service(
+            &app,
+            actix_test::TestRequest::get()
+                .uri("/console/workspace/settings")
+                .to_request(),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/html; charset=utf-8"
+        );
+        let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
+        let payload = String::from_utf8(body.to_vec()).unwrap();
+        assert!(payload.contains("<div id=\"root\"></div>"));
+    }
+
+    #[tokio::test]
+    async fn scoped_api_families_keep_local_unmatched_boundaries() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        for (method, path, status, body_kind) in [
+            (Method::GET, "/jina/v1/unknown", StatusCode::NOT_FOUND, "json"),
+            (Method::GET, "/anthropic/v1/unknown", StatusCode::NOT_FOUND, "json"),
+            (Method::GET, "/openapi/unknown", StatusCode::NOT_FOUND, "json"),
+            (
+                Method::GET,
+                "/doubao/v3/unknown",
+                StatusCode::NOT_IMPLEMENTED,
+                "not_implemented",
+            ),
+        ] {
+            let mut request = Request::builder().uri(path).method(method);
+            if path.starts_with("/openapi") {
+                request = request.header("Authorization", "Bearer service-key-123");
+            } else {
+                request = request.header("X-API-Key", "api-key-123");
+            }
+
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), status, "{path}");
+            let json = read_json(response).await;
+            match body_kind {
+                "json" => assert_eq!(json["error"], "not_found", "{path}"),
+                "not_implemented" => {
+                    assert_eq!(json["error"], "not_implemented", "{path}");
+                    assert_eq!(json["path"], path, "{path}");
+                }
+                _ => unreachable!(),
+            }
+        }
     }

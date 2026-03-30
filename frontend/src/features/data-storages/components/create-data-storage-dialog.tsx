@@ -3,25 +3,14 @@
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+
 import { useDataStoragesContext } from '../context/data-storages-context';
 import { useCreateDataStorage, CreateDataStorageInput } from '../data/data-storages';
 import { DataStorageFormData } from './types';
@@ -182,10 +171,7 @@ export function CreateDataStorageDialog() {
 
             <div className='grid gap-2'>
               <Label htmlFor='create-type'>{t('dataStorages.fields.type')}</Label>
-              <Select
-                value={selectedType}
-                onValueChange={(value) => setValue('type', value as DataStorageFormData['type'])}
-              >
+              <Select value={selectedType} onValueChange={(value) => setValue('type', value as DataStorageFormData['type'])}>
                 <SelectTrigger id='create-type'>
                   <SelectValue />
                 </SelectTrigger>
@@ -213,9 +199,7 @@ export function CreateDataStorageDialog() {
                   })}
                   placeholder='/var/axonhub/data'
                 />
-                {errors.directory && (
-                  <span className='text-sm text-red-500'>{errors.directory.message}</span>
-                )}
+                {errors.directory && <span className='text-sm text-red-500'>{errors.directory.message}</span>}
               </div>
             )}
 
@@ -235,30 +219,18 @@ export function CreateDataStorageDialog() {
                     })}
                     placeholder='my-bucket'
                   />
-                  {errors.s3BucketName && (
-                    <span className='text-sm text-red-500'>{errors.s3BucketName.message}</span>
-                  )}
+                  {errors.s3BucketName && <span className='text-sm text-red-500'>{errors.s3BucketName.message}</span>}
                 </div>
                 <div className='grid gap-2'>
                   <Label htmlFor='create-s3-endpoint'>{t('dataStorages.fields.s3Endpoint')}</Label>
-                  <Input
-                    id='create-s3-endpoint'
-                    {...register('s3Endpoint')}
-                    placeholder='https://s3.amazonaws.com'
-                  />
+                  <Input id='create-s3-endpoint' {...register('s3Endpoint')} placeholder='https://s3.amazonaws.com' />
                 </div>
                 <div className='grid gap-2'>
                   <Label htmlFor='create-s3-region'>{t('dataStorages.fields.s3Region')}</Label>
-                  <Input
-                    id='create-s3-region'
-                    {...register('s3Region')}
-                    placeholder='us-east-1'
-                  />
+                  <Input id='create-s3-region' {...register('s3Region')} placeholder='us-east-1' />
                 </div>
                 <div className='grid gap-2'>
-                  <Label htmlFor='create-s3-access-key'>
-                    {t('dataStorages.fields.s3AccessKey')} *
-                  </Label>
+                  <Label htmlFor='create-s3-access-key'>{t('dataStorages.fields.s3AccessKey')} *</Label>
                   <Input
                     id='create-s3-access-key'
                     {...register('s3AccessKey', {
@@ -270,14 +242,10 @@ export function CreateDataStorageDialog() {
                       },
                     })}
                   />
-                  {errors.s3AccessKey && (
-                    <span className='text-sm text-red-500'>{errors.s3AccessKey.message}</span>
-                  )}
+                  {errors.s3AccessKey && <span className='text-sm text-red-500'>{errors.s3AccessKey.message}</span>}
                 </div>
                 <div className='grid gap-2'>
-                  <Label htmlFor='create-s3-secret-key'>
-                    {t('dataStorages.fields.s3SecretKey')} *
-                  </Label>
+                  <Label htmlFor='create-s3-secret-key'>{t('dataStorages.fields.s3SecretKey')} *</Label>
                   <Input
                     id='create-s3-secret-key'
                     type='password'
@@ -290,9 +258,7 @@ export function CreateDataStorageDialog() {
                       },
                     })}
                   />
-                  {errors.s3SecretKey && (
-                    <span className='text-sm text-red-500'>{errors.s3SecretKey.message}</span>
-                  )}
+                  {errors.s3SecretKey && <span className='text-sm text-red-500'>{errors.s3SecretKey.message}</span>}
                 </div>
                 <div className='flex items-center space-x-2'>
                   <input
@@ -301,9 +267,7 @@ export function CreateDataStorageDialog() {
                     {...register('s3PathStyle')}
                     className='h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600'
                   />
-                  <Label htmlFor='create-s3-path-style'>
-                    {t('dataStorages.fields.s3PathStyle')}
-                  </Label>
+                  <Label htmlFor='create-s3-path-style'>{t('dataStorages.fields.s3PathStyle')}</Label>
                 </div>
               </>
             )}
@@ -324,14 +288,10 @@ export function CreateDataStorageDialog() {
                     })}
                     placeholder='my-bucket'
                   />
-                  {errors.gcsBucketName && (
-                    <span className='text-sm text-red-500'>{errors.gcsBucketName.message}</span>
-                  )}
+                  {errors.gcsBucketName && <span className='text-sm text-red-500'>{errors.gcsBucketName.message}</span>}
                 </div>
                 <div className='grid gap-2'>
-                  <Label htmlFor='create-gcs-credential'>
-                    {t('dataStorages.fields.gcsCredential')} *
-                  </Label>
+                  <Label htmlFor='create-gcs-credential'>{t('dataStorages.fields.gcsCredential')} *</Label>
                   <Textarea
                     id='create-gcs-credential'
                     {...register('gcsCredential', {
@@ -357,9 +317,7 @@ export function CreateDataStorageDialog() {
                     rows={5}
                     placeholder='{"type": "service_account", ...}'
                   />
-                  {errors.gcsCredential && (
-                    <span className='text-sm text-red-500'>{errors.gcsCredential.message}</span>
-                  )}
+                  {errors.gcsCredential && <span className='text-sm text-red-500'>{errors.gcsCredential.message}</span>}
                 </div>
               </>
             )}
@@ -380,24 +338,14 @@ export function CreateDataStorageDialog() {
                     })}
                     placeholder='https://webdav.example.com'
                   />
-                  {errors.webdavURL && (
-                    <span className='text-sm text-red-500'>{errors.webdavURL.message}</span>
-                  )}
+                  {errors.webdavURL && <span className='text-sm text-red-500'>{errors.webdavURL.message}</span>}
                 </div>
                 <div className='grid gap-2'>
-                  <Label htmlFor='create-webdav-username'>
-                    {t('dataStorages.fields.webdavUsername')}
-                  </Label>
-                  <Input
-                    id='create-webdav-username'
-                    {...register('webdavUsername')}
-                    placeholder='username'
-                  />
+                  <Label htmlFor='create-webdav-username'>{t('dataStorages.fields.webdavUsername')}</Label>
+                  <Input id='create-webdav-username' {...register('webdavUsername')} placeholder='username' />
                 </div>
                 <div className='grid gap-2'>
-                  <Label htmlFor='create-webdav-password'>
-                    {t('dataStorages.fields.webdavPassword')} *
-                  </Label>
+                  <Label htmlFor='create-webdav-password'>{t('dataStorages.fields.webdavPassword')} *</Label>
                   <Input
                     id='create-webdav-password'
                     type='password'
@@ -410,17 +358,11 @@ export function CreateDataStorageDialog() {
                       },
                     })}
                   />
-                  {errors.webdavPassword && (
-                    <span className='text-sm text-red-500'>{errors.webdavPassword.message}</span>
-                  )}
+                  {errors.webdavPassword && <span className='text-sm text-red-500'>{errors.webdavPassword.message}</span>}
                 </div>
                 <div className='grid gap-2'>
                   <Label htmlFor='create-webdav-path'>{t('dataStorages.fields.webdavPath')}</Label>
-                  <Input
-                    id='create-webdav-path'
-                    {...register('webdavPath')}
-                    placeholder='/remote.php/dav/files/user/'
-                  />
+                  <Input id='create-webdav-path' {...register('webdavPath')} placeholder='/remote.php/dav/files/user/' />
                 </div>
                 <div className='flex items-center space-x-2'>
                   <input
@@ -429,9 +371,7 @@ export function CreateDataStorageDialog() {
                     {...register('webdavInsecureSkipTLS')}
                     className='h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600'
                   />
-                  <Label htmlFor='create-webdav-insecure'>
-                    {t('dataStorages.fields.webdavInsecureSkipTLS')}
-                  </Label>
+                  <Label htmlFor='create-webdav-insecure'>{t('dataStorages.fields.webdavInsecureSkipTLS')}</Label>
                 </div>
               </>
             )}

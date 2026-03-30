@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
+
 import { Role } from '../data/schema';
 
 interface RolesContextType {

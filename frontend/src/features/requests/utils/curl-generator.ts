@@ -1,5 +1,5 @@
-import { ApiFormat } from '@/features/channels/data/schema';
 import { CHANNEL_CONFIGS } from '@/features/channels/data/config_channels';
+import { ApiFormat } from '@/features/channels/data/schema';
 
 export type ChannelType = keyof typeof CHANNEL_CONFIGS;
 

@@ -1,19 +1,21 @@
-import { useMemo, useState, useEffect } from 'react';
-import { format } from 'date-fns';
 import { useParams, useNavigate } from '@tanstack/react-router';
+import { format } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
 import { ArrowLeft, FileText, Activity, RefreshCw } from 'lucide-react';
+import { useMemo, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { extractNumberID } from '@/lib/utils';
-import { usePaginationSearch } from '@/hooks/use-pagination-search';
-import useInterval from '@/hooks/useInterval';
+
+import { Header } from '@/components/layout/header';
+import { Main } from '@/components/layout/main';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
-import { Header } from '@/components/layout/header';
-import { Main } from '@/components/layout/main';
 import { useGeneralSettings } from '@/features/system/data/system';
+import { usePaginationSearch } from '@/hooks/use-pagination-search';
+import useInterval from '@/hooks/useInterval';
+import { extractNumberID } from '@/lib/utils';
+
 import { useTraceWithSegments } from '../data';
 import { Segment, Span, parseRawRootSegment } from '../data/schema';
 import { SpanSection } from './span-section';
@@ -152,11 +154,11 @@ export default function TraceDetailPage() {
         </div>
       </Header>
 
-      <Main className='flex-1 overflow-hidden flex flex-col p-0'>
+      <Main className='flex flex-1 flex-col overflow-hidden p-0'>
         {effectiveRootSegment ? (
           <>
             {/* Top: Usage Metadata */}
-            <div className='px-6 py-4 border-b bg-background'>
+            <div className='bg-background border-b px-6 py-4'>
               <div className='grid gap-4 md:grid-cols-6'>
                 <div>
                   <p className='text-muted-foreground text-sm'>{t('traces.detail.totalTokensLabel')}</p>

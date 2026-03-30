@@ -1,12 +1,7 @@
 import { type FC, useCallback, useEffect, useRef } from 'react';
+
 import type { FormBounds, MouseArea, Particle } from './animated-line-background.engine';
-import {
-  animationConfig,
-  getFormBounds,
-  initParticles,
-  renderParticles,
-  updateParticles,
-} from './animated-line-background.engine';
+import { animationConfig, getFormBounds, initParticles, renderParticles, updateParticles } from './animated-line-background.engine';
 
 interface AnimationDiagnosticsSnapshot {
   targetFps: number;
@@ -98,20 +93,25 @@ const AnimatedLineBackground: FC = () => {
     };
   }, []);
 
-  const updateFormBounds = useCallback((canvasWidth: number, canvasHeight: number) => {
-    const newBounds = getMeasuredFormBounds() ?? getFormBounds(canvasWidth, canvasHeight);
-    const prev = formBoundsRef.current;
-    
-    if (!prev || 
-        prev.formLeft !== newBounds.formLeft || 
-        prev.formRight !== newBounds.formRight || 
-        prev.formTop !== newBounds.formTop || 
-        prev.formBottom !== newBounds.formBottom) {
-      formBoundsRef.current = newBounds;
-      return true;
-    }
-    return false;
-  }, [getMeasuredFormBounds]);
+  const updateFormBounds = useCallback(
+    (canvasWidth: number, canvasHeight: number) => {
+      const newBounds = getMeasuredFormBounds() ?? getFormBounds(canvasWidth, canvasHeight);
+      const prev = formBoundsRef.current;
+
+      if (
+        !prev ||
+        prev.formLeft !== newBounds.formLeft ||
+        prev.formRight !== newBounds.formRight ||
+        prev.formTop !== newBounds.formTop ||
+        prev.formBottom !== newBounds.formBottom
+      ) {
+        formBoundsRef.current = newBounds;
+        return true;
+      }
+      return false;
+    },
+    [getMeasuredFormBounds]
+  );
 
   const resize = useCallback(() => {
     const canvas = canvasRef.current;
@@ -196,8 +196,7 @@ const AnimatedLineBackground: FC = () => {
       }
 
       const mouseMoved =
-        lastRenderedMouseAreaRef.current.x !== mouseAreaRef.current.x ||
-        lastRenderedMouseAreaRef.current.y !== mouseAreaRef.current.y;
+        lastRenderedMouseAreaRef.current.x !== mouseAreaRef.current.x || lastRenderedMouseAreaRef.current.y !== mouseAreaRef.current.y;
       const formBoundsChanged = lastRenderedFormBoundsRef.current !== formBoundsRef.current;
 
       if (steps > 0 || mouseMoved || formBoundsChanged) {

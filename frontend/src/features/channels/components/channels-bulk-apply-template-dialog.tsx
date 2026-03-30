@@ -1,11 +1,13 @@
-import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { Button } from '@/components/ui/button';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+
 import { Channel } from '../data/schema';
 import { useChannelOverrideTemplates, useApplyChannelOverrideTemplate } from '../data/templates';
 
@@ -124,9 +126,7 @@ export function ChannelsBulkApplyTemplateDialog({ open, onOpenChange, selectedCh
           {/* Info Message */}
           {selectedTemplateId && (
             <div className='bg-muted/50 rounded-md border p-3'>
-              <p className='text-muted-foreground text-sm'>
-                {t('channels.templates.bulk.applyInfo')}
-              </p>
+              <p className='text-muted-foreground text-sm'>{t('channels.templates.bulk.applyInfo')}</p>
             </div>
           )}
         </div>

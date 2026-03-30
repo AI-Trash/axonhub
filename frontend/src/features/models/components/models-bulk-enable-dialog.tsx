@@ -2,7 +2,9 @@
 
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
+
 import { ConfirmDialog } from '@/components/confirm-dialog';
+
 import { useModels } from '../context/models-context';
 import { useBulkEnableModels } from '../data/models';
 
@@ -29,8 +31,7 @@ export function ModelsBulkEnableDialog() {
       resetRowSelection?.();
       setSelectedModels([]);
       setOpen(null);
-    } catch (error) {
-    }
+    } catch (error) {}
   };
 
   return (

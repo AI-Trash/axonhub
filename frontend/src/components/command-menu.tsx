@@ -1,9 +1,8 @@
-import React from 'react';
-import { useNavigate, useRouter } from '@tanstack/react-router';
 import { IconArrowRightDashed, IconChevronRight, IconDeviceLaptop, IconMoon, IconSun } from '@tabler/icons-react';
+import { useNavigate, useRouter } from '@tanstack/react-router';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSearch } from '@/context/search-context';
-import { useTheme } from '@/context/theme-context';
+
 import {
   CommandDialog,
   CommandEmpty,
@@ -13,17 +12,14 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command';
+import { useSearch } from '@/context/search-context';
+import { useTheme } from '@/context/theme-context';
+
 import { useSidebarData } from '../sidebar';
 import { ScrollArea } from './ui/scroll-area';
 
 // Inner component that uses sidebar data
-function CommandMenuContent({
-  open,
-  setOpen,
-}: {
-  open: boolean;
-  setOpen: React.Dispatch<React.SetStateAction<boolean>>;
-}) {
+function CommandMenuContent({ open, setOpen }: { open: boolean; setOpen: React.Dispatch<React.SetStateAction<boolean>> }) {
   const navigate = useNavigate();
   const { setTheme } = useTheme();
   const sidebarData = useSidebarData();

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   ColumnFiltersState,
   RowData,
@@ -13,12 +12,15 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useAnimatedList } from '@/hooks/useAnimatedList';
+
+import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TableSkeleton } from '@/components/ui/table-skeleton';
-import { ServerSidePagination } from '@/components/server-side-pagination';
+import { useAnimatedList } from '@/hooks/useAnimatedList';
 import type { DateTimeRangeValue } from '@/utils/date-range';
+
 import { Thread, ThreadConnection } from '../data/schema';
 import { ThreadsTableToolbar } from './data-table-toolbar';
 import { useThreadsColumns } from './threads-columns';

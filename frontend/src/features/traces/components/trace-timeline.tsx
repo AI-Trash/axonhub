@@ -1,11 +1,13 @@
 'use client';
 
-import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, Workflow } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { formatNumber } from '@/utils/format-number';
-import { Badge } from '@/components/ui/badge';
+
 import { formatDuration } from '../../../utils/format-duration';
 import type { Segment, RequestMetadata, Span } from '../data/schema';
 import { getSpanDisplayLabels, normalizeSpanType } from '../utils/span-display';

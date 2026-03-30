@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
 import { IconAlertTriangle, IconFlask, IconLoader2 } from '@tabler/icons-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@/components/ui/button';
+
 import { ConfirmDialog } from '@/components/confirm-dialog';
+import { Button } from '@/components/ui/button';
+
 import { useUpdateChannelStatus, useTestChannel } from '../data/channels';
 import { Channel } from '../data/schema';
 import { ErrorDisplay } from '../utils/error-formatter';
@@ -36,8 +38,7 @@ export function ChannelsStatusDialog({ open, onOpenChange, currentRow }: Props) 
       });
       onOpenChange(false);
       setTestResult(null);
-    } catch (error) {
-    }
+    } catch (error) {}
   };
 
   const handleTestChannel = async () => {

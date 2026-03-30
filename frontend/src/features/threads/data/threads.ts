@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { graphqlRequest } from '@/gql/graphql';
 import { useTranslation } from 'react-i18next';
-import { useSelectedProjectId } from '@/stores/projectStore';
+
+import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
+import { useSelectedProjectId } from '@/stores/projectStore';
+
 import { ThreadConnection, ThreadDetail, threadConnectionSchema, threadDetailSchema } from './schema';
 
 type ThreadOrderField = 'CREATED_AT' | 'UPDATED_AT';

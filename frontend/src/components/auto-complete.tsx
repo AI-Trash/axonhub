@@ -1,3 +1,5 @@
+import { Command as CommandPrimitive } from 'cmdk';
+import { Check } from 'lucide-react';
 /**
 MIT License
 
@@ -22,9 +24,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 import { useMemo, useState } from 'react';
-import { Command as CommandPrimitive } from 'cmdk';
-import { Check } from 'lucide-react';
+
 import { cn } from '@/lib/utils';
+
 import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from './ui/command';
 import { Input } from './ui/input';
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover';
@@ -90,7 +92,6 @@ export function AutoComplete<T extends string>({
       onSelectedValueChange(searchValue as T);
     }
   };
-
 
   const filtered = useMemo(() => {
     if (!searchValue) return items.slice(0, MAX_DISPLAY);
