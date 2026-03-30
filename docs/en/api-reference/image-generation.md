@@ -110,51 +110,22 @@ if (result.data) {
 | `moderation` | string | Content moderation level: `"low"` or `"auto"`. | - |
 | `partial_images` | number | Number of partial images to generate. | 1 |
 
-## Image Edit (Inpainting)
+## Image Edit Boundary (`/v1/images/edits`)
 
-To edit an image, use the `/v1/images/edits` endpoint with multipart/form-data:
+`POST /v1/images/edits` currently remains an explicit unsupported boundary in the accepted Rust-canonical backend state. Requests to this endpoint return a structured `501 Not Implemented` response instead of performing inpainting or multipart image editing.
 
-```python
-import requests
+If your client calls `/v1/images/edits`, expect a boundary response shaped like the other accepted explicit unsupported surfaces:
 
-url = "https://your-axonhub-instance/v1/images/edits"
-headers = {
-    "Authorization": f"Bearer {API_KEY}"
+```json
+{
+  "error": "not_implemented",
+  "message": "The requested image edit surface is not implemented in the current Rust backend.",
+  "path": "/v1/images/edits",
+  "status": 501
 }
-
-with open("image.png", "rb") as image_file, open("mask.png", "rb") as mask_file:
-    files = {
-        "image": image_file,
-        "mask": mask_file
-    }
-    data = {
-        "model": "gpt-image-1",
-        "prompt": "Change the color to white",
-        "size": "1024x1024",
-        "n": 1
-    }
-    
-    response = requests.post(url, headers=headers, files=files, data=data)
-    result = response.json()
 ```
 
-### Image Edit Parameters
-
-| Parameter | Type | Description | Default |
-|-----------|------|-------------|---------|
-| `image` | file | **Required.** The image to edit. | - |
-| `prompt` | string | **Required.** A text description of the desired edit. | - |
-| `mask` | file | An optional mask image. Transparent areas indicate where to edit. | - |
-| `model` | string | The model to use. | `dall-e-2` |
-| `n` | integer | The number of images to generate. | 1 |
-| `size` | string | The size of the generated images. | `"1024x1024"` |
-| `response_format` | string | The format: `"url"` or `"b64_json"`. | `"b64_json"` |
-| `user` | string | A unique identifier for your end-user. | - |
-| `background` | string | Background style: `"opaque"` or `"transparent"`. | - |
-| `output_format` | string | Image format: `"png"`, `"webp"`, or `"jpeg"`. | `"png"` |
-| `output_compression` | number | Compression level (0-100%). | 100 |
-| `input_fidelity` | string | Input fidelity level. | - |
-| `partial_images` | number | Number of partial images. | 1 |
+This documentation is intentionally limited to the current accepted state. Use `/v1/images/generations` for the supported image-generation flow; do not treat `/v1/images/edits` as a usable endpoint in the current backend.
 
 ## Supported Providers
 

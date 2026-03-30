@@ -1,15 +1,15 @@
 # Development Guide
 
-## Migration Status
+## Backend Contract Status
 
-AxonHub is in an additive Go-to-Rust backend migration.
+AxonHub's canonical backend implementation is Rust.
 
-- **Current full backend:** legacy Go service under `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/`
-- **Rust migration slice:** Cargo workspace rooted at `Cargo.toml`
+- **Canonical backend path:** Cargo workspace rooted at `Cargo.toml`
+- **Legacy reference/oracle tree:** `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/`
 
-### Rust Slice Current Coverage (Verified)
+### Current Rust Coverage (Verified)
 
-The Rust slice implements the following verified SQLite- and PostgreSQL-backed surface:
+The Rust backend implements the following verified SQLite- and PostgreSQL-backed surface:
 
 - **Config & CLI**: config loading, CLI compatibility (`config preview`, `config validate`, `config get`, `version`, `help`)
 - **Health & system**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
@@ -22,47 +22,22 @@ The Rust slice implements the following verified SQLite- and PostgreSQL-backed s
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as configured
 - **Database support**: SQLite and PostgreSQL fully verified; MySQL wired through shared SeaORM seam but full integration verification pending
 
-### Rust Slice Remaining Work (Explicit Buckets)
+### Remaining Follow-up Areas
 
-**Next (high-priority, near-term):**
+The Rust backend remains the canonical implementation path while broader follow-up work continues around deeper RBAC/admin coverage, MySQL integration verification, additional provider-edge verification, and other non-boundary parity areas.
 
-- Image generation endpoints (`/v1/images/generations`, `/v1/images/edits`)
-- RBAC/permission system migration (internal/scopes)
-- Core business logic surfaces (internal/server/biz): channel/model management, request lifecycle, usage/cost, trace/thread
-- Transformer/pipeline migration (llm/transformer, llm/pipeline): provider orchestration, outbound adapters
-- Model association/fetching parity
-- System onboarding completeness (bootstrap flows, default data)
-- OAuth parity verification (complete OAuth flow implementations)
-- MySQL integration verification completion
+The legacy Go tree remains in-repo as historical reference/oracle material. It is not the current/full runtime for maintained documentation or repo guidance.
 
-**Later (medium-priority, mid-term):**
+### Accepted Explicit Unsupported Boundaries (Truthful 501)
 
-- AiSDK compatibility (complete Vercel AI SDK protocol)
-- Full admin GraphQL write operations and advanced queries
-- Advanced/enterprise features: prompt protection, provider quota management, circuit breakers, channel auto-disable
-- Config alignment: full parity with legacy Go backend configuration options
-- Broader test parity: integration test coverage matching the Go suite
-- Additional provider-specific features (Gemini tools, Anthropic extensions)
+Accepted route families outside the current verified Rust surface return structured `501 Not Implemented` JSON:
 
-**Deferred with 501 (explicit boundaries):**
-
-- Operational/background items that remain Go-only until separate migration gates
-- Legacy-only database dialects (TiDB, Neon DB) - remain on Go backend
-- Helm Kubernetes deployment path (Go backend only)
-- Full legacy Go API surface that is not part of the targeted Rust slice
-
-### Unported HTTP Families (Truthful 501)
-
-Route families outside the verified scope return structured `501 Not Implemented` JSON:
-
-- `/v1/images/generations`, `/v1/images/edits` (image generation)
-- `/admin/*` write operations (user management, project creation, role assignment, etc.)
-- Non-target provider wrappers not yet migrated
+- `POST /v1/images/edits`
 - Realtime API endpoints (representative `/v1/realtime` traffic stays on explicit `/v1/*` `501` boundaries)
+- Gemini `countTokens` requests on the accepted explicit compatibility boundary
 - Vercel AI SDK protocol marker headers on `/v1/*` requests (for example `X-Vercel-Ai-Ui-Message-Stream: v1` or `X-Vercel-AI-Data-Stream: v1`)
-- Full admin plane beyond read operations
 
-Use the Go backend or the released Docker/binary artifacts when you need the full product surface. Use the Rust workspace when working on the migration itself.
+Use the Rust backend and Rust-tagged release artifacts for the current supported product surface. Keep the legacy Go tree only for historical reference/oracle work when a task explicitly requires it.
 
 ## Architecture Overview
 
@@ -72,18 +47,18 @@ AxonHub remains a unified AI gateway with a bidirectional request/response trans
   <img src="../../transformation-flow.svg" alt="AxonHub Transformation Flow" width="900"/>
 </div>
 
-The migration does **not** change the product goal. It changes the implementation strategy:
+The current backend architecture does **not** change the product goal. It changes how the canonical implementation is maintained:
 
-- preserve the existing operator-facing contract first,
-- port behavior slice by slice,
-- keep unported surfaces explicit instead of faking parity.
+- preserve the operator-facing contract,
+- keep accepted explicit unsupported boundaries honest,
+- extend Rust behavior under parity regression gates.
 
 ## Technology Stack
 
 ### Backend
 
-- **Stable implementation:** Go 1.26+, Gin, Ent, gqlgen, FX
-- **Migration slice:** Rust 1.78+, Tokio, Actix Web, Serde, Cargo workspace with shared dependencies
+- **Canonical implementation:** Rust 1.78+, Tokio, Actix Web, Serde, Cargo workspace with shared dependencies
+- **Legacy reference/oracle material:** Go 1.26+, Gin, Ent, gqlgen, FX
 
 ### Frontend
 
@@ -107,17 +82,17 @@ The migration does **not** change the product goal. It changes the implementatio
 - `Cargo.toml` — workspace root and shared dependency versions
 - `apps/axonhub-server` — Rust `axonhub` binary
 - `crates/axonhub-config` — shared config contract, defaults, env overrides, preview/get helpers
-- `crates/axonhub-http` — Actix router with `/health`, verified SQLite- and PostgreSQL-backed bootstrap/system routes, migrated OpenAI-compatible `/v1` routes, and truthful `501` route stubs for unported families
+- `crates/axonhub-http` — Actix router with `/health`, verified SQLite- and PostgreSQL-backed bootstrap/system routes, current OpenAI-compatible `/v1` routes, and truthful `501` boundaries for the accepted unsupported families
 
 ### Legacy Go Backend
 
-- `cmd/axonhub/main.go` — current CLI/server contract
-- `conf/conf.go` — config defaults and compatibility contract
-- `internal/server/` — current full HTTP surface
+- `cmd/axonhub/main.go` — historical CLI/server contract reference
+- `conf/conf.go` — historical config defaults and compatibility reference
+- `internal/server/` — historical reference/oracle HTTP surface
 - `internal/server/gql/` — GraphQL schema and resolvers
 - `internal/ent/` — Ent models, schema, and migrations
 
-## Rust Migration Slice Workflow
+## Rust Backend Workflow
 
 Run the Rust CLI from the workspace root:
 
@@ -132,11 +107,11 @@ cargo run -p axonhub-server --
 Current Rust behavior is intentionally limited:
 
 - `/health` returns a truthful health payload
-- `/admin/system/status` and `/admin/system/initialize` work on the supported SQLite- and PostgreSQL-backed migration paths
-- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` run through the practical migrated Rust slice with auth/context, routing, and SQLite- and PostgreSQL-backed persistence side effects
-- MySQL uses the same SeaORM-backed repository seam, but full Rust-side integration verification is still pending; TiDB and Neon DB remain Go-only
-- `/admin/*` write operations, non-target `/v1/*` routes such as image generation, and other still-unported families remain explicit structured `501 Not Implemented` JSON boundaries
-- config file paths and `AXONHUB_*` env keys mirror the first shared contract from `conf/conf.go`
+- `/admin/system/status` and `/admin/system/initialize` work on the supported SQLite- and PostgreSQL-backed Rust paths
+- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` run through the current Rust backend with auth/context, routing, and SQLite- and PostgreSQL-backed persistence side effects
+- MySQL uses the same SeaORM-backed repository seam, but full Rust-side integration verification is still pending; TiDB and Neon DB remain legacy-reference dialect material in the Go tree
+- `POST /v1/images/edits`, `/v1/realtime`, Gemini `countTokens`, and AiSDK-marked `/v1/*` requests remain explicit structured `501 Not Implemented` JSON boundaries
+- config file paths and `AXONHUB_*` env keys mirror the preserved operator-facing contract from `conf/conf.go`
 
 ## Frontend Development
 
@@ -148,18 +123,17 @@ pnpm dev
 
 The frontend development server runs at `http://localhost:5173` and proxies to whichever backend you are using locally.
 
-## Legacy Go Workflow
+## Legacy Go Reference Workflow
 
-When you need current production behavior, work in the legacy Go backend.
+Work in the legacy Go tree only when a task explicitly needs historical reference/oracle material or generated artifacts that still live there.
 
 Typical cases include:
 
-- GraphQL and admin flows
-- Ent schema and database-backed services
-- JWT/API-key auth and middleware
-- provider orchestration and outbound transformers
+- comparing older contract/oracle behavior during parity investigations
+- touching Ent or GraphQL generated-code inputs that still live in the Go tree
+- maintaining historical reference schemas, handlers, or compatibility notes
 
-Legacy Go commands are still relevant **only** when touching those areas:
+Legacy Go commands are still relevant **only** when touching those legacy-reference areas:
 
 ```bash
 go test ./...
@@ -194,7 +168,7 @@ pnpm build
 
 ## Adding a Channel
 
-New provider channels are still added through the legacy Go backend plus frontend configuration until provider routing is migrated.
+Some provider-channel additions still require touching legacy Go schema/transformer assets plus frontend configuration when those reference-owned pieces are involved.
 
 1. **Extend the channel enum in the Ent schema**
    - Add the provider key to `field.Enum("type")` in [internal/ent/schema/channel.go](../../../internal/ent/schema/channel.go)

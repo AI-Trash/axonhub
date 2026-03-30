@@ -473,6 +473,28 @@ cache:
 }
 
 #[test]
+fn get_accepts_nested_alias_keys_for_internal_config_access() {
+    let config = Config::default();
+
+    assert_eq!(
+        config.get("cache.default_expiration"),
+        Some(serde_json::json!("5m"))
+    );
+    assert_eq!(
+        config.get("cache.cleanup_interval"),
+        Some(serde_json::json!("10m"))
+    );
+    assert_eq!(
+        config.get("cache.memory.expiration"),
+        Some(serde_json::json!("5m"))
+    );
+    assert_eq!(
+        config.get("cache.memory.cleanup_interval"),
+        Some(serde_json::json!("10m"))
+    );
+}
+
+#[test]
 fn ensure_loadable_rejects_invalid_supported_value_shapes() {
     let mut config = Config::default();
     config.log.level = "verbose".to_owned();

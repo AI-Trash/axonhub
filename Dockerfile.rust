@@ -28,4 +28,4 @@ COPY --from=builder /build/target/release/axonhub /usr/local/bin/axonhub
 
 EXPOSE 8090
 
-ENTRYPOINT ["axonhub"]
+ENTRYPOINT ["/usr/local/bin/axonhub"]

@@ -28,7 +28,7 @@ pub(crate) async fn list_openai_models(
     }
 }
 
-pub(crate) async fn openai_chat_completions(
+pub async fn openai_chat_completions(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,
@@ -43,7 +43,7 @@ pub(crate) async fn openai_chat_completions(
     .await
 }
 
-pub(crate) async fn openai_responses(
+pub async fn openai_responses(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,
@@ -58,7 +58,7 @@ pub(crate) async fn openai_responses(
     .await
 }
 
-pub(crate) async fn openai_embeddings(
+pub async fn openai_embeddings(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,
@@ -73,7 +73,7 @@ pub(crate) async fn openai_embeddings(
     .await
 }
 
-pub(crate) async fn openai_images_generations(
+pub async fn openai_images_generations(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,
@@ -88,7 +88,7 @@ pub(crate) async fn openai_images_generations(
     .await
 }
 
-pub(crate) async fn openai_videos_create(
+pub async fn openai_videos_create(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,

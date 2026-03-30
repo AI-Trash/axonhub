@@ -472,10 +472,7 @@ fn graphql_not_implemented_for_route(
             "route_family": route_family,
             "method": "POST",
             "path": route_family,
-            "message": format!("GraphQL field `{field}` remains unsupported in the Rust backend cutover for `{route_family}`."),
-            "migration_status": "progressive cutover",
-            "legacy_go_backend_present": false,
-            "gemini_api_version": Value::Null,
+            "message": format!("GraphQL field `{field}` is not supported"),
         }),
     })
 }

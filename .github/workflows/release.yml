@@ -30,84 +30,9 @@ jobs:
       - name: Run Rust workspace tests
         run: cargo test --workspace --locked
 
-  goreleaser:
-    name: Publish legacy full-product release assets
+  canonical_rust_release_assets:
+    name: Publish canonical Rust release assets (${{ matrix.asset_platform }})
     needs: validate_rust_workspace
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - name: Install frontend dependencies
-        run: pnpm install
-        working-directory: frontend
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-          cache: true
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Update VERSION file
-        if: ${{ !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') }}
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
-          echo "Updating VERSION file to: $VERSION"
-          echo "$VERSION" > internal/build/VERSION
-          git add internal/build/VERSION
-
-      - name: Commit VERSION file
-        if: ${{ !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') }}
-        continue-on-error: true
-        run: |
-          # Configure git
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Check if internal/build/VERSION has changes
-          if git diff --cached --quiet -- internal/build/VERSION; then
-            echo "No changes to internal/build/VERSION"
-          else
-            # Commit VERSION file with [skip ci] to avoid triggering other workflows
-            git commit -m "chore: update VERSION to ${GITHUB_REF#refs/tags/} [skip ci]"
-            git push origin HEAD:${{ github.event.repository.default_branch }}
-          fi
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean --skip=validate
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
-
-  rust_migration_slice_assets:
-    name: Publish Rust migration-slice asset (${{ matrix.asset_platform }})
-    needs: [validate_rust_workspace, goreleaser]
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
@@ -157,13 +82,13 @@ jobs:
           echo "AXONHUB_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           echo "AXONHUB_BUILD_RUST_VERSION=$(rustc --version)" >> "$GITHUB_ENV"
 
-      - name: Upload Rust migration-slice asset
+      - name: Upload canonical Rust asset
         uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: axonhub
           manifest-path: apps/axonhub-server/Cargo.toml
           target: ${{ matrix.target }}
-          archive: axonhub-rust_${{ github.ref_name }}_${{ matrix.asset_platform }}
+          archive: axonhub_${{ matrix.asset_platform }}
           locked: true
           tar: unix
           zip: windows

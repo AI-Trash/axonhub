@@ -9,7 +9,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use bytes::Bytes;
 use std::collections::HashMap;
 
-pub(crate) async fn list_gemini_models(
+pub async fn list_gemini_models(
     state: web::Data<HttpState>,
     request: HttpRequest,
 ) -> HttpResponse {
@@ -37,7 +37,7 @@ pub(crate) async fn list_gemini_models(
     }
 }
 
-pub(crate) async fn gemini_generate_content(
+pub async fn gemini_generate_content(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,

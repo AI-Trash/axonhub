@@ -3825,7 +3825,7 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        assert_eq!(unsupported.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(unsupported.status(), StatusCode::NOT_FOUND);
 
         let connection = foundation.open_connection(false).unwrap();
         let request_formats: Vec<String> = {

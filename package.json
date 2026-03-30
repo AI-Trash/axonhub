@@ -1,0 +1,21 @@
+{
+  "name": "axonhub-workspace",
+  "private": true,
+  "packageManager": "pnpm@10.29.3",
+  "scripts": {
+    "dev": "pnpm --filter ./frontend dev",
+    "build": "pnpm --filter ./frontend build",
+    "lint": "pnpm --filter ./frontend lint",
+    "lint:fix": "pnpm --filter ./frontend lint:fix",
+    "format": "pnpm --filter ./frontend format",
+    "format:check": "pnpm --filter ./frontend format:check",
+    "test:e2e": "pnpm --filter ./frontend test:e2e",
+    "test:e2e:headed": "pnpm --filter ./frontend test:e2e:headed",
+    "test:e2e:ui": "pnpm --filter ./frontend test:e2e:ui",
+    "test:e2e:debug": "pnpm --filter ./frontend test:e2e:debug",
+    "test:e2e:setup": "pnpm --filter ./frontend test:e2e:setup",
+    "test:e2e:report": "pnpm --filter ./frontend test:e2e:report",
+    "test:ui": "pnpm --filter ./frontend test:ui",
+    "test:ui:headed": "pnpm --filter ./frontend test:ui:headed"
+  }
+}

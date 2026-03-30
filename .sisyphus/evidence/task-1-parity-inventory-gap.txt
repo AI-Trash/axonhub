@@ -9,10 +9,6 @@ RUST PARITY GAPS
 - runtime:gc-worker :: missing :: Current Rust migration slice does not expose the Go GC worker and storage-policy cleanup runtime.
 - runtime:provider-quota-poller :: missing :: Rust retains the config key but not the full Go provider-quota subsystem parity.
 
-[config]
-- config:cache.cleanup_interval :: missing :: Rust contract does not currently document this Go config key.
-- config:cache.default_expiration :: missing :: Rust contract does not currently document this Go config key.
-
 [database_runtime]
 - database-dialect:neon :: legacy-only :: Rust contract marks Neon as legacy-Go-only
 - database-dialect:tidb :: legacy-only :: Rust contract marks TiDB as legacy-Go-only
@@ -25,7 +21,6 @@ RUST PARITY GAPS
 
 [http_routes]
 - route:GET:/favicon :: missing :: No additional note
-- route:POST:/v1/images/edits :: missing :: Rust /v1 default-service still routes this family to explicit 501 not implemented handling.
 
 [provider_edge]
 - provider-edge:antigravity:exchange :: partial :: Rust wires the route family but still returns explicit 501 when provider-edge capability is unavailable.

@@ -917,7 +917,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     #[tokio::test]
-    async fn admin_route_requires_valid_jwt_before_truthful_501() {
+    async fn admin_route_requires_valid_jwt_before_unmatched_404() {
         let app = router(test_state(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -949,9 +949,11 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             )
             .await
             .unwrap();
-        assert_eq!(authorized.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(authorized.status(), StatusCode::NOT_FOUND);
         let json = read_json(authorized).await;
-        assert_eq!(json["route_family"], "/admin/*");
+        assert_eq!(json["error"], "not_found");
+        assert_eq!(json["status"], 404);
+        assert_eq!(json["message"], "The requested endpoint does not exist");
     }
 
     #[tokio::test]
@@ -1335,7 +1337,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     #[tokio::test]
-    async fn admin_request_content_neighboring_admin_surface_stays_truthful_501() {
+    async fn admin_request_content_neighboring_admin_surface_returns_404() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -1355,9 +1357,11 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let json = read_json(response).await;
-        assert_eq!(json["route_family"], "/admin/*");
+        assert_eq!(json["error"], "not_found");
+        assert_eq!(json["status"], 404);
+        assert_eq!(json["message"], "The requested endpoint does not exist");
     }
 
     #[tokio::test]
@@ -1686,8 +1690,8 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
 
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
         let json = read_json(response).await;
-        assert_eq!(json["route_family"], "/gemini/:gemini_api_version/*");
         assert_eq!(json["error"], "not_implemented");
+        assert_eq!(json["route_family"], "/gemini/:gemini_api_version/*");
     }
 
     #[tokio::test]
@@ -2247,7 +2251,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     #[tokio::test]
-    async fn non_target_v1_routes_still_return_truthful_501_when_openai_slice_is_enabled() {
+    async fn explicit_v1_boundary_routes_keep_501_when_openai_slice_is_enabled() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -2269,11 +2273,14 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
 
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
         let json = read_json(response).await;
+        assert_eq!(json["error"], "not_implemented");
         assert_eq!(json["route_family"], "/v1/*");
+        assert_eq!(json["path"], "/v1/images/edits");
+        assert_eq!(json["method"], "POST");
     }
 
     #[tokio::test]
-    async fn residual_non_target_families_keep_structured_truthful_501_payloads() {
+    async fn residual_non_target_v1_neighbors_keep_explicit_501_boundaries() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -2281,13 +2288,12 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             false,
         ));
 
-        for (method, path, header_name, header_value, expected_family) in [
+        for (method, path, header_name, header_value) in [
             (
                 Method::POST,
                 "/v1/images/edits",
                 Some("X-API-Key"),
                 Some("api-key-123"),
-                "/v1/*",
             ),
         ] {
             let mut request = Request::builder().uri(path).method(method);
@@ -2304,9 +2310,9 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "{path}");
             let json = read_json(response).await;
             assert_eq!(json["error"], "not_implemented", "{path}");
-            assert_eq!(json["route_family"], expected_family, "{path}");
-            assert_eq!(json["migration_status"], "progressive cutover", "{path}");
-            assert_eq!(json["legacy_go_backend_present"], false, "{path}");
+            assert_eq!(json["route_family"], "/v1/*", "{path}");
+            assert_eq!(json["path"], path, "{path}");
+            assert_eq!(json["method"], "POST", "{path}");
         }
     }
 

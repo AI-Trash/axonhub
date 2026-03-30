@@ -18,6 +18,7 @@ PARITY_DIR = ROOT / ".sisyphus" / "parity"
 SUITES_PATH = PARITY_DIR / "suites.json"
 MANIFEST_VERSION = 1
 FIXTURE_SCHEMA_VERSION = 1
+_RUST_CLI_BINARY: Path | None = None
 
 
 def load_manifest() -> dict[str, Any]:
@@ -68,18 +69,40 @@ def run_command(command: list[str], *, env: dict[str, str] | None = None) -> sub
     )
 
 
+def ensure_rust_cli_binary() -> Path:
+    global _RUST_CLI_BINARY
+
+    if _RUST_CLI_BINARY is not None:
+        return _RUST_CLI_BINARY
+
+    binary = ROOT / "target" / "debug" / "axonhub"
+    build = run_command(["cargo", "build", "--quiet", "-p", "axonhub-server"])
+    if build.returncode != 0:
+        raise SystemExit(
+            f"rust cli build failed\nSTDOUT:\n{build.stdout}\nSTDERR:\n{build.stderr}"
+        )
+    if not binary.exists():
+        raise SystemExit(f"expected rust cli binary at {binary}")
+    _RUST_CLI_BINARY = binary
+    return _RUST_CLI_BINARY
+
+
 def emit_cli_output(runtime: str, config: dict[str, Any], fixture: dict[str, Any]) -> dict[str, Any]:
     args = fixture.get("args", [])
+    env = fixture.get("env")
+    if env is not None and not isinstance(env, dict):
+        raise SystemExit(f"cli fixture env for {config['name']} must be an object")
     if runtime == "go":
         command = ["go", "run", "./cmd/axonhub", *args]
     elif runtime == "rust":
-        command = ["cargo", "run", "--quiet", "-p", "axonhub-server", "--", *args]
+        command = [str(ensure_rust_cli_binary()), *args]
     else:
         raise SystemExit(f"unsupported runtime: {runtime}")
 
-    result = run_command(command)
+    result = run_command(command, env=env)
     normalized_stderr = result.stderr.replace("\r\n", "\n")
     normalized_stderr = re.sub(r"(?m)^go: downloading .*$\n?", "", normalized_stderr)
+    normalized_stderr = re.sub(r"(?m)^exit status \d+\n?", "", normalized_stderr)
     if result.returncode == 0:
         normalized_stderr = ""
     return {
@@ -131,12 +154,62 @@ def emit_oracle_test_output(runtime: str, config: dict[str, Any]) -> dict[str, A
         return json.loads(capture_path.read_text(encoding="utf-8"))
 
 
+def _normalize_command_checks(config: dict[str, Any], fixture: dict[str, Any]) -> list[dict[str, Any]]:
+    commands = fixture.get("commands")
+    if commands is not None:
+        if not isinstance(commands, list):
+            raise SystemExit(f"command fixture for {config['name']} must provide a list under 'commands'")
+        normalized: list[dict[str, Any]] = []
+        for index, entry in enumerate(commands, start=1):
+            if not isinstance(entry, dict):
+                raise SystemExit(f"command fixture entry {index} for {config['name']} must be an object")
+            command = entry.get("command")
+            name = entry.get("name", f"check-{index}")
+            if not isinstance(name, str):
+                raise SystemExit(f"command fixture entry {index} for {config['name']} has invalid name")
+            if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+                raise SystemExit(f"command fixture entry {index} for {config['name']} must provide a string-list command")
+            normalized.append({"name": name, "command": command})
+        return normalized
+
+    command = fixture.get("command")
+    if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+        raise SystemExit(f"command fixture for {config['name']} must provide a string list")
+    return [{"name": config["name"], "command": command}]
+
+
+def emit_command_output(config: dict[str, Any], fixture: dict[str, Any]) -> dict[str, Any]:
+    checks = []
+    exit_code = 0
+    for check in _normalize_command_checks(config, fixture):
+        result = run_command(check["command"])
+        exit_code = max(exit_code, result.returncode)
+        checks.append(
+            {
+                "name": check["name"],
+                "command": check["command"],
+                "exit_code": result.returncode,
+                "stdout": result.stdout.replace("\r\n", "\n"),
+                "stderr": result.stderr.replace("\r\n", "\n"),
+            }
+        )
+
+    return {
+        "suite": config["name"],
+        "kind": "command",
+        "exit_code": exit_code,
+        "checks": checks,
+    }
+
+
 def emit_runtime_output(runtime: str, config: dict[str, Any]) -> dict[str, Any]:
     fixture = load_fixture(config)
     if config["kind"] == "cli":
         return emit_cli_output(runtime, config, fixture)
     if config["kind"] == "oracle_test":
         return emit_oracle_test_output(runtime, config)
+    if config["kind"] == "command":
+        return emit_command_output(config, fixture)
     raise SystemExit(f"unsupported suite kind: {config['kind']}")
 
 
@@ -152,6 +225,16 @@ def unified_diff(left_name: str, left: str, right_name: str, right: str) -> str:
 
 
 def compare_suite(config: dict[str, Any], diff_out: Path | None = None) -> tuple[bool, str]:
+    if config["kind"] == "command":
+        command_output = emit_runtime_output("host", config)
+        rendered = canonical_json(command_output)
+        if diff_out is not None:
+            diff_out.parent.mkdir(parents=True, exist_ok=True)
+            diff_out.write_text(rendered, encoding="utf-8")
+        if command_output["exit_code"] == 0:
+            return True, ""
+        return False, rendered
+
     go_output = emit_runtime_output("go", config)
     rust_output = emit_runtime_output("rust", config)
     go_rendered = canonical_json(go_output)

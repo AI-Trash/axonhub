@@ -32,8 +32,8 @@ jobs:
       - name: Test Rust workspace
         run: cargo test --workspace --locked
 
-  legacy_go_backend:
-    name: Legacy Go backend tests
+  go_oracle_reference:
+    name: Go oracle/reference tests
     runs-on: ubuntu-latest
     env:
       GO111MODULE: on
@@ -48,5 +48,39 @@ jobs:
           go-version: stable
           stable: true
 
-      - name: Test legacy Go backend
+      - name: Test Go oracle/reference backend
         run: make test-backend-all
+
+  full_parity_regression:
+    name: Full parity regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          stable: true
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run consolidated parity regression wave
+        run: python3 ".sisyphus/tools/task16_full_regression.py" run
+
+      - name: Verify parity sentinel
+        run: python3 ".sisyphus/tools/task16_full_regression.py" sentinel
+
+      - name: Run post-cutover guardrails
+        run: python3 ".sisyphus/tools/task18_guardrails.py" run
+
+      - name: Generate parity evidence index
+        run: python3 ".sisyphus/tools/task18_guardrails.py" evidence-index

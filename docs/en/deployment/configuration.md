@@ -1,19 +1,16 @@
 # Configuration Guide
 
-## Migration Context
+## Backend Contract Context
 
-AxonHub now contains two backend implementations in the repository:
+AxonHub's canonical backend implementation is Rust. The legacy Go tree remains in-repo as historical reference/oracle material rather than the current/full product runtime.
 
-- the **legacy Go backend**, which still provides the full product surface,
-- the **Rust migration slice**, which preserves the first shared configuration contract and a subset of the CLI/server behavior.
-
-This document describes the shared configuration contract used by both sides of the migration. The Rust implementation currently supports config loading, preview, validation, key lookup, and the minimal HTTP slice. It does **not** yet imply full backend parity.
+This document describes the operator-facing configuration contract preserved by the Rust backend. The current Rust implementation supports config loading, preview, validation, key lookup, and the verified backend surface documented in the maintained repository guidance. Accepted explicit unsupported boundaries remain explicit `501 Not Implemented` responses; this document does **not** imply that every route family is currently supported.
 
 ## Overview
 
 AxonHub supports YAML configuration files plus environment variable overrides.
 
-For the Rust migration slice, configuration is loaded from these paths in order of discovery:
+For the Rust backend, configuration is loaded from these paths in order of discovery:
 
 1. `./config.yml`
 2. `/etc/axonhub/config.yml`
@@ -195,7 +192,7 @@ cache:
     expiration: ""
 ```
 
-The Rust migration slice also normalizes legacy cache keys:
+The Rust backend also normalizes legacy cache keys:
 
 - `cache.default_expiration` → `cache.memory.expiration`
 - `cache.cleanup_interval` → `cache.memory.cleanup_interval`
@@ -222,7 +219,7 @@ cargo run -p axonhub-server -- config validate
 cargo run -p axonhub-server -- config get server.port
 ```
 
-The current validation slice checks the same minimum operator-facing rules as the legacy Go command:
+The current validation checks the same minimum operator-facing rules as the preserved operator-facing AxonHub CLI contract:
 
 - `server.port` must be between `1` and `65535`
 - `db.dsn` must not be empty
@@ -230,11 +227,12 @@ The current validation slice checks the same minimum operator-facing rules as th
 - `server.cors.allowed_origins` must not be empty when CORS is enabled
 - configured log levels and duration strings must be parseable
 
-## Notes About Parity
+## Notes About the Current Contract
 
-- The config contract is being migrated before the full runtime behavior.
-- A valid Rust config does **not** mean all Go backend features are already available in Rust.
-- For unported runtime surfaces, the Rust backend returns explicit `501 Not Implemented` responses instead of partial behavior.
+- This document reflects the Rust canonical backend's current configuration contract.
+- A valid Rust config does **not** mean every route family outside the verified surface is currently supported.
+- Accepted explicit unsupported boundaries still return structured `501 Not Implemented` responses instead of partial behavior.
+- The legacy Go tree remains available in-repo only as historical reference/oracle material.
 
 ## Related Documentation
 

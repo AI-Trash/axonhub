@@ -1,52 +1,31 @@
-FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
+FROM rust:stable-alpine AS builder
 
-WORKDIR /build
-RUN corepack enable && corepack prepare pnpm@latest --activate
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
-
-COPY ./frontend .
-ENV NODE_OPTIONS="--max-old-space-size=4096"
-RUN pnpm build
-
-# Copy dist to a stage with the target platform to avoid architecture mismatch
-FROM alpine AS frontend-dist
-COPY --from=frontend-builder /build/dist /dist
-
-FROM golang:alpine AS backend-builder
+ARG AXONHUB_BUILD_COMMIT=""
+ARG AXONHUB_BUILD_TIME=""
+ARG AXONHUB_BUILD_RUST_VERSION=""
 
 WORKDIR /build
 
-RUN apk add --no-cache git ca-certificates tzdata
+RUN apk add --no-cache build-base pkgconfig
 
-COPY go.mod go.sum ./
-COPY llm/go.mod llm/go.sum llm/
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    GOTOOLCHAIN=auto go mod download
+COPY Cargo.toml Cargo.lock ./
+COPY apps ./apps
+COPY crates ./crates
+COPY internal/build/VERSION ./internal/build/VERSION
 
-COPY . .
-COPY --from=frontend-dist /dist /build/internal/server/static/dist
+RUN export AXONHUB_BUILD_COMMIT="${AXONHUB_BUILD_COMMIT}" \
+    && export AXONHUB_BUILD_TIME="${AXONHUB_BUILD_TIME}" \
+    && export AXONHUB_BUILD_RUST_VERSION="${AXONHUB_BUILD_RUST_VERSION:-$(rustc --version)}" \
+    && cargo build --locked --release -p axonhub-server
 
-ENV GO111MODULE=on \
-    CGO_ENABLED=0 \
-    GOOS=linux
+FROM alpine:latest
 
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    GOTOOLCHAIN=auto go build \
-    -tags=nomsgpack \
-    -ldflags "-s -w -X 'github.com/looplj/axonhub/internal/build.Version=$(cat internal/build/VERSION 2>/dev/null || echo dev)' -X 'github.com/looplj/axonhub/internal/build.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
-    -o axonhub \
-    ./cmd/axonhub
-
-FROM alpine
-
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates libgcc tzdata wget
 
 WORKDIR /app
-COPY --from=backend-builder /build/axonhub /app/axonhub
+
+COPY --from=builder /build/target/release/axonhub /usr/local/bin/axonhub
 
 EXPOSE 8090
-ENTRYPOINT ["/app/axonhub"]
+
+ENTRYPOINT ["/usr/local/bin/axonhub"]

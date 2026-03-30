@@ -5,7 +5,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use bytes::Bytes;
 use std::collections::HashMap;
 
-pub(crate) async fn jina_rerank(
+pub async fn jina_rerank(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,
@@ -21,7 +21,7 @@ pub(crate) async fn jina_rerank(
     .await
 }
 
-pub(crate) async fn jina_embeddings(
+pub async fn jina_embeddings(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,

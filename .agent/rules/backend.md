@@ -5,12 +5,12 @@ globs: "**/*.{go,rs}"
 
 # Backend Rules
 
-## Migration Status
+## Backend Contract Status
 
-- The repository is in an additive Go-to-Rust backend migration.
-- `apps/axonhub-server`, `crates/axonhub-config`, and `crates/axonhub-http` are the first Rust migration slice.
-- `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/` remain the source of truth for the current full-featured backend.
-- Do not claim GraphQL, auth, provider orchestration, or full API parity are already migrated unless you actually port them.
+- Rust workspace is the canonical backend implementation.
+- `apps/axonhub-server`, `crates/axonhub-config`, and `crates/axonhub-http` preserve the operator-facing backend contract that CI must keep parity-tested.
+- `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/` remain historical reference/oracle material, not the canonical build/release/deployment path.
+- Named explicit unsupported boundaries remain truthful and deliberate: `/v1/images/edits`, `/v1/realtime`, Gemini `countTokens`, and AiSDK header-triggered `/v1/*` requests where the Rust tests currently pin them.
 
 ## Execution Rules
 
@@ -18,30 +18,30 @@ globs: "**/*.{go,rs}"
 2. Do NOT restart the development server — it is already managed.
 3. Do NOT delete legacy Go backend code as part of migration slices unless the user explicitly requests replacement work.
 
-## Rust Slice Rules
+## Rust Canonical Contract Rules
 
 1. Preserve the current operator-facing CLI contract from `cmd/axonhub/main.go`: default server startup, `config preview`, `config validate`, `config get <key>`, `version`, `help`, and `build-info`.
 2. Preserve config search paths and `AXONHUB_*` env key names from `conf/conf.go` when working in Rust config code.
-3. For unported HTTP surfaces in Rust, return structured `501 Not Implemented` responses. Be explicit; do not fake partial support.
-4. Keep the Rust migration slice additive. The Go backend still handles the full platform while migration proceeds.
+3. Keep structured `501 Not Implemented` responses only on the named explicit unsupported boundaries and truthful root catch-alls that the parity suite already covers.
+4. Do not reintroduce removed `handlers::unported`-style fallback modules, Go-fallback messaging, or migration-slice wording.
 
 ## Legacy Go Notes
 
-1. Existing Go code still owns current production behavior, GraphQL, Ent, auth, and provider orchestration.
+1. Existing Go code remains historical reference/oracle material for GraphQL, Ent, auth, provider orchestration, and generated-code workflows that still live in the legacy tree.
 2. If you change Go schemas or generated-code inputs, keep generated artifacts in sync only when the user explicitly asks for that workflow.
 3. Follow existing Go patterns for FX wiring, structured logging, and context propagation when touching legacy backend code.
 
 ## Compatibility Expectations
 
-1. Keep operator-visible behavior truthful during migration.
-2. If a route family is not migrated, say so in code and docs.
+1. Keep operator-visible behavior truthful in the post-cutover Rust-canonical state.
+2. If a route family remains on an accepted explicit unsupported boundary, say so in code and docs without directing operators to a Go fallback.
 3. Update English and Chinese docs together when backend behavior changes.
-4. Prefer small, honest migration slices over broad placeholders that imply parity.
+4. Preserve the parity guardrails in CI, suite manifests, and canonical repo guidance.
 
 ## Error Handling
 
 1. In legacy Go backend code, keep using the unified error response format from `internal/pkg/xerrors`.
-2. In Rust migration code, return explicit structured responses and do not imply unsupported features work.
+2. In Rust backend code, return explicit structured responses and do not imply unsupported features work.
 3. Implement proper error wrapping with context.
 
 ## Golang Rules

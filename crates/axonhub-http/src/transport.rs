@@ -12,7 +12,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-const NOT_IMPLEMENTED_MESSAGE: &str = "This surface is not supported by the Rust backend yet. The Actix-native Rust cutover currently verifies SQLite- and PostgreSQL-backed admin, GraphQL, CLI/config, and inference routes; MySQL uses the same seam but is not yet fully integration-verified, and unsupported families remain explicit 501 boundaries.";
+const NOT_IMPLEMENTED_MESSAGE: &str = "This endpoint is not yet supported by the Rust backend.";
 const MIGRATION_STATUS: &str = "progressive cutover";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

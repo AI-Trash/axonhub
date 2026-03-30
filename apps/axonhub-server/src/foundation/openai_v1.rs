@@ -73,8 +73,16 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 created: sqlite_timestamp_to_rfc3339(record.created_at.as_str()),
             })
             .collect::<Vec<_>>();
-        let first_id = data.first().map(|model| model.id.clone());
-        let last_id = data.last().map(|model| model.id.clone());
+        let first_id = if data.is_empty() {
+            Some(String::new())
+        } else {
+            data.first().map(|model| model.id.clone())
+        };
+        let last_id = if data.is_empty() {
+            Some(String::new())
+        } else {
+            data.last().map(|model| model.id.clone())
+        };
 
         Ok(AnthropicModelListResponse {
             object: "list",
@@ -1838,8 +1846,7 @@ pub(crate) fn prepare_gemini_request(
             .map(|role| if role == "model" { "assistant" } else { "user" })
             .unwrap_or("user");
         let text = flatten_gemini_parts(content).ok_or_else(|| OpenAiV1Error::InvalidRequest {
-            message: "only text Gemini contents are supported in the Rust migration slice"
-                .to_owned(),
+            message: "only text Gemini contents are supported".to_owned(),
         })?;
         messages.push(serde_json::json!({"role":role,"content":text}));
     }

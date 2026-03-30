@@ -34,8 +34,8 @@ jobs:
       - name: Run Rust clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-  legacy_go_backend:
-    name: Legacy Go backend lint
+  go_oracle_reference:
+    name: Go oracle/reference lint
     runs-on: ubuntu-latest
     env:
       GO111MODULE: on

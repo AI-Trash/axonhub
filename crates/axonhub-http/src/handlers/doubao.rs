@@ -5,7 +5,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use bytes::Bytes;
 use std::collections::HashMap;
 
-pub(crate) async fn doubao_create_task(
+pub async fn doubao_create_task(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,

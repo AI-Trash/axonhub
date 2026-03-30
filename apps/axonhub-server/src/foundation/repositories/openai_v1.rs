@@ -327,6 +327,7 @@ pub(crate) async fn select_inference_targets_seaorm(
         .filter(channels::Column::TypeField.eq(channel_type))
         .order_by_desc(channels::Column::OrderingWeight)
         .order_by_asc(channels::Column::Id)
+        .into_partial_model::<channels::RoutingCandidate>()
         .all(db)
         .await
         .map_err(map_openai_db_err)?;
@@ -1026,34 +1027,72 @@ pub(crate) async fn create_request_seaorm(
 
 pub(crate) async fn create_request_execution_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
+    backend: DatabaseBackend,
     record: &NewRequestExecutionRecord<'_>,
 ) -> Result<i64, OpenAiV1Error> {
-    let active_model = request_executions::ActiveModel {
-        project_id: Set(record.project_id),
-        request_id: Set(record.request_id),
-        channel_id: Set(record.channel_id),
-        data_storage_id: Set(record.data_storage_id),
-        external_id: Set(record.external_id.map(ToOwned::to_owned)),
-        model_id: Set(record.model_id.to_owned()),
-        format: Set(record.format.to_owned()),
-        request_body: Set(record.request_body_json.to_owned()),
-        response_body: Set(record.response_body_json.map(ToOwned::to_owned)),
-        response_chunks: Set(record.response_chunks_json.map(ToOwned::to_owned)),
-        error_message: Set(Some(record.error_message.to_owned())),
-        response_status_code: Set(record.response_status_code),
-        status: Set(record.status.to_owned()),
-        stream: Set(record.stream),
-        metrics_latency_ms: Set(record.metrics_latency_ms),
-        metrics_first_token_latency_ms: Set(record.metrics_first_token_latency_ms),
-        request_headers: Set(Some(record.request_headers_json.to_owned())),
-        ..Default::default()
-    };
-    let result = request_executions::Entity::insert(active_model)
-        .exec(db)
-        .await
-        .map_err(map_openai_db_err)?;
-    Ok(result.last_insert_id)
+    match backend {
+        DatabaseBackend::Postgres => {
+            let row = query_one_openai(
+                db,
+                backend,
+                "",
+                "INSERT INTO request_executions (project_id, request_id, channel_id, data_storage_id, external_id, model_id, format, request_body, response_body, response_chunks, error_message, response_status_code, status, stream, metrics_latency_ms, metrics_first_token_latency_ms, request_headers) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING id",
+                "",
+                vec![
+                    record.project_id.into(),
+                    record.request_id.into(),
+                    record.channel_id.into(),
+                    record.data_storage_id.into(),
+                    record.external_id.into(),
+                    record.model_id.into(),
+                    record.format.into(),
+                    record.request_body_json.into(),
+                    record.response_body_json.into(),
+                    record.response_chunks_json.into(),
+                    Some(record.error_message).into(),
+                    record.response_status_code.into(),
+                    record.status.into(),
+                    record.stream.into(),
+                    record.metrics_latency_ms.into(),
+                    record.metrics_first_token_latency_ms.into(),
+                    Some(record.request_headers_json).into(),
+                ],
+            )
+            .await?;
+            row.ok_or_else(|| OpenAiV1Error::Internal {
+                message: "Failed to persist request execution".to_owned(),
+            })?
+            .try_get_by_index(0)
+            .map_err(map_openai_db_err)
+        }
+        _ => {
+            let active_model = request_executions::ActiveModel {
+                project_id: Set(record.project_id),
+                request_id: Set(record.request_id),
+                channel_id: Set(record.channel_id),
+                data_storage_id: Set(record.data_storage_id),
+                external_id: Set(record.external_id.map(ToOwned::to_owned)),
+                model_id: Set(record.model_id.to_owned()),
+                format: Set(record.format.to_owned()),
+                request_body: Set(record.request_body_json.to_owned()),
+                response_body: Set(record.response_body_json.map(ToOwned::to_owned)),
+                response_chunks: Set(record.response_chunks_json.map(ToOwned::to_owned)),
+                error_message: Set(Some(record.error_message.to_owned())),
+                response_status_code: Set(record.response_status_code),
+                status: Set(record.status.to_owned()),
+                stream: Set(record.stream),
+                metrics_latency_ms: Set(record.metrics_latency_ms),
+                metrics_first_token_latency_ms: Set(record.metrics_first_token_latency_ms),
+                request_headers: Set(Some(record.request_headers_json.to_owned())),
+                ..Default::default()
+            };
+            let result = request_executions::Entity::insert(active_model)
+                .exec(db)
+                .await
+                .map_err(map_openai_db_err)?;
+            Ok(result.last_insert_id)
+        }
+    }
 }
 
 pub(crate) async fn update_request_result_seaorm(

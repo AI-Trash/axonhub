@@ -8,13 +8,13 @@ use actix_web::http::{Method, StatusCode};
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, web};
 use bytes::Bytes;
 
-pub(crate) async fn admin_graphql_playground() -> HttpResponse {
+pub async fn admin_graphql_playground() -> HttpResponse {
     HttpResponse::Ok()
         .insert_header(("content-type", "text/html; charset=utf-8"))
         .body(graphql_playground_html("/admin/graphql"))
 }
 
-pub(crate) async fn openapi_graphql_playground() -> HttpResponse {
+pub async fn openapi_graphql_playground() -> HttpResponse {
     HttpResponse::Ok()
         .insert_header(("content-type", "text/html; charset=utf-8"))
         .body(graphql_playground_html("/openapi/v1/graphql"))

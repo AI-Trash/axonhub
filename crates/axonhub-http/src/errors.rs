@@ -34,12 +34,8 @@ pub(crate) fn compatibility_bad_request_response(
     route: CompatibilityRoute,
     message: &str,
 ) -> HttpResponse {
-    compatibility_error_response(
-        route,
-        OpenAiV1Error::InvalidRequest {
-            message: message.to_owned(),
-        },
-    )
+    let _ = route;
+    error_response(StatusCode::BAD_REQUEST, "Bad Request", message)
 }
 
 pub(crate) fn compatibility_internal_error_response(route: CompatibilityRoute) -> HttpResponse {

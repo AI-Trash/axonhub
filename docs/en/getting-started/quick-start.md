@@ -2,20 +2,20 @@
 
 ## Before You Start
 
-AxonHub is currently in an additive Go-to-Rust backend migration.
+AxonHub's canonical backend in this repository is Rust.
 
-- If you want the **full product experience**, use Docker or released binaries.
-- If you want to work on the **Rust migration slice**, use the Cargo workspace in this repository or the dedicated Rust-tagged release assets and Docker image.
+- If you want the fastest local runtime for the currently supported product surface, use the Rust Docker/compose path or the Rust-tagged release assets.
+- If you want to work on backend code in this repository, use the Cargo workspace; the legacy Go tree remains in-repo only as historical reference/oracle material.
 
-The Rust slice already preserves config loading, CLI shape, `/health`, the verified SQLite- and PostgreSQL-backed bootstrap/system routes, the migrated OpenAI-compatible practical `/v1` subset, and explicit `501` responses for unported route families. The same SeaORM-backed slice is wired for MySQL but is not yet fully integration-verified, and TiDB/Neon remain Go-only.
+The Rust backend already preserves config loading, CLI shape, `/health`, the verified SQLite- and PostgreSQL-backed bootstrap/system routes, the current OpenAI-compatible practical `/v1` surface, and explicit `501` responses for the accepted unsupported route families. The same SeaORM-backed backend path is wired for MySQL but is not yet fully integration-verified, and TiDB/Neon remain legacy-reference dialect material in the Go tree.
 
 ## Prerequisites
 
-- Docker and Docker Compose for the full local product experience
+- Docker and Docker Compose for the fastest local runtime path
 - Or Rust 1.78+, Go 1.26+, Node.js 18+, and pnpm for repository development
 - A valid API key from an AI provider
 
-## Fastest Path: Full Local Runtime
+## Fastest Path: Canonical Local Runtime
 
 ### 1. Clone the repository
 
@@ -33,16 +33,16 @@ cp config.example.yml config.yml
 ### 3. Start the stack
 
 ```bash
-docker-compose up -d
+docker-compose -f docker-compose.rust.yml up -d
 ```
 
 ### 4. Open AxonHub
 
 - Web interface: `http://localhost:8090`
 
-## Rust Migration Slice Quick Start
+## Rust Backend Quick Start
 
-If you are working on the new Rust backend slice:
+If you are working on the Rust backend in this repository:
 
 ```bash
 cargo run -p axonhub-server -- help
@@ -51,27 +51,27 @@ cargo run -p axonhub-server -- config validate
 cargo run -p axonhub-server -- build-info
 ```
 
-You can also pull the published Rust migration-slice image directly:
+You can also pull the published Rust image directly:
 
 ```bash
 docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 ```
 
-That image is best for quickly validating the Rust slice. `/health` is the immediate readiness check; the bootstrap/system routes plus the migrated OpenAI-compatible practical `/v1` subset remain limited to the verified SQLite- and PostgreSQL-backed migration paths rather than a fresh full-product setup. The same SeaORM-backed slice is wired for MySQL but is not yet fully integration-verified, and TiDB/Neon remain on the Go backend.
+That image is best for quickly validating the current Rust-supported surface. `/health` is the immediate readiness check; the bootstrap/system routes plus the practical OpenAI-compatible `/v1` surface remain limited to the verified SQLite- and PostgreSQL-backed Rust backend paths. The same SeaORM-backed backend path is wired for MySQL but is not yet fully integration-verified, and TiDB/Neon remain legacy-reference dialect material in the Go tree.
 
-What to expect from the Rust slice right now:
+What to expect from the Rust backend right now:
 
 - `/health` works
-- `GET /admin/system/status` and `POST /admin/system/initialize` work for the supported SQLite- and PostgreSQL-backed migration paths
-- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` work on the migrated practical SQLite- and PostgreSQL-backed paths
+- `GET /admin/system/status` and `POST /admin/system/initialize` work for the supported SQLite- and PostgreSQL-backed Rust paths
+- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` work on the current practical SQLite- and PostgreSQL-backed Rust paths
 - MySQL uses the same SeaORM-backed repository seam, but full Rust-side integration verification is still pending
-- TiDB and Neon DB remain Go-only
+- TiDB and Neon DB remain legacy-reference dialect material in the Go tree
 - config search paths and `AXONHUB_*` env keys are supported
-- unported route families return structured `501 Not Implemented` JSON
+- accepted explicit unsupported route families return structured `501 Not Implemented` JSON
 
 ## First Product Steps
 
-Once the full backend is running, the normal AxonHub onboarding flow remains the same:
+Once the Rust backend is running, the normal AxonHub onboarding flow remains the same:
 
 1. configure your first provider channel,
 2. create an API key,
@@ -98,13 +98,14 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-## What the Migration Changes
+## What This Means for the Backend
 
-The migration changes how the backend is implemented, not what AxonHub aims to provide.
+The backend implementation is now centered on the Rust workspace and Rust-tagged artifacts, not on maintaining a dual-primary backend posture.
 
 - Product docs still describe the full AxonHub feature set.
-- The Rust workspace is the new implementation path.
-- Until more route families are ported, the Go backend remains the complete runtime.
+- The Rust workspace and Rust-tagged artifacts are the canonical implementation path.
+- Accepted explicit unsupported boundaries stay explicit until additional Rust verification lands.
+- The legacy Go tree remains in-repo only as historical reference/oracle material.
 
 ## Related Documentation
 

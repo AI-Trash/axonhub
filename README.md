@@ -12,7 +12,7 @@
 [![Test Status](https://github.com/looplj/axonhub/actions/workflows/test.yml/badge.svg)](https://github.com/looplj/axonhub/actions/workflows/test.yml)
 [![Lint Status](https://github.com/looplj/axonhub/actions/workflows/lint.yml/badge.svg)](https://github.com/looplj/axonhub/actions/workflows/lint.yml)
 [![Rust Workspace](https://img.shields.io/badge/rust-workspace-d19132?logo=rust&logoColor=white)](Cargo.toml)
-[![Legacy Go Backend](https://img.shields.io/badge/legacy-go%20backend-00ADD8?logo=go&logoColor=white)](cmd/axonhub/main.go)
+[![Go Backend (Legacy)](https://img.shields.io/badge/go-backend-legacy-00ADD8?logo=go&logoColor=white)](cmd/axonhub/main.go)
 [![Docker Ready](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)](https://docker.com)
 
 [English](README.md) | [中文](README.zh-CN.md)
@@ -21,13 +21,13 @@
 
 ---
 
-## 🚧 Backend Migration Status
+## Backend Architecture
 
-This repository is in the **final Go-to-Rust backend cutover stage**.
+AxonHub's canonical backend implementation is written in Rust. The Rust workspace and Rust-tagged release artifacts constitute the primary deployment path for the platform.
 
-### Current Rust-Supported Slice (Verified)
+### Current Rust-Supported Surface (Verified)
 
-The Rust workspace and Rust-tagged release artifacts are the truthful replacement for the following verified SQLite- and PostgreSQL-backed AxonHub surface:
+The Rust backend provides the following verified functionality for SQLite and PostgreSQL deployments:
 
 - **CLI/config**: command-line interface and configuration loading
 - **Health & system**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
@@ -38,62 +38,37 @@ The Rust workspace and Rust-tagged release artifacts are the truthful replacemen
 - **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`
 - **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as listed in routes
-- **Database support for this verified slice**: SQLite and PostgreSQL
+- **Database support**: SQLite and PostgreSQL
 
-### Currently Implemented but Not Fully Verified
+### Partially Verified Features
 
-- **Provider-edge admin OAuth helpers**: Codex, Claude Code, Antigravity, and Copilot admin OAuth routes are wired in Rust and have auth/boundary coverage across the family; the current positive route proof covers secure-runtime-gated Codex start, but full per-provider end-to-end verification is still incomplete.
-- **MySQL support**: the same SeaORM-backed slice is wired through the shared repository seam and capability builders, but full MySQL-backed automated integration verification is not yet present in this Rust test suite.
+- **Provider-edge admin OAuth helpers**: Codex, Claude Code, Antigravity, and Copilot admin OAuth routes are wired in Rust with auth/boundary coverage; the current positive route proof covers secure-runtime-gated Codex start, but full per-provider end-to-end verification is still incomplete.
+- **MySQL support**: The SeaORM-backed slice is wired through the shared repository seam and capability builders, but full MySQL-backed automated integration verification is not yet present in this Rust test suite.
 
-### Current Unsupported Boundary
+### Unsupported Boundaries (Explicit 501)
 
-Route families outside that verified scope return explicit Rust-side `501 Not Implemented` payloads instead of instructing users to fall back to the legacy Go backend. Notably:
+Route families outside the verified scope return explicit Rust-side `501 Not Implemented` responses. These include:
 
-- **Image editing and remaining image variants**: `POST /v1/images/edits` and any still-unmigrated image routes remain on explicit Rust `501 Not Implemented` boundaries
-- **Realtime API**: no dedicated Rust realtime/WebSocket route family is exposed; representative `/v1/realtime` traffic remains on explicit `501 Not Implemented` boundaries
+- **Image editing**: `POST /v1/images/edits` and other unmigrated image routes
+- **Realtime API**: no dedicated Rust realtime/WebSocket route family; `/v1/realtime` returns `501 Not Implemented`
 - **Full admin management**: write operations, user/project/role management, quota configuration
 - **Complete RBAC/permission system**: fine-grained access control beyond basic admin auth
 - **Core business logic surfaces**: channel/model association/fetching, usage/cost tracking, trace/thread management, system onboarding completeness
 - **Transformer/pipeline surfaces**: full provider orchestration, outbound transformers, middleware pipeline
-- **AiSDK compatibility**: Vercel AI SDK protocol requests remain unsupported in Rust; `/v1` requests marked with `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` return explicit `501 Not Implemented`
+- **AiSDK compatibility**: Vercel AI SDK protocol requests remain unsupported; `/v1` requests with `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` return `501 Not Implemented`
 - **Advanced/enterprise features**: prompt protection, provider quota management, circuit breakers
-- **Config alignment**: full parity with legacy Go backend configuration options
-- **Test parity**: broader integration test coverage matching the Go suite
+- **Configuration parity**: full alignment with the complete AxonHub configuration surface
+- **Test parity**: broader integration test coverage
 
-### Migration Roadmap (Explicit Buckets)
+### Historical Reference Only
 
-**Next (high-priority, near-term):**
-
-- Remaining image routes beyond `POST /v1/images/generations` (notably `/v1/images/edits`)
-- RBAC/permission system migration (internal/scopes)
-- Core business logic surfaces (internal/server/biz): channel/model management, request lifecycle, usage/cost, trace/thread
-- Transformer/pipeline migration (llm/transformer, llm/pipeline): provider orchestration, outbound adapters
-- Model association/fetching parity
-- System onboarding completeness (bootstrap flows, default data)
-- OAuth parity verification (complete OAuth flow implementations)
-- MySQL integration verification completion
-
-**Later (medium-priority, mid-term):**
-
-- AiSDK compatibility (complete Vercel AI SDK protocol)
-- Full admin GraphQL write operations and advanced queries
-- Advanced/enterprise features: prompt protection, provider quota management, circuit breakers, channel auto-disable
-- Config alignment: full parity with legacy Go backend configuration options
-- Broader test parity: integration test coverage matching the Go suite
-- Additional provider-specific features (Gemini tools, Anthropic extensions)
-
-**Deferred with 501 (explicit boundaries):**
-
-- Operational/background items that remain Go-only until separate migration gates
-- Legacy-only database dialects (TiDB, Neon DB) - remain on Go backend
-- Helm Kubernetes deployment path (Go backend only)
-- Full legacy Go API surface that is not part of the targeted Rust slice
+The legacy Go tree under `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/**` remains in-repo as contract/oracle history and implementation reference. It is not a supported deployment path, release path, or canonical backend for AxonHub.
 
 ### What This Means in Practice
 
-For the **supported product surface** described above, use the Rust binary, `ghcr.io/looplj/axonhub:rust-latest`, or `docker-compose.rust.yml`. `looplj/axonhub:latest` remains the rollback target only while Go retirement gates are being completed.
+For the **supported product surface** described above, use the Rust binary, `ghcr.io/looplj/axonhub:rust-latest`, or `docker-compose.rust.yml`.
 
-For **unsupported features** or database dialects not yet verified (TiDB, Neon DB), continue using the legacy Go backend from `cmd/axonhub/main.go` or the standard `axonhub` release artifacts.
+For the explicit unsupported boundaries listed above, expect truthful Rust-side `501 Not Implemented` responses instead of a Go fallback. The legacy Go tree remains available in-repo as historical reference only.
 
 ---
 
@@ -262,17 +237,15 @@ cd axonhub_*
 
 That's it! Now configure your first AI channel and start calling models through AxonHub.
 
-### Rust Cutover Artifacts
+### Rust Deployment Artifacts
 
-Tagged releases publish dedicated Rust delivery paths for the supported replacement scope:
+The Rust backend is deployed through the following canonical artifacts:
 
-- release assets named like `axonhub-rust_<tag>_<platform>.(tar.gz|zip)`
+- Release assets named `axonhub-rust_<tag>_<platform>.(tar.gz|zip)`
 - Docker images `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
 - Compose example at `docker-compose.rust.yml`
 
-These artifacts preserve the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed replacement surface already covered by the current Rust test matrix: `/health`, admin bootstrap/status, identity/request-context, admin read routes, admin GraphQL, OpenAPI GraphQL, and the migrated inference families including `POST /v1/images/generations`. The same SeaORM-backed slice is wired for MySQL, but full MySQL-backed automated integration verification is still pending in this Rust test suite. Any route family outside that supported scope stays on explicit Rust `501 Not Implemented` responses until separately migrated and verified.
-
-The binary PASS/FAIL cutover, HOLD, and ROLLBACK criteria for those Rust-tagged artifacts are defined in `.sisyphus/artifacts/rust-backend-seaorm-actix-migration-plan/final-cutover-gates.md`.
+These artifacts provide the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed surface covered by the Rust test suite: `/health`, admin bootstrap/status, identity/request-context, admin read routes, admin GraphQL, OpenAPI GraphQL, and the migrated inference families including `POST /v1/images/generations`. The same SeaORM-backed slice is wired for MySQL, but full MySQL-backed automated integration verification is still pending. Any route family outside the verified scope returns explicit `501 Not Implemented` responses.
 
 ### Zero-Code Migration Example
 
@@ -354,24 +327,24 @@ Perfect for individual developers and small teams. No complex configuration requ
 
 For production environments, high availability, and enterprise deployments.
 
-> **Important:** The current Rust cutover is verified for **SQLite and PostgreSQL** in the accepted slices. MySQL is wired through the same SeaORM-backed slice, but full Rust-side automated integration verification is still pending. TiDB and Neon DB remain legacy-Go-only until separately verified in Rust. See the [Backend Migration Status](#-backend-migration-status) section for details.
+> **Important:** The Rust backend is verified for **SQLite and PostgreSQL**. MySQL is wired through the same SeaORM-backed slice, but full Rust-side automated integration verification is still pending. TiDB and Neon DB remain documented in the legacy Go tree as historical reference only, not as the canonical deployment path. See the [Backend Architecture](#backend-architecture) section for details.
 
 #### Database Support
 
-**Rust Cutover (Current Verified Scope):**
+**Rust Backend (Verified Support):**
 
 | Database | Supported Versions | Recommended Scenario | Auto Migration | Links |
 | -------- | ------------------ | -------------------- | -------------- | ------ |
-| **SQLite** | 3.0+ | Development, small deployments, Rust cutover scope | ✅ Supported | [SQLite](https://www.sqlite.org/index.html) |
-| **PostgreSQL** | 15+ | Production environment, medium-large deployments, Rust cutover scope | ✅ Supported | [PostgreSQL](https://www.postgresql.org/) |
+| **SQLite** | 3.0+ | Development, small deployments | ✅ Supported | [SQLite](https://www.sqlite.org/index.html) |
+| **PostgreSQL** | 15+ | Production environment, medium-large deployments | ✅ Supported | [PostgreSQL](https://www.postgresql.org/) |
 
-**Rust Cutover (Implemented Through Shared SeaORM Seam, Not Yet Fully Integration-Verified):**
+**Rust Backend (Partially Verified):**
 
 | Database | Supported Versions | Recommended Scenario | Auto Migration | Links |
 | -------- | ------------------ | -------------------- | -------------- | ------ |
 | **MySQL** | 8.0+ | Same SeaORM-backed repository slice as SQLite/PostgreSQL; verify in your environment before production use | ⚠️ Implemented, repo-level integration verification pending | [MySQL](https://www.mysql.com/) |
 
-**Legacy Go Backend (Not Yet Supported in Rust Cutover):**
+**Historical Reference Only (legacy Go contract material):**
 
 | Database | Supported Versions | Recommended Scenario | Auto Migration | Links |
 | -------- | ------------------ | -------------------- | -------------- | ------ |
@@ -380,11 +353,13 @@ For production environments, high availability, and enterprise deployments.
 | **TiDB** | V8.0+ | Distributed deployment, large scale | ✅ Supported | [TiDB](https://tidb.io/) |
 | **Neon DB** | - | Serverless, Free tier, Auto Scale | ✅ Supported | [Neon DB](https://neon.com/) |
 
+These entries are preserved as historical reference for the legacy Go contract surface. The canonical deployment guidance in this repository stays on the Rust backend.
+
 #### Configuration
 
-**Rust Cutover (SQLite default; PostgreSQL verified, MySQL wired through the same seam):**
+**Rust Backend (SQLite default; PostgreSQL verified, MySQL wired through the same seam):**
 
-AxonHub uses YAML configuration files with environment variable override support. The Rust cutover uses SQLite by default with no additional configuration needed. PostgreSQL uses the same verified `db.dialect` / `db.dsn` contract, and MySQL is wired through that same contract but is not yet fully integration-verified by this Rust test suite.
+AxonHub uses YAML configuration files with environment variable override support. The Rust backend uses SQLite by default with no additional configuration needed. PostgreSQL uses the same verified `db.dialect` / `db.dsn` contract, and MySQL is wired through that same contract but is not yet fully integration-verified by this Rust test suite.
 
 ```yaml
 # config.yml
@@ -393,7 +368,7 @@ server:
   name: "AxonHub"
   debug: false
 
-# SQLite is the default database for the Rust cutover.
+# SQLite is the default database for the Rust backend.
 # No additional db configuration needed - data is stored in ./axonhub.db
 ```
 
@@ -411,14 +386,14 @@ AXONHUB_LOG_LEVEL=info
 # AXONHUB_DB_DSN=mysql://user:pass@localhost:3306/axonhub
 ```
 
-**Legacy Go Backend (Remaining Unported Dialects):**
+**Historical Reference Only (legacy Go dialect examples):**
 
-For TiDB or Neon DB deployments, you must use the legacy Go backend. Configuration examples are available in the [configuration documentation](docs/en/deployment/configuration.md).
+TiDB and Neon DB examples remain in the legacy Go tree and documentation as reference material only. The canonical deployment guidance in this repository stays on the Rust backend and its explicitly documented supported surface.
 
 
 #### Docker Compose Deployment
 
-**Rust Cutover (SQLite):**
+**Rust Backend (SQLite):**
 
 Use the provided `docker-compose.rust.yml` file for the Rust backend with SQLite:
 
@@ -430,15 +405,15 @@ docker-compose -f docker-compose.rust.yml up -d
 docker-compose -f docker-compose.rust.yml ps
 ```
 
-**Legacy Go Backend (TiDB/Neon and other unported dialects):**
+**Historical Reference Only (legacy Go dialect examples):**
 
-For TiDB/Neon and other unported-dialect deployments with the legacy Go backend, refer to the full [deployment documentation](docs/en/deployment/configuration.md).
+TiDB and Neon DB compose examples remain in the legacy Go tree and documentation as reference material only. This deployment guide keeps Rust as the canonical operator path.
 
 #### Helm Kubernetes Deployment
 
-**Legacy Go Backend Only (Not Yet Supported in Rust Cutover):**
+Deploy AxonHub on Kubernetes using the official Helm chart. This deployment path uses the Rust backend as the canonical image and supports PostgreSQL (verified) and MySQL (wired but not fully verified). TiDB and Neon DB references remain historical material in the legacy Go tree; this Helm path documents the Rust canonical image only.
 
-Deploy AxonHub on Kubernetes using the official Helm chart. This deployment path uses the legacy Go backend and supports multi-dialect databases.
+The Helm chart is the recommended Kubernetes deployment method for the Rust backend.
 
 ```bash
 # Quick installation
@@ -460,15 +435,15 @@ kubectl port-forward svc/axonhub 8090:8090
 |-----------|-------------|---------|
 | `axonhub.replicaCount` | Replicas | `1` |
 | `axonhub.dbPassword` | DB password | `axonhub_password` |
-| `postgresql.enabled` | Embedded PostgreSQL (Go backend only) | `true` |
+| `postgresql.enabled` | Embedded PostgreSQL | `true` |
 | `ingress.enabled` | Enable ingress | `false` |
 | `persistence.enabled` | Data persistence | `false` |
 
-For detailed configuration and troubleshooting, see [Helm Chart Documentation](deploy/helm/README.md). Note: Helm deployment is not yet available for the Rust cutover.
+For detailed configuration and troubleshooting, see [Helm Chart Documentation](deploy/helm/README.md).
 
 #### Virtual Machine Deployment
 
-**Rust Cutover (SQLite):**
+**Rust Backend (SQLite):**
 
 Download the Rust-specific release from [GitHub Releases](https://github.com/looplj/axonhub/releases) (look for `axonhub-rust_*` assets).
 
@@ -490,9 +465,9 @@ axonhub config validate
 ./stop.sh
 ```
 
-**Legacy Go Backend (TiDB/Neon and other unported dialects):**
+**Historical Reference Only (legacy Go dialect examples):**
 
-For TiDB/Neon and other unported-dialect deployments, use the standard `axonhub_*` releases and configure the database connection as described in the [configuration documentation](docs/en/deployment/configuration.md).
+TiDB and Neon DB virtual-machine examples remain documented in the legacy Go tree as historical reference only. This README keeps Rust-tagged assets as the canonical release path.
 
 ---
 
@@ -580,9 +555,9 @@ For detailed development instructions, architecture design, and contribution gui
 - 🔧 [99designs/gqlgen](https://github.com/99designs/gqlgen) - GraphQL code generation for the legacy backend
 - 🌐 [gin-gonic/gin](https://github.com/gin-gonic/gin) - HTTP framework for the legacy backend
 - 🗄️ [ent/ent](https://github.com/ent/ent) - ORM framework for the legacy backend
-- 🦀 [tokio-rs/axum](https://github.com/tokio-rs/axum) - HTTP framework for the Rust migration slice (early phase)
-- ⚙️ [actix-rs/actix-web](https://github.com/actix/actix-web) - HTTP framework for the Rust backend cutover (production)
-- ⚙️ [tokio-rs/tokio](https://github.com/tokio-rs/tokio) - Async runtime for the Rust backend cutover
+- 🦀 [tokio-rs/axum](https://github.com/tokio-rs/axum) - HTTP framework for the Rust backend (early phase)
+- ⚙️ [actix-rs/actix-web](https://github.com/actix-rs/actix-web) - HTTP framework for the Rust backend (production)
+- ⚙️ [tokio-rs/tokio](https://github.com/tokio-rs/tokio) - Async runtime for the Rust backend
 - ☁️ [Render](https://render.com) - Free cloud deployment platform for hosting our demo
 - 🗃️ [TiDB Cloud](https://www.pingcap.com/tidb-cloud/) - Serverless database platform for demo deployment
 

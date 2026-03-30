@@ -13,7 +13,7 @@ axonhub:
   
   image:
     repository: looplj/axonhub
-    tag: "latest"  # Consider using specific version in production
+    tag: "latest"
     pullPolicy: IfNotPresent
   
   # Environment variables - customize the database connection string for your environment

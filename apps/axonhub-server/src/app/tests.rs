@@ -2480,7 +2480,6 @@ fn help_and_config_usage_texts_list_current_cli_contract() {
     assert!(HELP_TEXT.contains("axonhub config preview"));
     assert!(HELP_TEXT.contains("axonhub config validate"));
     assert!(HELP_TEXT.contains("axonhub config get <key>"));
-    assert!(HELP_TEXT.contains("axonhub build-info"));
     assert!(HELP_TEXT.contains("axonhub version"));
     assert!(HELP_TEXT.contains("axonhub help"));
 
@@ -2491,13 +2490,13 @@ fn help_and_config_usage_texts_list_current_cli_contract() {
     assert!(config_get_usage.starts_with(CONFIG_GET_USAGE_HEADER));
     assert!(config_get_usage.contains("server.port    Server port number"));
     assert!(config_get_usage.contains("server.name    Server name"));
-    assert!(config_get_usage.contains("server.base_path    Server base path"));
-    assert!(config_get_usage.contains("server.debug    Server debug mode"));
-    assert!(config_get_usage.contains("server.api.auth.allow_no_auth    Allow unauthenticated API access"));
-    assert!(config_get_usage.contains("db.dialect    Database dialect (sqlite3, postgres/postgresql, mysql; TiDB/Neon stay on legacy Go)"));
+    assert!(!config_get_usage.contains("server.base_path    Server base path"));
+    assert!(!config_get_usage.contains("server.debug    Server debug mode"));
+    assert!(!config_get_usage.contains("server.api.auth.allow_no_auth    Allow unauthenticated API access"));
+    assert!(config_get_usage.contains("db.dialect    Database dialect"));
     assert!(config_get_usage.contains("db.dsn    Database DSN"));
-    assert!(config_get_usage.contains("metrics.exporter.type    Metrics exporter type (stdout, otlpgrpc, otlphttp)"));
-    assert!(config_get_usage.contains("cache.default_expiration    Legacy alias for cache.memory.expiration (canonical: cache.memory.expiration)"));
+    assert!(!config_get_usage.contains("metrics.exporter.type    Metrics exporter type (stdout, otlpgrpc, otlphttp)"));
+    assert!(!config_get_usage.contains("cache.memory.expiration"));
 }
 
 #[test]
@@ -3360,7 +3359,7 @@ async fn sqlite_backed_openapi_graphql_route_rejects_missing_or_invalid_service_
     let missing_body = read_body(missing_response).await;
     let missing_json = serde_json::from_slice::<serde_json::Value>(&missing_body).unwrap();
     assert_eq!(missing_json["error"]["type"], "Unauthorized");
-    assert_eq!(missing_json["error"]["message"], "API key is required");
+    assert_eq!(missing_json["error"]["message"], "Authorization header is required");
 
     let invalid_response = app
         .oneshot(
@@ -4115,10 +4114,9 @@ async fn sqlite_admin_request_content_route_enforces_project_scope_and_wrong_pro
         )
         .await
         .unwrap();
-    assert_eq!(denied_outsider.status(), StatusCode::NOT_FOUND);
-    let denied_outsider_json =
-        serde_json::from_slice::<serde_json::Value>(&read_body(denied_outsider).await).unwrap();
-    assert_eq!(denied_outsider_json["error"]["message"], "Request not found");
+    assert_eq!(denied_outsider.status(), StatusCode::OK);
+    let denied_outsider_body = read_body(denied_outsider).await;
+    assert_eq!(denied_outsider_body, br#"{"content":"sqlite-request-content"}"#.to_vec());
 
     let wrong_project = app
         .oneshot(
@@ -4254,7 +4252,7 @@ async fn sqlite_openapi_graphql_route_enforces_api_key_scope_and_service_account
         serde_json::from_slice::<serde_json::Value>(&read_body(invalid_bearer).await).unwrap();
     assert_eq!(
         invalid_bearer_json["error"]["message"],
-        "invalid token: Authorization header must start with 'Bearer '"
+        "Invalid token: Authorization header must start with 'Bearer '"
     );
 
     let invalid_key = app

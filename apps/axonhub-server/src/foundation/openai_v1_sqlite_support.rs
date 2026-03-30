@@ -1116,8 +1116,16 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
                 created: sqlite_timestamp_to_rfc3339(record.created_at.as_str()),
             })
             .collect::<Vec<_>>();
-        let first_id = data.first().map(|model| model.id.clone());
-        let last_id = data.last().map(|model| model.id.clone());
+        let first_id = if data.is_empty() {
+            Some(String::new())
+        } else {
+            data.first().map(|model| model.id.clone())
+        };
+        let last_id = if data.is_empty() {
+            Some(String::new())
+        } else {
+            data.last().map(|model| model.id.clone())
+        };
 
         Ok(AnthropicModelListResponse {
             object: "list",

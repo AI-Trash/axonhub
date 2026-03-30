@@ -298,6 +298,7 @@ pub mod channels {
         pub base_url: Option<String>,
         pub credentials: String,
         pub supported_models: String,
+        pub settings: String,
         pub ordering_weight: i32,
         #[sea_orm(from_col = "type_field")]
         pub channel_type: String,
@@ -1275,8 +1276,8 @@ pub mod user_roles {
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i64,
-        pub created_at: Option<String>,
-        pub updated_at: Option<String>,
+        pub created_at: String,
+        pub updated_at: String,
         pub user_id: i64,
         pub role_id: i64,
     }

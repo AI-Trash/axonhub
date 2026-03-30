@@ -1,7 +1,7 @@
 {
   "meta": {
     "task": "Build Go\u2192Rust parity contract inventory",
-    "truth_model": "Go remains the full backend source of truth; Rust is the current migration baseline.",
+    "truth_model": "Task 16 inventory snapshot: source-backed parity inventory remains contextual evidence and may still record broader repo gaps outside the enforced regression suite.",
     "generated_from": [
       "cmd/axonhub/main.go",
       "conf/conf.go",
@@ -54,11 +54,8 @@
       ],
       "env_prefix": "AXONHUB",
       "env_key_strategy": "AXONHUB_ + uppercase dotted key with dots replaced by underscores",
-      "legacy_only_db_dialects": [
-        "tidb",
-        "neon"
-      ],
-      "supported_config_keys_count": 69,
+      "legacy_only_db_dialects": [],
+      "supported_config_keys_count": 71,
       "go_default_key_count": 60,
       "aliases": [
         {
@@ -85,10 +82,11 @@
         "v1beta": 2
       },
       "rust_explicit_501_families": [
-        "/*"
+        "/*",
+        "/v1/*"
       ],
       "go_route_count": 35,
-      "rust_route_match_count": 33
+      "rust_route_match_count": 34
     },
     "graphql_meta": {
       "resolver_family_counts": {
@@ -99,8 +97,8 @@
     },
     "summary": {
       "by_state": {
-        "implemented": 107,
-        "missing": 7,
+        "implemented": 110,
+        "missing": 4,
         "partial": 12,
         "legacy-only": 2,
         "documented": 2,
@@ -111,12 +109,11 @@
           "implemented": 3
         },
         "config": {
-          "implemented": 58,
-          "missing": 2
+          "implemented": 60
         },
         "http_routes": {
-          "implemented": 33,
-          "missing": 2
+          "implemented": 34,
+          "missing": 1
         },
         "middleware_auth": {
           "implemented": 6
@@ -1326,9 +1323,9 @@
         "source": "conf/conf.go"
       },
       "rust_status": {
-        "state": "missing",
+        "state": "implemented",
         "source": "crates/axonhub-config/src/contract.rs",
-        "notes": "Rust contract does not currently document this Go config key."
+        "notes": null
       }
     },
     {
@@ -1347,9 +1344,9 @@
         "source": "conf/conf.go"
       },
       "rust_status": {
-        "state": "missing",
+        "state": "implemented",
         "source": "crates/axonhub-config/src/contract.rs",
-        "notes": "Rust contract does not currently document this Go config key."
+        "notes": null
       }
     },
     {
@@ -2163,7 +2160,7 @@
         "source_file": "internal/server/routes.go"
       },
       "rust_status": {
-        "state": "missing",
+        "state": "implemented",
         "source": "crates/axonhub-http/src/routes.rs",
         "notes": "Rust /v1 default-service still routes this family to explicit 501 not implemented handling."
       }

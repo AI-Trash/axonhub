@@ -41,7 +41,7 @@ pub(crate) async fn system_status(
     }
 }
 
-pub(crate) async fn initialize_system(
+pub async fn initialize_system(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,
@@ -93,7 +93,7 @@ pub(crate) async fn initialize_system(
     }
 }
 
-pub(crate) async fn sign_in(state: web::Data<HttpState>, body: Bytes) -> HttpResponse {
+pub async fn sign_in(state: web::Data<HttpState>, body: Bytes) -> HttpResponse {
     let request: SignInRequest = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {

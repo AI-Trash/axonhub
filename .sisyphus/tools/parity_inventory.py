@@ -330,12 +330,10 @@ def parse_go_routes() -> list[RouteEntry]:
 
 def parse_rust_route_presence() -> tuple[set[tuple[str, str]], set[str]]:
     routes = read_text("crates/axonhub-http/src/routes.rs")
-    handlers = read_text("crates/axonhub-http/src/handlers/unported.rs")
     supported: set[tuple[str, str]] = set()
     explicit_501: set[str] = set()
 
     explicit_501.update(re.findall(r'not_implemented_response\("([^"]+)"', routes))
-    explicit_501.update(re.findall(r'not_implemented_response\("([^"]+)"', handlers))
 
     route_method_pairs = [
         ("GET", "/health"),
@@ -359,6 +357,7 @@ def parse_rust_route_presence() -> tuple[set[tuple[str, str]], set[str]]:
         ("POST", "/v1/responses"),
         ("POST", "/v1/embeddings"),
         ("POST", "/v1/images/generations"),
+        ("POST", "/v1/images/edits"),
         ("POST", "/v1/videos"),
         ("GET", "/v1/videos/{id}"),
         ("DELETE", "/v1/videos/{id}"),
@@ -850,7 +849,7 @@ def build_inventory() -> dict[str, Any]:
     return {
         "meta": {
             "task": "Build Go→Rust parity contract inventory",
-            "truth_model": "Go remains the full backend source of truth; Rust is the current migration baseline.",
+            "truth_model": "Task 16 inventory snapshot: source-backed parity inventory remains contextual evidence and may still record broader repo gaps outside the enforced regression suite.",
             "generated_from": [
                 "cmd/axonhub/main.go",
                 "conf/conf.go",

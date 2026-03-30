@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/gin-gonic/gin"
 	"github.com/zhenzou/executors"
 
@@ -38,6 +39,8 @@ type oracleFixture struct {
 	Emitter               string        `json:"emitter,omitempty"`
 	Request               oracleRequest `json:"request"`
 	Model                 *oracleModel  `json:"model,omitempty"`
+	Handler               string        `json:"handler,omitempty"`
+	SeedSystem            bool          `json:"seed_system,omitempty"`
 	NormalizeGeneratedKey bool          `json:"normalize_generated_key,omitempty"`
 }
 
@@ -111,8 +114,18 @@ func emitSuite(t *testing.T, suite string, fixture oracleFixture) oracleOutput {
 	switch emitter {
 	case "admin_system_status_initial":
 		return emitAdminSystemStatusInitial(t, fixture)
+	case "admin_signin_invalid_json":
+		return emitAdminSignInInvalidJSON(t, fixture)
 	case "v1_models_basic":
 		return emitV1ModelsBasic(t, fixture)
+	case "anthropic_models_basic":
+		return emitAnthropicModelsBasic(t, fixture)
+	case "gemini_models_basic":
+		return emitGeminiModelsBasic(t, fixture)
+	case "provider_edge_codex_start_invalid_json":
+		return emitProviderEdgeCodexStartInvalidJSON(t, fixture)
+	case "http_handler_parity":
+		return emitHTTPHandlerParity(t, suite, fixture)
 	case "openapi_graphql_create_llm_api_key":
 		return emitOpenApiGraphqlCreateLLMAPIKey(t, fixture)
 	default:
@@ -138,6 +151,27 @@ func emitAdminSystemStatusInitial(t *testing.T, fixture oracleFixture) oracleOut
 	router.ServeHTTP(recorder, request)
 
 	return buildHTTPOutput(t, "admin_system_status_initial", recorder)
+}
+
+func emitAdminSignInInvalidJSON(t *testing.T, fixture oracleFixture) oracleOutput {
+	t.Helper()
+	handlers := &api.AuthHandlers{}
+
+	router := gin.New()
+	router.POST(fixture.Request.Path, handlers.SignIn)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		fixture.Request.Method,
+		fixture.Request.Path,
+		bytes.NewBufferString(fixture.Request.Body),
+	)
+	for key, value := range fixture.Request.Headers {
+		request.Header.Set(key, value)
+	}
+	router.ServeHTTP(recorder, request)
+
+	return buildHTTPOutput(t, "admin_signin_invalid_json", recorder)
 }
 
 func emitV1ModelsBasic(t *testing.T, fixture oracleFixture) oracleOutput {
@@ -199,6 +233,249 @@ func emitV1ModelsBasic(t *testing.T, fixture oracleFixture) oracleOutput {
 	router.ServeHTTP(recorder, request)
 
 	return buildHTTPOutput(t, "v1_models_basic", recorder)
+}
+
+func emitAnthropicModelsBasic(t *testing.T, fixture oracleFixture) oracleOutput {
+	t.Helper()
+	client := enttest.Open(t, "sqlite3", "file:parity-anthropic-models?mode=memory&_fk=1")
+	t.Cleanup(func() { _ = client.Close() })
+
+	cacheConfig := xcache.Config{Mode: xcache.ModeMemory}
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	modelFixture := fixture.Model
+	if modelFixture == nil {
+		t.Fatal("model fixture is required")
+	}
+
+	_, err := client.Model.Create().
+		SetDeveloper(modelFixture.Developer).
+		SetModelID(modelFixture.ModelID).
+		SetType(model.Type(modelFixture.ModelType)).
+		SetName(modelFixture.Name).
+		SetIcon(modelFixture.Icon).
+		SetGroup(modelFixture.Group).
+		SetModelCard(&objects.ModelCard{}).
+		SetSettings(&objects.ModelSettings{}).
+		SetStatus(model.StatusEnabled).
+		SetRemark(modelFixture.Remark).
+		Save(setupCtx)
+	if err != nil {
+		t.Fatalf("seed model: %v", err)
+	}
+
+	systemService := biz.NewSystemService(biz.SystemServiceParams{CacheConfig: cacheConfig, Ent: client})
+	executor := executors.NewPoolScheduleExecutor(executors.WithMaxConcurrent(1))
+	t.Cleanup(func() { _ = executor.Shutdown(context.Background()) })
+	channelService := biz.NewChannelService(biz.ChannelServiceParams{
+		CacheConfig:   cacheConfig,
+		Executor:      executor,
+		Ent:           client,
+		SystemService: systemService,
+		HttpClient:    httpclient.NewHttpClient(),
+	})
+	t.Cleanup(channelService.Stop)
+	modelService := biz.NewModelService(biz.ModelServiceParams{
+		ChannelService: channelService,
+		SystemService:  systemService,
+		Ent:            client,
+	})
+	handlers := &api.AnthropicHandlers{
+		ChannelService: channelService,
+		ModelService:   modelService,
+		SystemService:  systemService,
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		ctx := authz.WithTestBypass(ent.NewContext(c.Request.Context(), client))
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
+	router.GET(fixture.Request.Path, handlers.ListModels)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, fixture.Request.Path, nil)
+	router.ServeHTTP(recorder, request)
+
+	return buildHTTPOutput(t, "anthropic_models_basic", recorder)
+}
+
+func emitGeminiModelsBasic(t *testing.T, fixture oracleFixture) oracleOutput {
+	t.Helper()
+	client := enttest.Open(t, "sqlite3", "file:parity-gemini-models?mode=memory&_fk=1")
+	t.Cleanup(func() { _ = client.Close() })
+
+	cacheConfig := xcache.Config{Mode: xcache.ModeMemory}
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+	modelFixture := fixture.Model
+	if modelFixture == nil {
+		t.Fatal("model fixture is required")
+	}
+
+	_, err := client.Model.Create().
+		SetDeveloper(modelFixture.Developer).
+		SetModelID(modelFixture.ModelID).
+		SetType(model.Type(modelFixture.ModelType)).
+		SetName(modelFixture.Name).
+		SetIcon(modelFixture.Icon).
+		SetGroup(modelFixture.Group).
+		SetModelCard(&objects.ModelCard{}).
+		SetSettings(&objects.ModelSettings{}).
+		SetStatus(model.StatusEnabled).
+		SetRemark(modelFixture.Remark).
+		Save(setupCtx)
+	if err != nil {
+		t.Fatalf("seed model: %v", err)
+	}
+
+	systemService := biz.NewSystemService(biz.SystemServiceParams{CacheConfig: cacheConfig, Ent: client})
+	executor := executors.NewPoolScheduleExecutor(executors.WithMaxConcurrent(1))
+	t.Cleanup(func() { _ = executor.Shutdown(context.Background()) })
+	channelService := biz.NewChannelService(biz.ChannelServiceParams{
+		CacheConfig:   cacheConfig,
+		Executor:      executor,
+		Ent:           client,
+		SystemService: systemService,
+		HttpClient:    httpclient.NewHttpClient(),
+	})
+	t.Cleanup(channelService.Stop)
+	modelService := biz.NewModelService(biz.ModelServiceParams{
+		ChannelService: channelService,
+		SystemService:  systemService,
+		Ent:            client,
+	})
+	handlers := &api.GeminiHandlers{
+		ChannelService: channelService,
+		ModelService:   modelService,
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		ctx := authz.WithTestBypass(ent.NewContext(c.Request.Context(), client))
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
+	router.GET(fixture.Request.Path, handlers.ListModels)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, fixture.Request.Path, nil)
+	router.ServeHTTP(recorder, request)
+
+	return buildHTTPOutput(t, "gemini_models_basic", recorder)
+}
+
+func emitProviderEdgeCodexStartInvalidJSON(t *testing.T, fixture oracleFixture) oracleOutput {
+	t.Helper()
+	handlers := api.NewCodexHandlers(api.CodexHandlersParams{CacheConfig: xcache.Config{Mode: xcache.ModeMemory}, HttpClient: httpclient.NewHttpClient()})
+
+	router := gin.New()
+	router.POST(fixture.Request.Path, handlers.StartOAuth)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		fixture.Request.Method,
+		fixture.Request.Path,
+		bytes.NewBufferString(fixture.Request.Body),
+	)
+	for key, value := range fixture.Request.Headers {
+		request.Header.Set(key, value)
+	}
+	router.ServeHTTP(recorder, request)
+
+	return buildHTTPOutput(t, "provider_edge_codex_start_invalid_json", recorder)
+}
+
+func emitHTTPHandlerParity(t *testing.T, suite string, fixture oracleFixture) oracleOutput {
+	t.Helper()
+	client := enttest.Open(t, "sqlite3", fmt.Sprintf("file:parity-%s?mode=memory&_fk=1", strings.ReplaceAll(suite, ":", "-")))
+	t.Cleanup(func() { _ = client.Close() })
+	cacheConfig := xcache.Config{Mode: xcache.ModeMemory}
+	setupCtx := authz.WithTestBypass(ent.NewContext(context.Background(), client))
+
+	if fixture.SeedSystem {
+		systemService := biz.NewSystemService(biz.SystemServiceParams{CacheConfig: cacheConfig, Ent: client})
+		if err := systemService.Initialize(setupCtx, &biz.InitializeSystemParams{
+			OwnerEmail:     "owner@example.com",
+			OwnerPassword:  "password123",
+			OwnerFirstName: "System",
+			OwnerLastName:  "Owner",
+			BrandName:      "AxonHub",
+		}); err != nil {
+			t.Fatalf("initialize system: %v", err)
+		}
+	}
+
+	var route func(*gin.Engine)
+	switch fixture.Handler {
+	case "admin_initialize_invalid_json":
+		systemService := biz.NewSystemService(biz.SystemServiceParams{CacheConfig: cacheConfig, Ent: client})
+		handlers := api.NewSystemHandlers(api.SystemHandlersParams{SystemService: systemService})
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.InitializeSystem) }
+	case "admin_graphql_playground":
+		route = func(router *gin.Engine) {
+			playgroundHandler := playground.Handler("AxonHub", "/admin/graphql")
+			router.GET(fixture.Request.Path, func(c *gin.Context) { playgroundHandler.ServeHTTP(c.Writer, c.Request) })
+		}
+	case "openapi_graphql_playground":
+		route = func(router *gin.Engine) {
+			playgroundHandler := playground.Handler("AxonHub", "/openapi/v1/graphql")
+			router.GET(fixture.Request.Path, func(c *gin.Context) { playgroundHandler.ServeHTTP(c.Writer, c.Request) })
+		}
+	case "openai_chat_empty_body":
+		handlers := &api.OpenAIHandlers{ChatCompletionHandlers: &api.ChatCompletionHandlers{}}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.ChatCompletion) }
+	case "openai_responses_empty_body":
+		handlers := &api.OpenAIHandlers{ResponseCompletionHandlers: &api.ChatCompletionHandlers{}}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.CreateResponse) }
+	case "openai_embeddings_empty_body":
+		handlers := &api.OpenAIHandlers{EmbeddingHandlers: &api.ChatCompletionHandlers{}}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.CreateEmbedding) }
+	case "openai_images_generations_empty_body":
+		handlers := &api.OpenAIHandlers{ImageGenerationHandlers: &api.ChatCompletionHandlers{}}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.CreateImage) }
+	case "openai_videos_create_empty_body":
+		handlers := &api.OpenAIHandlers{VideoHandlers: &api.ChatCompletionHandlers{}}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.CreateVideo) }
+	case "anthropic_messages_empty_body":
+		handlers := &api.AnthropicHandlers{ChatCompletionHandlers: &api.ChatCompletionHandlers{}}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.CreateMessage) }
+	case "jina_rerank_empty_body":
+		handlers := &api.JinaHandlers{RerankHandlers: &api.ChatCompletionHandlers{}}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.Rerank) }
+	case "jina_embeddings_empty_body":
+		handlers := &api.JinaHandlers{EmbeddingHandlers: &api.ChatCompletionHandlers{}}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.CreateEmbedding) }
+	case "gemini_generate_content_empty_body":
+		handlers := &api.GeminiHandlers{ChatCompletionHandlers: api.NewChatCompletionHandlers(nil)}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.GenerateContent) }
+	case "v1beta_generate_content_empty_body":
+		handlers := &api.GeminiHandlers{ChatCompletionHandlers: api.NewChatCompletionHandlers(nil)}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.GenerateContent) }
+	case "doubao_create_task_empty_body":
+		handlers := &api.DoubaoHandlers{CreateOrchestrator: nil}
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.CreateTask) }
+	case "provider_edge_claudecode_start_invalid_json":
+		handlers := api.NewClaudeCodeHandlers(api.ClaudeCodeHandlersParams{CacheConfig: xcache.Config{Mode: xcache.ModeMemory}, HttpClient: httpclient.NewHttpClient()})
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.StartOAuth) }
+	case "provider_edge_antigravity_start_invalid_json":
+		handlers := api.NewAntigravityHandlers(api.AntigravityHandlersParams{CacheConfig: xcache.Config{Mode: xcache.ModeMemory}, HttpClient: httpclient.NewHttpClient()})
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.StartOAuth) }
+	case "provider_edge_copilot_start_invalid_json":
+		handlers := api.NewCopilotHandlers(api.CopilotHandlersParams{CacheConfig: xcache.Config{Mode: xcache.ModeMemory}, HttpClient: httpclient.NewHttpClient()})
+		route = func(router *gin.Engine) { router.POST(fixture.Request.Path, handlers.StartOAuth) }
+	default:
+		t.Fatalf("unsupported parity handler %q for suite %q", fixture.Handler, suite)
+	}
+
+	router := gin.New()
+	route(router)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(fixture.Request.Method, fixture.Request.Path, bytes.NewBufferString(fixture.Request.Body))
+	for key, value := range fixture.Request.Headers {
+		request.Header.Set(key, value)
+	}
+	router.ServeHTTP(recorder, request)
+	return buildHTTPOutput(t, suite, recorder)
 }
 
 func emitOpenApiGraphqlCreateLLMAPIKey(t *testing.T, fixture oracleFixture) oracleOutput {
@@ -332,6 +609,12 @@ func normalizeValue(value *any) {
 			if key == "key" {
 				if stringValue, ok := current.(string); ok && strings.HasPrefix(stringValue, "ah-") {
 					normalized[key] = "<generated-api-key>"
+					continue
+				}
+			}
+			if key == "token" {
+				if _, ok := current.(string); ok {
+					normalized[key] = "<token>"
 					continue
 				}
 			}

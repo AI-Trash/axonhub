@@ -1,6 +1,6 @@
 # AxonHub Helm Chart
 
-> **Important:** This Helm chart deploys the **legacy Go backend only**. The current Rust backend cutover is not yet supported for Kubernetes via Helm. For Rust deployments, use the `docker-compose.rust.yml` file or the `axonhub-rust_*` release artifacts. See the [Backend Migration Status](../../README.md#backend-migration-status) section in the main README for details.
+> **Important:** This Helm chart targets the canonical Rust container image. The default image is `looplj/axonhub:latest`, and you can override it to another Rust-published tag or registry mirror such as GHCR. PostgreSQL is the verified production path; MySQL remains wired through the shared SeaORM layer but is not yet fully integration-verified.
 
 This Helm chart deploys AxonHub on Kubernetes with PostgreSQL database.
 
@@ -33,8 +33,8 @@ The following table lists the configurable parameters of the AxonHub chart and t
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `axonhub.replicaCount` | Number of AxonHub replicas | `1` |
-| `axonhub.image.repository` | AxonHub image repository | `looplj/axonhub` |
-| `axonhub.image.tag` | AxonHub image tag | `latest` |
+| `axonhub.image.repository` | AxonHub canonical Rust image repository | `looplj/axonhub` |
+| `axonhub.image.tag` | AxonHub canonical Rust image tag | `latest` |
 | `axonhub.image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `axonhub.dbPassword` | Database password | `axonhub_password` |
 | `axonhub.service.type` | Kubernetes service type | `ClusterIP` |

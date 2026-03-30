@@ -13,14 +13,14 @@ This file provides guidance to AI coding assistants when working with code in th
 ## Configuration
 
 - Uses SQLite database (axonhub.db) by default.
-- The legacy Go config contract lives in `conf/conf.go`; the Rust migration slice mirrors the first shared subset in `crates/axonhub-config`.
+- The Rust config implementation is canonical in `crates/axonhub-config`; the legacy Go config contract in `conf/conf.go` remains as historical reference.
 - Backend API: port 8090, Frontend dev server: port 5173 (proxies to backend).
-- Go version: 1.26.0+.
+- Go version: 1.26.0+ (legacy).
 - Rust workspace is rooted at `Cargo.toml`.
 
 ## Project Overview
 
-AxonHub is an all-in-one AI development platform that serves as a unified API gateway for multiple AI providers. The repository is currently in an additive Go-to-Rust backend migration: the existing Go backend still provides the full product surface, while the Rust workspace contains the first truthful migration slice with compatible config/CLI behavior, `/health`, `GET /admin/system/status`, and explicit `501 Not Implemented` stubs for unported HTTP families.
+AxonHub is an all-in-one AI development platform that serves as a unified API gateway for multiple AI providers. The Rust workspace is the canonical backend implementation. The legacy Go tree remains in-repo as historical reference/oracle material and is not a canonical build, release, or deployment path.
 
 ### Core Architecture
 
@@ -33,25 +33,25 @@ AxonHub is an all-in-one AI development platform that serves as a unified API ga
 
 ## Technology Stack
 
-- **Backend (current full implementation)**: Go 1.26.0+ with Gin HTTP framework, Ent ORM, gqlgen GraphQL, FX dependency injection
-- **Backend (migration slice)**: Rust workspace with Tokio, Actix Web, Serde, and shared workspace dependencies
+- **Backend (canonical)**: Rust workspace with Tokio, Actix Web, Serde, and shared workspace dependencies
+- **Backend (legacy)**: Go 1.26.0+ with Gin HTTP framework, Ent ORM, gqlgen GraphQL, FX dependency injection
 - **Frontend**: React 19 with TypeScript, TanStack Router, TanStack Query, Zustand, Tailwind CSS
 - **Database**: SQLite (development), PostgreSQL/MySQL/TiDB (production)
 - **Authentication**: JWT with role-based access control
 
 ## Backend Structure
 
-### Rust Migration Workspace
+### Rust Workspace (Canonical)
 
 - `Cargo.toml` — Root Cargo workspace with shared dependencies
 - `apps/axonhub-server` — Rust `axonhub` binary preserving the operator-facing CLI shape
 - `crates/axonhub-config` — Rust config loading, defaults, env override, preview/get helpers
-- `crates/axonhub-http` — Actix router with `/health` and truthful unported route stubs
+- `crates/axonhub-http` — Actix router with `/health` plus the named explicit unsupported boundaries preserved by parity tests
 
-### Legacy Go Backend
+### Legacy Go Backend (Historical Reference)
 
-- `cmd/axonhub/main.go` — Existing Go application entry point and CLI contract source
-- `conf/conf.go` — Existing Go configuration loading/defaults contract
+- `cmd/axonhub/main.go` — Original Go application entry point and CLI contract
+- `conf/conf.go` — Original Go configuration loading/defaults contract
 - `internal/server/` — HTTP server and route handling with Gin
 - `internal/server/biz/` — Core business logic and services
 - `internal/server/api/` — REST and GraphQL API handlers

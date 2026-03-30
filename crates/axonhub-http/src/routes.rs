@@ -5,8 +5,9 @@ use crate::middleware::{
 };
 use crate::state::{HttpMetricsCapability, HttpState};
 use actix_web::dev::{ServiceFactory, ServiceRequest, ServiceResponse};
+use actix_web::http::Method;
 use actix_web::web::{self, ServiceConfig};
-use actix_web::App;
+use actix_web::{App, HttpRequest};
 
 fn configure_admin_public(cfg: &mut ServiceConfig) {
     cfg.service(
@@ -64,7 +65,7 @@ fn configure_admin_protected(cfg: &mut ServiceConfig) {
             web::resource("/requests/{request_id}/content")
                 .route(web::get().to(handlers::admin::download_request_content)),
         )
-        .default_service(web::route().to(handlers::unported::unported_admin));
+        .default_service(web::route().to(handlers::not_found));
 }
 
 fn configure_openai_v1(cfg: &mut ServiceConfig) {
@@ -84,6 +85,10 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
             web::resource("/images/generations")
                 .route(web::post().to(handlers::openai_v1::openai_images_generations)),
         )
+        .service(web::resource("/images/edits").route(web::to(|req: HttpRequest| async move {
+            crate::errors::not_implemented_response("/v1/*", Method::from(req.method().clone()), req.uri().clone(), None)
+                .into_response()
+        })))
         .service(
             web::resource("/videos").route(web::post().to(handlers::openai_v1::openai_videos_create)),
         )
@@ -96,8 +101,12 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
         .service(
             web::resource("/messages").route(web::post().to(handlers::anthropic::anthropic_messages)),
         )
-        .service(web::resource("/").route(web::to(handlers::unported::unported_v1)))
-        .default_service(web::route().to(handlers::unported::unported_v1));
+        .service(web::resource("/realtime").route(web::to(|req: HttpRequest| async move {
+            crate::errors::not_implemented_response("/v1/*", Method::from(req.method().clone()), req.uri().clone(), None)
+                .into_response()
+        })))
+        .service(web::resource("/").route(web::to(handlers::not_found)))
+        .default_service(web::route().to(handlers::not_found));
 }
 
 fn configure_jina(cfg: &mut ServiceConfig) {
@@ -122,7 +131,7 @@ fn configure_v1beta(cfg: &mut ServiceConfig) {
             web::resource("/models/{action:.*}")
                 .route(web::post().to(handlers::gemini::gemini_generate_content)),
         )
-        .default_service(web::route().to(handlers::unported::unported_gemini));
+        .default_service(web::route().to(handlers::not_found));
 }
 
 fn configure_openapi(cfg: &mut ServiceConfig) {
@@ -186,7 +195,7 @@ fn configure_gemini(cfg: &mut ServiceConfig) {
                 web::route()
                     .wrap(request_context())
                     .wrap(gemini_auth())
-                    .to(handlers::unported::unported_gemini),
+                    .to(handlers::not_found),
             ),
     );
 }

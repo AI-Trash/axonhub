@@ -6,7 +6,6 @@ pub(crate) mod graphql;
 pub(crate) mod jina;
 pub(crate) mod openai_v1;
 pub(crate) mod provider_edge;
-pub(crate) mod unported;
 
 use crate::errors::{
     compatibility_bad_request_response, compatibility_error_response,
@@ -224,7 +223,7 @@ where
 
 pub(crate) fn graphql_playground_html(endpoint: &str) -> String {
     format!(
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>AxonHub GraphQL Playground</title></head><body><div id=\"root\"></div><script>window.GRAPHQL_ENDPOINT={endpoint:?};</script><p>GraphQL playground endpoint: <code>{endpoint}</code></p></body></html>"
+        "<!DOCTYPE html>\n<html>\n  <head>\n  \t<meta charset=\"utf-8\">\n  \t<title>AxonHub</title>\n\t<style>\n\t\tbody {{\n\t\t\tmargin: 0;\n\t\t}}\n\n\t\t#graphiql {{\n\t\t\theight: 100vh;\n\t\t}}\n\n\t\t.loading {{\n        \theight: 100%;\n        \tdisplay: flex;\n        \talign-items: center;\n        \tjustify-content: center;\n        \tfont-size: 4rem;\n\t\t}}\n\t</style>\n\t<script\n\t\tsrc=\"https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js\"\n\t\tintegrity=\"sha256-S0lp&#43;k7zWUMk2ixteM6HZvu8L9Eh//OVrt&#43;ZfbCpmgY=\"\n\t\tcrossorigin=\"anonymous\"\n\t></script>\n\t<script\n\t\tsrc=\"https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js\"\n\t\tintegrity=\"sha256-IXWO0ITNDjfnNXIu5POVfqlgYoop36bDzhodR6LW5Pc=\"\n\t\tcrossorigin=\"anonymous\"\n\t></script>\n\t<link\n\t\trel=\"stylesheet\"\n\t\thref=\"https://cdn.jsdelivr.net/npm/graphiql@4.1.2/graphiql.min.css\"\n\t\tintegrity=\"sha256-MEh&#43;B2NdMSpj9kexQNN3QKc8UzMrCXW/Sx/phcpuyIU=\"\n\t\tcrossorigin=\"anonymous\"\n\t/>\n  </head>\n  <body>\n    <div id=\"graphiql\">\n\t\t<div class=\"loading\">Loading…</div>\n\t</div>\n\n\t<script\n\t\tsrc=\"https://cdn.jsdelivr.net/npm/graphiql@4.1.2/graphiql.min.js\"\n\t\tintegrity=\"sha256-hnImuor1znlJkD/FOTL3jayfS/xsyNoP04abi8bFJWs=\"\n\t\tcrossorigin=\"anonymous\"\n\t></script>\n\n    <script>\n      class PrefixedStorage {{\n        constructor(prefix = '') {{\n          this.prefix = prefix;\n        }}\n\n        _addPrefix(key) {{\n          return this.prefix + key;\n        }}\n\n        _removePrefix(prefixedKey) {{\n          return prefixedKey.substring(this.prefix.length);\n        }}\n\n        setItem(key, value) {{\n          const prefixedKey = this._addPrefix(key);\n          localStorage.setItem(prefixedKey, value);\n        }}\n\n        getItem(key) {{\n          const prefixedKey = this._addPrefix(key);\n          return localStorage.getItem(prefixedKey);\n        }}\n\n        removeItem(key) {{\n          const prefixedKey = this._addPrefix(key);\n          localStorage.removeItem(prefixedKey);\n        }}\n\n        clear() {{\n          const keysToRemove = [];\n          for (let i = 0; i < localStorage.length; i++) {{\n            const key = localStorage.key(i);\n            if (key.startsWith(this.prefix)) {{\n              keysToRemove.push(key);\n            }}\n          }}\n          keysToRemove.forEach(key => localStorage.removeItem(key));\n        }}\n\n        get length() {{\n          let count = 0;\n          for (let i = 0; i < localStorage.length; i++) {{\n            const key = localStorage.key(i);\n            if (key.startsWith(this.prefix)) {{\n              count++;\n            }}\n          }}\n          return count;\n        }}\n\n        key(index) {{\n          const keys = [];\n          for (let i = 0; i < localStorage.length; i++) {{\n            const key = localStorage.key(i);\n            if (key.startsWith(this.prefix)) {{\n              keys.push(this._removePrefix(key));\n            }}\n          }}\n          return index >= 0 && index < keys.length ? keys[index] : null;\n        }}\n      }}\n      const url = location.protocol + '//' + location.host + \"{endpoint}\";\n      const wsProto = location.protocol == 'https:' ? 'wss:' : 'ws:';\n      const subscriptionUrl = wsProto + '//' + location.host + \"{endpoint}\";\n      const fetcherHeaders = undefined;\n      const uiHeaders = undefined;\n\n      let plugins = [];\n\n      const fetcher = GraphiQL.createFetcher({{ url, subscriptionUrl, headers: fetcherHeaders }});\n      ReactDOM.render(\n        React.createElement(GraphiQL, {{\n          fetcher: fetcher,\n          isHeadersEditorEnabled: true,\n          shouldPersistHeaders: true,\n\t\t  headers: JSON.stringify(uiHeaders, null, 2),\n\t\t  plugins: plugins,\n          storage: new PrefixedStorage('')\n        }}),\n        document.getElementById('graphiql'),\n      );\n    </script>\n  </body>\n</html>",
     )
 }
 
@@ -372,4 +371,12 @@ pub(crate) fn parse_query_pairs(raw: &str) -> HashMap<String, String> {
 
 pub(crate) fn actix_json_response(status: StatusCode, value: Value) -> HttpResponse<BoxBody> {
     HttpResponse::build(status).json(value)
+}
+
+pub(crate) async fn not_found() -> HttpResponse {
+    HttpResponse::NotFound().json(serde_json::json!({
+        "error": "not_found",
+        "status": 404,
+        "message": "The requested endpoint does not exist"
+    }))
 }

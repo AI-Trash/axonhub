@@ -1,14 +1,12 @@
 version: 2
 
-project_name: axonhub
+project_name: axonhub-go-reference
 
-dist: .builds
+dist: .builds/go-reference
 
 before:
   hooks:
     - /bin/sh -c 'cd deploy && chmod +x *.sh'
-    - cargo check --workspace --locked
-    - make build-frontend
     - go mod tidy
 
 builds:
@@ -33,7 +31,7 @@ builds:
       - arm64
       - loong64
     goarm:
-      - 7
+      - '7'
     ignore:
       - goos: windows
         goarch: arm
@@ -98,7 +96,7 @@ archives:
         dst: upgrade.bat
 
 brews:
-  - name: axonhub
+  - name: axonhub-go-reference
     ids: [archive]
     repository:
       owner: looplj
@@ -106,7 +104,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
     homepage: "https://github.com/looplj/axonhub"
-    description: "All-in-one AI development platform. Use any SDK, access any model."
+    description: "Legacy Go reference packaging for AxonHub. Canonical releases are Rust-built."
     license: "Apache-2.0"
     url_template: "https://github.com/looplj/axonhub/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     commit_author:
@@ -126,6 +124,9 @@ brews:
     test: |
       system "#{bin}/axonhub", "version"
     caveats: |
+      This formula packages the legacy Go reference build.
+      Canonical release artifacts and container tags are Rust-built.
+
       AxonHub runs with default configuration.
       To customize, create a config file at: #{etc}/axonhub/config.yml
 

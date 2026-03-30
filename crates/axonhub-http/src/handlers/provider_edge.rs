@@ -21,7 +21,7 @@ fn unsupported_provider_edge_response<'a>(
     }
 }
 
-pub(crate) async fn start_codex_oauth(
+pub async fn start_codex_oauth(
     state: web::Data<HttpState>,
     http_request: HttpRequest,
     body: Bytes,
@@ -77,7 +77,7 @@ pub(crate) async fn exchange_codex_oauth(
     .await
 }
 
-pub(crate) async fn start_claudecode_oauth(
+pub async fn start_claudecode_oauth(
     state: web::Data<HttpState>,
     http_request: HttpRequest,
     body: Bytes,
@@ -133,7 +133,7 @@ pub(crate) async fn exchange_claudecode_oauth(
     .await
 }
 
-pub(crate) async fn start_antigravity_oauth(
+pub async fn start_antigravity_oauth(
     state: web::Data<HttpState>,
     http_request: HttpRequest,
     body: Bytes,
@@ -189,7 +189,7 @@ pub(crate) async fn exchange_antigravity_oauth(
     .await
 }
 
-pub(crate) async fn start_copilot_oauth(
+pub async fn start_copilot_oauth(
     state: web::Data<HttpState>,
     http_request: HttpRequest,
     body: Bytes,

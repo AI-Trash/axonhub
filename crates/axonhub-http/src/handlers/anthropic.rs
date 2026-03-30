@@ -7,7 +7,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use bytes::Bytes;
 use std::collections::HashMap;
 
-pub(crate) async fn list_anthropic_models(
+pub async fn list_anthropic_models(
     state: web::Data<HttpState>,
     request: HttpRequest,
 ) -> HttpResponse {
@@ -30,7 +30,7 @@ pub(crate) async fn list_anthropic_models(
     }
 }
 
-pub(crate) async fn anthropic_messages(
+pub async fn anthropic_messages(
     state: web::Data<HttpState>,
     request: HttpRequest,
     body: Bytes,

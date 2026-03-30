@@ -8,6 +8,7 @@ use actix_web::body::BoxBody;
 use actix_web::dev::ServiceResponse;
 use actix_web::http::Method;
 use actix_web::test as actix_test;
+use actix_web::{App, web};
 use axonhub_http::{router as http_router, HttpState, InitializeSystemRequest, TraceConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,6 +27,7 @@ struct OracleFixture {
     emitter: Option<String>,
     request: OracleRequest,
     model: Option<OracleModel>,
+    handler: Option<String>,
     normalize_generated_key: Option<bool>,
 }
 
@@ -102,7 +104,14 @@ async fn parity_oracle_emit_suite() {
 
     let output = match emitter.as_str() {
         "admin_system_status_initial" => emit_admin_system_status_initial(&suite, fixture).await,
+        "admin_signin_invalid_json" => emit_admin_signin_invalid_json(&suite, fixture).await,
         "v1_models_basic" => emit_v1_models_basic(&suite, fixture).await,
+        "anthropic_models_basic" => emit_anthropic_models_basic(&suite, fixture).await,
+        "gemini_models_basic" => emit_gemini_models_basic(&suite, fixture).await,
+        "provider_edge_codex_start_invalid_json" => {
+            emit_provider_edge_codex_start_invalid_json(&suite, fixture).await
+        }
+        "http_handler_parity" => emit_http_handler_parity(&suite, fixture).await,
         "openapi_graphql_create_llm_api_key" => {
             emit_openapi_graphql_create_llm_api_key(&suite, fixture).await
         }
@@ -193,6 +202,17 @@ async fn emit_admin_system_status_initial(suite: &str, fixture: OracleFixture) -
     output
 }
 
+async fn emit_admin_signin_invalid_json(suite: &str, fixture: OracleFixture) -> OracleOutput {
+    let db_path = temp_sqlite_path("admin-signin-invalid");
+    let response = TestApp::new(sqlite_state(&db_path))
+        .oneshot(fixture.request)
+        .await
+        .unwrap();
+    let output = response_to_output(suite, response, false).await;
+    fs::remove_file(db_path).ok();
+    output
+}
+
 async fn emit_v1_models_basic(suite: &str, fixture: OracleFixture) -> OracleOutput {
     let db_path = temp_sqlite_path("v1-models");
     bootstrap_sqlite(&db_path);
@@ -217,6 +237,198 @@ async fn emit_v1_models_basic(suite: &str, fixture: OracleFixture) -> OracleOutp
         .oneshot(fixture.request)
         .await
         .unwrap();
+    let output = response_to_output(suite, response, false).await;
+    fs::remove_file(db_path).ok();
+    output
+}
+
+async fn emit_anthropic_models_basic(suite: &str, fixture: OracleFixture) -> OracleOutput {
+    let db_path = temp_sqlite_path("anthropic-models");
+    bootstrap_sqlite(&db_path);
+    if let Some(model) = fixture.model {
+        let connection = rusqlite::Connection::open(&db_path).expect("open sqlite db");
+        connection
+            .execute(
+                "INSERT INTO models (developer, model_id, type, name, icon, \"group\", model_card, settings, status, remark, deleted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, '{}', '{}', 'enabled', ?7, 0)",
+                rusqlite::params![
+                    model.developer,
+                    model.model_id,
+                    model.model_type,
+                    model.name,
+                    model.icon,
+                    model.group,
+                    model.remark,
+                ],
+            )
+            .expect("seed model");
+    }
+    let response = TestApp::new(sqlite_state(&db_path))
+        .oneshot(fixture.request)
+        .await
+        .unwrap();
+    let output = response_to_output(suite, response, false).await;
+    fs::remove_file(db_path).ok();
+    output
+}
+
+async fn emit_gemini_models_basic(suite: &str, fixture: OracleFixture) -> OracleOutput {
+    let db_path = temp_sqlite_path("gemini-models");
+    bootstrap_sqlite(&db_path);
+    if let Some(model) = fixture.model {
+        let connection = rusqlite::Connection::open(&db_path).expect("open sqlite db");
+        connection
+            .execute(
+                "INSERT INTO models (developer, model_id, type, name, icon, \"group\", model_card, settings, status, remark, deleted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, '{}', '{}', 'enabled', ?7, 0)",
+                rusqlite::params![
+                    model.developer,
+                    model.model_id,
+                    model.model_type,
+                    model.name,
+                    model.icon,
+                    model.group,
+                    model.remark,
+                ],
+            )
+            .expect("seed model");
+    }
+    let response = TestApp::new(sqlite_state(&db_path))
+        .oneshot(fixture.request)
+        .await
+        .unwrap();
+    let output = response_to_output(suite, response, false).await;
+    fs::remove_file(db_path).ok();
+    output
+}
+
+async fn emit_provider_edge_codex_start_invalid_json(
+    suite: &str,
+    fixture: OracleFixture,
+) -> OracleOutput {
+    let db_path = temp_sqlite_path("provider-edge-invalid-json");
+    let state = sqlite_state(&db_path);
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(state))
+            .service(
+                web::resource("/admin/codex/oauth/start")
+                    .route(web::post().to(axonhub_http::parity_start_codex_oauth)),
+            ),
+    )
+    .await;
+    let mut request = actix_test::TestRequest::post().uri(&fixture.request.path);
+    if let Some(headers) = fixture.request.headers.as_ref() {
+        for (name, value) in headers {
+            request = request.insert_header((name.as_str(), value.as_str()));
+        }
+    }
+    let response = actix_test::call_service(
+        &app,
+        request
+            .set_payload(fixture.request.body.unwrap_or_default().into_bytes())
+            .to_request(),
+    )
+    .await;
+    let output = response_to_output(suite, response, false).await;
+    fs::remove_file(db_path).ok();
+    output
+}
+
+async fn emit_http_handler_parity(suite: &str, fixture: OracleFixture) -> OracleOutput {
+    let db_path = temp_sqlite_path(&format!("handler-{}", suite.replace(':', "-")));
+    if matches!(fixture.handler.as_deref(), Some("anthropic_models_basic" | "gemini_models_basic" | "v1_models_basic")) {
+        bootstrap_sqlite(&db_path);
+    }
+    let state = sqlite_state(&db_path);
+    let handler = fixture.handler.as_deref().expect("handler fixture is required");
+    let app = match handler {
+        "admin_initialize_invalid_json" => actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(state))
+                .service(web::resource("/admin/system/initialize").route(web::post().to(axonhub_http::parity_initialize_system))),
+        )
+        .await,
+        "admin_graphql_playground" => actix_test::init_service(
+            App::new().service(web::resource("/admin/playground").route(web::get().to(axonhub_http::parity_admin_graphql_playground))),
+        )
+        .await,
+        "openapi_graphql_playground" => actix_test::init_service(
+            App::new().service(web::resource("/openapi/v1/playground").route(web::get().to(axonhub_http::parity_openapi_graphql_playground))),
+        )
+        .await,
+        "openai_chat_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/chat/completions").route(web::post().to(axonhub_http::parity_openai_chat_completions))),
+        )
+        .await,
+        "openai_responses_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/responses").route(web::post().to(axonhub_http::parity_openai_responses))),
+        )
+        .await,
+        "openai_embeddings_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/embeddings").route(web::post().to(axonhub_http::parity_openai_embeddings))),
+        )
+        .await,
+        "openai_images_generations_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/images/generations").route(web::post().to(axonhub_http::parity_openai_images_generations))),
+        )
+        .await,
+        "openai_videos_create_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/videos").route(web::post().to(axonhub_http::parity_openai_videos_create))),
+        )
+        .await,
+        "anthropic_messages_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/anthropic/v1/messages").route(web::post().to(axonhub_http::parity_anthropic_messages))),
+        )
+        .await,
+        "jina_rerank_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/jina/v1/rerank").route(web::post().to(axonhub_http::parity_jina_rerank))),
+        )
+        .await,
+        "jina_embeddings_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/jina/v1/embeddings").route(web::post().to(axonhub_http::parity_jina_embeddings))),
+        )
+        .await,
+        "gemini_generate_content_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/gemini/v1/models/gemini-2.5-flash:generateContent").route(web::post().to(axonhub_http::parity_gemini_generate_content))),
+        )
+        .await,
+        "v1beta_generate_content_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/v1beta/models/gemini-2.5-flash:generateContent").route(web::post().to(axonhub_http::parity_gemini_generate_content))),
+        )
+        .await,
+        "doubao_create_task_empty_body" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/doubao/v3/contents/generations/tasks").route(web::post().to(axonhub_http::parity_doubao_create_task))),
+        )
+        .await,
+        "provider_edge_claudecode_start_invalid_json" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/admin/claudecode/oauth/start").route(web::post().to(axonhub_http::parity_start_claudecode_oauth))),
+        )
+        .await,
+        "provider_edge_antigravity_start_invalid_json" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/admin/antigravity/oauth/start").route(web::post().to(axonhub_http::parity_start_antigravity_oauth))),
+        )
+        .await,
+        "provider_edge_copilot_start_invalid_json" => actix_test::init_service(
+            App::new().app_data(web::Data::new(state)).service(web::resource("/admin/copilot/oauth/start").route(web::post().to(axonhub_http::parity_start_copilot_oauth))),
+        )
+        .await,
+        _ => panic!("unsupported handler parity fixture {handler}"),
+    };
+
+    let mut request = actix_test::TestRequest::default()
+        .method(Method::from_bytes(fixture.request.method.as_bytes()).expect("valid method"))
+        .uri(&fixture.request.path);
+    if let Some(headers) = fixture.request.headers.as_ref() {
+        for (name, value) in headers {
+            request = request.insert_header((name.as_str(), value.as_str()));
+        }
+    }
+    let response = actix_test::call_service(
+        &app,
+        request
+            .set_payload(fixture.request.body.unwrap_or_default().into_bytes())
+            .to_request(),
+    )
+    .await;
     let output = response_to_output(suite, response, false).await;
     fs::remove_file(db_path).ok();
     output
@@ -314,6 +526,12 @@ fn normalize_json_value(value: &mut Value, normalize_generated_key: bool) {
                 normalize_json_value(current, normalize_generated_key);
                 if key == "created" && current.is_number() {
                     *current = Value::String("<created>".to_owned());
+                }
+                if key == "created" && current.is_string() {
+                    *current = Value::String("<created>".to_owned());
+                }
+                if key == "token" && current.is_string() {
+                    *current = Value::String("<token>".to_owned());
                 }
                 if normalize_generated_key
                     && key == "key"
