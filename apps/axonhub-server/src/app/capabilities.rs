@@ -26,8 +26,8 @@ use crate::foundation::{
     system::SeaOrmBootstrapService,
 };
 
-const SQLITE_POSTGRES_AND_MYSQL_DIALECT_HINT: &str =
-    "Rust replacement for this surface is currently supported only on sqlite3, postgres, and mysql.";
+const SQLITE_AND_POSTGRES_DIALECT_HINT: &str =
+    "Rust replacement for this surface is currently supported only on sqlite3 and postgres.";
 
 pub(crate) struct ServerCapabilities {
     pub(crate) system_bootstrap: SystemBootstrapCapability,
@@ -73,7 +73,7 @@ impl PersistenceProfile {
 
 fn supported_seaorm_dialect_message(surface: &str) -> String {
     format!(
-        "{surface} is not available for the configured dialect yet. {SQLITE_POSTGRES_AND_MYSQL_DIALECT_HINT}"
+        "{surface} is not available for the configured dialect yet. {SQLITE_AND_POSTGRES_DIALECT_HINT}"
     )
 }
 

@@ -246,21 +246,33 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             if state.jwt_internal {
                 return Err(AdminAuthError::Internal);
             }
-            if token != "valid-admin-token" {
-                return Err(AdminAuthError::InvalidToken);
+            match token {
+                "valid-admin-token" => Ok(AuthUserContext {
+                    id: 1,
+                    email: "owner@example.com".to_owned(),
+                    first_name: "System".to_owned(),
+                    last_name: "Owner".to_owned(),
+                    is_owner: true,
+                    prefer_language: "en".to_owned(),
+                    avatar: Some(String::new()),
+                    scopes: vec![],
+                    roles: vec![],
+                    projects: vec![],
+                }),
+                "limited-admin-token" => Ok(AuthUserContext {
+                    id: 2,
+                    email: "admin@example.com".to_owned(),
+                    first_name: "Admin".to_owned(),
+                    last_name: "User".to_owned(),
+                    is_owner: false,
+                    prefer_language: "en".to_owned(),
+                    avatar: Some(String::new()),
+                    scopes: vec!["read_channels".to_owned()],
+                    roles: vec![],
+                    projects: vec![],
+                }),
+                _ => Err(AdminAuthError::InvalidToken),
             }
-            Ok(AuthUserContext {
-                id: 1,
-                email: "owner@example.com".to_owned(),
-                first_name: "System".to_owned(),
-                last_name: "Owner".to_owned(),
-                is_owner: true,
-                prefer_language: "en".to_owned(),
-                avatar: Some(String::new()),
-                scopes: vec![],
-                roles: vec![],
-                projects: vec![],
-            })
         }
 
         fn authenticate_api_key(
@@ -2295,6 +2307,12 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                 Some("X-API-Key"),
                 Some("api-key-123"),
             ),
+            (
+                Method::POST,
+                "/v1/images/variations",
+                Some("X-API-Key"),
+                Some("api-key-123"),
+            ),
         ] {
             let mut request = Request::builder().uri(path).method(method);
             if let (Some(name), Some(value)) = (header_name, header_value) {
@@ -2399,6 +2417,39 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         assert_eq!(json["path"], "/v1/realtime");
         assert_eq!(json["migration_status"], "progressive cutover");
         assert_eq!(json["legacy_go_backend_present"], false);
+    }
+
+    #[test]
+    fn readme_unsupported_boundary_contract_matches_explicit_v1_guardrails() {
+        let readme = include_str!("../../../README.md");
+
+        for required_snippet in [
+            "- **Image editing and image variants**: `POST /v1/images/edits`, `POST /v1/images/variations`, and other unmigrated image routes",
+            "- **Realtime API**: no dedicated Rust realtime/WebSocket route family; `/v1/realtime` returns `501 Not Implemented`",
+            "- **AiSDK compatibility**: Vercel AI SDK protocol requests remain unsupported; `/v1` requests with `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` return `501 Not Implemented`",
+        ] {
+            assert!(
+                readme.contains(required_snippet),
+                "README unsupported-boundary contract missing snippet: {required_snippet}"
+            );
+        }
+
+        let routes = include_str!("routes.rs");
+        for required_route in [
+            "web::resource(\"/images/edits\").route(web::to(explicit_v1_not_implemented_boundary))",
+            "web::resource(\"/images/variations\").route(web::to(explicit_v1_not_implemented_boundary))",
+            "web::resource(\"/realtime\").route(web::to(explicit_v1_not_implemented_boundary))",
+        ] {
+            assert!(
+                routes.contains(required_route),
+                "routes.rs explicit unsupported boundary missing: {required_route}"
+            );
+        }
+
+        let handlers = include_str!("handlers/mod.rs");
+        assert!(handlers.contains("X-Vercel-Ai-Ui-Message-Stream"));
+        assert!(handlers.contains("X-Vercel-AI-Data-Stream"));
+        assert!(handlers.contains("remain on the explicit `/v1/*` 501 boundary"));
     }
 
     #[tokio::test]

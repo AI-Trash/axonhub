@@ -2684,6 +2684,20 @@ fn mysql_capabilities_route_through_the_same_seaorm_slice() {
     }
 }
 
+#[test]
+fn unsupported_dialect_messages_keep_mysql_out_of_public_rust_target_hint() {
+    let message = match build_system_bootstrap_capability("oracle", ":memory:", "v0.9.20") {
+        SystemBootstrapCapability::Available { .. } => {
+            panic!("expected unsupported bootstrap capability for oracle dialect")
+        }
+        SystemBootstrapCapability::Unsupported { message } => message,
+    };
+
+    assert!(message.contains("sqlite3"));
+    assert!(message.contains("postgres"));
+    assert!(!message.contains("mysql"));
+}
+
 #[tokio::test]
 async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
     let db_path = temp_sqlite_path("unsupported-dialect-provider-edge");

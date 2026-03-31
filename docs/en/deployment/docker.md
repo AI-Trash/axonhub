@@ -39,7 +39,6 @@ What to expect from that image today:
 - `GET /admin/system/status` and `POST /admin/system/initialize` are supported on the verified SQLite- and PostgreSQL-backed runtime paths
 - the verified Rust replacement scope also covers admin auth/read flows, admin GraphQL, OpenAPI GraphQL, request-context/auth foundations, and the migrated inference families on the accepted SQLite and PostgreSQL paths
 - route families outside that verified scope return explicit `501 Not Implemented` JSON instead of redirecting operators to the legacy Go backend
-- MySQL is wired through the same SeaORM-backed repository seam but is not yet fully integration-verified in the Rust test suite
 - multi-dialect replacement beyond SQLite and PostgreSQL is still out of scope for this cutover gate
 
 ## Quick Start
@@ -128,7 +127,7 @@ healthcheck:
 Keep these distinctions clear while the Go retirement gates are still in progress:
 
 - Docker deployment for the supported scope now centers on the Rust runtime.
-- The verified replacement scope currently covers **SQLite and PostgreSQL**; MySQL is wired but not yet fully integration-verified, and unsupported dialects and unported route families remain explicit exclusions.
+- The verified replacement scope currently covers **SQLite and PostgreSQL**; unsupported dialects and unported route families remain explicit exclusions.
 - If you run the Rust backend directly from the workspace, `/health`, the SQLite/PostgreSQL-backed admin/bootstrap/auth/GraphQL surface, and the migrated inference families are available alongside explicit `501` route stubs for every remaining unsupported family.
 
 ## Troubleshooting

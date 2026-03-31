@@ -1,19 +1,19 @@
 # 配置指南
 
-## 迁移背景
+## 当前契约背景
 
-AxonHub 当前在同一个仓库中同时存在两套后端实现：
+AxonHub 在此仓库中的 canonical 后端实现已经是 Rust。
 
-- **旧 Go 后端**：仍然提供完整产品能力
-- **Rust 迁移切片**：保留第一批共享的配置契约，以及一小部分 CLI / 服务行为
+- **Rust backend**：当前对外的 canonical 配置契约与受支持运行时路径
+- **旧 Go 树**：保留在仓库中作为历史参考 / oracle 材料，不再是当前仓库的 canonical 部署契约
 
-本文描述的是迁移两侧共享的配置契约。当前 Rust 实现已经支持配置加载、preview、validate、key lookup 与最小 HTTP 切片，但这**不代表**完整后端能力已经迁移完成。
+本文描述的是当前 Rust backend 对外保留的配置契约。配置加载、`config preview`、`config validate`、`config get` 与当前受支持的 Rust 运行时，都遵循这里说明的配置形状。
 
 ## 概述
 
 AxonHub 支持 YAML 配置文件和环境变量覆盖。
 
-对于 Rust 迁移切片，配置文件会按以下发现顺序加载：
+对于当前 Rust backend，配置文件会按以下发现顺序加载：
 
 1. `./config.yml`
 2. `/etc/axonhub/config.yml`
@@ -195,7 +195,7 @@ cache:
     expiration: ""
 ```
 
-Rust 迁移切片也会兼容旧缓存字段：
+当前 Rust 配置契约也兼容旧缓存字段：
 
 - `cache.default_expiration` → `cache.memory.expiration`
 - `cache.cleanup_interval` → `cache.memory.cleanup_interval`

@@ -7,7 +7,7 @@ AxonHub's canonical backend in this repository is Rust.
 - If you want the fastest local runtime for the currently supported product surface, use the Rust Docker/compose path or the Rust-tagged release assets.
 - If you want to work on backend code in this repository, use the Cargo workspace; the legacy Go tree remains in-repo only as historical reference/oracle material.
 
-The Rust backend already preserves config loading, CLI shape, `/health`, the verified SQLite- and PostgreSQL-backed bootstrap/system routes, the current OpenAI-compatible practical `/v1` surface, and explicit `501` responses for the accepted unsupported route families. The same SeaORM-backed backend path is wired for MySQL but is not yet fully integration-verified, and TiDB/Neon remain legacy-reference dialect material in the Go tree.
+The Rust backend already preserves config loading, CLI shape, `/health`, the verified SQLite- and PostgreSQL-backed bootstrap/system routes, the current OpenAI-compatible practical `/v1` surface, and explicit `501` responses for the accepted unsupported route families. SQLite and PostgreSQL are the Rust target-state databases in this repository, and TiDB/Neon remain legacy-reference dialect material in the Go tree.
 
 ## Prerequisites
 
@@ -57,14 +57,13 @@ You can also pull the published Rust image directly:
 docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 ```
 
-That image is best for quickly validating the current Rust-supported surface. `/health` is the immediate readiness check; the bootstrap/system routes plus the practical OpenAI-compatible `/v1` surface remain limited to the verified SQLite- and PostgreSQL-backed Rust backend paths. The same SeaORM-backed backend path is wired for MySQL but is not yet fully integration-verified, and TiDB/Neon remain legacy-reference dialect material in the Go tree.
+That image is best for quickly validating the current Rust-supported surface. `/health` is the immediate readiness check; the bootstrap/system routes plus the practical OpenAI-compatible `/v1` surface remain limited to the verified SQLite- and PostgreSQL-backed Rust backend paths. TiDB/Neon remain legacy-reference dialect material in the Go tree.
 
 What to expect from the Rust backend right now:
 
 - `/health` works
 - `GET /admin/system/status` and `POST /admin/system/initialize` work for the supported SQLite- and PostgreSQL-backed Rust paths
 - `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` work on the current practical SQLite- and PostgreSQL-backed Rust paths
-- MySQL uses the same SeaORM-backed repository seam, but full Rust-side integration verification is still pending
 - TiDB and Neon DB remain legacy-reference dialect material in the Go tree
 - config search paths and `AXONHUB_*` env keys are supported
 - accepted explicit unsupported route families return structured `501 Not Implemented` JSON

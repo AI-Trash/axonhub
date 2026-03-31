@@ -110,51 +110,22 @@ if (result.data) {
 | `moderation` | string | 内容审核级别：`"low"` 或 `"auto"`。 | - |
 | `partial_images` | number | 要生成的部分图像数量。 | 1 |
 
-## 图像编辑（局部重绘）
+## 图像编辑边界（`/v1/images/edits`）
 
-要编辑图像，请使用 `/v1/images/edits` 端点，使用 multipart/form-data 格式：
+`POST /v1/images/edits` 在当前 Rust-canonical 后端状态下仍然是显式未支持边界。请求这个端点时，Rust 会返回结构化的 `501 Not Implemented` 响应，而不是执行局部重绘或 multipart 图像编辑。
 
-```python
-import requests
+如果你的客户端仍然调用 `/v1/images/edits`，应当预期得到与其他显式未支持能力相同风格的边界响应：
 
-url = "https://your-axonhub-instance/v1/images/edits"
-headers = {
-    "Authorization": f"Bearer {API_KEY}"
+```json
+{
+  "error": "not_implemented",
+  "message": "当前 Rust 后端尚未实现图像编辑能力。",
+  "path": "/v1/images/edits",
+  "status": 501
 }
-
-with open("image.png", "rb") as image_file, open("mask.png", "rb") as mask_file:
-    files = {
-        "image": image_file,
-        "mask": mask_file
-    }
-    data = {
-        "model": "gpt-image-1",
-        "prompt": "将颜色改为白色",
-        "size": "1024x1024",
-        "n": 1
-    }
-    
-    response = requests.post(url, headers=headers, files=files, data=data)
-    result = response.json()
 ```
 
-### 图像编辑参数
-
-| 参数 | 类型 | 描述 | 默认值 |
-|-----------|------|-------------|---------|
-| `image` | file | **必填。** 要编辑的图像。 | - |
-| `prompt` | string | **必填。** 所需编辑的文本描述。 | - |
-| `mask` | file | 可选的蒙版图像。透明区域表示要编辑的位置。 | - |
-| `model` | string | 要使用的模型。 | `dall-e-2` |
-| `n` | integer | 要生成的图像数量。 | 1 |
-| `size` | string | 生成图像的尺寸。 | `"1024x1024"` |
-| `response_format` | string | 格式：`"url"` 或 `"b64_json"`。 | `"b64_json"` |
-| `user` | string | 最终用户的唯一标识符。 | - |
-| `background` | string | 背景样式：`"opaque"` 或 `"transparent"`。 | - |
-| `output_format` | string | 图像格式：`"png"`、`"webp"` 或 `"jpeg"`。 | `"png"` |
-| `output_compression` | number | 压缩级别 (0-100%)。 | 100 |
-| `input_fidelity` | string | 输入保真度级别。 | - |
-| `partial_images` | number | 部分图像数量。 | 1 |
+本页刻意只描述当前已接受的真实状态。请使用 `/v1/images/generations` 完成受支持的图像生成流程，不要把 `/v1/images/edits` 当作当前后端中的可用端点。
 
 ## 支持的提供商
 

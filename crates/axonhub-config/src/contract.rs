@@ -22,9 +22,6 @@ pub const SUPPORTED_DB_DIALECTS: &[&str] = &[
     "pg",
     "pgx",
     "postgresdb",
-    "mysql",
-    "tidb",
-    "neon",
 ];
 
 const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
@@ -138,7 +135,7 @@ const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
     },
     SupportedConfigKey {
         key: "db.dialect",
-        description: "Database dialect (sqlite3/sqlite, postgres/postgresql/pg/pgx/postgresdb, mysql, tidb, neon)",
+        description: "Database dialect (sqlite3/sqlite, postgres/postgresql/pg/pgx/postgresdb)",
     },
     SupportedConfigKey {
         key: "db.dsn",
@@ -360,7 +357,7 @@ pub(crate) fn validate_db_dialect(dialect: &str) -> Result<()> {
     }
 
     Err(anyhow!(
-        "unsupported db.dialect '{trimmed}': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb, mysql, tidb, neon"
+        "unsupported db.dialect '{trimmed}': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb"
     ))
 }
 

@@ -2,12 +2,12 @@
 
 ## 开始之前
 
-AxonHub 当前正处于增量式 Go → Rust 后端迁移阶段。
+AxonHub 在此仓库中的 canonical 后端实现已经是 Rust。
 
 - 如果你要体验**完整产品能力**，请使用 Docker 或发布版二进制。
-- 如果你要参与**Rust 迁移切片开发**，请使用仓库中的 Cargo workspace，或者使用带有 Rust 标记的发布资产与 Docker 镜像。
+- 如果你要参与**Rust 后端开发**，请使用仓库中的 Cargo workspace，或者使用带有 Rust 标记的发布资产与 Docker 镜像。
 
-Rust 切片目前已经提供配置加载、CLI 形状兼容、`/health`、已验证的 SQLite 与 PostgreSQL 支撑的 bootstrap/system 路由、已迁移的 OpenAI 兼容实用 `/v1` 子集，以及对未迁移路由族的显式 `501` 返回。相同的 SeaORM 支撑切片也已经为 MySQL 完成布线，但 Rust 侧尚未完成完整集成验证；TiDB 与 Neon 仍然只能使用 Go 后端。
+Rust 切片目前已经提供配置加载、CLI 形状兼容、`/health`、已验证的 SQLite 与 PostgreSQL 支撑的 bootstrap/system 路由、已迁移的 OpenAI 兼容实用 `/v1` 子集，以及对未迁移路由族的显式 `501` 返回。SQLite 与 PostgreSQL 是当前仓库里 Rust 目标态支持的数据库；TiDB 与 Neon 仍然只能使用 Go 后端。
 
 ## 前置要求
 
@@ -57,14 +57,13 @@ cargo run -p axonhub-server -- build-info
 docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 ```
 
-这个镜像更适合快速验证 Rust 切片。立即可用的就绪检查是 `/health`；bootstrap/system 路由与已迁移的 OpenAI 兼容实用 `/v1` 子集仍然只面向已验证的 SQLite 与 PostgreSQL 迁移数据路径，并不代表一个全新完整产品初始化场景。相同的 SeaORM 支撑切片也已经为 MySQL 完成布线，但 Rust 侧尚未完成完整集成验证；TiDB 与 Neon 仍然保留在 Go 后端。
+这个镜像更适合快速验证 Rust 切片。立即可用的就绪检查是 `/health`；bootstrap/system 路由与已迁移的 OpenAI 兼容实用 `/v1` 子集仍然只面向已验证的 SQLite 与 PostgreSQL 迁移数据路径，并不代表一个全新完整产品初始化场景。TiDB 与 Neon 仍然保留在 Go 后端。
 
 当前 Rust 切片的行为预期：
 
 - `/health` 可用
 - 对受支持的 SQLite 与 PostgreSQL 迁移路径，`GET /admin/system/status` 与 `POST /admin/system/initialize` 可用
 - `/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings` 在已迁移的实用 SQLite 与 PostgreSQL 路径上可用
-- MySQL 通过相同的 SeaORM repository seam 已完成布线，但 Rust 侧完整集成验证仍待完成
 - TiDB 与 Neon DB 仍然只能使用 Go 后端
 - 支持配置文件搜索路径与 `AXONHUB_*` 环境变量
 - 未迁移路由族返回结构化 `501 Not Implemented` JSON
@@ -104,7 +103,7 @@ print(response.choices[0].message.content)
 
 - 产品文档仍然描述完整的 AxonHub 能力；
 - Rust workspace 是新的实现路径；
-- 在更多路由族完成迁移前，Go 后端仍然是完整运行时。
+- Rust workspace 与 Rust 标记交付物是当前仓库中的 canonical 后端路径，旧 Go 树仅保留为历史参考 / oracle 材料。
 
 ## 相关文档
 

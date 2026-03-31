@@ -33,7 +33,7 @@ The Rust backend provides the following verified functionality for SQLite and Po
 - **Health & system**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
 - **Identity & context**: authentication, request context, JWT handling
 - **Admin read routes**: `GET /admin/requests/:request_id/content`
-- **Admin GraphQL**: `POST /admin/graphql` with playground
+- **Admin GraphQL**: `POST /admin/graphql` with playground and the current supported settings-management subset
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` with playground
 - **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`
 - **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
@@ -43,15 +43,14 @@ The Rust backend provides the following verified functionality for SQLite and Po
 ### Partially Verified Features
 
 - **Provider-edge admin OAuth helpers**: Codex, Claude Code, Antigravity, and Copilot admin OAuth routes are wired in Rust with auth/boundary coverage; the current positive route proof covers secure-runtime-gated Codex start, but full per-provider end-to-end verification is still incomplete.
-- **MySQL support**: The SeaORM-backed slice is wired through the shared repository seam and capability builders, but full MySQL-backed automated integration verification is not yet present in this Rust test suite.
 
 ### Unsupported Boundaries (Explicit 501)
 
 Route families outside the verified scope return explicit Rust-side `501 Not Implemented` responses. These include:
 
-- **Image editing**: `POST /v1/images/edits` and other unmigrated image routes
+- **Image editing and image variants**: `POST /v1/images/edits`, `POST /v1/images/variations`, and other unmigrated image routes
 - **Realtime API**: no dedicated Rust realtime/WebSocket route family; `/v1/realtime` returns `501 Not Implemented`
-- **Full admin management**: write operations, user/project/role management, quota configuration
+- **Broader admin management write surfaces**: user/project/role management, quota configuration, and other write operations outside the current canonical settings-management subset
 - **Complete RBAC/permission system**: fine-grained access control beyond basic admin auth
 - **Core business logic surfaces**: channel/model association/fetching, usage/cost tracking, trace/thread management, system onboarding completeness
 - **Transformer/pipeline surfaces**: full provider orchestration, outbound transformers, middleware pipeline
@@ -66,7 +65,7 @@ The legacy Go tree under `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/se
 
 ### What This Means in Practice
 
-For the **supported product surface** described above, use the Rust binary, `ghcr.io/looplj/axonhub:rust-latest`, or `docker-compose.rust.yml`.
+For the **supported product surface** described above, use the Rust binary or the Rust-tagged release assets.
 
 For the explicit unsupported boundaries listed above, expect truthful Rust-side `501 Not Implemented` responses instead of a Go fallback. The legacy Go tree remains available in-repo as historical reference only.
 
@@ -246,7 +245,7 @@ The Rust backend is deployed through the following canonical artifacts:
 - Docker images `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
 - Compose example at `docker-compose.rust.yml`
 
-These artifacts provide the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed surface covered by the Rust test suite: `/health`, admin bootstrap/status, identity/request-context, admin read routes, admin GraphQL, OpenAPI GraphQL, and the migrated inference families including `POST /v1/images/generations`. The same SeaORM-backed slice is wired for MySQL, but full MySQL-backed automated integration verification is still pending. Any route family outside the verified scope returns explicit `501 Not Implemented` responses.
+These artifacts provide the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed surface covered by the Rust test suite: `/health`, admin bootstrap/status, identity/request-context, admin read routes, the current canonical `/admin/graphql` subset (including the verified settings-write mutations), OpenAPI GraphQL, and the migrated inference families including `POST /v1/images/generations`. Any route family outside the verified scope returns explicit `501 Not Implemented` responses.
 
 ### Zero-Code Migration Example
 
@@ -328,7 +327,7 @@ Perfect for individual developers and small teams. No complex configuration requ
 
 For production environments, high availability, and enterprise deployments.
 
-> **Important:** The Rust backend is verified for **SQLite and PostgreSQL**. MySQL is wired through the same SeaORM-backed slice, but full Rust-side automated integration verification is still pending. TiDB and Neon DB remain documented in the legacy Go tree as historical reference only, not as the canonical deployment path. See the [Backend Architecture](#backend-architecture) section for details.
+> **Important:** The Rust backend is verified for **SQLite and PostgreSQL**. MySQL is not part of the Rust target-state support contract in this repository. TiDB and Neon DB remain documented in the legacy Go tree as historical reference only, not as the canonical deployment path. See the [Backend Architecture](#backend-architecture) section for details.
 
 #### Database Support
 
@@ -338,12 +337,6 @@ For production environments, high availability, and enterprise deployments.
 | -------- | ------------------ | -------------------- | -------------- | ------ |
 | **SQLite** | 3.0+ | Development, small deployments | ✅ Supported | [SQLite](https://www.sqlite.org/index.html) |
 | **PostgreSQL** | 15+ | Production environment, medium-large deployments | ✅ Supported | [PostgreSQL](https://www.postgresql.org/) |
-
-**Rust Backend (Partially Verified):**
-
-| Database | Supported Versions | Recommended Scenario | Auto Migration | Links |
-| -------- | ------------------ | -------------------- | -------------- | ------ |
-| **MySQL** | 8.0+ | Same SeaORM-backed repository slice as SQLite/PostgreSQL; verify in your environment before production use | ⚠️ Implemented, repo-level integration verification pending | [MySQL](https://www.mysql.com/) |
 
 **Historical Reference Only (legacy Go contract material):**
 
@@ -358,9 +351,9 @@ These entries are preserved as historical reference for the legacy Go contract s
 
 #### Configuration
 
-**Rust Backend (SQLite default; PostgreSQL verified, MySQL wired through the same seam):**
+**Rust Backend (SQLite default; PostgreSQL verified):**
 
-AxonHub uses YAML configuration files with environment variable override support. The Rust backend uses SQLite by default with no additional configuration needed. PostgreSQL uses the same verified `db.dialect` / `db.dsn` contract, and MySQL is wired through that same contract but is not yet fully integration-verified by this Rust test suite.
+AxonHub uses YAML configuration files with environment variable override support. The Rust backend uses SQLite by default with no additional configuration needed. PostgreSQL uses the same verified `db.dialect` / `db.dsn` contract.
 
 ```yaml
 # config.yml
@@ -382,9 +375,6 @@ AXONHUB_LOG_LEVEL=info
 # PostgreSQL example:
 # AXONHUB_DB_DIALECT=postgres
 # AXONHUB_DB_DSN=postgres://user:pass@localhost/axonhub?sslmode=disable
-# MySQL example:
-# AXONHUB_DB_DIALECT=mysql
-# AXONHUB_DB_DSN=mysql://user:pass@localhost:3306/axonhub
 ```
 
 **Historical Reference Only (legacy Go dialect examples):**
@@ -412,7 +402,7 @@ TiDB and Neon DB compose examples remain in the legacy Go tree and documentation
 
 #### Helm Kubernetes Deployment
 
-Deploy AxonHub on Kubernetes using the official Helm chart. This deployment path uses the Rust backend as the canonical image and supports PostgreSQL (verified) and MySQL (wired but not fully verified). TiDB and Neon DB references remain historical material in the legacy Go tree; this Helm path documents the Rust canonical image only.
+Deploy AxonHub on Kubernetes using the official Helm chart. This deployment path uses the Rust backend as the canonical image and targets PostgreSQL as the verified Kubernetes database path. TiDB and Neon DB references remain historical material in the legacy Go tree; this Helm path documents the Rust canonical image only.
 
 The Helm chart is the recommended Kubernetes deployment method for the Rust backend.
 

@@ -8,6 +8,16 @@ use actix_web::http::Method;
 use actix_web::web::{self, ServiceConfig};
 use actix_web::{App, HttpRequest};
 
+async fn explicit_v1_not_implemented_boundary(req: HttpRequest) -> actix_web::HttpResponse {
+    crate::errors::not_implemented_response(
+        "/v1/*",
+        Method::from(req.method().clone()),
+        req.uri().clone(),
+        None,
+    )
+    .into_response()
+}
+
 fn configure_admin_public(cfg: &mut ServiceConfig) {
     cfg.service(
         web::resource("/system/status").route(web::get().to(handlers::admin::system_status)),
@@ -84,10 +94,8 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
             web::resource("/images/generations")
                 .route(web::post().to(handlers::openai_v1::openai_images_generations)),
         )
-        .service(web::resource("/images/edits").route(web::to(|req: HttpRequest| async move {
-            crate::errors::not_implemented_response("/v1/*", Method::from(req.method().clone()), req.uri().clone(), None)
-                .into_response()
-        })))
+        .service(web::resource("/images/edits").route(web::to(explicit_v1_not_implemented_boundary)))
+        .service(web::resource("/images/variations").route(web::to(explicit_v1_not_implemented_boundary)))
         .service(
             web::resource("/videos").route(web::post().to(handlers::openai_v1::openai_videos_create)),
         )
@@ -100,10 +108,7 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
         .service(
             web::resource("/messages").route(web::post().to(handlers::anthropic::anthropic_messages)),
         )
-        .service(web::resource("/realtime").route(web::to(|req: HttpRequest| async move {
-            crate::errors::not_implemented_response("/v1/*", Method::from(req.method().clone()), req.uri().clone(), None)
-                .into_response()
-        })))
+        .service(web::resource("/realtime").route(web::to(explicit_v1_not_implemented_boundary)))
         .service(web::resource("/").route(web::to(handlers::not_found)))
         .default_service(web::route().to(handlers::not_found));
 }

@@ -48,7 +48,7 @@ jobs:
           go-version: stable
           stable: true
 
-      - name: Test Go oracle/reference backend
+      - name: Test legacy Go oracle/reference backend
         run: make test-backend-all
 
   full_parity_regression:
@@ -76,10 +76,10 @@ jobs:
       - name: Run consolidated parity regression wave
         run: python3 ".sisyphus/tools/task16_full_regression.py" run
 
-      - name: Verify parity sentinel
+      - name: Verify parity sentinel and cutover artifact
         run: python3 ".sisyphus/tools/task16_full_regression.py" sentinel
 
-      - name: Run post-cutover guardrails
+      - name: Run cutover guardrails (supported/unsupported/mysql)
         run: python3 ".sisyphus/tools/task18_guardrails.py" run
 
       - name: Generate parity evidence index

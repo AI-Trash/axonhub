@@ -299,7 +299,7 @@ fn preview_parse_get_and_validation_keep_current_contract() {
         vec![
             "server.port must be between 1 and 65535".to_owned(),
             "db.dsn cannot be empty".to_owned(),
-            "unsupported db.dialect 'oracle': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb, mysql, tidb, neon".to_owned(),
+            "unsupported db.dialect 'oracle': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb".to_owned(),
             "log.name cannot be empty".to_owned(),
             "log.encoding must be one of: json, console".to_owned(),
             "log.output must be one of: stdio, file".to_owned(),
@@ -352,9 +352,22 @@ provider_edge:
 }
 
 #[test]
-fn load_accepts_go_owned_and_rejects_unknown_dialects() {
+fn load_rejects_non_target_rust_dialects_in_yaml() {
     let _lock = test_guard();
-    let fixture = TestFixture::new("unsupported-dialects");
+    let fixture = TestFixture::new("non-target-rust-dialects");
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+db:
+  dialect: "mysql"
+  dsn: "mysql://root:root@127.0.0.1:3306/axonhub"
+"#,
+    );
+
+    let mysql_error = LoadedConfig::load().unwrap_err().to_string();
+    assert!(mysql_error.contains("unsupported db.dialect 'mysql'"));
+    assert!(mysql_error.contains("sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb"));
+
     fixture.write_workspace_file(
         "config.yml",
         r#"
@@ -364,12 +377,20 @@ db:
 "#,
     );
 
-    let tidb_loaded = LoadedConfig::load().unwrap();
-    assert_eq!(tidb_loaded.config.db.dialect, "tidb");
-    assert_eq!(
-        tidb_loaded.get("db.dialect"),
-        Some(serde_json::json!("tidb"))
+    let tidb_error = LoadedConfig::load().unwrap_err().to_string();
+    assert!(tidb_error.contains("unsupported db.dialect 'tidb'"));
+
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+db:
+  dialect: "neon"
+  dsn: "postgres://axonhub:secret@localhost/axonhub?sslmode=require"
+"#,
     );
+
+    let neon_error = LoadedConfig::load().unwrap_err().to_string();
+    assert!(neon_error.contains("unsupported db.dialect 'neon'"));
 
     fixture.write_workspace_file(
         "config.yml",
@@ -387,24 +408,46 @@ db:
 }
 
 #[test]
-fn load_accepts_go_owned_dialect_from_env_override() {
+fn load_rejects_non_target_rust_dialects_from_env_override() {
     let _lock = test_guard();
-    let fixture = TestFixture::new("unsupported-env-dialect");
+    let fixture = TestFixture::new("non-target-env-dialect");
+    fixture.set_env("AXONHUB_DB_DIALECT", "mysql");
+    fixture.set_env(
+        "AXONHUB_DB_DSN",
+        "mysql://axonhub:secret@localhost:3306/axonhub",
+    );
+
+    let mysql_error = LoadedConfig::load().unwrap_err().to_string();
+    assert!(mysql_error.contains("unsupported db.dialect 'mysql'"));
+
+    fixture.set_env("AXONHUB_DB_DIALECT", "tidb");
+    fixture.set_env("AXONHUB_DB_DSN", "mysql://root:root@127.0.0.1:4000/axonhub");
+
+    let tidb_error = LoadedConfig::load().unwrap_err().to_string();
+    assert!(tidb_error.contains("unsupported db.dialect 'tidb'"));
+
     fixture.set_env("AXONHUB_DB_DIALECT", "neon");
     fixture.set_env(
         "AXONHUB_DB_DSN",
         "postgres://axonhub:secret@localhost/axonhub?sslmode=disable",
     );
 
-    let loaded = LoadedConfig::load().unwrap();
-
-    assert_eq!(loaded.config.db.dialect, "neon");
+    let neon_error = LoadedConfig::load().unwrap_err().to_string();
+    assert!(neon_error.contains("unsupported db.dialect 'neon'"));
 }
 
 #[test]
-fn load_accepts_supported_postgres_mysql_tidb_and_neon_dialects() {
+fn load_accepts_supported_sqlite_and_postgres_dialects() {
     let _lock = test_guard();
     let fixture = TestFixture::new("supported-dialects");
+
+    fixture.set_env("AXONHUB_DB_DIALECT", "sqlite");
+    fixture.set_env(
+        "AXONHUB_DB_DSN",
+        "file:axonhub.db?cache=shared&_fk=1&_pragma=journal_mode(WAL)",
+    );
+    let sqlite_loaded = LoadedConfig::load().unwrap();
+    assert_eq!(sqlite_loaded.config.db.dialect, "sqlite");
 
     fixture.set_env("AXONHUB_DB_DIALECT", "postgres");
     fixture.set_env(
@@ -413,27 +456,6 @@ fn load_accepts_supported_postgres_mysql_tidb_and_neon_dialects() {
     );
     let postgres_loaded = LoadedConfig::load().unwrap();
     assert_eq!(postgres_loaded.config.db.dialect, "postgres");
-
-    fixture.set_env("AXONHUB_DB_DIALECT", "mysql");
-    fixture.set_env(
-        "AXONHUB_DB_DSN",
-        "mysql://axonhub:secret@localhost:3306/axonhub",
-    );
-    let mysql_loaded = LoadedConfig::load().unwrap();
-    assert_eq!(mysql_loaded.config.db.dialect, "mysql");
-
-    fixture.set_env("AXONHUB_DB_DIALECT", "tidb");
-    fixture.set_env("AXONHUB_DB_DSN", "mysql://root:root@127.0.0.1:4000/axonhub");
-    let tidb_loaded = LoadedConfig::load().unwrap();
-    assert_eq!(tidb_loaded.config.db.dialect, "tidb");
-
-    fixture.set_env("AXONHUB_DB_DIALECT", "neon");
-    fixture.set_env(
-        "AXONHUB_DB_DSN",
-        "postgres://axonhub:secret@localhost/axonhub?sslmode=require",
-    );
-    let neon_loaded = LoadedConfig::load().unwrap();
-    assert_eq!(neon_loaded.config.db.dialect, "neon");
 }
 
 #[test]

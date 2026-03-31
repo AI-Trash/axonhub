@@ -1,6 +1,6 @@
 # AxonHub Helm Chart
 
-> **Important:** This Helm chart targets the canonical Rust container image. The default image is `looplj/axonhub:latest`, and you can override it to another Rust-published tag or registry mirror such as GHCR. PostgreSQL is the verified production path; MySQL remains wired through the shared SeaORM layer but is not yet fully integration-verified.
+> **Important:** This Helm chart targets the canonical Rust container image. The default image is `looplj/axonhub:latest`, and you can override it to another Rust-published tag or registry mirror such as GHCR. PostgreSQL is the verified production path for this chart; MySQL is outside the Rust target-state support contract in this repository.
 
 This Helm chart deploys AxonHub on Kubernetes with PostgreSQL database.
 
