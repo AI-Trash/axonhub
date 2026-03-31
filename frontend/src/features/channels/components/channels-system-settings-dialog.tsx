@@ -2,7 +2,6 @@
 
 import { Loader2, Settings2, Activity } from 'lucide-react';
 import React, { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { useChannelSetting, useUpdateChannelSetting, type ProbeFrequency } from '@/features/system/data/system';
 
 import { useChannels } from '../context/channels-context';
+import * as m from '@/paraglide/messages';
 
 const PROBE_FREQUENCY_OPTIONS: { value: ProbeFrequency; label: string }[] = [
   { value: 'ONE_MINUTE', label: '1 minute' },
@@ -21,7 +21,6 @@ const PROBE_FREQUENCY_OPTIONS: { value: ProbeFrequency; label: string }[] = [
 ];
 
 export function ChannelsSystemSettingsDialog() {
-  const { t } = useTranslation();
   const { open, setOpen } = useChannels();
   const { data: settings, isLoading } = useChannelSetting();
   const updateSettings = useUpdateChannelSetting();
@@ -58,9 +57,9 @@ export function ChannelsSystemSettingsDialog() {
         <DialogHeader>
           <DialogTitle className='flex items-center gap-2'>
             <Settings2 className='h-5 w-5' />
-            {t('channels.dialogs.systemSettings.title')}
+            {m["channels.dialogs.systemSettings.title"]()}
           </DialogTitle>
-          <DialogDescription>{t('channels.dialogs.systemSettings.description')}</DialogDescription>
+          <DialogDescription>{m["channels.dialogs.systemSettings.description"]()}</DialogDescription>
         </DialogHeader>
 
         {isLoading ? (
@@ -73,16 +72,16 @@ export function ChannelsSystemSettingsDialog() {
               <CardHeader className='pb-0'>
                 <CardTitle className='flex items-center gap-2 text-sm'>
                   <Activity className='text-muted-foreground h-4 w-4' />
-                  {t('channels.dialogs.systemSettings.channelProbe.label')}
+                  {m["channels.dialogs.systemSettings.channelProbe.label"]()}
                 </CardTitle>
               </CardHeader>
               <CardContent className='space-y-4 pt-4'>
                 <div className='flex items-center justify-between'>
                   <div className='flex-1 pr-4'>
-                    <p className='text-sm font-medium'>{t('channels.dialogs.systemSettings.channelProbe.enabledLabel')}</p>
-                    <p className='text-muted-foreground text-sm'>{t('channels.dialogs.systemSettings.channelProbe.enabledDescription')}</p>
+                    <p className='text-sm font-medium'>{m["channels.dialogs.systemSettings.channelProbe.enabledLabel"]()}</p>
+                    <p className='text-muted-foreground text-sm'>{m["channels.dialogs.systemSettings.channelProbe.enabledDescription"]()}</p>
                     <p className='text-muted-foreground mt-1 text-xs'>
-                      {t('channels.dialogs.systemSettings.channelProbe.probeDescription')}
+                      {m["channels.dialogs.systemSettings.channelProbe.probeDescription"]()}
                     </p>
                   </div>
                   <Switch id='probe-enabled' checked={probeEnabled} onCheckedChange={setProbeEnabled} disabled={updateSettings.isPending} />
@@ -91,7 +90,7 @@ export function ChannelsSystemSettingsDialog() {
                 {probeEnabled && (
                   <div className='space-y-2'>
                     <label htmlFor='probe-frequency' className='text-sm font-medium'>
-                      {t('channels.dialogs.systemSettings.channelProbe.frequencyLabel')}
+                      {m["channels.dialogs.systemSettings.channelProbe.frequencyLabel"]()}
                     </label>
                     <Select value={probeFrequency} onValueChange={(value) => setProbeFrequency(value as ProbeFrequency)}>
                       <SelectTrigger id='probe-frequency' disabled={updateSettings.isPending}>
@@ -106,10 +105,10 @@ export function ChannelsSystemSettingsDialog() {
                       </SelectContent>
                     </Select>
                     <p className='text-muted-foreground text-xs'>
-                      {t('channels.dialogs.systemSettings.channelProbe.frequencyDescription')}
+                      {m["channels.dialogs.systemSettings.channelProbe.frequencyDescription"]()}
                     </p>
                     <p className='text-muted-foreground mt-1 text-xs'>
-                      {t('channels.dialogs.systemSettings.channelProbe.frequencyWarning')}
+                      {m["channels.dialogs.systemSettings.channelProbe.frequencyWarning"]()}
                     </p>
                   </div>
                 )}
@@ -120,16 +119,16 @@ export function ChannelsSystemSettingsDialog() {
 
         <DialogFooter>
           <Button variant='outline' onClick={handleClose} disabled={updateSettings.isPending}>
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           <Button onClick={handleSave} disabled={updateSettings.isPending || isLoading}>
             {updateSettings.isPending ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                {t('common.buttons.saving')}
+                {m["common.buttons.saving"]()}
               </>
             ) : (
-              t('common.buttons.save')
+              m["common.buttons.save"]()
             )}
           </Button>
         </DialogFooter>

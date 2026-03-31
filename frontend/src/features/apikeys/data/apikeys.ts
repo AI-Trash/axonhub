@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
@@ -17,6 +16,7 @@ import type {
   UpdateApiKeyProfilesInput,
 } from './schema';
 import { apiKeyConnectionSchema, apiKeyProfileQuotaUsageSchema, apiKeySchema, apiKeyTokenUsageStatsSchema } from './schema';
+import * as m from '@/paraglide/messages';
 
 const NOAUTH_API_KEY_TYPE = 'noauth';
 
@@ -278,7 +278,6 @@ export function useApiKeys(
     disableAutoFetch?: boolean;
   }
 ) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
   const permissions = useRequestPermissions();
   const selectedProjectId = useSelectedProjectId();
@@ -299,7 +298,7 @@ export function useApiKeys(
         const data = await graphqlRequest<{ apiKeys: ApiKeyConnection }>(query, mergedVariables, headers);
         return apiKeyConnectionSchema.parse(data?.apiKeys);
       } catch (error) {
-        handleError(error, t('apikeys.errors.fetchData'));
+        handleError(error, m["apikeys.errors.fetchData"]());
         throw error;
       }
     },
@@ -308,7 +307,6 @@ export function useApiKeys(
 }
 
 export function useApiKey(id: string) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
   const permissions = useRequestPermissions();
   const selectedProjectId = useSelectedProjectId();
@@ -322,7 +320,7 @@ export function useApiKey(id: string) {
         const data = await graphqlRequest<{ node: ApiKey }>(query, { id }, headers);
         return apiKeySchema.parse(data.node);
       } catch (error) {
-        handleError(error, t('apikeys.errors.fetchDetails'));
+        handleError(error, m["apikeys.errors.fetchDetails"]());
         throw error;
       }
     },
@@ -337,7 +335,6 @@ export function useApiKeyQuotaUsages(
     refetchInterval?: number;
   }
 ) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
   const selectedProjectId = useSelectedProjectId();
 
@@ -353,7 +350,7 @@ export function useApiKeyQuotaUsages(
         );
         return apiKeyProfileQuotaUsageSchema.array().parse(data.apiKeyQuotaUsages);
       } catch (error) {
-        handleError(error, t('apikeys.errors.fetchDetails'));
+        handleError(error, m["apikeys.errors.fetchDetails"]());
         throw error;
       }
     },
@@ -372,7 +369,6 @@ export function useApiKeyTokenUsageStats(
     enabled?: boolean;
   }
 ) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
   const selectedProjectId = useSelectedProjectId();
 
@@ -388,7 +384,7 @@ export function useApiKeyTokenUsageStats(
         );
         return apiKeyTokenUsageStatsSchema.array().parse(data.apiKeyTokenUsageStats);
       } catch (error) {
-        handleError(error, t('apikeys.errors.fetchUsageStats'));
+        handleError(error, m["apikeys.errors.fetchUsageStats"]());
         throw error;
       }
     },
@@ -399,7 +395,6 @@ export function useApiKeyTokenUsageStats(
 }
 
 export function useCreateApiKey() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const permissions = useRequestPermissions();
   const selectedProjectId = useSelectedProjectId();
@@ -417,16 +412,15 @@ export function useCreateApiKey() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
-      toast.success(t('apikeys.messages.createSuccess'));
+      toast.success(m["apikeys.messages.createSuccess"]());
     },
     onError: (_error) => {
-      toast.error(t('apikeys.messages.createError'));
+      toast.error(m["apikeys.messages.createError"]());
     },
   });
 }
 
 export function useUpdateApiKey() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const permissions = useRequestPermissions();
   const selectedProjectId = useSelectedProjectId();
@@ -440,16 +434,15 @@ export function useUpdateApiKey() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
       queryClient.invalidateQueries({ queryKey: ['apiKey', variables.id] });
-      toast.success(t('apikeys.messages.updateSuccess'));
+      toast.success(m["apikeys.messages.updateSuccess"]());
     },
     onError: (_error) => {
-      toast.error(t('apikeys.messages.updateError'));
+      toast.error(m["apikeys.messages.updateError"]());
     },
   });
 }
 
 export function useUpdateApiKeyStatus() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -463,20 +456,19 @@ export function useUpdateApiKeyStatus() {
       queryClient.invalidateQueries({ queryKey: ['apiKey', variables.id] });
       const statusText =
         data.updateAPIKeyStatus.status === 'enabled'
-          ? t('apikeys.status.enabled')
+          ? m["apikeys.status.enabled"]()
           : data.updateAPIKeyStatus.status === 'disabled'
-            ? t('apikeys.status.disabled')
-            : t('apikeys.status.archived');
-      toast.success(t('apikeys.messages.statusUpdateSuccess', { status: statusText }));
+            ? m["apikeys.status.disabled"]()
+            : m["apikeys.status.archived"]();
+      toast.success(m["apikeys.messages.statusUpdateSuccess"]({ status: statusText }));
     },
     onError: (_error) => {
-      toast.error(t('apikeys.messages.statusUpdateError'));
+      toast.error(m["apikeys.messages.statusUpdateError"]());
     },
   });
 }
 
 export function useUpdateApiKeyProfiles() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -488,16 +480,15 @@ export function useUpdateApiKeyProfiles() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
       queryClient.invalidateQueries({ queryKey: ['apiKey', variables.id] });
-      toast.success(t('apikeys.messages.profilesUpdateSuccess'));
+      toast.success(m["apikeys.messages.profilesUpdateSuccess"]());
     },
     onError: (_error) => {
-      toast.error(t('apikeys.messages.profilesUpdateError'));
+      toast.error(m["apikeys.messages.profilesUpdateError"]());
     },
   });
 }
 
 export function useBulkDisableApiKeys() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -509,16 +500,15 @@ export function useBulkDisableApiKeys() {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
-      toast.success(t('apikeys.messages.bulkDisableSuccess', { count: variables.length }));
+      toast.success(m["apikeys.messages.bulkDisableSuccess"]({ count: variables.length }));
     },
     onError: (_error) => {
-      toast.error(t('apikeys.messages.bulkDisableError'));
+      toast.error(m["apikeys.messages.bulkDisableError"]());
     },
   });
 }
 
 export function useBulkEnableApiKeys() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -530,16 +520,15 @@ export function useBulkEnableApiKeys() {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
-      toast.success(t('apikeys.messages.bulkEnableSuccess', { count: variables.length }));
+      toast.success(m["apikeys.messages.bulkEnableSuccess"]({ count: variables.length }));
     },
     onError: (_error) => {
-      toast.error(t('apikeys.messages.bulkEnableError'));
+      toast.error(m["apikeys.messages.bulkEnableError"]());
     },
   });
 }
 
 export function useBulkArchiveApiKeys() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -551,10 +540,10 @@ export function useBulkArchiveApiKeys() {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
-      toast.success(t('apikeys.messages.bulkArchiveSuccess', { count: variables.length }));
+      toast.success(m["apikeys.messages.bulkArchiveSuccess"]({ count: variables.length }));
     },
     onError: (_error) => {
-      toast.error(t('apikeys.messages.bulkArchiveError'));
+      toast.error(m["apikeys.messages.bulkArchiveError"]());
     },
   });
 }

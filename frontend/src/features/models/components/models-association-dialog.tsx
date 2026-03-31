@@ -2,7 +2,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { IconPlus, IconTrash, IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useEffect, useMemo, useCallback, useState, useRef } from 'react';
 import { useForm, useFieldArray, useWatch } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -26,6 +25,7 @@ import { useQueryModelChannelConnections, ModelAssociationInput, ModelChannelCon
 import { useUpdateModel } from '../data/models';
 import { ModelAssociation } from '../data/schema';
 import { ChannelModelsList } from './channel-models-list';
+import * as m from '@/paraglide/messages';
 
 const associationFormSchema = z.object({
   associations: z
@@ -89,7 +89,6 @@ const associationFormSchema = z.object({
 type AssociationFormData = z.infer<typeof associationFormSchema>;
 
 export function ModelsAssociationDialog() {
-  const { t } = useTranslation();
   const { open, setOpen, currentRow } = useModels();
   const updateModel = useUpdateModel();
   const { data: channelsData } = useAllChannelsForOrdering({ enabled: open === 'association' });
@@ -277,7 +276,7 @@ export function ModelsAssociationDialog() {
           setConnections([]);
         }
       } catch (error) {
-        toast.error(t('common.errors.loadFailed'));
+        toast.error(m["common.errors.loadFailed"]());
         setConnections([]);
       }
     };
@@ -486,8 +485,8 @@ export function ModelsAssociationDialog() {
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent ref={dialogContentRef} className='flex h-[85vh] max-h-[800px] flex-col sm:max-w-6xl'>
         <DialogHeader className='shrink-0 text-left'>
-          <DialogTitle>{t('models.dialogs.association.title')}</DialogTitle>
-          <DialogDescription>{t('models.dialogs.association.description', { name: currentRow?.name })}</DialogDescription>
+          <DialogTitle>{m["models.dialogs.association.title"]()}</DialogTitle>
+          <DialogDescription>{m["models.dialogs.association.description"]({ name: currentRow?.name })}</DialogDescription>
         </DialogHeader>
 
         <div className='flex min-h-0 flex-1 gap-6'>
@@ -498,17 +497,17 @@ export function ModelsAssociationDialog() {
               <Form {...form}>
                 <form id='association-form' onSubmit={form.handleSubmit(onSubmit)} className='space-y-3'>
                   {fields.length === 0 && (
-                    <p className='text-muted-foreground py-8 text-center text-sm'>{t('models.dialogs.association.noRules')}</p>
+                    <p className='text-muted-foreground py-8 text-center text-sm'>{m["models.dialogs.association.noRules"]()}</p>
                   )}
 
                   {fields.length > 0 && (
                     <div className='grid grid-cols-[2.25rem_3rem_14rem_1fr_2.25rem] items-center gap-2 border-b px-[13px] pb-2'>
                       <div />
                       <div className='text-muted-foreground text-center text-xs font-medium'>
-                        {t('models.dialogs.association.priority')}
+                        {m["models.dialogs.association.priority"]()}
                       </div>
-                      <div className='text-muted-foreground text-center text-xs font-medium'>{t('models.dialogs.association.type')}</div>
-                      <div className='text-muted-foreground text-center text-xs font-medium'>{t('models.dialogs.association.rule')}</div>
+                      <div className='text-muted-foreground text-center text-xs font-medium'>{m["models.dialogs.association.type"]()}</div>
+                      <div className='text-muted-foreground text-center text-xs font-medium'>{m["models.dialogs.association.rule"]()}</div>
                       <div />
                     </div>
                   )}
@@ -540,7 +539,7 @@ export function ModelsAssociationDialog() {
             <div className='bg-background shrink-0 border-t pt-4'>
               <Button type='button' variant='outline' onClick={handleAddAssociation} disabled={fields.length >= 10} className='w-full'>
                 <IconPlus className='mr-2 h-4 w-4' />
-                {t('models.dialogs.association.addRule')}
+                {m["models.dialogs.association.addRule"]()}
               </Button>
             </div>
           </div>
@@ -548,10 +547,10 @@ export function ModelsAssociationDialog() {
           {/* Right Side - Preview */}
           <div className='flex min-h-0 flex-1 flex-col border-l pl-6'>
             <div className='shrink-0 space-y-2 pb-4'>
-              <h3 className='text-sm font-semibold'>{t('models.dialogs.association.preview')}</h3>
-              <p className='text-muted-foreground text-xs'>{t('models.dialogs.association.previewDescription')}</p>
+              <h3 className='text-sm font-semibold'>{m["models.dialogs.association.preview"]()}</h3>
+              <p className='text-muted-foreground text-xs'>{m["models.dialogs.association.previewDescription"]()}</p>
               <Input
-                placeholder={t('models.dialogs.association.filterByChannel')}
+                placeholder={m["models.dialogs.association.filterByChannel"]()}
                 value={channelFilter}
                 onChange={(e) => setChannelFilter(e.target.value)}
                 className='h-8'
@@ -562,8 +561,8 @@ export function ModelsAssociationDialog() {
                 channels={filteredConnections}
                 emptyMessage={
                   channelFilter.trim()
-                    ? t('models.dialogs.association.noFilteredConnections')
-                    : t('models.dialogs.association.noConnections')
+                    ? m["models.dialogs.association.noFilteredConnections"]()
+                    : m["models.dialogs.association.noConnections"]()
                 }
               />
             </div>
@@ -572,10 +571,10 @@ export function ModelsAssociationDialog() {
 
         <DialogFooter className='shrink-0 border-t pt-4'>
           <Button type='button' variant='outline' onClick={handleClose}>
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           <Button type='submit' form='association-form' disabled={updateModel.isPending || !form.formState.isValid}>
-            {t('common.buttons.save')}
+            {m["common.buttons.save"]()}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -594,8 +593,6 @@ interface AssociationRowProps {
 }
 
 function AssociationRow({ index, form, channelOptions, allModelOptions, allTags, onRemove, portalContainer }: AssociationRowProps) {
-  const { t } = useTranslation();
-
   const type = form.watch(`associations.${index}.type`);
   const channelId = form.watch(`associations.${index}.channelId`);
   const channelTags = form.watch(`associations.${index}.channelTags`);
@@ -704,12 +701,12 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='channel_model'>{t('models.dialogs.association.types.channelModel')}</SelectItem>
-                    <SelectItem value='channel_regex'>{t('models.dialogs.association.types.channelRegex')}</SelectItem>
-                    <SelectItem value='channel_tags_model'>{t('models.dialogs.association.types.channelTagsModel')}</SelectItem>
-                    <SelectItem value='channel_tags_regex'>{t('models.dialogs.association.types.channelTagsRegex')}</SelectItem>
-                    <SelectItem value='model'>{t('models.dialogs.association.types.model')}</SelectItem>
-                    <SelectItem value='regex'>{t('models.dialogs.association.types.regex')}</SelectItem>
+                    <SelectItem value='channel_model'>{m["models.dialogs.association.types.channelModel"]()}</SelectItem>
+                    <SelectItem value='channel_regex'>{m["models.dialogs.association.types.channelRegex"]()}</SelectItem>
+                    <SelectItem value='channel_tags_model'>{m["models.dialogs.association.types.channelTagsModel"]()}</SelectItem>
+                    <SelectItem value='channel_tags_regex'>{m["models.dialogs.association.types.channelTagsRegex"]()}</SelectItem>
+                    <SelectItem value='model'>{m["models.dialogs.association.types.model"]()}</SelectItem>
+                    <SelectItem value='regex'>{m["models.dialogs.association.types.regex"]()}</SelectItem>
                   </SelectContent>
                 </Select>
               </FormControl>
@@ -730,8 +727,8 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
                     selectedValue={field.value?.toString() || ''}
                     onSelectedValueChange={(value) => field.onChange(Number(value))}
                     items={channelOptions.map((opt) => ({ value: opt.value.toString(), label: opt.label }))}
-                    placeholder={t('models.dialogs.association.selectChannel')}
-                    emptyMessage={t('models.dialogs.association.noModelsAvailable')}
+                    placeholder={m["models.dialogs.association.selectChannel"]()}
+                    emptyMessage={m["models.dialogs.association.noModelsAvailable"]()}
                     portalContainer={portalContainer}
                   />
                 </FormControl>
@@ -748,7 +745,7 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
             name={`associations.${index}.modelId`}
             render={({ field }) => (
               <FormItem className='min-w-0 gap-0'>
-                {/* <FormLabel className='text-xs'>{t('models.dialogs.association.selectModel')}</FormLabel> */}
+                {/* <FormLabel className='text-xs'>{m["models.dialogs.association.selectModel"]()}</FormLabel> */}
                 <FormControl>
                   <AutoComplete
                     selectedValue={field.value?.toString() || ''}
@@ -758,11 +755,11 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
                     searchValue={modelSearch}
                     onSearchValueChange={setModelSearch}
                     items={modelOptions}
-                    placeholder={t('models.dialogs.association.selectModel')}
+                    placeholder={m["models.dialogs.association.selectModel"]()}
                     emptyMessage={
                       modelOptions.length === 0 && channelId
-                        ? t('models.dialogs.association.noChannelModelsAvailable')
-                        : t('models.dialogs.association.selectChannelFirst')
+                        ? m["models.dialogs.association.noChannelModelsAvailable"]()
+                        : m["models.dialogs.association.selectChannelFirst"]()
                     }
                     portalContainer={portalContainer}
                   />
@@ -780,12 +777,12 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
             name={`associations.${index}.pattern`}
             render={({ field }) => (
               <FormItem className='min-w-0 gap-0'>
-                {/* <FormLabel className='text-xs'>{t('models.dialogs.association.pattern')}</FormLabel> */}
+                {/* <FormLabel className='text-xs'>{m["models.dialogs.association.pattern"]()}</FormLabel> */}
                 <FormControl>
                   <Input
                     {...field}
                     value={field.value?.toString() || ''}
-                    placeholder={t('models.dialogs.association.patternPlaceholder')}
+                    placeholder={m["models.dialogs.association.patternPlaceholder"]()}
                     className='h-9'
                   />
                 </FormControl>
@@ -819,11 +816,11 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
                       searchValue={modelSearch}
                       onSearchValueChange={setModelSearch}
                       items={modelOptions}
-                      placeholder={t('models.dialogs.association.selectModel')}
+                      placeholder={m["models.dialogs.association.selectModel"]()}
                       emptyMessage={
                         modelOptions.length === 0 && channelId
-                          ? t('models.dialogs.association.noChannelModelsAvailable')
-                          : t('models.dialogs.association.selectChannelFirst')
+                          ? m["models.dialogs.association.noChannelModelsAvailable"]()
+                          : m["models.dialogs.association.selectChannelFirst"]()
                       }
                       portalContainer={portalContainer}
                     />
@@ -842,7 +839,7 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
                     <Input
                       {...field}
                       value={field.value?.toString() || ''}
-                      placeholder={t('models.dialogs.association.patternPlaceholder')}
+                      placeholder={m["models.dialogs.association.patternPlaceholder"]()}
                       className='h-9'
                     />
                   </FormControl>
@@ -861,12 +858,12 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
             name={`associations.${index}.channelTags`}
             render={({ field, fieldState }) => (
               <FormItem className='space-y-1'>
-                <FormLabel className='text-xs'>{t('models.dialogs.association.selectChannelTags')}</FormLabel>
+                <FormLabel className='text-xs'>{m["models.dialogs.association.selectChannelTags"]()}</FormLabel>
                 <FormControl>
                   <TagsAutocompleteInput
                     value={field.value || []}
                     onChange={field.onChange}
-                    placeholder={t('models.dialogs.association.selectChannelTags')}
+                    placeholder={m["models.dialogs.association.selectChannelTags"]()}
                     suggestions={allTags}
                     className='h-auto min-h-9 py-1'
                   />
@@ -889,7 +886,7 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
             className='text-muted-foreground hover:text-foreground mb-2 h-7 px-2 text-xs'
           >
             {excludeExpanded ? <IconChevronUp className='mr-1 h-3 w-3' /> : <IconChevronDown className='mr-1 h-3 w-3' />}
-            {t('models.dialogs.association.excludeSection')}
+            {m["models.dialogs.association.excludeSection"]()}
             {hasExcludeData && !excludeExpanded && (
               <Badge variant='secondary' className='ml-2 h-4 px-1 text-[10px]'>
                 {(excludeChannelNamePattern ? 1 : 0) + (excludeChannelIds?.length || 0) + (excludeChannelTags?.length || 0)}
@@ -904,12 +901,12 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
                   name={`associations.${index}.excludeChannelNamePattern`}
                   render={({ field }) => (
                     <FormItem className='space-y-1'>
-                      <FormLabel className='text-xs'>{t('models.dialogs.association.excludeChannelNamePattern')}</FormLabel>
+                      <FormLabel className='text-xs'>{m["models.dialogs.association.excludeChannelNamePattern"]()}</FormLabel>
                       <FormControl>
                         <Input
                           {...field}
                           value={field.value?.toString() || ''}
-                          placeholder={t('models.dialogs.association.excludeChannelNamePattern')}
+                          placeholder={m["models.dialogs.association.excludeChannelNamePattern"]()}
                           className='h-9'
                         />
                       </FormControl>
@@ -922,12 +919,12 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
                   name={`associations.${index}.excludeChannelTags`}
                   render={({ field }) => (
                     <FormItem className='space-y-1'>
-                      <FormLabel className='text-xs'>{t('models.dialogs.association.excludeChannelTags')}</FormLabel>
+                      <FormLabel className='text-xs'>{m["models.dialogs.association.excludeChannelTags"]()}</FormLabel>
                       <FormControl>
                         <TagsAutocompleteInput
                           value={field.value || []}
                           onChange={field.onChange}
-                          placeholder={t('models.dialogs.association.excludeChannelTags')}
+                          placeholder={m["models.dialogs.association.excludeChannelTags"]()}
                           suggestions={allTags}
                           className='h-auto min-h-9 py-1'
                         />
@@ -942,7 +939,7 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
                 name={`associations.${index}.excludeChannelIds`}
                 render={({ field }) => (
                   <FormItem className='space-y-1'>
-                    <FormLabel className='text-xs'>{t('models.dialogs.association.excludeChannelIds')}</FormLabel>
+                    <FormLabel className='text-xs'>{m["models.dialogs.association.excludeChannelIds"]()}</FormLabel>
                     <FormControl>
                       <TagsAutocompleteInput
                         value={(field.value || []).map((id: number) => {
@@ -958,7 +955,7 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
                             .filter((id) => !isNaN(id));
                           field.onChange(ids);
                         }}
-                        placeholder={t('models.dialogs.association.excludeChannelIds')}
+                        placeholder={m["models.dialogs.association.excludeChannelIds"]()}
                         suggestions={channelOptions.map((opt) => opt.label)}
                         className='h-auto min-h-9 py-1'
                       />
@@ -978,19 +975,17 @@ function AssociationRow({ index, form, channelOptions, allModelOptions, allTags,
           let hint = null;
           const selectedChannel = channelOptions.find((c) => c.value === channelId);
           if (type === 'channel_model' && channelId && modelId) {
-            hint = t('models.dialogs.association.ruleHints.channelModel', {
+            hint = m["models.dialogs.association.ruleHints.channelModel"]({
               model: modelId,
-              channel: selectedChannel?.label || channelId.toString(),
-            });
+              channel: selectedChannel?.label || channelId.toString() });
           } else if (type === 'channel_regex' && channelId && pattern) {
-            hint = t('models.dialogs.association.ruleHints.channelRegex', {
+            hint = m["models.dialogs.association.ruleHints.channelRegex"]({
               pattern,
-              channel: selectedChannel?.label || channelId.toString(),
-            });
+              channel: selectedChannel?.label || channelId.toString() });
           } else if (type === 'channel_tags_model' && channelTags && channelTags.length > 0 && modelId) {
-            hint = t('models.dialogs.association.ruleHints.channelTagsModel', { model: modelId, tags: channelTags.join(', ') });
+            hint = m["models.dialogs.association.ruleHints.channelTagsModel"]({ model: modelId, tags: channelTags.join(', ') });
           } else if (type === 'channel_tags_regex' && channelTags && channelTags.length > 0 && pattern) {
-            hint = t('models.dialogs.association.ruleHints.channelTagsRegex', { pattern, tags: channelTags.join(', ') });
+            hint = m["models.dialogs.association.ruleHints.channelTagsRegex"]({ pattern, tags: channelTags.join(', ') });
           }
           if (hint) {
             return <div className='text-muted-foreground ml-[6.25rem] text-xs'>{hint}</div>;

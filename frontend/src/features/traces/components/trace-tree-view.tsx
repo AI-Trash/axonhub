@@ -1,7 +1,6 @@
 import { format } from 'date-fns';
 import { ChevronRight, ChevronDown, Clock, Zap } from 'lucide-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -10,6 +9,8 @@ import { cn } from '@/lib/utils';
 import { Segment, Span } from '../data/schema';
 import { normalizeSpanType } from '../utils/span-display';
 import { getSpanIcon } from './constant';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 interface TraceTreeViewProps {
   trace: Segment;
@@ -29,7 +30,6 @@ function SpanItem({
   onSelect?: () => void;
   isActive?: boolean;
 }) {
-  const { t } = useTranslation();
   const normalizedSpanType = normalizeSpanType(span.type);
   const SpanIcon = getSpanIcon(normalizedSpanType);
 
@@ -56,7 +56,7 @@ function SpanItem({
           <SpanIcon className='text-muted-foreground h-4 w-4' />
           <span className='truncate text-sm font-medium'>{span.type}</span>
           <Badge variant='secondary' className='text-xs capitalize'>
-            {t(`traces.common.badges.${type}`)}
+            {dynamicTranslation(`traces.common.badges.${type}`)}
           </Badge>
         </div>
         <ChevronRight className='text-muted-foreground h-4 w-4 flex-shrink-0' />
@@ -67,7 +67,6 @@ function SpanItem({
 }
 
 export function TraceTreeView({ trace, level = 0, onSpanSelect, selectedSpanId }: TraceTreeViewProps) {
-  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(level === 0);
 
   const duration = trace.duration ? `${(trace.duration / 1000).toFixed(3)}s` : '0s';
@@ -76,19 +75,19 @@ export function TraceTreeView({ trace, level = 0, onSpanSelect, selectedSpanId }
 
   const tokenRows = [
     trace.metadata?.inputTokens != null && {
-      label: t('traces.detail.inputTokensLabel'),
+      label: m["traces.detail.inputTokensLabel"](),
       value: trace.metadata.inputTokens.toLocaleString(),
     },
     trace.metadata?.outputTokens != null && {
-      label: t('traces.detail.outputTokensLabel'),
+      label: m["traces.detail.outputTokensLabel"](),
       value: trace.metadata.outputTokens.toLocaleString(),
     },
     trace.metadata?.totalTokens != null && {
-      label: t('traces.detail.totalTokensLabel'),
+      label: m["traces.detail.totalTokensLabel"](),
       value: trace.metadata.totalTokens.toLocaleString(),
     },
     trace.metadata?.cachedTokens != null && {
-      label: t('traces.detail.cachedTokensLabel'),
+      label: m["traces.detail.cachedTokensLabel"](),
       value: trace.metadata.cachedTokens.toLocaleString(),
     },
   ].filter(Boolean) as { label: string; value: string }[];
@@ -115,14 +114,14 @@ export function TraceTreeView({ trace, level = 0, onSpanSelect, selectedSpanId }
                 <Zap className='text-primary h-4 w-4' />
                 <span className='font-semibold'>{trace.model}</span>
                 <Badge variant='secondary' className='text-xs'>
-                  {t('traces.detail.levelBadge', { level })}
+                  {m["traces.detail.levelBadge"]({ level })}
                 </Badge>
               </div>
 
               <div className='grid grid-cols-2 gap-3 text-sm md:grid-cols-4'>
                 <div className='flex items-center gap-2'>
                   <Clock className='text-muted-foreground h-3 w-3' />
-                  <span className='text-muted-foreground'>{t('traces.detail.durationLabel')}</span>
+                  <span className='text-muted-foreground'>{m["traces.detail.durationLabel"]()}</span>
                   <span className='font-medium'>{duration}</span>
                 </div>
 
@@ -135,7 +134,7 @@ export function TraceTreeView({ trace, level = 0, onSpanSelect, selectedSpanId }
 
                 {trace.metadata?.itemCount != null && (
                   <div className='flex items-center gap-1'>
-                    <span className='text-muted-foreground'>{t('traces.detail.itemsLabel')}</span>
+                    <span className='text-muted-foreground'>{m["traces.detail.itemsLabel"]()}</span>
                     <span className='font-medium'>{trace.metadata.itemCount}</span>
                   </div>
                 )}
@@ -153,7 +152,7 @@ export function TraceTreeView({ trace, level = 0, onSpanSelect, selectedSpanId }
               {trace.requestSpans && trace.requestSpans.length > 0 && (
                 <div className='space-y-2'>
                   <h4 className='text-primary flex items-center gap-2 text-sm font-semibold'>
-                    <span>📤</span> {t('traces.detail.requestSpansHeader', { count: trace.requestSpans.length })}
+                    <span>📤</span> {m["traces.detail.requestSpansHeader"]({ count: trace.requestSpans.length })}
                   </h4>
                   <div className='space-y-1'>
                     {trace.requestSpans.map((span: Span) => (
@@ -173,7 +172,7 @@ export function TraceTreeView({ trace, level = 0, onSpanSelect, selectedSpanId }
               {trace.responseSpans && trace.responseSpans.length > 0 && (
                 <div className='space-y-2'>
                   <h4 className='text-primary flex items-center gap-2 text-sm font-semibold'>
-                    <span>📥</span> {t('traces.detail.responseSpansHeader', { count: trace.responseSpans.length })}
+                    <span>📥</span> {m["traces.detail.responseSpansHeader"]({ count: trace.responseSpans.length })}
                   </h4>
                   <div className='space-y-1'>
                     {trace.responseSpans.map((span: Span) => (

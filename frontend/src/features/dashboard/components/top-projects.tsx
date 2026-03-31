@@ -1,13 +1,12 @@
 import { FolderIcon } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatNumber } from '@/utils/format-number';
 
 import { useTopProjects } from '../data/dashboard';
+import * as m from '@/paraglide/messages';
 
 export function TopProjects() {
-  const { t } = useTranslation();
   const { data: topProjects, isLoading, error } = useTopProjects(5);
 
   if (isLoading) {
@@ -30,13 +29,13 @@ export function TopProjects() {
   if (error) {
     return (
       <div className='text-sm text-red-500'>
-        {t('dashboard.charts.errorLoadingTopProjects')} {error.message}
+        {m["dashboard.charts.errorLoadingTopProjects"]()} {error.message}
       </div>
     );
   }
 
   if (!topProjects || topProjects.length === 0) {
-    return <div className='text-muted-foreground text-sm'>{t('dashboard.charts.noProjectData')}</div>;
+    return <div className='text-muted-foreground text-sm'>{m["dashboard.charts.noProjectData"]()}</div>;
   }
 
   return (
@@ -51,7 +50,7 @@ export function TopProjects() {
             <p className='text-muted-foreground text-sm'>{project.projectDescription}</p>
           </div>
           <div className='ml-auto font-medium'>
-            {formatNumber(project.requestCount)} {t('dashboard.stats.requests')}
+            {formatNumber(project.requestCount)} {m["dashboard.stats.requests"]()}
           </div>
         </div>
       ))}

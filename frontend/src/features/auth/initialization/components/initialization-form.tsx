@@ -1,7 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { HTMLAttributes } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 
 import { PasswordInput } from '@/components/password-input';
@@ -10,31 +9,31 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Input } from '@/components/ui/input';
 import { useInitializeSystem } from '@/features/auth/data/initialization';
 import { cn } from '@/lib/utils';
+import * as m from '@/paraglide/messages';
 
 type InitializationFormProps = HTMLAttributes<HTMLFormElement>;
 
 // Create form schema factory to support i18n
-const createFormSchema = (t: (key: string) => string) =>
+const createFormSchema = () =>
   z.object({
     ownerEmail: z
       .string()
-      .min(1, { message: t('initialization.form.validation.ownerEmailRequired') })
-      .email({ message: t('initialization.form.validation.ownerEmailInvalid') }),
+      .min(1, { message: m["initialization.form.validation.ownerEmailRequired"]() })
+      .email({ message: m["initialization.form.validation.ownerEmailInvalid"]() }),
     ownerPassword: z
       .string()
       .min(1, {
-        message: t('initialization.form.validation.ownerPasswordRequired'),
+        message: m["initialization.form.validation.ownerPasswordRequired"](),
       })
       .min(8, {
-        message: t('initialization.form.validation.ownerPasswordMinLength'),
+        message: m["initialization.form.validation.ownerPasswordMinLength"](),
       }),
-    ownerFirstName: z.string().min(1, { message: t('initialization.form.validation.ownerFirstNameRequired') }),
-    ownerLastName: z.string().min(1, { message: t('initialization.form.validation.ownerLastNameRequired') }),
-    brandName: z.string().min(1, { message: t('initialization.form.validation.brandNameRequired') }),
+    ownerFirstName: z.string().min(1, { message: m["initialization.form.validation.ownerFirstNameRequired"]() }),
+    ownerLastName: z.string().min(1, { message: m["initialization.form.validation.ownerLastNameRequired"]() }),
+    brandName: z.string().min(1, { message: m["initialization.form.validation.brandNameRequired"]() }),
   });
 
 export function InitializationForm({ className, ...props }: InitializationFormProps) {
-  const { t } = useTranslation();
   const initializeSystemMutation = useInitializeSystem();
 
   const formSchema = createFormSchema(t);
@@ -70,10 +69,10 @@ export function InitializationForm({ className, ...props }: InitializationFormPr
           name='ownerFirstName'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('initialization.form.ownerFirstName')}</FormLabel>
+              <FormLabel>{m["initialization.form.ownerFirstName"]()}</FormLabel>
               <FormControl>
                 <Input
-                  placeholder={t('initialization.form.placeholders.ownerFirstName')}
+                  placeholder={m["initialization.form.placeholders.ownerFirstName"]()}
                   className='border-slate-300 !bg-white text-slate-800 transition-all duration-300 placeholder:text-slate-400 focus:border-slate-500 focus:!bg-white focus:ring-2 focus:ring-slate-200'
                   {...field}
                 />
@@ -87,10 +86,10 @@ export function InitializationForm({ className, ...props }: InitializationFormPr
           name='ownerLastName'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('initialization.form.ownerLastName')}</FormLabel>
+              <FormLabel>{m["initialization.form.ownerLastName"]()}</FormLabel>
               <FormControl>
                 <Input
-                  placeholder={t('initialization.form.placeholders.ownerLastName')}
+                  placeholder={m["initialization.form.placeholders.ownerLastName"]()}
                   className='border-slate-300 !bg-white text-slate-800 transition-all duration-300 placeholder:text-slate-400 focus:border-slate-500 focus:!bg-white focus:ring-2 focus:ring-slate-200'
                   {...field}
                 />
@@ -104,10 +103,10 @@ export function InitializationForm({ className, ...props }: InitializationFormPr
           name='ownerEmail'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('initialization.form.ownerEmail')}</FormLabel>
+              <FormLabel>{m["initialization.form.ownerEmail"]()}</FormLabel>
               <FormControl>
                 <Input
-                  placeholder={t('initialization.form.placeholders.ownerEmail')}
+                  placeholder={m["initialization.form.placeholders.ownerEmail"]()}
                   className='border-slate-300 !bg-white text-slate-800 transition-all duration-300 placeholder:text-slate-400 focus:border-slate-500 focus:!bg-white focus:ring-2 focus:ring-slate-200'
                   {...field}
                 />
@@ -121,10 +120,10 @@ export function InitializationForm({ className, ...props }: InitializationFormPr
           name='ownerPassword'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('initialization.form.ownerPassword')}</FormLabel>
+              <FormLabel>{m["initialization.form.ownerPassword"]()}</FormLabel>
               <FormControl>
                 <PasswordInput
-                  placeholder={t('initialization.form.placeholders.ownerPassword')}
+                  placeholder={m["initialization.form.placeholders.ownerPassword"]()}
                   className='border-slate-300 bg-white text-slate-800 backdrop-blur-sm transition-all duration-300 placeholder:text-slate-400 focus:border-slate-500 focus:bg-white focus:ring-2 focus:ring-slate-200'
                   {...field}
                 />
@@ -138,10 +137,10 @@ export function InitializationForm({ className, ...props }: InitializationFormPr
           name='brandName'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('initialization.form.brandName')}</FormLabel>
+              <FormLabel>{m["initialization.form.brandName"]()}</FormLabel>
               <FormControl>
                 <Input
-                  placeholder={t('initialization.form.placeholders.brandName')}
+                  placeholder={m["initialization.form.placeholders.brandName"]()}
                   className='border-slate-300 !bg-white text-slate-800 transition-all duration-300 placeholder:text-slate-400 focus:border-slate-500 focus:!bg-white focus:ring-2 focus:ring-slate-200'
                   {...field}
                 />
@@ -155,7 +154,7 @@ export function InitializationForm({ className, ...props }: InitializationFormPr
           className='mt-6 w-full rounded-lg bg-slate-800 px-6 py-3 font-medium text-white shadow-lg transition-all duration-300 hover:bg-slate-700 hover:shadow-xl focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 disabled:opacity-50'
           disabled={initializeSystemMutation.isPending}
         >
-          {initializeSystemMutation.isPending ? t('initialization.form.submitting') : t('initialization.form.submit')}
+          {initializeSystemMutation.isPending ? m["initialization.form.submitting"]() : m["initialization.form.submit"]()}
         </Button>
       </form>
     </Form>

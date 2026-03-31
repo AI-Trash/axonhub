@@ -1,9 +1,9 @@
 import type React from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 import AutoRouterDiagram from '../sign-in/components/auto-router-diagram';
+import * as m from '@/paraglide/messages';
 
 export interface TwoColumnAuthProps {
   title: React.ReactNode;
@@ -26,7 +26,6 @@ export default function TwoColumnAuth({
   rightFooter,
   rightMaxWidthClassName = 'max-w-md',
 }: TwoColumnAuthProps) {
-  const { t } = useTranslation();
   return (
     <div className='flex min-h-screen'>
       {/* Left Side - Brand/Welcome Section */}
@@ -41,11 +40,11 @@ export default function TwoColumnAuth({
         <div className='relative z-10 flex flex-col justify-center px-12 py-16 text-white'>
           <div className='w-full max-w-lg'>
             <div className='mb-8'>
-              <h1 className='mb-4 text-4xl font-light text-slate-100'>{t('auth.brand.title')}</h1>
+              <h1 className='mb-4 text-4xl font-light text-slate-100'>{m["auth.brand.title"]()}</h1>
               <h2 className='mb-6 bg-gradient-to-r from-emerald-300 to-teal-200 bg-clip-text text-5xl font-bold text-transparent'>
                 AxonHub
               </h2>
-              <p className='text-lg leading-relaxed text-slate-300'>{t('auth.brand.description')}</p>
+              <p className='text-lg leading-relaxed text-slate-300'>{m["auth.brand.description"]()}</p>
             </div>
 
             <div className='mt-4'>

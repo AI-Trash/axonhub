@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -11,6 +10,7 @@ import { buildDateRangeWhereClause, type DateTimeRangeValue } from '@/utils/date
 import { ThreadsTable } from './components/threads-table';
 import type { Thread } from './data/schema';
 import { useThreads } from './data/threads';
+import * as m from '@/paraglide/messages';
 
 function ThreadsContent() {
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs, cursorHistory } = usePaginationSearch({
@@ -114,15 +114,13 @@ function ThreadsContent() {
 }
 
 export default function ThreadsManagement() {
-  const { t } = useTranslation();
-
   return (
     <>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('threads.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('threads.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["threads.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["threads.description"]()}</p>
           </div>
         </div>
       </Header>

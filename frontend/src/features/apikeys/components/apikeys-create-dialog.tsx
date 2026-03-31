@@ -1,7 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 
 import { ScopesSelect } from '@/components/scopes-select';
 import { Button } from '@/components/ui/button';
@@ -13,9 +12,9 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useCreateApiKey } from '../data/apikeys';
 import { CreateApiKeyInput, createApiKeyInputSchema } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 export function ApiKeysCreateDialog() {
-  const { t } = useTranslation();
   const { isDialogOpen, closeDialog, openDialog, setSelectedApiKey } = useApiKeysContext();
   const createApiKey = useCreateApiKey();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -60,8 +59,8 @@ export function ApiKeysCreateDialog() {
     <Dialog open={isDialogOpen.create} onOpenChange={handleClose}>
       <DialogContent className='flex max-h-[90vh] flex-col sm:max-w-[600px]' ref={setDialogContent}>
         <DialogHeader>
-          <DialogTitle>{t('apikeys.dialogs.create.title')}</DialogTitle>
-          <DialogDescription>{t('apikeys.dialogs.create.description')}</DialogDescription>
+          <DialogTitle>{m["apikeys.dialogs.create.title"]()}</DialogTitle>
+          <DialogDescription>{m["apikeys.dialogs.create.description"]()}</DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-4'>
@@ -70,9 +69,9 @@ export function ApiKeysCreateDialog() {
               name='name'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('apikeys.dialogs.fields.name.label')}</FormLabel>
+                  <FormLabel>{m["apikeys.dialogs.fields.name.label"]()}</FormLabel>
                   <FormControl>
-                    <Input placeholder={t('apikeys.dialogs.fields.name.placeholder')} {...field} />
+                    <Input placeholder={m["apikeys.dialogs.fields.name.placeholder"]()} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -84,27 +83,27 @@ export function ApiKeysCreateDialog() {
               name='type'
               render={({ field }) => (
                 <FormItem className='space-y-3'>
-                  <FormLabel>{t('apikeys.dialogs.fields.type.label')}</FormLabel>
+                  <FormLabel>{m["apikeys.dialogs.fields.type.label"]()}</FormLabel>
                   <FormControl>
                     <RadioGroup onValueChange={field.onChange} defaultValue={field.value} className='flex flex-col space-y-1'>
                       <FormItem className='flex items-center space-y-0 space-x-3'>
                         <FormControl>
                           <RadioGroupItem value='user' />
                         </FormControl>
-                        <FormLabel className='font-normal'>{t('apikeys.dialogs.fields.type.user')}</FormLabel>
+                        <FormLabel className='font-normal'>{m["apikeys.dialogs.fields.type.user"]()}</FormLabel>
                       </FormItem>
                       <FormItem className='flex items-center space-y-0 space-x-3'>
                         <FormControl>
                           <RadioGroupItem value='service_account' />
                         </FormControl>
-                        <FormLabel className='font-normal'>{t('apikeys.dialogs.fields.type.serviceAccount')}</FormLabel>
+                        <FormLabel className='font-normal'>{m["apikeys.dialogs.fields.type.serviceAccount"]()}</FormLabel>
                       </FormItem>
                     </RadioGroup>
                   </FormControl>
                   <FormDescription>
                     {apiKeyType === 'user'
-                      ? t('apikeys.dialogs.fields.type.userDescription')
-                      : t('apikeys.dialogs.fields.type.serviceAccountDescription')}
+                      ? m["apikeys.dialogs.fields.type.userDescription"]()
+                      : m["apikeys.dialogs.fields.type.serviceAccountDescription"]()}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -117,11 +116,11 @@ export function ApiKeysCreateDialog() {
                 name='scopes'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('apikeys.dialogs.fields.scopes.label')}</FormLabel>
+                    <FormLabel>{m["apikeys.dialogs.fields.scopes.label"]()}</FormLabel>
                     <FormControl>
                       <ScopesSelect value={field.value || []} onChange={field.onChange} portalContainer={dialogContent} />
                     </FormControl>
-                    <FormDescription>{t('apikeys.dialogs.fields.scopes.description')}</FormDescription>
+                    <FormDescription>{m["apikeys.dialogs.fields.scopes.description"]()}</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -131,10 +130,10 @@ export function ApiKeysCreateDialog() {
             <DialogFooter className='flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end'>
               <div className='flex w-full gap-2 sm:w-auto'>
                 <Button type='button' variant='outline' onClick={handleClose} disabled={isSubmitting}>
-                  {t('common.buttons.cancel')}
+                  {m["common.buttons.cancel"]()}
                 </Button>
                 <Button type='submit' disabled={isSubmitting}>
-                  {isSubmitting ? t('common.buttons.creating') : t('common.buttons.create')}
+                  {isSubmitting ? m["common.buttons.creating"]() : m["common.buttons.create"]()}
                 </Button>
               </div>
             </DialogFooter>

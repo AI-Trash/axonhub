@@ -4,6 +4,7 @@ import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import { toast } from 'sonner';
 
+import * as m from '@/paraglide/messages';
 import { useAuthStore } from '@/stores/authStore';
 import { handleServerError } from '@/utils/handle-server-error';
 
@@ -12,9 +13,6 @@ import { SearchProvider } from './context/search-context';
 import { ThemeProvider } from './context/theme-context';
 
 import './index.css';
-// Initialize i18n
-import './lib/i18n';
-import i18n from './lib/i18n';
 // Generated Routes
 import { routeTree } from './routeTree.gen';
 
@@ -46,7 +44,7 @@ const queryClient = new QueryClient({
           error instanceof Response ? error.status : error && typeof error === 'object' && 'status' in error ? (error as any).status : 0;
 
         if (status === 304) {
-          toast.error(i18n.t('common.errors.contentNotModified'));
+          toast.error(m["common.errors.contentNotModified"]());
         }
       },
     },
@@ -58,13 +56,13 @@ const queryClient = new QueryClient({
         error instanceof Response ? error.status : error && typeof error === 'object' && 'status' in error ? (error as any).status : 0;
 
       if (status === 401) {
-        toast.error(i18n.t('common.errors.sessionExpired'));
+        toast.error(m["common.errors.sessionExpired"]());
         useAuthStore.getState().auth.reset();
         const redirect = `${router.history.location.href}`;
         router.navigate({ to: '/sign-in', search: { redirect } });
       }
       if (status === 500) {
-        toast.error(i18n.t('common.errors.internalServerError'));
+        toast.error(m["common.errors.internalServerError"]());
         // router.navigate({ to: '/500' })
       }
       if (status === 403) {

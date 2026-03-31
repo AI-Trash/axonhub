@@ -3,7 +3,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useState, useEffect, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -21,14 +20,15 @@ import { useAuthStore } from '@/stores/authStore';
 
 import { User, CreateUserInput, UpdateUserInput } from '../data/schema';
 import { useCreateUser, useUpdateUser } from '../data/users';
+import * as m from '@/paraglide/messages';
 
 // 创建表单验证模式的工厂函数
-const createFormSchema = (t: (key: string) => string) =>
+const createFormSchema = () =>
   z
     .object({
-      firstName: z.string().min(1, t('users.validation.firstNameRequired')),
-      lastName: z.string().min(1, t('users.validation.lastNameRequired')),
-      email: z.email().min(1, t('users.validation.emailRequired')),
+      firstName: z.string().min(1, m["users.validation.firstNameRequired"]()),
+      lastName: z.string().min(1, m["users.validation.lastNameRequired"]()),
+      email: z.email().min(1, m["users.validation.emailRequired"]()),
       password: z.string().optional(),
       confirmPassword: z.string().optional(),
       isOwner: z.boolean().optional(),
@@ -70,7 +70,6 @@ interface Props {
 }
 
 export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
-  const { t } = useTranslation();
   const currentUser = useAuthStore((state) => state.auth.user);
   const isEdit = !!currentRow;
   const [roles, setRoles] = useState<Role[]>([]);
@@ -140,11 +139,11 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
         setCanEdit(canEditTarget);
       }
     } catch (error) {
-      toast.error(t('common.errors.userLoadFailed'));
+      toast.error(m["common.errors.userLoadFailed"]());
     } finally {
       setLoading(false);
     }
-  }, [t, setRoles, currentUser, isEdit, currentRow]);
+  }, [setRoles, currentUser, isEdit, currentRow]);
 
   // Load roles and scopes when dialog opens
   useEffect(() => {
@@ -202,7 +201,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
       form.reset();
       onOpenChange(false);
     } catch (error) {
-      toast.error(t('common.errors.userSaveFailed'));
+      toast.error(m["common.errors.userSaveFailed"]());
     }
   };
 
@@ -224,8 +223,8 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
     >
       <DialogContent className='sm:max-w-2xl' ref={setDialogContent}>
         <DialogHeader className='text-left'>
-          <DialogTitle>{isEdit ? t('users.dialogs.edit.title') : t('users.dialogs.add.title')}</DialogTitle>
-          <DialogDescription>{isEdit ? t('users.dialogs.edit.description') : t('users.dialogs.add.description')}</DialogDescription>
+          <DialogTitle>{isEdit ? m["users.dialogs.edit.title"]() : m["users.dialogs.add.title"]()}</DialogTitle>
+          <DialogDescription>{isEdit ? m["users.dialogs.edit.description"]() : m["users.dialogs.add.description"]()}</DialogDescription>
         </DialogHeader>
 
         <div className='max-h-[60vh] overflow-y-auto px-1'>
@@ -237,7 +236,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
                   name='firstName'
                   render={({ field, fieldState }) => (
                     <FormItem>
-                      <FormLabel>{t('users.form.firstName')}</FormLabel>
+                      <FormLabel>{m["users.form.firstName"]()}</FormLabel>
                       <FormControl>
                         <Input placeholder='John' aria-invalid={!!fieldState.error} {...field} />
                       </FormControl>
@@ -252,7 +251,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
                   name='lastName'
                   render={({ field, fieldState }) => (
                     <FormItem>
-                      <FormLabel>{t('users.form.lastName')}</FormLabel>
+                      <FormLabel>{m["users.form.lastName"]()}</FormLabel>
                       <FormControl>
                         <Input placeholder='Doe' aria-invalid={!!fieldState.error} {...field} />
                       </FormControl>
@@ -269,7 +268,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
                 name='email'
                 render={({ field, fieldState }) => (
                   <FormItem>
-                    <FormLabel>{t('users.form.email')}</FormLabel>
+                    <FormLabel>{m["users.form.email"]()}</FormLabel>
                     <FormControl>
                       <Input placeholder='john.doe@example.com' aria-invalid={!!fieldState.error} {...field} />
                     </FormControl>
@@ -288,7 +287,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
                     name='password'
                     render={({ field, fieldState }) => (
                       <FormItem>
-                        <FormLabel>{t('users.form.password')}</FormLabel>
+                        <FormLabel>{m["users.form.password"]()}</FormLabel>
                         <FormControl>
                           <Input type='password' aria-invalid={!!fieldState.error} {...field} />
                         </FormControl>
@@ -303,7 +302,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
                     name='confirmPassword'
                     render={({ field, fieldState }) => (
                       <FormItem>
-                        <FormLabel>{t('users.form.confirmPassword')}</FormLabel>
+                        <FormLabel>{m["users.form.confirmPassword"]()}</FormLabel>
                         <FormControl>
                           <Input type='password' aria-invalid={!!fieldState.error} {...field} />
                         </FormControl>
@@ -325,8 +324,8 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
                       <Checkbox checked={field.value} onCheckedChange={field.onChange} />
                     </FormControl>
                     <div className='space-y-1 leading-none'>
-                      <FormLabel>{t('users.form.isOwner')}</FormLabel>
-                      <p className='text-muted-foreground text-sm'>{t('users.form.ownerDescription')}</p>
+                      <FormLabel>{m["users.form.isOwner"]()}</FormLabel>
+                      <p className='text-muted-foreground text-sm'>{m["users.form.ownerDescription"]()}</p>
                     </div>
                   </FormItem>
                 )}
@@ -334,9 +333,9 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
 
               {/* Roles Section */}
               <div className='space-y-3 pt-2'>
-                <FormLabel>{t('users.form.roles')}</FormLabel>
+                <FormLabel>{m["users.form.roles"]()}</FormLabel>
                 {loading ? (
-                  <div>{t('users.form.loadingRoles')}</div>
+                  <div>{m["users.form.loadingRoles"]()}</div>
                 ) : (
                   <div className='grid grid-cols-2 gap-2'>
                     {roles.map((role) => (
@@ -364,7 +363,7 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
                 name='scopes'
                 render={({ field }) => (
                   <FormItem className='pt-2'>
-                    <FormLabel>{t('users.form.scopes')}</FormLabel>
+                    <FormLabel>{m["users.form.scopes"]()}</FormLabel>
                     <FormControl>
                       <ScopesSelect level='system' value={field.value || []} onChange={field.onChange} portalContainer={dialogContent} />
                     </FormControl>
@@ -379,12 +378,12 @@ export function UsersActionDialog({ currentRow, open, onOpenChange }: Props) {
         </div>
 
         <DialogFooter>
-          {isEdit && !canEdit && <p className='text-destructive mr-auto text-sm'>{t('users.errors.insufficientPermissions')}</p>}
+          {isEdit && !canEdit && <p className='text-destructive mr-auto text-sm'>{m["users.errors.insufficientPermissions"]()}</p>}
           <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           <Button type='submit' form='user-form' disabled={createUser.isPending || updateUser.isPending || (isEdit && !canEdit)}>
-            {createUser.isPending || updateUser.isPending ? t('common.buttons.saving') : t('common.buttons.save')}
+            {createUser.isPending || updateUser.isPending ? m["common.buttons.saving"]() : m["common.buttons.save"]()}
           </Button>
         </DialogFooter>
       </DialogContent>

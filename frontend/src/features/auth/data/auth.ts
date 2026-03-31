@@ -6,9 +6,10 @@ import { toast } from 'sonner';
 import { graphqlRequest } from '@/gql/graphql';
 import { ME_QUERY } from '@/gql/users';
 import { authApi } from '@/lib/api-client';
-import i18n from '@/lib/i18n';
 import { useAuthStore, setTokenToStorage, removeTokenFromStorage } from '@/stores/authStore';
 import { AuthUser } from '@/stores/authStore';
+import * as m from '@/paraglide/messages';
+import { getLocale, setLocale } from '@/paraglide/runtime';
 
 export interface SignInInput {
   email: string;
@@ -39,9 +40,9 @@ export function useMe(enabled = true) {
 
       setUser(query.data);
 
-      // Initialize i18n with user's preferred language
-      if (userLanguage !== i18n.language) {
-        i18n.changeLanguage(userLanguage);
+      // Sync locale with user's preferred language
+      if (userLanguage !== getLocale()) {
+        setLocale(userLanguage, { reload: false });
       }
     }
   }, [query.data, setUser]);
@@ -67,12 +68,12 @@ export function useSignIn() {
       setAccessToken(data.token);
       setUser(data.user);
 
-      // Initialize i18n with user's preferred language
-      if (userLanguage !== i18n.language) {
-        i18n.changeLanguage(userLanguage);
+      // Sync locale with user's preferred language
+      if (userLanguage !== getLocale()) {
+        setLocale(userLanguage, { reload: false });
       }
 
-      toast.success(i18n.t('common.success.signedIn'));
+      toast.success(m["common.success.signedIn"]());
 
       // Redirect based on user role
       // Owner users go to dashboard, non-owner users go to requests page
@@ -97,7 +98,7 @@ export function useSignOut() {
     // Clear auth store
     reset();
 
-    toast.success(i18n.t('common.success.signedOut'));
+    toast.success(m["common.success.signedOut"]());
 
     // Redirect to sign in page
     router.navigate({ to: '/sign-in' });

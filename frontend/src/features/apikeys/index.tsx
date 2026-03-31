@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -16,11 +15,11 @@ import { ApiKeysTable } from './components/apikeys-table';
 import ApiKeysProvider from './context/apikeys-context';
 import { useApiKeys } from './data/apikeys';
 import { ApiKeyType } from './data/schema';
+import * as m from '@/paraglide/messages';
 
 type ApiKeyTabKey = ApiKeyType | 'all';
 
 function ApiKeysContent() {
-  const { t } = useTranslation();
   const { apiKeyPermissions } = usePermissions();
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
     defaultPageSize: 20,
@@ -96,20 +95,20 @@ function ApiKeysContent() {
     resetCursor();
   };
 
-  const columns = React.useMemo(() => createColumns(t, apiKeyPermissions.canWrite), [t, apiKeyPermissions.canWrite]);
+  const columns = React.useMemo(() => createColumns(apiKeyPermissions.canWrite), [apiKeyPermissions.canWrite]);
 
   return (
     <div className='flex flex-1 flex-col overflow-hidden'>
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ApiKeyTabKey)} className='w-full'>
         <TabsList className='shadow-soft border-border bg-background grid w-full grid-cols-3 rounded-2xl border'>
           <TabsTrigger value='all' data-value='all'>
-            {t('apikeys.tabs.all')}
+            {m["apikeys.tabs.all"]()}
           </TabsTrigger>
           <TabsTrigger value='user' data-value='user'>
-            {t('apikeys.type.user')}
+            {m["apikeys.type.user"]()}
           </TabsTrigger>
           <TabsTrigger value='service_account' data-value='service_account'>
-            {t('apikeys.type.service_account')}
+            {m["apikeys.type.service_account"]()}
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -141,15 +140,13 @@ function ApiKeysContent() {
 }
 
 export default function ApiKeysManagement() {
-  const { t } = useTranslation();
-
   return (
     <ApiKeysProvider>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('apikeys.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('apikeys.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["apikeys.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["apikeys.description"]()}</p>
           </div>
           <ApiKeysPrimaryButtons />
         </div>

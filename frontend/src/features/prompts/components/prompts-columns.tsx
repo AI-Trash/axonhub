@@ -1,7 +1,6 @@
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import { useCallback, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +12,8 @@ import { usePrompts } from '../context/prompts-context';
 import { Prompt } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
 import { PromptsStatusDialog } from './prompts-status-dialog';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 function StatusSwitchCell({ row }: { row: Row<Prompt> }) {
   const prompt = row.original;
@@ -32,7 +33,7 @@ function StatusSwitchCell({ row }: { row: Row<Prompt> }) {
   );
 }
 
-export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrite: boolean = true): ColumnDef<Prompt>[] => {
+export const createColumns = (t: (key: string, params?: Record<string, unknown>) => string, canWrite: boolean = true): ColumnDef<Prompt>[] => {
   return [
     ...(canWrite
       ? [
@@ -42,7 +43,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
               <Checkbox
                 checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')}
                 onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-                aria-label={t('common.columns.selectAll')}
+                aria-label={m["common.columns.selectAll"]()}
                 className='translate-y-[2px]'
               />
             ),
@@ -50,7 +51,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
               <Checkbox
                 checked={row.getIsSelected()}
                 onCheckedChange={(value) => row.toggleSelected(!!value)}
-                aria-label={t('common.columns.selectRow')}
+                aria-label={m["common.columns.selectRow"]()}
                 className='translate-y-[2px]'
               />
             ),
@@ -61,7 +62,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
       : []),
     {
       accessorKey: 'name',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.name')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.name"]()} />,
       cell: ({ row }) => {
         const prompt = row.original;
         return (
@@ -78,7 +79,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'order',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('prompts.columns.order')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["prompts.columns.order"]()} />,
       cell: ({ row }) => {
         const order = row.getValue('order') as number;
         return <div className='text-center text-sm'>{order}</div>;
@@ -90,7 +91,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'description',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.description')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.description"]()} />,
       cell: ({ row }) => {
         const description = row.getValue('description') as string;
         return (
@@ -109,7 +110,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'role',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('prompts.columns.role')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["prompts.columns.role"]()} />,
       cell: ({ row }) => {
         const role = row.getValue('role') as string;
         return <Badge variant='outline'>{role}</Badge>;
@@ -118,17 +119,17 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       id: 'actionType',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('prompts.columns.actionType')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["prompts.columns.actionType"]()} />,
       cell: ({ row }) => {
         const prompt = row.original;
         const actionType = prompt.settings?.action?.type;
-        return <Badge variant='secondary'>{actionType ? t(`prompts.actionTypes.${actionType}`) : '-'}</Badge>;
+        return <Badge variant='secondary'>{actionType ? dynamicTranslation(`prompts.actionTypes.${actionType}`) : '-'}</Badge>;
       },
       enableSorting: false,
     },
     {
       id: 'conditions',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('prompts.columns.conditions')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["prompts.columns.conditions"]()} />,
       cell: ({ row }) => {
         const prompt = row.original;
         const conditionsCount = prompt.settings?.conditions?.length || 0;
@@ -142,14 +143,14 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'status',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.status')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.status"]()} />,
       cell: StatusSwitchCell,
       enableSorting: false,
       enableHiding: false,
     },
     {
       accessorKey: 'createdAt',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.createdAt')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.createdAt"]()} />,
       cell: ({ row }) => {
         const raw = row.getValue('createdAt') as unknown;
         const date = raw instanceof Date ? raw : new Date(raw as string);
@@ -172,7 +173,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       id: 'actions',
-      header: t('common.columns.actions'),
+      header: m["common.columns.actions"](),
       cell: DataTableRowActions,
       meta: {
         className: 'w-[56px] min-w-[56px] pr-3 pl-0',

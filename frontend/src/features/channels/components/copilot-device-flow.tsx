@@ -2,7 +2,6 @@
 
 import { Copy, ExternalLink, Loader2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import { useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -11,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useSelectedProjectId } from '@/stores/projectStore';
 
 import { useDeviceFlow } from '../hooks/use-device-flow';
+import * as m from '@/paraglide/messages';
 
 interface CopilotDeviceFlowProps {
   onSuccess: (credentials: string) => void;
@@ -19,7 +19,6 @@ interface CopilotDeviceFlowProps {
 }
 
 export function CopilotDeviceFlow({ onSuccess, onError, existingCredentials }: CopilotDeviceFlowProps) {
-  const { t } = useTranslation();
   const projectId = useSelectedProjectId();
   const hasExistingCredentials = existingCredentials && existingCredentials.trim().length > 0;
   const deviceFlow = useDeviceFlow({
@@ -54,12 +53,12 @@ export function CopilotDeviceFlow({ onSuccess, onError, existingCredentials }: C
         <div className='rounded-md border border-green-500/50 bg-green-50/10 p-3'>
           <div className='flex items-center gap-2 text-green-600'>
             <CheckCircle2 className='h-5 w-5' />
-            <span className='font-medium'>{t('channels.dialogs.github_copilot.messages.alreadyConnected')}</span>
+            <span className='font-medium'>{m["channels.dialogs.github_copilot.messages.alreadyConnected"]()}</span>
           </div>
-          <p className='text-muted-foreground mt-1 text-xs'>{t('channels.dialogs.github_copilot.messages.credentialsStored')}</p>
+          <p className='text-muted-foreground mt-1 text-xs'>{m["channels.dialogs.github_copilot.messages.credentialsStored"]()}</p>
           <Button type='button' onClick={handleReconnect} variant='outline' size='sm' className='mt-2'>
             <RefreshCw className='mr-2 h-4 w-4' />
-            {t('channels.dialogs.github_copilot.buttons.reauthenticate')}
+            {m["channels.dialogs.github_copilot.buttons.reauthenticate"]()}
           </Button>
         </div>
       </div>
@@ -73,9 +72,9 @@ export function CopilotDeviceFlow({ onSuccess, onError, existingCredentials }: C
         <div className='rounded-md border border-green-500 p-3'>
           <div className='flex items-center gap-2 text-green-600'>
             <CheckCircle2 className='h-5 w-5' />
-            <span className='font-medium'>{t('channels.dialogs.github_copilot.messages.authSuccess')}</span>
+            <span className='font-medium'>{m["channels.dialogs.github_copilot.messages.authSuccess"]()}</span>
           </div>
-          <p className='text-muted-foreground mt-1 text-xs'>{t('channels.dialogs.github_copilot.messages.credentialsImported')}</p>
+          <p className='text-muted-foreground mt-1 text-xs'>{m["channels.dialogs.github_copilot.messages.credentialsImported"]()}</p>
         </div>
       </div>
     );
@@ -88,12 +87,12 @@ export function CopilotDeviceFlow({ onSuccess, onError, existingCredentials }: C
         <div className='border-destructive rounded-md border p-3'>
           <div className='text-destructive flex items-center gap-2'>
             <AlertCircle className='h-5 w-5' />
-            <span className='font-medium'>{t('common.error')}</span>
+            <span className='font-medium'>{m["common.error"]()}</span>
           </div>
           <p className='text-muted-foreground mt-1 text-xs'>{deviceFlow.error}</p>
           <Button type='button' onClick={handleReset} variant='outline' size='sm' className='mt-2'>
             <RefreshCw className='mr-2 h-4 w-4' />
-            {t('common.buttons.retry')}
+            {m["common.buttons.retry"]()}
           </Button>
         </div>
       </div>
@@ -107,11 +106,11 @@ export function CopilotDeviceFlow({ onSuccess, onError, existingCredentials }: C
         <div className='rounded-md border p-3'>
           <div className='flex items-center gap-2'>
             {deviceFlow.isPolling && <Loader2 className='h-5 w-5 animate-spin' />}
-            <span className='font-medium'>{t('channels.dialogs.github_copilot.messages.waitingForAuth')}</span>
+            <span className='font-medium'>{m["channels.dialogs.github_copilot.messages.waitingForAuth"]()}</span>
           </div>
 
           <div className='mt-3 space-y-2'>
-            <FormLabel className='text-sm font-medium'>{t('channels.dialogs.github_copilot.labels.userCode')}</FormLabel>
+            <FormLabel className='text-sm font-medium'>{m["channels.dialogs.github_copilot.labels.userCode"]()}</FormLabel>
             <div className='flex items-center gap-2'>
               <div className='bg-muted flex-1 rounded-md p-3 text-center'>
                 <span className='font-mono text-2xl font-bold tracking-wider'>{deviceFlow.userCode}</span>
@@ -122,12 +121,12 @@ export function CopilotDeviceFlow({ onSuccess, onError, existingCredentials }: C
                 onClick={() => {
                   if (deviceFlow.userCode) {
                     navigator.clipboard.writeText(deviceFlow.userCode);
-                    toast.success(t('channels.messages.credentialsCopied'));
+                    toast.success(m["channels.messages.credentialsCopied"]());
                   }
                 }}
                 variant='outline'
                 size='icon'
-                title={t('copilot_device.copy_code')}
+                title={m["copilot_device.copy_code"]()}
               >
                 <Copy className='h-4 w-4' />
               </Button>
@@ -137,23 +136,23 @@ export function CopilotDeviceFlow({ onSuccess, onError, existingCredentials }: C
           <div className='mt-3 space-y-2'>
             <Button type='button' variant='secondary' onClick={handleOpenGitHub} className='w-full'>
               <ExternalLink className='mr-2 h-4 w-4' />
-              {t('channels.dialogs.github_copilot.buttons.openGitHub')}
+              {m["channels.dialogs.github_copilot.buttons.openGitHub"]()}
             </Button>
             <p className='text-muted-foreground text-center text-xs'>{deviceFlow.verificationUri}</p>
           </div>
 
           <div className='bg-muted/50 mt-3 rounded-md p-3'>
             <ol className='text-muted-foreground list-inside list-decimal space-y-1 text-sm'>
-              <li>{t('copilot_device.step_1')}</li>
-              <li>{t('copilot_device.step_2')}</li>
-              <li>{t('copilot_device.step_3')}</li>
-              <li>{t('copilot_device.step_4')}</li>
+              <li>{m["copilot_device.step_1"]()}</li>
+              <li>{m["copilot_device.step_2"]()}</li>
+              <li>{m["copilot_device.step_3"]()}</li>
+              <li>{m["copilot_device.step_4"]()}</li>
             </ol>
           </div>
 
           <Button type='button' onClick={handleReset} variant='ghost' size='sm' className='mt-2 w-full'>
             <RefreshCw className='mr-2 h-4 w-4' />
-            {t('common.buttons.retry')}
+            {m["common.buttons.retry"]()}
           </Button>
         </div>
       </div>
@@ -165,7 +164,7 @@ export function CopilotDeviceFlow({ onSuccess, onError, existingCredentials }: C
     <div className='mt-3 space-y-2'>
       <div className='rounded-md border p-3'>
         <Button type='button' variant='secondary' onClick={deviceFlow.start} disabled={!projectId || deviceFlow.isPolling}>
-          {deviceFlow.isPolling ? t('channels.dialogs.oauth.buttons.starting') : t('channels.dialogs.github_copilot.buttons.startOAuth')}
+          {deviceFlow.isPolling ? m["channels.dialogs.oauth.buttons.starting"]() : m["channels.dialogs.github_copilot.buttons.startOAuth"]()}
         </Button>
       </div>
     </div>

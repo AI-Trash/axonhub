@@ -1,15 +1,15 @@
 import { ColumnDef } from '@tanstack/react-table';
-import { TFunction } from 'i18next';
 
 import { Badge } from '@/components/ui/badge';
 
 import { DataStorage } from '../data/data-storages';
 import { DataStorageActions } from './data-storage-actions';
+import * as m from '@/paraglide/messages';
 
-export const createColumns = (t: TFunction, defaultDataStorageID?: string | null): ColumnDef<DataStorage>[] => [
+export const createColumns = (defaultDataStorageID?: string | null): ColumnDef<DataStorage>[] => [
   {
     accessorKey: 'name',
-    header: t('common.columns.name'),
+    header: m["common.columns.name"](),
     cell: ({ row }) => {
       const isDefault = defaultDataStorageID === row.original.id;
 
@@ -18,7 +18,7 @@ export const createColumns = (t: TFunction, defaultDataStorageID?: string | null
           <span className='font-medium'>{row.getValue('name')}</span>
           {isDefault && (
             <Badge variant='outline' className='text-xs font-normal'>
-              {t('dataStorages.default')}
+              {m["dataStorages.default"]()}
             </Badge>
           )}
         </div>
@@ -27,12 +27,12 @@ export const createColumns = (t: TFunction, defaultDataStorageID?: string | null
   },
   {
     accessorKey: 'primary',
-    header: t('dataStorages.columns.primary'),
+    header: m["dataStorages.columns.primary"](),
     cell: ({ row }) => {
       const isPrimary = row.original.primary;
       return isPrimary ? (
         <Badge variant='secondary' className='text-xs'>
-          {t('dataStorages.primary')}
+          {m["dataStorages.primary"]()}
         </Badge>
       ) : (
         <span className='text-muted-foreground'>-</span>
@@ -41,7 +41,7 @@ export const createColumns = (t: TFunction, defaultDataStorageID?: string | null
   },
   {
     accessorKey: 'description',
-    header: t('common.columns.description'),
+    header: m["common.columns.description"](),
     cell: ({ row }) => {
       const description = row.getValue('description') as string;
       return <span className='text-muted-foreground'>{description || '-'}</span>;
@@ -49,22 +49,22 @@ export const createColumns = (t: TFunction, defaultDataStorageID?: string | null
   },
   {
     accessorKey: 'type',
-    header: t('dataStorages.columns.type'),
+    header: m["dataStorages.columns.type"](),
     cell: ({ row }) => {
       const type = row.getValue('type') as string;
       const typeLabels: Record<string, string> = {
-        database: t('dataStorages.types.database'),
-        fs: t('dataStorages.types.fs'),
-        s3: t('dataStorages.types.s3'),
-        gcs: t('dataStorages.types.gcs'),
-        webdav: t('dataStorages.types.webdav'),
+        database: m["dataStorages.types.database"](),
+        fs: m["dataStorages.types.fs"](),
+        s3: m["dataStorages.types.s3"](),
+        gcs: m["dataStorages.types.gcs"](),
+        webdav: m["dataStorages.types.webdav"](),
       };
       return <Badge variant='outline'>{typeLabels[type] || type}</Badge>;
     },
   },
   {
     accessorKey: 'settings',
-    header: t('dataStorages.columns.settings'),
+    header: m["dataStorages.columns.settings"](),
     cell: ({ row }) => {
       const settings = row.getValue('settings') as DataStorage['settings'];
       const type = row.original.type;
@@ -90,7 +90,7 @@ export const createColumns = (t: TFunction, defaultDataStorageID?: string | null
   },
   {
     accessorKey: 'status',
-    header: t('common.columns.status'),
+    header: m["common.columns.status"](),
     cell: ({ row }) => {
       const status = row.getValue('status') as string;
       const statusVariants: Record<string, 'default' | 'secondary'> = {
@@ -98,15 +98,15 @@ export const createColumns = (t: TFunction, defaultDataStorageID?: string | null
         archived: 'secondary',
       };
       const statusLabels: Record<string, string> = {
-        active: t('dataStorages.status.active'),
-        archived: t('dataStorages.status.archived'),
+        active: m["dataStorages.status.active"](),
+        archived: m["dataStorages.status.archived"](),
       };
       return <Badge variant={statusVariants[status] || 'default'}>{statusLabels[status] || status}</Badge>;
     },
   },
   {
     id: 'actions',
-    header: t('common.columns.actions'),
+    header: m["common.columns.actions"](),
     cell: ({ row }) => <DataStorageActions dataStorage={row.original} defaultDataStorageID={defaultDataStorageID} />,
   },
 ];

@@ -1,7 +1,6 @@
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as React from 'react';
 import { DayPicker, type DateRange } from 'react-day-picker';
-import { useTranslation } from 'react-i18next';
 
 import { buttonVariants } from '@/components/ui/button';
 import { useClickOutside } from '@/hooks/use-click-outside';
@@ -18,6 +17,7 @@ import {
 import { dayPickerClassNames, dayPickerComponents, dayPickerFormatters } from './day-picker-config';
 import { TimeField } from './time-field';
 import { addMonthsSafe, formatRange } from './utils';
+import * as m from '@/paraglide/messages';
 
 export interface DateTimeRangePickerProps {
   value?: DateTimeRangeValue;
@@ -29,7 +29,6 @@ export interface DateTimeRangePickerProps {
 
 export function DateTimeRangePicker(props: DateTimeRangePickerProps) {
   const { value, onChange, onCancel, onConfirm, className } = props;
-  const { t } = useTranslation();
   const isControlled = Object.prototype.hasOwnProperty.call(props, 'value');
   const normalizedValue = React.useMemo(() => normalizeDateTimeRangeValue(value), [value]);
   const [internal, setInternal] = React.useState<DateTimeRangeValue>(() => normalizedValue);
@@ -78,7 +77,7 @@ export function DateTimeRangePicker(props: DateTimeRangePickerProps) {
   }, []);
 
   const headerText = React.useMemo(
-    () => formatRange(internal.from, internal.to, t('common.filters.dateRange')),
+    () => formatRange(internal.from, internal.to, m["common.filters.dateRange"]()),
     [internal.from, internal.to, t]
   );
 
@@ -144,26 +143,26 @@ export function DateTimeRangePicker(props: DateTimeRangePickerProps) {
       <div className='border-t border-gray-100 bg-gray-50 px-6 py-6 dark:border-white/5 dark:bg-[#0a0a0b]/80'>
         <div className='flex flex-col gap-6 md:flex-row'>
           <TimeField
-            label={t('common.filters.startTime')}
+            label={m["common.filters.startTime"]()}
             value={internal.startTime}
             active={startActive}
             open={startOpen}
             onToggle={toggleStart}
             onChange={(next) => emit({ ...internal, startTime: next })}
             onClose={closePanel}
-            closeLabel={t('common.close')}
+            closeLabel={m["common.close"]()}
             wrapperRef={startWrapRef}
           />
 
           <TimeField
-            label={t('common.filters.endTime')}
+            label={m["common.filters.endTime"]()}
             value={internal.endTime}
             active={endActive}
             open={endOpen}
             onToggle={toggleEnd}
             onChange={(next) => emit({ ...internal, endTime: next })}
             onClose={closePanel}
-            closeLabel={t('common.close')}
+            closeLabel={m["common.close"]()}
             wrapperRef={endWrapRef}
           />
         </div>
@@ -175,7 +174,7 @@ export function DateTimeRangePicker(props: DateTimeRangePickerProps) {
           className='rounded-md text-[11px] font-semibold tracking-widest text-gray-400 uppercase transition-colors hover:text-gray-600 dark:hover:text-gray-200'
           onClick={handleReset}
         >
-          {t('common.filters.reset')}
+          {m["common.filters.reset"]()}
         </button>
 
         <div className='flex gap-4'>
@@ -184,14 +183,14 @@ export function DateTimeRangePicker(props: DateTimeRangePickerProps) {
             className='h-10 min-w-24 rounded-md px-6 text-sm font-semibold text-gray-600 transition-all hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/5'
             onClick={onCancel}
           >
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </button>
           <button
             type='button'
             className='bg-primary shadow-primary/20 h-10 min-w-24 rounded-md px-6 text-sm font-semibold text-white shadow-xl transition-all active:scale-[0.98]'
             onClick={() => onConfirm?.(internal)}
           >
-            {t('common.buttons.confirm')}
+            {m["common.buttons.confirm"]()}
           </button>
         </div>
       </div>

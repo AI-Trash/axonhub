@@ -27,7 +27,6 @@ import {
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { PermissionGuard } from '@/components/permission-guard';
 import { Badge } from '@/components/ui/badge';
@@ -38,17 +37,19 @@ import { TableSkeleton } from '@/components/ui/table-skeleton';
 
 import { useModels } from '../context/models-context';
 import { Model } from '../data/schema';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
+import * as m from '@/paraglide/messages';
 
 const MotionTableRow = motion.create(TableRow);
 
 export function useDeveloperLabel() {
-  const { t, i18n } = useTranslation();
   return useCallback(
     (developer: string) => {
       const key = `models.developers.${developer}`;
-      return i18n.exists(key) ? t(key) : developer;
+      const translated = dynamicTranslation(key);
+      return translated !== key ? translated : developer;
     },
-    [t, i18n]
+    []
   );
 }
 
@@ -75,7 +76,6 @@ export function ModelsTable({
   onNameFilterChange,
   canWrite = true,
 }: ModelsTableProps) {
-  const { t } = useTranslation();
   const getDeveloperLabel = useDeveloperLabel();
   const { setSelectedModels, setResetRowSelection, setOpen } = useModels();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -203,7 +203,7 @@ export function ModelsTable({
       <div className='mb-4 flex items-center justify-between'>
         <div className='flex flex-1 items-center space-x-2'>
           <Input
-            placeholder={t('models.filters.filterByName')}
+            placeholder={m["models.filters.filterByName"]()}
             value={(table.getColumn('name')?.getFilterValue() as string) ?? ''}
             onChange={(event) => table.getColumn('name')?.setFilterValue(event.target.value)}
             className='h-8 w-[150px] lg:w-[250px]'
@@ -213,11 +213,11 @@ export function ModelsTable({
           {!loading && data.length > 0 && (
             <>
               <span className='text-muted-foreground text-sm'>
-                {t('models.groupedView.summary', { groups: groupedRows.size, models: totalCount ?? data.length })}
+                {m["models.groupedView.summary"]({ groups: groupedRows.size, models: totalCount ?? data.length })}
               </span>
               <Button variant='outline' size='sm' className='h-8' onClick={toggleAllGroups}>
                 {allGroupsCollapsed ? <IconChevronsDown className='mr-1 h-4 w-4' /> : <IconChevronsUp className='mr-1 h-4 w-4' />}
-                {allGroupsCollapsed ? t('models.groupedView.expandAll') : t('models.groupedView.collapseAll')}
+                {allGroupsCollapsed ? m["models.groupedView.expandAll"]() : m["models.groupedView.collapseAll"]()}
               </Button>
             </>
           )}
@@ -308,31 +308,31 @@ export function ModelsTable({
                                           <div className='grid grid-cols-1 gap-6 md:grid-cols-2'>
                                             {/* Basic Info */}
                                             <div className='space-y-3'>
-                                              <h4 className='text-sm font-semibold'>{t('models.expandedRow.basic')}</h4>
+                                              <h4 className='text-sm font-semibold'>{m["models.expandedRow.basic"]()}</h4>
                                               <div className='space-y-2 text-sm'>
                                                 <div className='flex justify-between'>
-                                                  <span className='text-muted-foreground'>{t('models.columns.modelId')}:</span>
+                                                  <span className='text-muted-foreground'>{m["models.columns.modelId"]()}:</span>
                                                   <span className='font-mono text-xs'>{model.modelID}</span>
                                                 </div>
                                                 <div className='flex items-center justify-between'>
-                                                  <span className='text-muted-foreground'>{t('models.columns.developer')}:</span>
+                                                  <span className='text-muted-foreground'>{m["models.columns.developer"]()}:</span>
                                                   <Badge variant='outline'>{getDeveloperLabel(model.developer)}</Badge>
                                                 </div>
                                                 <div className='flex items-center justify-between'>
-                                                  <span className='text-muted-foreground'>{t('models.columns.group')}:</span>
+                                                  <span className='text-muted-foreground'>{m["models.columns.group"]()}:</span>
                                                   <span>{model.group}</span>
                                                 </div>
                                                 <div className='flex justify-between'>
-                                                  <span className='text-muted-foreground'>{t('common.columns.createdAt')}:</span>
+                                                  <span className='text-muted-foreground'>{m["common.columns.createdAt"]()}:</span>
                                                   <span>{format(model.createdAt, 'yyyy-MM-dd HH:mm')}</span>
                                                 </div>
                                                 <div className='flex justify-between'>
-                                                  <span className='text-muted-foreground'>{t('common.columns.updatedAt')}:</span>
+                                                  <span className='text-muted-foreground'>{m["common.columns.updatedAt"]()}:</span>
                                                   <span>{format(model.updatedAt, 'yyyy-MM-dd HH:mm')}</span>
                                                 </div>
                                                 {model.remark && (
                                                   <div className='flex justify-between'>
-                                                    <span className='text-muted-foreground'>{t('models.columns.remark')}:</span>
+                                                    <span className='text-muted-foreground'>{m["models.columns.remark"]()}:</span>
                                                     <span className='max-w-[200px] truncate text-right' title={model.remark}>
                                                       {model.remark}
                                                     </span>
@@ -343,31 +343,31 @@ export function ModelsTable({
 
                                             {/* Capabilities */}
                                             <div className='space-y-3'>
-                                              <h4 className='text-sm font-semibold'>{t('models.expandedRow.capabilities')}</h4>
+                                              <h4 className='text-sm font-semibold'>{m["models.expandedRow.capabilities"]()}</h4>
                                               <div className='space-y-2 text-sm'>
                                                 <div className='flex items-center justify-between'>
-                                                  <span className='text-muted-foreground'>{t('models.modelCard.toolCall')}:</span>
+                                                  <span className='text-muted-foreground'>{m["models.modelCard.toolCall"]()}:</span>
                                                   <span>
                                                     {modelCard?.toolCall ? <IconCheck className='h-4 w-4 text-green-600' /> : '-'}
                                                   </span>
                                                 </div>
                                                 <div className='flex items-center justify-between'>
-                                                  <span className='text-muted-foreground'>{t('models.modelCard.vision')}:</span>
+                                                  <span className='text-muted-foreground'>{m["models.modelCard.vision"]()}:</span>
                                                   <span>{modelCard?.vision ? <IconCheck className='h-4 w-4 text-green-600' /> : '-'}</span>
                                                 </div>
                                                 <div className='flex items-center justify-between'>
-                                                  <span className='text-muted-foreground'>{t('models.modelCard.temperature')}:</span>
+                                                  <span className='text-muted-foreground'>{m["models.modelCard.temperature"]()}:</span>
                                                   <span>
                                                     {modelCard?.temperature ? <IconCheck className='h-4 w-4 text-green-600' /> : '-'}
                                                   </span>
                                                 </div>
                                                 {/* Reasoning grouped */}
                                                 <div className='space-y-1'>
-                                                  <span className='text-muted-foreground'>{t('models.modelCard.reasoning')}:</span>
+                                                  <span className='text-muted-foreground'>{m["models.modelCard.reasoning"]()}:</span>
                                                   <div className='ml-4 space-y-1'>
                                                     <div className='flex items-center justify-between'>
                                                       <span className='text-muted-foreground text-xs'>
-                                                        {t('models.modelCard.reasoningSupported')}:
+                                                        {m["models.modelCard.reasoningSupported"]()}:
                                                       </span>
                                                       <span>
                                                         {modelCard?.reasoning?.supported ? (
@@ -379,7 +379,7 @@ export function ModelsTable({
                                                     </div>
                                                     <div className='flex items-center justify-between'>
                                                       <span className='text-muted-foreground text-xs'>
-                                                        {t('models.modelCard.reasoningDefault')}:
+                                                        {m["models.modelCard.reasoningDefault"]()}:
                                                       </span>
                                                       <span>
                                                         {modelCard?.reasoning?.default ? (
@@ -401,10 +401,10 @@ export function ModelsTable({
                                             <div className='space-y-4'>
                                               {/* Modalities */}
                                               <div className='space-y-3'>
-                                                <h4 className='text-sm font-semibold'>{t('models.modelCard.modalities')}</h4>
+                                                <h4 className='text-sm font-semibold'>{m["models.modelCard.modalities"]()}</h4>
                                                 <div className='space-y-2 text-sm'>
                                                   <div className='flex items-start gap-2'>
-                                                    <span className='text-muted-foreground shrink-0'>{t('models.modelCard.input')}:</span>
+                                                    <span className='text-muted-foreground shrink-0'>{m["models.modelCard.input"]()}:</span>
                                                     <div className='flex flex-wrap gap-1'>
                                                       {modelCard?.modalities?.input?.length
                                                         ? modelCard.modalities.input.map((m) => (
@@ -416,7 +416,7 @@ export function ModelsTable({
                                                     </div>
                                                   </div>
                                                   <div className='flex items-start gap-2'>
-                                                    <span className='text-muted-foreground shrink-0'>{t('models.modelCard.output')}:</span>
+                                                    <span className='text-muted-foreground shrink-0'>{m["models.modelCard.output"]()}:</span>
                                                     <div className='flex flex-wrap gap-1'>
                                                       {modelCard?.modalities?.output?.length
                                                         ? modelCard.modalities.output.map((m) => (
@@ -432,16 +432,16 @@ export function ModelsTable({
 
                                               {/* Limits */}
                                               <div className='space-y-3'>
-                                                <h4 className='text-sm font-semibold'>{t('models.modelCard.limit')}</h4>
+                                                <h4 className='text-sm font-semibold'>{m["models.modelCard.limit"]()}</h4>
                                                 <div className='space-y-2 text-sm'>
                                                   <div className='flex justify-between'>
-                                                    <span className='text-muted-foreground'>{t('models.modelCard.context')}:</span>
+                                                    <span className='text-muted-foreground'>{m["models.modelCard.context"]()}:</span>
                                                     <span className='font-mono text-xs'>
                                                       {modelCard?.limit?.context?.toLocaleString() ?? '-'}
                                                     </span>
                                                   </div>
                                                   <div className='flex justify-between'>
-                                                    <span className='text-muted-foreground'>{t('models.modelCard.output')}:</span>
+                                                    <span className='text-muted-foreground'>{m["models.modelCard.output"]()}:</span>
                                                     <span className='font-mono text-xs'>
                                                       {modelCard?.limit?.output?.toLocaleString() ?? '-'}
                                                     </span>
@@ -452,25 +452,25 @@ export function ModelsTable({
 
                                             {/* Right: Cost */}
                                             <div className='space-y-3'>
-                                              <h4 className='text-sm font-semibold'>{t('models.modelCard.cost')} ($/M)</h4>
+                                              <h4 className='text-sm font-semibold'>{m["models.modelCard.cost"]()} ($/M)</h4>
                                               <div className='space-y-2 text-sm'>
                                                 <div className='flex justify-between'>
-                                                  <span className='text-muted-foreground'>{t('models.modelCard.input')}:</span>
+                                                  <span className='text-muted-foreground'>{m["models.modelCard.input"]()}:</span>
                                                   <span className='font-mono text-xs'>{modelCard?.cost?.input ?? '-'}</span>
                                                 </div>
                                                 <div className='flex justify-between'>
-                                                  <span className='text-muted-foreground'>{t('models.modelCard.output')}:</span>
+                                                  <span className='text-muted-foreground'>{m["models.modelCard.output"]()}:</span>
                                                   <span className='font-mono text-xs'>{modelCard?.cost?.output ?? '-'}</span>
                                                 </div>
                                                 {modelCard?.cost?.cacheRead !== undefined && (
                                                   <div className='flex justify-between'>
-                                                    <span className='text-muted-foreground'>{t('models.modelCard.cacheRead')}:</span>
+                                                    <span className='text-muted-foreground'>{m["models.modelCard.cacheRead"]()}:</span>
                                                     <span className='font-mono text-xs'>{modelCard.cost.cacheRead}</span>
                                                   </div>
                                                 )}
                                                 {modelCard?.cost?.cacheWrite !== undefined && (
                                                   <div className='flex justify-between'>
-                                                    <span className='text-muted-foreground'>{t('models.modelCard.cacheWrite')}:</span>
+                                                    <span className='text-muted-foreground'>{m["models.modelCard.cacheWrite"]()}:</span>
                                                     <span className='font-mono text-xs'>{modelCard.cost.cacheWrite}</span>
                                                   </div>
                                                 )}
@@ -480,18 +480,18 @@ export function ModelsTable({
 
                                           {/* Bottom Section: Dates */}
                                           <div className='border-t pt-4'>
-                                            <h4 className='mb-3 text-sm font-semibold'>{t('models.modelCard.dates')}</h4>
+                                            <h4 className='mb-3 text-sm font-semibold'>{m["models.modelCard.dates"]()}</h4>
                                             <div className='flex gap-6 text-sm'>
                                               <div className='flex gap-2'>
-                                                <span className='text-muted-foreground'>{t('models.modelCard.knowledge')}:</span>
+                                                <span className='text-muted-foreground'>{m["models.modelCard.knowledge"]()}:</span>
                                                 <span>{modelCard?.knowledge || '-'}</span>
                                               </div>
                                               <div className='flex gap-2'>
-                                                <span className='text-muted-foreground'>{t('models.modelCard.releaseDate')}:</span>
+                                                <span className='text-muted-foreground'>{m["models.modelCard.releaseDate"]()}:</span>
                                                 <span>{modelCard?.releaseDate || '-'}</span>
                                               </div>
                                               <div className='flex gap-2'>
-                                                <span className='text-muted-foreground'>{t('models.modelCard.lastUpdated')}:</span>
+                                                <span className='text-muted-foreground'>{m["models.modelCard.lastUpdated"]()}:</span>
                                                 <span>{modelCard?.lastUpdated || '-'}</span>
                                               </div>
                                             </div>
@@ -511,7 +511,7 @@ export function ModelsTable({
               ) : (
                 <TableRow className='!bg-[var(--table-background)]'>
                   <TableCell colSpan={columns.length} className='h-24 !bg-[var(--table-background)] text-center'>
-                    {t('common.noData')}
+                    {m["common.noData"]()}
                   </TableCell>
                 </TableRow>
               )}
@@ -531,7 +531,7 @@ export function ModelsTable({
               <span className='bg-primary text-primary-foreground flex h-6 min-w-6 items-center justify-center rounded px-1.5 text-xs font-medium'>
                 {selectedCount}
               </span>
-              <span className='text-muted-foreground text-sm'>{t('common.selected')}</span>
+              <span className='text-muted-foreground text-sm'>{m["common.selected"]()}</span>
             </div>
             <div className='bg-border mx-2 h-6 w-px' />
             <PermissionGuard requiredScope='write_channels'>
@@ -541,7 +541,7 @@ export function ModelsTable({
                   size='icon'
                   className='h-8 w-8 text-green-600 hover:bg-green-100 hover:text-green-700'
                   onClick={() => setOpen('bulkEnable')}
-                  title={t('common.buttons.enable')}
+                  title={m["common.buttons.enable"]()}
                 >
                   <IconCheck className='h-4 w-4' />
                 </Button>
@@ -550,7 +550,7 @@ export function ModelsTable({
                   size='icon'
                   className='h-8 w-8 text-amber-600 hover:bg-amber-100 hover:text-amber-700'
                   onClick={() => setOpen('bulkDisable')}
-                  title={t('common.buttons.disable')}
+                  title={m["common.buttons.disable"]()}
                 >
                   <IconBan className='h-4 w-4' />
                 </Button>
@@ -559,7 +559,7 @@ export function ModelsTable({
                   size='icon'
                   className='text-destructive h-8 w-8 hover:bg-red-100 hover:text-red-700'
                   onClick={() => setOpen('delete')}
-                  title={t('common.buttons.delete')}
+                  title={m["common.buttons.delete"]()}
                 >
                   <IconTrash className='h-4 w-4' />
                 </Button>

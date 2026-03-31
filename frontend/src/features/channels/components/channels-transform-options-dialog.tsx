@@ -3,7 +3,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -16,6 +15,7 @@ import { Form, FormField, FormItem, FormLabel, FormMessage, FormControl } from '
 import { useUpdateChannel } from '../data/channels';
 import { Channel, TransformOptions } from '../data/schema';
 import { mergeChannelSettingsForUpdate } from '../utils/merge';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   open: boolean;
@@ -30,7 +30,6 @@ const transformOptionsFormSchema = z.object({
 });
 
 export function ChannelsTransformOptionsDialog({ open, onOpenChange, currentRow }: Props) {
-  const { t } = useTranslation();
   const updateChannel = useUpdateChannel();
 
   const form = useForm<TransformOptions>({
@@ -64,10 +63,10 @@ export function ChannelsTransformOptionsDialog({ open, onOpenChange, currentRow 
           settings: nextSettings,
         },
       });
-      toast.success(t('channels.messages.updateSuccess'));
+      toast.success(m["channels.messages.updateSuccess"]());
       onOpenChange(false);
     } catch (_error) {
-      toast.error(t('channels.messages.updateError'));
+      toast.error(m["channels.messages.updateError"]());
     }
   };
 
@@ -83,15 +82,15 @@ export function ChannelsTransformOptionsDialog({ open, onOpenChange, currentRow 
     >
       <DialogContent className='sm:max-w-2xl'>
         <DialogHeader className='text-left'>
-          <DialogTitle>{t('channels.dialogs.transformOptions.title')}</DialogTitle>
-          <DialogDescription>{t('channels.dialogs.transformOptions.description', { name: currentRow.name })}</DialogDescription>
+          <DialogTitle>{m["channels.dialogs.transformOptions.title"]()}</DialogTitle>
+          <DialogDescription>{m["channels.dialogs.transformOptions.description"]({ name: currentRow.name })}</DialogDescription>
         </DialogHeader>
 
         <div className='space-y-6'>
           <Card>
             <CardHeader>
-              <CardTitle className='text-lg'>{t('channels.dialogs.transformOptions.options.title')}</CardTitle>
-              <CardDescription>{t('channels.dialogs.transformOptions.options.description')}</CardDescription>
+              <CardTitle className='text-lg'>{m["channels.dialogs.transformOptions.options.title"]()}</CardTitle>
+              <CardDescription>{m["channels.dialogs.transformOptions.options.description"]()}</CardDescription>
             </CardHeader>
             <CardContent className='space-y-4'>
               <Form {...form}>
@@ -106,10 +105,10 @@ export function ChannelsTransformOptionsDialog({ open, onOpenChange, currentRow 
                         </FormControl>
                         <div className='space-y-0.5'>
                           <FormLabel className='cursor-pointer text-sm font-normal'>
-                            {t('channels.dialogs.fields.transformOptions.forceArrayInstructions.label')}
+                            {m["channels.dialogs.fields.transformOptions.forceArrayInstructions.label"]()}
                           </FormLabel>
                           <p className='text-muted-foreground text-xs'>
-                            {t('channels.dialogs.fields.transformOptions.forceArrayInstructions.description')}
+                            {m["channels.dialogs.fields.transformOptions.forceArrayInstructions.description"]()}
                           </p>
                         </div>
                         <FormMessage />
@@ -127,10 +126,10 @@ export function ChannelsTransformOptionsDialog({ open, onOpenChange, currentRow 
                         </FormControl>
                         <div className='space-y-0.5'>
                           <FormLabel className='cursor-pointer text-sm font-normal'>
-                            {t('channels.dialogs.fields.transformOptions.forceArrayInputs.label')}
+                            {m["channels.dialogs.fields.transformOptions.forceArrayInputs.label"]()}
                           </FormLabel>
                           <p className='text-muted-foreground text-xs'>
-                            {t('channels.dialogs.fields.transformOptions.forceArrayInputs.description')}
+                            {m["channels.dialogs.fields.transformOptions.forceArrayInputs.description"]()}
                           </p>
                         </div>
                         <FormMessage />
@@ -148,10 +147,10 @@ export function ChannelsTransformOptionsDialog({ open, onOpenChange, currentRow 
                         </FormControl>
                         <div className='space-y-0.5'>
                           <FormLabel className='cursor-pointer text-sm font-normal'>
-                            {t('channels.dialogs.fields.transformOptions.replaceDeveloperRoleWithSystem.label')}
+                            {m["channels.dialogs.fields.transformOptions.replaceDeveloperRoleWithSystem.label"]()}
                           </FormLabel>
                           <p className='text-muted-foreground text-xs'>
-                            {t('channels.dialogs.fields.transformOptions.replaceDeveloperRoleWithSystem.description')}
+                            {m["channels.dialogs.fields.transformOptions.replaceDeveloperRoleWithSystem.description"]()}
                           </p>
                         </div>
                         <FormMessage />
@@ -166,10 +165,10 @@ export function ChannelsTransformOptionsDialog({ open, onOpenChange, currentRow 
 
         <DialogFooter>
           <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           <Button type='button' onClick={form.handleSubmit(onSubmit)} disabled={updateChannel.isPending}>
-            {updateChannel.isPending ? t('common.buttons.saving') : t('common.buttons.save')}
+            {updateChannel.isPending ? m["common.buttons.saving"]() : m["common.buttons.save"]()}
           </Button>
         </DialogFooter>
       </DialogContent>

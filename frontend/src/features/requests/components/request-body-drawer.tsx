@@ -2,7 +2,6 @@
 
 import { ChevronLeft, ChevronRight, ExternalLink, FileText, ChevronsDownUp, ChevronsUpDown, Copy, Terminal } from 'lucide-react';
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { JsonViewer } from '@/components/json-tree-view';
@@ -22,6 +21,8 @@ import { Request, RequestConnection } from '../data/schema';
 import { generateRequestCurl } from '../utils/curl-generator';
 import { CurlPreviewDialog } from './curl-preview-dialog';
 import { getStatusColor } from './help';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 interface RequestBodyDrawerProps {
   open: boolean;
@@ -46,7 +47,6 @@ export function RequestBodyDrawer({
   pageInfo: initialPageInfo,
   queryWhere,
 }: RequestBodyDrawerProps) {
-  const { t } = useTranslation();
   const { navigateWithSearch } = usePaginationSearch({ defaultPageSize: 20 });
   const permissions = useRequestPermissions();
   const selectedProjectId = useSelectedProjectId();
@@ -97,9 +97,9 @@ export function RequestBodyDrawer({
       } catch {
         navigator.clipboard.writeText(String(data));
       }
-      toast.success(t('requests.actions.copy'));
+      toast.success(m["requests.actions.copy"]());
     },
-    [t]
+    []
   );
 
   const handleCurlPreview = useCallback(() => {
@@ -204,7 +204,7 @@ export function RequestBodyDrawer({
                 <>
                   <span className='font-mono'>#{extractNumberID(listRequest.id)}</span>
                   <Badge className={getStatusColor(listRequest.status)} variant='secondary'>
-                    {t(`requests.status.${listRequest.status}`)}
+                    {dynamicTranslation(`requests.status.${listRequest.status}`)}
                   </Badge>
                 </>
               ) : isLoading ? (
@@ -219,7 +219,7 @@ export function RequestBodyDrawer({
                 className='h-7 w-7'
                 onClick={handlePrev}
                 disabled={!canGoPrev || isLoadingMore}
-                title={t('requests.drawer.previous')}
+                title={m["requests.drawer.previous"]()}
               >
                 <ChevronLeft className='h-4 w-4' />
               </Button>
@@ -229,13 +229,13 @@ export function RequestBodyDrawer({
                 className='h-7 w-7'
                 onClick={handleNext}
                 disabled={!canGoNext || isLoadingMore}
-                title={t('requests.drawer.next')}
+                title={m["requests.drawer.next"]()}
               >
                 <ChevronRight className='h-4 w-4' />
               </Button>
               <Button variant='outline' size='sm' onClick={handleViewDetail} className='ml-1 h-7 text-xs'>
                 <ExternalLink className='mr-1 h-3.5 w-3.5' />
-                {t('requests.drawer.viewDetail')}
+                {m["requests.drawer.viewDetail"]()}
               </Button>
             </div>
           </div>
@@ -250,15 +250,15 @@ export function RequestBodyDrawer({
                 {/* Tab bar + action buttons */}
                 <div className='mx-6 mt-4 flex flex-shrink-0 items-center gap-2'>
                   <TabsList className='grid flex-1 grid-cols-2'>
-                    <TabsTrigger value='request'>{t('requests.detail.tabs.request')}</TabsTrigger>
-                    <TabsTrigger value='response'>{t('requests.detail.tabs.response')}</TabsTrigger>
+                    <TabsTrigger value='request'>{m["requests.detail.tabs.request"]()}</TabsTrigger>
+                    <TabsTrigger value='response'>{m["requests.detail.tabs.response"]()}</TabsTrigger>
                   </TabsList>
                   <Button
                     variant='outline'
                     size='icon'
                     className='h-9 w-9 flex-shrink-0'
                     onClick={() => setGlobalExpanded((v) => !v)}
-                    title={globalExpanded ? t('requests.drawer.collapseAll') : t('requests.drawer.expandAll')}
+                    title={globalExpanded ? m["requests.drawer.collapseAll"]() : m["requests.drawer.expandAll"]()}
                   >
                     {globalExpanded ? <ChevronsDownUp className='h-4 w-4' /> : <ChevronsUpDown className='h-4 w-4' />}
                   </Button>
@@ -267,7 +267,7 @@ export function RequestBodyDrawer({
                     size='icon'
                     className='h-9 w-9 flex-shrink-0'
                     onClick={() => copyBody(activeTab === 'request' ? displayedRequest.requestBody : displayedRequest.responseBody)}
-                    title={t('requests.actions.copy')}
+                    title={m["requests.actions.copy"]()}
                   >
                     <Copy className='h-4 w-4' />
                   </Button>
@@ -277,7 +277,7 @@ export function RequestBodyDrawer({
                       size='icon'
                       className='h-9 w-9 flex-shrink-0'
                       onClick={handleCurlPreview}
-                      title={t('requests.actions.copyCurl')}
+                      title={m["requests.actions.copyCurl"]()}
                     >
                       <Terminal className='h-4 w-4' />
                     </Button>
@@ -299,7 +299,7 @@ export function RequestBodyDrawer({
                       />
                     ) : (
                       <div className='flex h-32 items-center justify-center'>
-                        <p className='text-muted-foreground text-sm'>{t('requests.drawer.noRequestBody')}</p>
+                        <p className='text-muted-foreground text-sm'>{m["requests.drawer.noRequestBody"]()}</p>
                       </div>
                     )}
                   </ScrollArea>
@@ -320,7 +320,7 @@ export function RequestBodyDrawer({
                       />
                     ) : (
                       <div className='flex h-32 items-center justify-center'>
-                        <p className='text-muted-foreground text-sm'>{t('requests.detail.noResponse')}</p>
+                        <p className='text-muted-foreground text-sm'>{m["requests.detail.noResponse"]()}</p>
                       </div>
                     )}
                   </ScrollArea>

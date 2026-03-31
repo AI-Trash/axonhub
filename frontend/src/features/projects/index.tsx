@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -15,9 +14,9 @@ import { ProjectsPrimaryButtons } from './components/projects-primary-buttons';
 import { ProjectsTable } from './components/projects-table';
 import ProjectsProvider from './context/projects-context';
 import { useProjects } from './data/projects';
+import * as m from '@/paraglide/messages';
 
 function ProjectsContent() {
-  const { t } = useTranslation();
   const { projectPermissions } = usePermissions();
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
     defaultPageSize: 20,
@@ -30,7 +29,7 @@ function ProjectsContent() {
   const debouncedSearchFilter = useDebounce(searchFilter, 300);
 
   // Memoize columns to prevent infinite re-renders
-  const columns = useMemo(() => createColumns(t, projectPermissions.canWrite), [t, projectPermissions.canWrite]);
+  const columns = useMemo(() => createColumns(projectPermissions.canWrite), [projectPermissions.canWrite]);
 
   // Build where clause for API filtering with OR logic
   const whereClause = (() => {
@@ -95,15 +94,13 @@ function ProjectsContent() {
 }
 
 export default function ProjectsPage() {
-  const { t } = useTranslation();
-
   return (
     <ProjectsProvider>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('projects.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('projects.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["projects.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["projects.description"]()}</p>
           </div>
           <ProjectsPrimaryButtons />
         </div>

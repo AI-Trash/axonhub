@@ -1,6 +1,5 @@
 import { IconDotsVertical, IconEdit, IconTrash } from '@tabler/icons-react';
 import { Row } from '@tanstack/react-table';
-import { useTranslation } from 'react-i18next';
 
 import { PermissionGuard } from '@/components/permission-guard';
 import { Button } from '@/components/ui/button';
@@ -14,13 +13,13 @@ import {
 
 import { usePrompts } from '../context/prompts-context';
 import { Prompt } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface DataTableRowActionsProps {
   row: Row<Prompt>;
 }
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
-  const { t } = useTranslation();
   const { setOpen, setCurrentRow } = usePrompts();
   const prompt = row.original;
 
@@ -29,7 +28,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       <DropdownMenuTrigger asChild>
         <Button variant='ghost' className='data-[state=open]:bg-muted flex h-8 w-8 p-0'>
           <IconDotsVertical className='h-4 w-4' />
-          <span className='sr-only'>{t('common.buttons.openMenu')}</span>
+          <span className='sr-only'>{m["common.buttons.openMenu"]()}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end' className='w-[160px]'>
@@ -42,7 +41,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               }}
             >
               <IconEdit className='mr-2 h-4 w-4' />
-              {t('common.buttons.edit')}
+              {m["common.buttons.edit"]()}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -53,7 +52,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               className='text-destructive focus:text-destructive'
             >
               <IconTrash className='mr-2 h-4 w-4' />
-              {t('common.buttons.delete')}
+              {m["common.buttons.delete"]()}
             </DropdownMenuItem>
           </>
         </PermissionGuard>

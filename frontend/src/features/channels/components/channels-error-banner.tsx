@@ -1,9 +1,9 @@
 import { AlertCircle, Filter } from 'lucide-react';
 import { memo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import * as m from '@/paraglide/messages';
 
 interface ChannelsErrorBannerProps {
   errorCount: number;
@@ -18,8 +18,6 @@ export const ChannelsErrorBanner = memo(function ChannelsErrorBanner({
   showErrorOnly,
   onExitErrorOnlyMode,
 }: ChannelsErrorBannerProps) {
-  const { t } = useTranslation();
-
   if (errorCount === 0) {
     return null;
   }
@@ -30,9 +28,9 @@ export const ChannelsErrorBanner = memo(function ChannelsErrorBanner({
       <AlertDescription className='flex items-center justify-between'>
         <div>
           {showErrorOnly ? (
-            <span>{t('channels.errorBanner.errorOnlyMode')}</span>
+            <span>{m["channels.errorBanner.errorOnlyMode"]()}</span>
           ) : (
-            <span>{t('channels.errorBanner.message', { count: errorCount })}</span>
+            <span>{m["channels.errorBanner.message"]({ count: errorCount })}</span>
           )}
         </div>
         <div className='flex items-center space-x-2'>
@@ -43,7 +41,7 @@ export const ChannelsErrorBanner = memo(function ChannelsErrorBanner({
               onClick={onExitErrorOnlyMode}
               className='border-orange-300 bg-orange-100 hover:bg-orange-200 dark:border-orange-700 dark:bg-orange-900 dark:hover:bg-orange-800'
             >
-              {t('channels.errorBanner.exitErrorOnlyButton')}
+              {m["channels.errorBanner.exitErrorOnlyButton"]()}
             </Button>
           )}
           {!showErrorOnly && (
@@ -54,7 +52,7 @@ export const ChannelsErrorBanner = memo(function ChannelsErrorBanner({
               className='border-orange-300 bg-orange-100 hover:bg-orange-200 dark:border-orange-700 dark:bg-orange-900 dark:hover:bg-orange-800'
             >
               <Filter className='mr-2 h-4 w-4' />
-              {t('channels.errorBanner.filterButton')}
+              {m["channels.errorBanner.filterButton"]()}
             </Button>
           )}
         </div>

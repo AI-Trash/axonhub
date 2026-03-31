@@ -2,7 +2,6 @@
 
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -12,6 +11,7 @@ import { Label } from '@/components/ui/label';
 
 import { User } from '../data/schema';
 import { useDeleteUser } from '../data/users';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   open: boolean;
@@ -20,7 +20,6 @@ interface Props {
 }
 
 export function UsersDeleteDialog({ open, onOpenChange, currentRow }: Props) {
-  const { t } = useTranslation();
   const [confirmText, setConfirmText] = useState('');
   const deleteUser = useDeleteUser();
 
@@ -31,10 +30,10 @@ export function UsersDeleteDialog({ open, onOpenChange, currentRow }: Props) {
 
     try {
       await deleteUser.mutateAsync(currentRow.id);
-      toast.success(t('common.success.userDeleted'));
+      toast.success(m["common.success.userDeleted"]());
       onOpenChange(false);
     } catch (error) {
-      toast.error(t('common.errors.somethingWentWrong'));
+      toast.error(m["common.errors.somethingWentWrong"]());
     }
   };
 

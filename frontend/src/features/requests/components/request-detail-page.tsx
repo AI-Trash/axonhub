@@ -4,7 +4,6 @@ import { format } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
 import { Copy, Clock, Key, Database, ArrowLeft, FileText, Layers, Download, Terminal } from 'lucide-react';
 import { useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { JsonViewer } from '@/components/json-tree-view';
@@ -27,12 +26,14 @@ import { generateRequestCurl, generateExecutionCurl } from '../utils/curl-genera
 import { ChunksDialog } from './chunks-dialog';
 import { CurlPreviewDialog } from './curl-preview-dialog';
 import { getStatusColor } from './help';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 export default function RequestDetailPage() {
-  const { t, i18n } = useTranslation();
   const { requestId } = useParams({ from: '/_authenticated/project/requests/$requestId' });
   const navigate = useNavigate();
-  const locale = i18n.language === 'zh' ? zhCN : enUS;
+  const locale = getLocale() === 'zh' ? zhCN : enUS;
   const { getSearchParams } = usePaginationSearch({ defaultPageSize: 20 });
   const selectedProjectId = useSelectedProjectId();
 
@@ -58,7 +59,7 @@ export default function RequestDetailPage() {
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    toast.success(t('requests.actions.copy'));
+    toast.success(m["requests.actions.copy"]());
   };
 
   const downloadFile = (content: string, filename: string) => {
@@ -71,7 +72,7 @@ export default function RequestDetailPage() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast.success(t('requests.actions.download'));
+    toast.success(m["requests.actions.download"]());
   };
 
   const downloadVideo = async () => {
@@ -89,7 +90,7 @@ export default function RequestDetailPage() {
 
       const token = getTokenFromStorage();
       if (!token) {
-        toast.error(t('common.errors.sessionExpiredSignIn'));
+        toast.error(m["common.errors.sessionExpiredSignIn"]());
         return;
       }
 
@@ -117,9 +118,9 @@ export default function RequestDetailPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(objectUrl);
-      toast.success(t('requests.actions.download'));
+      toast.success(m["requests.actions.download"]());
     } catch (err) {
-      toast.error(t('common.errors.operationFailed', { operation: t('requests.actions.downloadVideo') }));
+      toast.error(m["common.errors.operationFailed"]({ operation: m["requests.actions.downloadVideo"]() }));
     } finally {
       setIsDownloadingVideo(false);
     }
@@ -173,7 +174,7 @@ export default function RequestDetailPage() {
   };
 
   const formatLatency = (latencyMs: number | null) => {
-    if (latencyMs === null) return t('requests.columns.unknown');
+    if (latencyMs === null) return m["requests.columns.unknown"]();
     if (latencyMs < 1000) return `${latencyMs}ms`;
     return `${(latencyMs / 1000).toFixed(2)}s`;
   };
@@ -194,7 +195,7 @@ export default function RequestDetailPage() {
           <div className='flex h-full items-center justify-center'>
             <div className='space-y-4 text-center'>
               <div className='border-primary mx-auto h-12 w-12 animate-spin rounded-full border-b-2'></div>
-              <p className='text-muted-foreground text-lg'>{t('common.loading')}</p>
+              <p className='text-muted-foreground text-lg'>{m["common.loading"]()}</p>
             </div>
           </div>
         </Main>
@@ -211,11 +212,11 @@ export default function RequestDetailPage() {
             <div className='space-y-6 text-center'>
               <div className='space-y-2'>
                 <FileText className='text-muted-foreground mx-auto h-16 w-16' />
-                <p className='text-muted-foreground text-xl font-medium'>{t('requests.dialogs.requestDetail.notFound')}</p>
+                <p className='text-muted-foreground text-xl font-medium'>{m["requests.dialogs.requestDetail.notFound"]()}</p>
               </div>
               <Button onClick={handleBack} size='lg'>
                 <ArrowLeft className='mr-2 h-4 w-4' />
-                {t('common.back')}
+                {m["common.back"]()}
               </Button>
             </div>
           </div>
@@ -230,7 +231,7 @@ export default function RequestDetailPage() {
         <div className='flex items-center space-x-4'>
           <Button variant='ghost' size='sm' onClick={handleBack} className='hover:bg-accent'>
             <ArrowLeft className='mr-2 h-4 w-4' />
-            {t('common.back')}
+            {m["common.back"]()}
           </Button>
           <Separator orientation='vertical' className='h-6' />
           <div className='flex items-center space-x-3'>
@@ -239,10 +240,10 @@ export default function RequestDetailPage() {
             </div>
             <div>
               <h1 className='text-lg leading-none font-semibold'>
-                {t('requests.detail.title')} #{extractNumberID(request.id) || request.id}
+                {m["requests.detail.title"]()} #{extractNumberID(request.id) || request.id}
               </h1>
               <div className='mt-1 flex items-center gap-2'>
-                <p className='text-muted-foreground text-sm'>{request.modelID || t('requests.columns.unknown')}</p>
+                <p className='text-muted-foreground text-sm'>{request.modelID || m["requests.columns.unknown"]()}</p>
                 <span className='text-muted-foreground text-xs'>•</span>
                 <p className='text-muted-foreground text-xs'>{format(new Date(request.createdAt), 'yyyy-MM-dd HH:mm:ss', { locale })}</p>
               </div>
@@ -261,10 +262,10 @@ export default function RequestDetailPage() {
                   <div className='bg-primary/10 flex h-7 w-7 items-center justify-center rounded-lg'>
                     <DashboardIcon className='text-primary h-3.5 w-3.5' />
                   </div>
-                  <span className='text-base'>{t('requests.detail.overview')}</span>
+                  <span className='text-base'>{m["requests.detail.overview"]()}</span>
                 </div>
                 <Badge className={getStatusColor(request.status)} variant='secondary'>
-                  {t(`requests.status.${request.status}`)}
+                  {dynamicTranslation(`requests.status.${request.status}`)}
                 </Badge>
               </CardTitle>
             </CardHeader>
@@ -273,29 +274,29 @@ export default function RequestDetailPage() {
                 <div className='bg-muted/30 flex items-center justify-between gap-2 rounded-lg border px-3 py-2'>
                   <div className='flex items-center gap-2'>
                     <Database className='text-primary h-3.5 w-3.5' />
-                    <span className='text-xs font-medium'>{t('requests.columns.channel')}</span>
+                    <span className='text-xs font-medium'>{m["requests.columns.channel"]()}</span>
                   </div>
                   <p className='bg-background rounded border px-2 py-0.5 font-mono text-xs'>
-                    {request.channel?.name || t('requests.columns.unknown')}
+                    {request.channel?.name || m["requests.columns.unknown"]()}
                   </p>
                 </div>
 
                 <div className='bg-muted/30 flex items-center justify-between gap-2 rounded-lg border px-3 py-2'>
                   <div className='flex items-center gap-2'>
                     <Database className='text-primary h-3.5 w-3.5' />
-                    <span className='text-xs font-medium'>{t('requests.columns.modelId')}</span>
+                    <span className='text-xs font-medium'>{m["requests.columns.modelId"]()}</span>
                   </div>
                   <p className='bg-background rounded border px-2 py-0.5 font-mono text-xs'>
-                    {request.modelID || t('requests.columns.unknown')}
+                    {request.modelID || m["requests.columns.unknown"]()}
                   </p>
                 </div>
 
                 <div className='bg-muted/30 flex items-center justify-between gap-2 rounded-lg border px-3 py-2'>
                   <div className='flex items-center gap-2'>
                     <Key className='text-primary h-3.5 w-3.5' />
-                    <span className='text-xs font-medium'>{t('requests.dialogs.requestDetail.fields.apiKeyName')}</span>
+                    <span className='text-xs font-medium'>{m["requests.dialogs.requestDetail.fields.apiKeyName"]()}</span>
                   </div>
-                  <p className='text-muted-foreground font-mono text-xs'>{request.apiKey?.name || t('requests.columns.unknown')}</p>
+                  <p className='text-muted-foreground font-mono text-xs'>{request.apiKey?.name || m["requests.columns.unknown"]()}</p>
                 </div>
               </div>
             </CardContent>
@@ -321,12 +322,11 @@ export default function RequestDetailPage() {
               const cacheWriteCost = usage.costItems?.find((i: any) => i.itemCode === 'prompt_write_cached_tokens')?.subtotal;
 
               const formatCurrency = (val: number) =>
-                t('currencies.format', {
+                m["currencies.format"]({
                   val,
                   currency: settings?.currencyCode,
-                  locale: i18n.language === 'zh' ? 'zh-CN' : 'en-US',
-                  minimumFractionDigits: 6,
-                });
+                  locale: getLocale() === 'zh' ? 'zh-CN' : 'en-US',
+                  minimumFractionDigits: 6 });
 
               const renderCost = (val: number | null | undefined) => {
                 if (cost <= 0) return '-';
@@ -342,24 +342,24 @@ export default function RequestDetailPage() {
                         <div className='bg-primary/10 flex h-7 w-7 items-center justify-center rounded-lg'>
                           <Database className='text-primary h-3.5 w-3.5' />
                         </div>
-                        <span className='text-base'>{t('requests.detail.tabs.usage')}</span>
+                        <span className='text-base'>{m["requests.detail.tabs.usage"]()}</span>
                       </div>
                       <Badge className='bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300' variant='secondary'>
-                        {t(`usageLogs.source.${usage.source}`)}
+                        {dynamicTranslation(`usageLogs.source.${usage.source}`)}
                       </Badge>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className='grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5'>
                       <div className='bg-muted/30 flex flex-col justify-center rounded-lg border px-2.5 py-2'>
-                        <span className='text-muted-foreground text-xs font-medium'>{t('usageLogs.columns.inputLabel')}</span>
+                        <span className='text-muted-foreground text-xs font-medium'>{m["usageLogs.columns.inputLabel"]()}</span>
                         <div className='mt-1'>
                           <p className='text-sm font-semibold'>{usage.promptTokens.toLocaleString()}</p>
                           <p className='text-muted-foreground text-xs'>{renderCost(promptCost)}</p>
                         </div>
                       </div>
                       <div className='bg-muted/30 flex flex-col justify-center rounded-lg border px-2.5 py-2'>
-                        <span className='text-muted-foreground text-xs font-medium'>{t('usageLogs.columns.outputLabel')}</span>
+                        <span className='text-muted-foreground text-xs font-medium'>{m["usageLogs.columns.outputLabel"]()}</span>
                         <div className='mt-1'>
                           <p className='text-sm font-semibold'>{usage.completionTokens.toLocaleString()}</p>
                           <p className='text-muted-foreground text-xs'>{renderCost(completionCost)}</p>
@@ -367,7 +367,7 @@ export default function RequestDetailPage() {
                       </div>
 
                       <div className='bg-muted/30 flex flex-col justify-center rounded-lg border px-2.5 py-2'>
-                        <span className='text-muted-foreground text-xs font-medium'>{t('usageLogs.columns.promptCachedTokens')}</span>
+                        <span className='text-muted-foreground text-xs font-medium'>{m["usageLogs.columns.promptCachedTokens"]()}</span>
                         <div className='mt-1'>
                           <div className='flex items-center justify-between'>
                             <p className='text-sm font-semibold'>{cachedTokens.toLocaleString()}</p>
@@ -381,7 +381,7 @@ export default function RequestDetailPage() {
                         </div>
                       </div>
                       <div className='bg-muted/30 flex flex-col justify-center rounded-lg border px-2.5 py-2'>
-                        <span className='text-muted-foreground text-xs font-medium'>{t('usageLogs.columns.writeCacheTokens')}</span>
+                        <span className='text-muted-foreground text-xs font-medium'>{m["usageLogs.columns.writeCacheTokens"]()}</span>
                         <div className='mt-1'>
                           <div className='flex items-center justify-between'>
                             <p className='text-sm font-semibold'>{writeCachedTokens.toLocaleString()}</p>
@@ -395,7 +395,7 @@ export default function RequestDetailPage() {
                         </div>
                       </div>
                       <div className='bg-muted/30 flex flex-col justify-center rounded-lg border px-2.5 py-2'>
-                        <span className='text-muted-foreground text-xs font-medium'>{t('usageLogs.columns.totalTokens')}</span>
+                        <span className='text-muted-foreground text-xs font-medium'>{m["usageLogs.columns.totalTokens"]()}</span>
                         <div className='mt-1'>
                           <p className='text-sm font-semibold'>{usage.totalTokens.toLocaleString()}</p>
                           <p className='text-muted-foreground text-xs'>{renderCost(cost)}</p>
@@ -414,13 +414,13 @@ export default function RequestDetailPage() {
                 <div className='bg-muted/20 border-b px-6 pt-6'>
                   <TabsList className='bg-background grid w-full grid-cols-3'>
                     <TabsTrigger value='request' className='data-[state=active]:bg-primary data-[state=active]:text-primary-foreground'>
-                      {t('requests.detail.tabs.request')}
+                      {m["requests.detail.tabs.request"]()}
                     </TabsTrigger>
                     <TabsTrigger value='response' className='data-[state=active]:bg-primary data-[state=active]:text-primary-foreground'>
-                      {t('requests.detail.tabs.response')}
+                      {m["requests.detail.tabs.response"]()}
                     </TabsTrigger>
                     <TabsTrigger value='executions' className='data-[state=active]:bg-primary data-[state=active]:text-primary-foreground'>
-                      {t('requests.detail.tabs.executions')}
+                      {m["requests.detail.tabs.executions"]()}
                     </TabsTrigger>
                   </TabsList>
                 </div>
@@ -434,7 +434,7 @@ export default function RequestDetailPage() {
                       className='hover:bg-primary hover:text-primary-foreground'
                     >
                       <Terminal className='mr-2 h-4 w-4' />
-                      {t('requests.actions.copyCurl')}
+                      {m["requests.actions.copyCurl"]()}
                     </Button>
                   </div>
                   {request.requestHeaders && (
@@ -442,7 +442,7 @@ export default function RequestDetailPage() {
                       <div className='flex items-center justify-between'>
                         <h4 className='flex items-center gap-2 text-base font-semibold'>
                           <FileText className='text-primary h-4 w-4' />
-                          {t('requests.columns.requestHeaders')}
+                          {m["requests.columns.requestHeaders"]()}
                         </h4>
                         <div className='flex gap-2'>
                           <Button
@@ -452,7 +452,7 @@ export default function RequestDetailPage() {
                             className='hover:bg-primary hover:text-primary-foreground'
                           >
                             <Copy className='mr-2 h-4 w-4' />
-                            {t('requests.dialogs.jsonViewer.copy')}
+                            {m["requests.dialogs.jsonViewer.copy"]()}
                           </Button>
                           <Button
                             variant='outline'
@@ -461,7 +461,7 @@ export default function RequestDetailPage() {
                             className='hover:bg-primary hover:text-primary-foreground'
                           >
                             <Download className='mr-2 h-4 w-4' />
-                            {t('requests.dialogs.jsonViewer.download')}
+                            {m["requests.dialogs.jsonViewer.download"]()}
                           </Button>
                         </div>
                       </div>
@@ -481,7 +481,7 @@ export default function RequestDetailPage() {
                     <div className='flex items-center justify-between'>
                       <h4 className='flex items-center gap-2 text-base font-semibold'>
                         <FileText className='text-primary h-4 w-4' />
-                        {t('requests.columns.requestBody')}
+                        {m["requests.columns.requestBody"]()}
                       </h4>
                       <div className='flex gap-2'>
                         <Button
@@ -491,7 +491,7 @@ export default function RequestDetailPage() {
                           className='hover:bg-primary hover:text-primary-foreground'
                         >
                           <Copy className='mr-2 h-4 w-4' />
-                          {t('requests.dialogs.jsonViewer.copy')}
+                          {m["requests.dialogs.jsonViewer.copy"]()}
                         </Button>
                         <Button
                           variant='outline'
@@ -500,7 +500,7 @@ export default function RequestDetailPage() {
                           className='hover:bg-primary hover:text-primary-foreground'
                         >
                           <Download className='mr-2 h-4 w-4' />
-                          {t('requests.dialogs.jsonViewer.download')}
+                          {m["requests.dialogs.jsonViewer.download"]()}
                         </Button>
                       </div>
                     </div>
@@ -522,7 +522,7 @@ export default function RequestDetailPage() {
                     <div className='flex items-center justify-between'>
                       <h4 className='flex items-center gap-2 text-base font-semibold'>
                         <FileText className='text-primary h-4 w-4' />
-                        {t('requests.columns.responseBody')}
+                        {m["requests.columns.responseBody"]()}
                       </h4>
                       <div className='flex gap-2'>
                         {(request.format === 'openai/video' || request.format === 'seedance/video') &&
@@ -536,7 +536,7 @@ export default function RequestDetailPage() {
                               className='hover:bg-primary hover:text-primary-foreground'
                             >
                               <Download className='mr-2 h-4 w-4' />
-                              {t('requests.actions.downloadVideo')}
+                              {m["requests.actions.downloadVideo"]()}
                             </Button>
                           )}
                         <Button
@@ -547,7 +547,7 @@ export default function RequestDetailPage() {
                           className='hover:bg-primary hover:text-primary-foreground disabled:opacity-50'
                         >
                           <Layers className='mr-2 h-4 w-4' />
-                          {t('requests.columns.responseChunks')}
+                          {m["requests.columns.responseChunks"]()}
                         </Button>
                         <Button
                           variant='outline'
@@ -557,7 +557,7 @@ export default function RequestDetailPage() {
                           className='hover:bg-primary hover:text-primary-foreground disabled:opacity-50'
                         >
                           <Copy className='mr-2 h-4 w-4' />
-                          {t('requests.dialogs.jsonViewer.copy')}
+                          {m["requests.dialogs.jsonViewer.copy"]()}
                         </Button>
                         <Button
                           variant='outline'
@@ -567,7 +567,7 @@ export default function RequestDetailPage() {
                           className='hover:bg-primary hover:text-primary-foreground disabled:opacity-50'
                         >
                           <Download className='mr-2 h-4 w-4' />
-                          {t('requests.dialogs.jsonViewer.download')}
+                          {m["requests.dialogs.jsonViewer.download"]()}
                         </Button>
                       </div>
                     </div>
@@ -586,7 +586,7 @@ export default function RequestDetailPage() {
                       <div className='bg-muted/20 flex h-[500px] w-full items-center justify-center rounded-lg border'>
                         <div className='space-y-3 text-center'>
                           <FileText className='text-muted-foreground mx-auto h-12 w-12' />
-                          <p className='text-muted-foreground text-base'>{t('requests.detail.noResponse')}</p>
+                          <p className='text-muted-foreground text-base'>{m["requests.detail.noResponse"]()}</p>
                         </div>
                       </div>
                     )}
@@ -606,10 +606,10 @@ export default function RequestDetailPage() {
                                   <div className='bg-primary/10 text-primary flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold'>
                                     {index + 1}
                                   </div>
-                                  {t('requests.dialogs.requestDetail.execution', { index: index + 1 })}
+                                  {m["requests.dialogs.requestDetail.execution"]({ index: index + 1 })}
                                 </h5>
                                 <Badge className={getStatusColor(execution.status)} variant='secondary'>
-                                  {t(`requests.status.${execution.status}`)}
+                                  {dynamicTranslation(`requests.status.${execution.status}`)}
                                 </Badge>
                               </div>
                             </CardHeader>
@@ -618,40 +618,40 @@ export default function RequestDetailPage() {
                                 <div className='bg-background space-y-2 rounded-lg border p-3'>
                                   <span className='flex items-center gap-2 text-sm font-medium'>
                                     <Database className='text-primary h-4 w-4' />
-                                    {t('requests.columns.channel')}
+                                    {m["requests.columns.channel"]()}
                                   </span>
                                   <p className='text-muted-foreground font-mono text-sm'>
-                                    {execution.channel?.name || t('requests.columns.unknown')}
+                                    {execution.channel?.name || m["requests.columns.unknown"]()}
                                   </p>
                                 </div>
                                 <div className='bg-background space-y-2 rounded-lg border p-3'>
                                   <span className='flex items-center gap-2 text-sm font-medium'>
                                     <Clock className='text-primary h-4 w-4' />
-                                    {t('requests.dialogs.requestDetail.fields.startTime')}
+                                    {m["requests.dialogs.requestDetail.fields.startTime"]()}
                                   </span>
                                   <p className='text-muted-foreground font-mono text-sm'>
                                     {execution.createdAt
                                       ? format(new Date(execution.createdAt), 'yyyy-MM-dd HH:mm:ss', { locale })
-                                      : t('requests.columns.unknown')}
+                                      : m["requests.columns.unknown"]()}
                                   </p>
                                 </div>
                                 <div className='bg-background space-y-2 rounded-lg border p-3'>
                                   <span className='flex items-center gap-2 text-sm font-medium'>
                                     <Clock className='text-primary h-4 w-4' />
-                                    {t('requests.dialogs.requestDetail.fields.endTime')}
+                                    {m["requests.dialogs.requestDetail.fields.endTime"]()}
                                   </span>
                                   <p className='text-muted-foreground font-mono text-sm'>
                                     {execution.status === 'completed' || execution.status === 'failed'
                                       ? execution.updatedAt
                                         ? format(new Date(execution.updatedAt), 'yyyy-MM-dd HH:mm:ss', { locale })
-                                        : t('requests.columns.unknown')
+                                        : m["requests.columns.unknown"]()
                                       : '-'}
                                   </p>
                                 </div>
                                 <div className='bg-background space-y-2 rounded-lg border p-3'>
                                   <span className='flex items-center gap-2 text-sm font-medium'>
                                     <Clock className='text-primary h-4 w-4' />
-                                    {t('requests.columns.latency')}
+                                    {m["requests.columns.latency"]()}
                                   </span>
                                   <p className='text-muted-foreground font-mono text-sm'>
                                     {execution.status === 'completed' || execution.status === 'failed'
@@ -662,7 +662,7 @@ export default function RequestDetailPage() {
                                 <div className='bg-background space-y-2 rounded-lg border p-3'>
                                   <span className='flex items-center gap-2 text-sm font-medium'>
                                     <Clock className='text-primary h-4 w-4' />
-                                    {t('requests.columns.firstTokenLatency')}
+                                    {m["requests.columns.firstTokenLatency"]()}
                                   </span>
                                   <p className='text-muted-foreground font-mono text-sm'>
                                     {execution.status === 'completed' && execution.metricsFirstTokenLatencyMs != null
@@ -677,7 +677,7 @@ export default function RequestDetailPage() {
                                   <div className='flex items-center justify-between'>
                                     <span className='text-destructive flex items-center gap-2 text-sm font-semibold'>
                                       <FileText className='h-4 w-4' />
-                                      {t('common.messages.errorMessage')}
+                                      {m["common.messages.errorMessage"]()}
                                     </span>
                                     {execution.status === 'failed' && execution.responseStatusCode && (
                                       <Badge variant='destructive'>HTTP {execution.responseStatusCode}</Badge>
@@ -707,7 +707,7 @@ export default function RequestDetailPage() {
                                     className='hover:bg-primary hover:text-primary-foreground'
                                   >
                                     <Terminal className='mr-2 h-4 w-4' />
-                                    {t('requests.actions.copyCurl')}
+                                    {m["requests.actions.copyCurl"]()}
                                   </Button>
                                 </div>
                               )}
@@ -717,7 +717,7 @@ export default function RequestDetailPage() {
                                   <div className='flex items-center justify-between'>
                                     <span className='flex items-center gap-2 text-sm font-semibold'>
                                       <FileText className='text-primary h-4 w-4' />
-                                      {t('requests.columns.requestHeaders')}
+                                      {m["requests.columns.requestHeaders"]()}
                                     </span>
                                     <div className='flex gap-2'>
                                       <Button
@@ -727,7 +727,7 @@ export default function RequestDetailPage() {
                                         className='hover:bg-primary hover:text-primary-foreground'
                                       >
                                         <Copy className='mr-2 h-4 w-4' />
-                                        {t('requests.dialogs.jsonViewer.copy')}
+                                        {m["requests.dialogs.jsonViewer.copy"]()}
                                       </Button>
                                       <Button
                                         variant='outline'
@@ -741,7 +741,7 @@ export default function RequestDetailPage() {
                                         className='hover:bg-primary hover:text-primary-foreground'
                                       >
                                         <Download className='mr-2 h-4 w-4' />
-                                        {t('requests.dialogs.jsonViewer.download')}
+                                        {m["requests.dialogs.jsonViewer.download"]()}
                                       </Button>
                                     </div>
                                   </div>
@@ -762,7 +762,7 @@ export default function RequestDetailPage() {
                                   <div className='flex items-center justify-between'>
                                     <span className='flex items-center gap-2 text-sm font-semibold'>
                                       <FileText className='text-primary h-4 w-4' />
-                                      {t('requests.columns.requestBody')}
+                                      {m["requests.columns.requestBody"]()}
                                     </span>
                                     <div className='flex gap-2'>
                                       <Button
@@ -772,7 +772,7 @@ export default function RequestDetailPage() {
                                         className='hover:bg-primary hover:text-primary-foreground'
                                       >
                                         <Copy className='mr-2 h-4 w-4' />
-                                        {t('requests.dialogs.jsonViewer.copy')}
+                                        {m["requests.dialogs.jsonViewer.copy"]()}
                                       </Button>
                                       <Button
                                         variant='outline'
@@ -783,7 +783,7 @@ export default function RequestDetailPage() {
                                         className='hover:bg-primary hover:text-primary-foreground'
                                       >
                                         <Download className='mr-2 h-4 w-4' />
-                                        {t('requests.dialogs.jsonViewer.download')}
+                                        {m["requests.dialogs.jsonViewer.download"]()}
                                       </Button>
                                     </div>
                                   </div>
@@ -804,7 +804,7 @@ export default function RequestDetailPage() {
                                   <div className='flex items-center justify-between'>
                                     <span className='flex items-center gap-2 text-sm font-semibold'>
                                       <FileText className='text-primary h-4 w-4' />
-                                      {t('requests.columns.responseBody')}
+                                      {m["requests.columns.responseBody"]()}
                                     </span>
                                     <div className='flex gap-2'>
                                       {execution.responseChunks && execution.responseChunks.length > 0 && (
@@ -815,7 +815,7 @@ export default function RequestDetailPage() {
                                           className='hover:bg-primary hover:text-primary-foreground'
                                         >
                                           <Layers className='mr-2 h-4 w-4' />
-                                          {t('requests.columns.responseChunks')}
+                                          {m["requests.columns.responseChunks"]()}
                                         </Button>
                                       )}
                                       <Button
@@ -825,7 +825,7 @@ export default function RequestDetailPage() {
                                         className='hover:bg-primary hover:text-primary-foreground'
                                       >
                                         <Copy className='mr-2 h-4 w-4' />
-                                        {t('requests.dialogs.jsonViewer.copy')}
+                                        {m["requests.dialogs.jsonViewer.copy"]()}
                                       </Button>
                                       <Button
                                         variant='outline'
@@ -836,7 +836,7 @@ export default function RequestDetailPage() {
                                         className='hover:bg-primary hover:text-primary-foreground'
                                       >
                                         <Download className='mr-2 h-4 w-4' />
-                                        {t('requests.dialogs.jsonViewer.download')}
+                                        {m["requests.dialogs.jsonViewer.download"]()}
                                       </Button>
                                     </div>
                                   </div>
@@ -860,7 +860,7 @@ export default function RequestDetailPage() {
                     <div className='py-16 text-center'>
                       <div className='space-y-4'>
                         <FileText className='text-muted-foreground mx-auto h-16 w-16' />
-                        <p className='text-muted-foreground text-lg'>{t('requests.dialogs.requestDetail.noExecutions')}</p>
+                        <p className='text-muted-foreground text-lg'>{m["requests.dialogs.requestDetail.noExecutions"]()}</p>
                       </div>
                     </div>
                   )}
@@ -876,7 +876,7 @@ export default function RequestDetailPage() {
         open={showResponseChunks}
         onOpenChange={setShowResponseChunks}
         chunks={selectedResponseChunks}
-        title={t('requests.dialogs.jsonViewer.responseChunks')}
+        title={m["requests.dialogs.jsonViewer.responseChunks"]()}
       />
 
       {/* Execution Chunks Modal */}
@@ -884,7 +884,7 @@ export default function RequestDetailPage() {
         open={showExecutionChunks}
         onOpenChange={setShowExecutionChunks}
         chunks={selectedExecutionChunks}
-        title={t('requests.dialogs.jsonViewer.responseChunks')}
+        title={m["requests.dialogs.jsonViewer.responseChunks"]()}
       />
 
       {/* cURL Preview Modal */}

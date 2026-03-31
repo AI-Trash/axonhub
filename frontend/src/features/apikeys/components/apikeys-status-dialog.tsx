@@ -1,15 +1,14 @@
 'use client';
 
 import { IconAlertTriangle } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useUpdateApiKeyStatus } from '../data/apikeys';
+import * as m from '@/paraglide/messages';
 
 export function ApiKeysStatusDialog() {
-  const { t } = useTranslation();
   const { isDialogOpen, closeDialog, selectedApiKey, resetRowSelection } = useApiKeysContext();
   const updateApiKeyStatus = useUpdateApiKeyStatus();
 
@@ -39,16 +38,16 @@ export function ApiKeysStatusDialog() {
       title={
         <span className={isDisabling ? 'text-destructive' : 'text-green-600'}>
           <IconAlertTriangle className={`${isDisabling ? 'stroke-destructive' : 'stroke-green-600'} mr-1 inline-block`} size={18} />
-          {isDisabling ? t('apikeys.dialogs.status.disableTitle') : t('apikeys.dialogs.status.enableTitle')}
+          {isDisabling ? m["apikeys.dialogs.status.disableTitle"]() : m["apikeys.dialogs.status.enableTitle"]()}
         </span>
       }
       desc={
         isDisabling
-          ? t('apikeys.dialogs.status.disableDescription', { name: selectedApiKey.name })
-          : t('apikeys.dialogs.status.enableDescription', { name: selectedApiKey.name })
+          ? m["apikeys.dialogs.status.disableDescription"]({ name: selectedApiKey.name })
+          : m["apikeys.dialogs.status.enableDescription"]({ name: selectedApiKey.name })
       }
-      confirmText={isDisabling ? t('common.buttons.disable') : t('common.buttons.enable')}
-      cancelBtnText={t('common.buttons.cancel')}
+      confirmText={isDisabling ? m["common.buttons.disable"]() : m["common.buttons.enable"]()}
+      cancelBtnText={m["common.buttons.cancel"]()}
     />
   );
 }

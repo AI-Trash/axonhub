@@ -4,7 +4,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Search } from 'lucide-react';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -23,6 +22,7 @@ import { useSelectedProjectId } from '@/stores/projectStore';
 
 import { User } from '../data/schema';
 import { useAddUserToProject, useUpdateProjectUser, useAllUsers } from '../data/users';
+import * as m from '@/paraglide/messages';
 
 interface Role {
   id: string;
@@ -47,7 +47,6 @@ interface Props {
 }
 
 export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Props) {
-  const { t } = useTranslation();
   const currentUser = useAuthStore((state) => state.auth.user);
   const selectedProjectId = useSelectedProjectId();
   const isEdit = !!currentRow;
@@ -66,7 +65,7 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
       return formSchema;
     }
     return formSchema.extend({
-      userId: z.string().min(1, t('users.validation.userRequired')),
+      userId: z.string().min(1, m["users.validation.userRequired"]()),
     });
   }, [isEdit, t]);
 
@@ -127,11 +126,11 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
         setCanEdit(canEditTarget);
       }
     } catch (error) {
-      toast.error(t('common.errors.loadFailed'));
+      toast.error(m["common.errors.loadFailed"]());
     } finally {
       setLoading(false);
     }
-  }, [t, selectedProjectId, isEdit, currentRow, currentUser]);
+  }, [selectedProjectId, isEdit, currentRow, currentUser]);
 
   useEffect(() => {
     if (open) {
@@ -191,9 +190,9 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
     >
       <DialogContent className='sm:max-w-2xl' ref={setDialogContent}>
         <DialogHeader className='text-left'>
-          <DialogTitle>{isEdit ? t('users.dialogs.edit.title') : t('users.dialogs.addToProject.title')}</DialogTitle>
+          <DialogTitle>{isEdit ? m["users.dialogs.edit.title"]() : m["users.dialogs.addToProject.title"]()}</DialogTitle>
           <DialogDescription>
-            {isEdit ? t('users.dialogs.edit.description') : t('users.dialogs.addToProject.description')}
+            {isEdit ? m["users.dialogs.edit.description"]() : m["users.dialogs.addToProject.description"]()}
           </DialogDescription>
         </DialogHeader>
 
@@ -207,27 +206,27 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
                   name='userId'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('users.form.selectUser')}</FormLabel>
+                      <FormLabel>{m["users.form.selectUser"]()}</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder={t('users.form.selectUserPlaceholder')} />
+                            <SelectValue placeholder={m["users.form.selectUserPlaceholder"]()} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
                           <div className='flex items-center border-b px-3 pb-2'>
                             <Search className='mr-2 h-4 w-4 shrink-0 opacity-50' />
                             <Input
-                              placeholder={t('users.form.searchUsers')}
+                              placeholder={m["users.form.searchUsers"]()}
                               value={searchTerm}
                               onChange={(e) => setSearchTerm(e.target.value)}
                               className='h-8 border-0 p-0 focus-visible:ring-0'
                             />
                           </div>
                           {usersLoading ? (
-                            <div className='text-muted-foreground p-2 text-center text-sm'>{t('common.loading')}</div>
+                            <div className='text-muted-foreground p-2 text-center text-sm'>{m["common.loading"]()}</div>
                           ) : availableUsers.length === 0 ? (
-                            <div className='text-muted-foreground p-2 text-center text-sm'>{t('users.form.noUsersFound')}</div>
+                            <div className='text-muted-foreground p-2 text-center text-sm'>{m["users.form.noUsersFound"]()}</div>
                           ) : (
                             availableUsers.map((user) => (
                               <SelectItem key={user.id} value={user.id}>
@@ -253,8 +252,8 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
                       <Checkbox checked={field.value} onCheckedChange={field.onChange} />
                     </FormControl>
                     <div className='space-y-1 leading-none'>
-                      <FormLabel>{t('users.form.isOwner')}</FormLabel>
-                      <p className='text-muted-foreground text-sm'>{t('users.form.ownerDescription')}</p>
+                      <FormLabel>{m["users.form.isOwner"]()}</FormLabel>
+                      <p className='text-muted-foreground text-sm'>{m["users.form.ownerDescription"]()}</p>
                     </div>
                   </FormItem>
                 )}
@@ -262,11 +261,11 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
 
               {/* Roles Section */}
               <div className='space-y-3'>
-                <FormLabel>{t('users.form.projectRoles')}</FormLabel>
+                <FormLabel>{m["users.form.projectRoles"]()}</FormLabel>
                 {loading ? (
-                  <div>{t('users.form.loadingRoles')}</div>
+                  <div>{m["users.form.loadingRoles"]()}</div>
                 ) : roles.length === 0 ? (
-                  <div className='text-muted-foreground text-sm'>{t('users.form.noProjectRoles')}</div>
+                  <div className='text-muted-foreground text-sm'>{m["users.form.noProjectRoles"]()}</div>
                 ) : (
                   <div className='grid grid-cols-2 gap-2'>
                     {roles.map((role) => (
@@ -294,7 +293,7 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
                 name='scopes'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('users.form.projectScopes')}</FormLabel>
+                    <FormLabel>{m["users.form.projectScopes"]()}</FormLabel>
                     <FormControl>
                       <ScopesSelect value={field.value || []} onChange={field.onChange} portalContainer={dialogContent} />
                     </FormControl>
@@ -307,7 +306,7 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
         </div>
 
         <DialogFooter>
-          {isEdit && !canEdit && <p className='text-destructive mr-auto text-sm'>{t('users.errors.insufficientPermissions')}</p>}
+          {isEdit && !canEdit && <p className='text-destructive mr-auto text-sm'>{m["users.errors.insufficientPermissions"]()}</p>}
           <Button
             variant='outline'
             onClick={() => {
@@ -315,7 +314,7 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
               onOpenChange(false);
             }}
           >
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           <Button
             type='submit'
@@ -323,10 +322,10 @@ export function ProjectUserActionDialog({ currentRow, open, onOpenChange }: Prop
             disabled={addUserToProject.isPending || updateProjectUser.isPending || (isEdit && !canEdit)}
           >
             {addUserToProject.isPending || updateProjectUser.isPending
-              ? t('users.buttons.adding')
+              ? m["users.buttons.adding"]()
               : isEdit
-                ? t('common.buttons.saveChanges')
-                : t('users.buttons.addToProject')}
+                ? m["common.buttons.saveChanges"]()
+                : m["users.buttons.addToProject"]()}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -2,7 +2,6 @@ import { Cross2Icon } from '@radix-ui/react-icons';
 import { Table } from '@tanstack/react-table';
 import { RefreshCw, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { DataTableFacetedFilter } from '@/components/data-table-faceted-filter';
 import { DateRangePicker } from '@/components/date-range-picker';
@@ -18,6 +17,7 @@ import type { DateTimeRangeValue } from '@/utils/date-range';
 
 import { RequestStatus } from '../data/schema';
 import { DataTableViewOptions } from './data-table-view-options';
+import * as m from '@/paraglide/messages';
 
 interface DataTableToolbarProps<TData> {
   table: Table<TData>;
@@ -42,7 +42,6 @@ export function DataTableToolbar<TData>({
   autoRefresh = false,
   onAutoRefreshChange,
 }: DataTableToolbarProps<TData>) {
-  const { t } = useTranslation();
   const [showArchivedApiKeys, setShowArchivedApiKeys] = useState(false);
   const [showArchivedChannels, setShowArchivedChannels] = useState(false);
   const hasDateRange = !!dateRange?.from || !!dateRange?.to;
@@ -148,34 +147,34 @@ export function DataTableToolbar<TData>({
   const requestStatuses = [
     {
       value: 'pending' as RequestStatus,
-      label: t('requests.status.pending'),
+      label: m["requests.status.pending"](),
     },
     {
       value: 'processing' as RequestStatus,
-      label: t('requests.status.processing'),
+      label: m["requests.status.processing"](),
     },
     {
       value: 'completed' as RequestStatus,
-      label: t('requests.status.completed'),
+      label: m["requests.status.completed"](),
     },
     {
       value: 'failed' as RequestStatus,
-      label: t('requests.status.failed'),
+      label: m["requests.status.failed"](),
     },
   ];
 
   const requestSources = [
     {
       value: 'api',
-      label: t('requests.source.api'),
+      label: m["requests.source.api"](),
     },
     {
       value: 'playground',
-      label: t('requests.source.playground'),
+      label: m["requests.source.playground"](),
     },
     {
       value: 'test',
-      label: t('requests.source.test'),
+      label: m["requests.source.test"](),
     },
   ];
 
@@ -183,25 +182,25 @@ export function DataTableToolbar<TData>({
     <div className='flex items-center justify-between'>
       <div className='flex flex-1 items-center space-x-2'>
         <Input
-          placeholder={t('requests.filters.filterModelId')}
+          placeholder={m["requests.filters.filterModelId"]()}
           value={(table.getColumn('modelID')?.getFilterValue() as string) ?? ''}
           onChange={(event) => table.getColumn('modelID')?.setFilterValue(event.target.value)}
           className='h-8 w-[150px] lg:w-[250px]'
         />
         {table.getColumn('status') && (
-          <DataTableFacetedFilter column={table.getColumn('status')} title={t('requests.filters.status')} options={requestStatuses} />
+          <DataTableFacetedFilter column={table.getColumn('status')} title={m["requests.filters.status"]()} options={requestStatuses} />
         )}
         {/* {table.getColumn('source') && (
           <DataTableFacetedFilter
             column={table.getColumn('source')}
-            title={t('requests.filters.source')}
+            title={m["requests.filters.source"]()}
             options={requestSources}
           />
         )} */}
         {canViewChannels && table.getColumn('channel') && (channelOptions.length > 0 || isFetchingChannels) && (
           <DataTableFacetedFilter
             column={table.getColumn('channel')}
-            title={t('requests.filters.channel')}
+            title={m["requests.filters.channel"]()}
             options={channelOptions}
             footer={
               <div
@@ -217,7 +216,7 @@ export function DataTableToolbar<TData>({
                   onClick={(e) => e.stopPropagation()}
                 />
                 <label htmlFor='show-archived-channels' className='cursor-pointer text-sm' onClick={(e) => e.stopPropagation()}>
-                  {t('common.showArchived')}
+                  {m["common.showArchived"]()}
                 </label>
               </div>
             }
@@ -226,7 +225,7 @@ export function DataTableToolbar<TData>({
         {canViewApiKeys && table.getColumn('apiKey') && (apiKeyOptions.length > 0 || isFetchingApiKeys) && (
           <DataTableFacetedFilter
             column={table.getColumn('apiKey')}
-            title={t('requests.filters.apiKey')}
+            title={m["requests.filters.apiKey"]()}
             options={apiKeyOptions}
             footer={
               <div
@@ -242,7 +241,7 @@ export function DataTableToolbar<TData>({
                   onClick={(e) => e.stopPropagation()}
                 />
                 <label htmlFor='show-archived-api-keys' className='cursor-pointer text-sm' onClick={(e) => e.stopPropagation()}>
-                  {t('common.showArchived')}
+                  {m["common.showArchived"]()}
                 </label>
               </div>
             }
@@ -263,7 +262,7 @@ export function DataTableToolbar<TData>({
             }}
             className='h-8 px-2 lg:px-3'
           >
-            {t('common.filters.reset')}
+            {m["common.filters.reset"]()}
             <Cross2Icon className='ml-2 h-4 w-4' />
           </Button>
         )}
@@ -273,14 +272,14 @@ export function DataTableToolbar<TData>({
           <div className='flex items-center space-x-2'>
             <Switch checked={autoRefresh} onCheckedChange={onAutoRefreshChange} id='auto-refresh-switch' />
             <label htmlFor='auto-refresh-switch' className='text-muted-foreground cursor-pointer text-sm'>
-              {t('common.autoRefresh')}
+              {m["common.autoRefresh"]()}
             </label>
           </div>
         )}
         {showRefresh && onRefresh && (
           <Button variant='outline' size='sm' onClick={onRefresh}>
             <RefreshCw className={`mr-2 h-4 w-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-            {t('common.refresh')}
+            {m["common.refresh"]()}
           </Button>
         )}
         <DataTableViewOptions table={table} />

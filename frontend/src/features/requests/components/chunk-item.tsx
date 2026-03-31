@@ -1,10 +1,10 @@
 import { Copy, Download } from 'lucide-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { JsonViewer } from '@/components/json-tree-view';
 import { Button } from '@/components/ui/button';
+import * as m from '@/paraglide/messages';
 
 interface ChunkItemProps {
   chunk: any;
@@ -12,7 +12,6 @@ interface ChunkItemProps {
 }
 
 export function ChunkItem({ chunk, index }: ChunkItemProps) {
-  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
   const formatJson = (data: any) => {
@@ -28,7 +27,7 @@ export function ChunkItem({ chunk, index }: ChunkItemProps) {
     navigator.clipboard.writeText(formatJson(chunk));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast.success(t('requests.actions.copy'));
+    toast.success(m["requests.actions.copy"]());
   };
 
   const downloadChunk = () => {
@@ -41,7 +40,7 @@ export function ChunkItem({ chunk, index }: ChunkItemProps) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast.success(t('requests.actions.download'));
+    toast.success(m["requests.actions.download"]());
   };
 
   return (

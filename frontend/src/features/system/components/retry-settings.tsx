@@ -2,7 +2,6 @@
 
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import React, { useState, useEffect, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,9 +12,10 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 
 import { useRetryPolicy, useUpdateRetryPolicy, type RetryPolicyInput } from '../data/system';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 export function RetrySettings() {
-  const { t } = useTranslation();
   const { data: retryPolicy, isLoading } = useRetryPolicy();
   const updateRetryPolicy = useUpdateRetryPolicy();
 
@@ -113,8 +113,8 @@ export function RetrySettings() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t('system.retry.title')}</CardTitle>
-        <CardDescription>{t('system.retry.description')}</CardDescription>
+        <CardTitle>{m["system.retry.title"]()}</CardTitle>
+        <CardDescription>{m["system.retry.description"]()}</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className='space-y-6'>
@@ -122,9 +122,9 @@ export function RetrySettings() {
           <div className='flex items-center justify-between' id='retry-enabled-switch'>
             <div className='space-y-0.5'>
               <Label htmlFor='retry-enabled' className='text-base'>
-                {t('system.retry.enabled.label')}
+                {m["system.retry.enabled.label"]()}
               </Label>
-              <div className='text-muted-foreground text-sm'>{t('system.retry.enabled.description')}</div>
+              <div className='text-muted-foreground text-sm'>{m["system.retry.enabled.description"]()}</div>
             </div>
             <Switch id='retry-enabled' checked={formData.enabled} onCheckedChange={(checked) => handleInputChange('enabled', checked)} />
           </div>
@@ -135,19 +135,19 @@ export function RetrySettings() {
           {formData.enabled && (
             <div className='space-y-4'>
               <div className='space-y-2'>
-                <Label htmlFor='load-balancer-strategy'>{t('system.retry.loadBalancerStrategy.label')}</Label>
-                <div className='text-muted-foreground mb-2 text-sm'>{t('system.retry.loadBalancerStrategy.description')}</div>
+                <Label htmlFor='load-balancer-strategy'>{m["system.retry.loadBalancerStrategy.label"]()}</Label>
+                <div className='text-muted-foreground mb-2 text-sm'>{m["system.retry.loadBalancerStrategy.description"]()}</div>
                 <Select
                   value={formData.loadBalancerStrategy || 'adaptive'}
                   onValueChange={(value) => value && handleInputChange('loadBalancerStrategy', value)}
                 >
                   <SelectTrigger id='load-balancer-strategy' className='w-56'>
-                    <SelectValue placeholder={t('system.retry.loadBalancerStrategy.placeholder')} />
+                    <SelectValue placeholder={m["system.retry.loadBalancerStrategy.placeholder"]()} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='adaptive'>{t('system.retry.loadBalancerStrategy.options.adaptive')}</SelectItem>
-                    <SelectItem value='failover'>{t('system.retry.loadBalancerStrategy.options.failover')}</SelectItem>
-                    <SelectItem value='circuit-breaker'>{t('system.retry.loadBalancerStrategy.options.circuitBreaker')}</SelectItem>
+                    <SelectItem value='adaptive'>{m["system.retry.loadBalancerStrategy.options.adaptive"]()}</SelectItem>
+                    <SelectItem value='failover'>{m["system.retry.loadBalancerStrategy.options.failover"]()}</SelectItem>
+                    <SelectItem value='circuit-breaker'>{m["system.retry.loadBalancerStrategy.options.circuitBreaker"]()}</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -155,7 +155,7 @@ export function RetrySettings() {
                 {formData.loadBalancerStrategy && (
                   <div className='bg-muted/50 mt-3 rounded-md border p-3'>
                     <div className='text-muted-foreground text-xs leading-relaxed'>
-                      {t(`system.retry.loadBalancerStrategy.documentation.${formData.loadBalancerStrategy}`)}
+                      {dynamicTranslation(`system.retry.loadBalancerStrategy.documentation.${formData.loadBalancerStrategy}`)}
                     </div>
                   </div>
                 )}
@@ -163,8 +163,8 @@ export function RetrySettings() {
 
               {/* Max Channel Retries */}
               <div className='space-y-2' id='retry-max-retries'>
-                <Label htmlFor='max-channel-retries'>{t('system.retry.maxChannelRetries.label')}</Label>
-                <div className='text-muted-foreground mb-2 text-sm'>{t('system.retry.maxChannelRetries.description')}</div>
+                <Label htmlFor='max-channel-retries'>{m["system.retry.maxChannelRetries.label"]()}</Label>
+                <div className='text-muted-foreground mb-2 text-sm'>{m["system.retry.maxChannelRetries.description"]()}</div>
                 <Input
                   id='max-channel-retries'
                   type='number'
@@ -178,8 +178,8 @@ export function RetrySettings() {
 
               {/* Max Single Channel Retries */}
               <div className='space-y-2'>
-                <Label htmlFor='max-single-channel-retries'>{t('system.retry.maxSingleChannelRetries.label')}</Label>
-                <div className='text-muted-foreground mb-2 text-sm'>{t('system.retry.maxSingleChannelRetries.description')}</div>
+                <Label htmlFor='max-single-channel-retries'>{m["system.retry.maxSingleChannelRetries.label"]()}</Label>
+                <div className='text-muted-foreground mb-2 text-sm'>{m["system.retry.maxSingleChannelRetries.description"]()}</div>
                 <Input
                   id='max-single-channel-retries'
                   type='number'
@@ -193,8 +193,8 @@ export function RetrySettings() {
 
               {/* Retry Delay */}
               <div className='space-y-2'>
-                <Label htmlFor='retry-delay'>{t('system.retry.retryDelayMs.label')}</Label>
-                <div className='text-muted-foreground mb-2 text-sm'>{t('system.retry.retryDelayMs.description')}</div>
+                <Label htmlFor='retry-delay'>{m["system.retry.retryDelayMs.label"]()}</Label>
+                <div className='text-muted-foreground mb-2 text-sm'>{m["system.retry.retryDelayMs.description"]()}</div>
                 <div className='flex items-center space-x-2'>
                   <Input
                     id='retry-delay'
@@ -217,9 +217,9 @@ export function RetrySettings() {
                 <div className='flex items-center justify-between'>
                   <div className='space-y-0.5'>
                     <Label htmlFor='auto-disable-channel' className='text-base'>
-                      {t('system.retry.autoDisableChannel.label')}
+                      {m["system.retry.autoDisableChannel.label"]()}
                     </Label>
-                    <div className='text-muted-foreground text-sm'>{t('system.retry.autoDisableChannel.description')}</div>
+                    <div className='text-muted-foreground text-sm'>{m["system.retry.autoDisableChannel.description"]()}</div>
                   </div>
                   <Switch
                     id='auto-disable-channel'
@@ -231,10 +231,10 @@ export function RetrySettings() {
                 {formData.autoDisableChannel?.enabled && (
                   <div className='space-y-3'>
                     <div className='flex items-center justify-between'>
-                      <Label className='text-sm font-medium'>{t('system.retry.autoDisableChannel.statuses.label')}</Label>
+                      <Label className='text-sm font-medium'>{m["system.retry.autoDisableChannel.statuses.label"]()}</Label>
                       <Button type='button' variant='outline' size='sm' onClick={addStatus}>
                         <Plus className='mr-1 h-4 w-4' />
-                        {t('system.retry.autoDisableChannel.statuses.add')}
+                        {m["system.retry.autoDisableChannel.statuses.add"]()}
                       </Button>
                     </div>
 
@@ -244,7 +244,7 @@ export function RetrySettings() {
                           <div key={index} className='flex items-center space-x-2'>
                             <Input
                               type='number'
-                              placeholder={t('system.retry.autoDisableChannel.statuses.statusPlaceholder')}
+                              placeholder={m["system.retry.autoDisableChannel.statuses.statusPlaceholder"]()}
                               value={statusItem.status}
                               onChange={(e) => handleStatusChange(index, 'status', parseInt(e.target.value) || 0)}
                               className='w-24'
@@ -253,14 +253,14 @@ export function RetrySettings() {
                             />
                             <Input
                               type='number'
-                              placeholder={t('system.retry.autoDisableChannel.statuses.timesPlaceholder')}
+                              placeholder={m["system.retry.autoDisableChannel.statuses.timesPlaceholder"]()}
                               value={statusItem.times}
                               onChange={(e) => handleStatusChange(index, 'times', parseInt(e.target.value) || 0)}
                               className='w-24'
                               min='1'
                               max='100'
                             />
-                            <span className='text-muted-foreground text-sm'>{t('system.retry.autoDisableChannel.statuses.times')}</span>
+                            <span className='text-muted-foreground text-sm'>{m["system.retry.autoDisableChannel.statuses.times"]()}</span>
                             <Button type='button' variant='ghost' size='icon' onClick={() => removeStatus(index)}>
                               <Trash2 className='h-4 w-4' />
                             </Button>
@@ -268,7 +268,7 @@ export function RetrySettings() {
                         ))}
                       </div>
                     ) : (
-                      <div className='text-muted-foreground text-sm'>{t('system.retry.autoDisableChannel.statuses.empty')}</div>
+                      <div className='text-muted-foreground text-sm'>{m["system.retry.autoDisableChannel.statuses.empty"]()}</div>
                     )}
                   </div>
                 )}
@@ -281,7 +281,7 @@ export function RetrySettings() {
           {/* Submit Button */}
           <div className='flex justify-end'>
             <Button type='submit' disabled={updateRetryPolicy.isPending} className='min-w-24'>
-              {updateRetryPolicy.isPending ? <Loader2 className='h-4 w-4 animate-spin' /> : t('common.buttons.save')}
+              {updateRetryPolicy.isPending ? <Loader2 className='h-4 w-4 animate-spin' /> : m["common.buttons.save"]()}
             </Button>
           </div>
         </form>

@@ -1,4 +1,3 @@
-import type { TFunction } from 'i18next';
 
 import type { Span } from '../data/schema';
 
@@ -70,12 +69,12 @@ export function getSpanTypeTranslationKey(type?: string | null): string {
   return spanTypeTranslationKeyMap[normalized] ?? spanTypeTranslationKeyMap[normalized.replace(/_/g, '')] ?? DEFAULT_SPAN_TYPE_KEY;
 }
 
-export function getLocalizedSpanType(type: string | null | undefined, t: TFunction): string {
+export function getLocalizedSpanType(type: string | null | undefined): string {
   const key = getSpanTypeTranslationKey(type);
   return t(`traces.timeline.spanTypes.${key}`, createFallbackLabel(type));
 }
 
-export function getSpanDisplayLabels(span: Span, t: TFunction): { primary: string; secondary?: string } {
+export function getSpanDisplayLabels(span: Span): { primary: string; secondary?: string } {
   const typeLabel = getLocalizedSpanType(span.type, t);
   const normalizedType = normalizeSpanType(span.type);
 

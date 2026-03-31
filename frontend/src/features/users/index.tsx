@@ -1,5 +1,4 @@
 import React, { useState, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -13,9 +12,9 @@ import { UsersPrimaryButtons } from './components/users-primary-buttons';
 import { UsersTable } from './components/users-table';
 import UsersProvider from './context/users-context';
 import { useUsers } from './data/users';
+import * as m from '@/paraglide/messages';
 
 function UsersContent() {
-  const { t } = useTranslation();
   const { userPermissions } = usePermissions();
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
     defaultPageSize: 20,
@@ -30,7 +29,7 @@ function UsersContent() {
   const debouncedNameFilter = useDebounce(nameFilter, 300);
 
   // Memoize columns to prevent infinite re-renders
-  const columns = useMemo(() => createColumns(t, userPermissions.canWrite), [t, userPermissions.canWrite]);
+  const columns = useMemo(() => createColumns(userPermissions.canWrite), [userPermissions.canWrite]);
 
   // Build where clause for API filtering
   const whereClause = (() => {
@@ -102,15 +101,13 @@ function UsersContent() {
 }
 
 export default function UsersManagement() {
-  const { t } = useTranslation();
-
   return (
     <UsersProvider>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('users.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('users.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["users.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["users.description"]()}</p>
           </div>
           <UsersPrimaryButtons />
         </div>

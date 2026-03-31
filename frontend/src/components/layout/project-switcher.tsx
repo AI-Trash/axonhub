@@ -1,6 +1,5 @@
 import { ChevronsUpDown, FolderKanban } from 'lucide-react';
 import * as React from 'react';
-import { useTranslation } from 'react-i18next';
 
 import {
   DropdownMenu,
@@ -12,10 +11,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useMyProjects } from '@/features/projects/data/projects';
 import { useProjectStore } from '@/stores/projectStore';
+import * as m from '@/paraglide/messages';
 
 export function ProjectSwitcher() {
   const { data: myProjects, isLoading: isLoadingProjects } = useMyProjects();
-  const { t } = useTranslation();
   const { selectedProjectId, setSelectedProjectId } = useProjectStore();
 
   // 当项目列表加载完成后，验证并设置选中的项目
@@ -53,7 +52,7 @@ export function ProjectSwitcher() {
     return null;
   }
 
-  const displayName = selectedProject?.name || t('sidebar.projectSwitcher.selectProject');
+  const displayName = selectedProject?.name || m["sidebar.projectSwitcher.selectProject"]();
 
   return (
     <DropdownMenu>
@@ -64,7 +63,7 @@ export function ProjectSwitcher() {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className='min-w-56 rounded-lg' align='start' sideOffset={4}>
-        <DropdownMenuLabel className='text-muted-foreground text-xs'>{t('sidebar.projectSwitcher.projects')}</DropdownMenuLabel>
+        <DropdownMenuLabel className='text-muted-foreground text-xs'>{m["sidebar.projectSwitcher.projects"]()}</DropdownMenuLabel>
         {myProjects.map((project) => (
           <DropdownMenuItem key={project.id} onClick={() => handleProjectChange(project.id)} className='gap-2 p-2'>
             <div className='flex size-6 items-center justify-center rounded-sm border'>

@@ -3,7 +3,6 @@
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Cell, type TooltipProps } from 'recharts';
 
 import { TimePeriodSelector, type FastestTimeWindow } from '@/components/time-period-selector';
@@ -13,6 +12,7 @@ import { formatNumber } from '@/utils/format-number';
 
 import { safeNumber, safeToFixed, sanitizeChartData, type ChartData } from '../utils/chart-helpers';
 import { ChartLegend, type ChartLegendItem } from './chart-legend';
+import * as m from '@/paraglide/messages';
 
 // 5 colors matches the slice limit in chartData processing (.slice(0, 5))
 const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
@@ -88,7 +88,6 @@ export function FastestPerformersCard<T extends ThroughputData>({
   useData,
   getName,
 }: FastestPerformersCardProps<T>) {
-  const { t } = useTranslation();
   const [timeWindow, setTimeWindow] = useState<FastestTimeWindow>('month');
 
   const { data: items, isLoading, isFetching, error } = useData(timeWindow);
@@ -117,7 +116,7 @@ export function FastestPerformersCard<T extends ThroughputData>({
         </CardHeader>
         <CardContent>
           <div className='text-sm text-red-500'>
-            {t('common.loadError')}: {error.message}
+            {m["common.loadError"]()}: {error.message}
           </div>
         </CardContent>
       </Card>

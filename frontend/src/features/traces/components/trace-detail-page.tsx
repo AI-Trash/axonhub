@@ -3,7 +3,6 @@ import { format } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
 import { ArrowLeft, FileText, Activity, RefreshCw } from 'lucide-react';
 import { useMemo, useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -20,12 +19,13 @@ import { useTraceWithSegments } from '../data';
 import { Segment, Span, parseRawRootSegment } from '../data/schema';
 import { SpanSection } from './span-section';
 import { TraceFlatTimeline } from './trace-flat-timeline';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
 
 export default function TraceDetailPage() {
-  const { t, i18n } = useTranslation();
   const { traceId } = useParams({ from: '/_authenticated/project/traces/$traceId' });
   const navigate = useNavigate();
-  const locale = i18n.language === 'zh' ? zhCN : enUS;
+  const locale = getLocale() === 'zh' ? zhCN : enUS;
   const [selectedTrace, setSelectedTrace] = useState<Segment | null>(null);
   const [selectedSpan, setSelectedSpan] = useState<Span | null>(null);
   const [selectedSpanType, setSelectedSpanType] = useState<'request' | 'response' | null>(null);
@@ -83,7 +83,7 @@ export default function TraceDetailPage() {
           <div className='flex h-full items-center justify-center'>
             <div className='space-y-4 text-center'>
               <div className='border-primary mx-auto h-12 w-12 animate-spin rounded-full border-b-2'></div>
-              <p className='text-muted-foreground text-lg'>{t('common.loading')}</p>
+              <p className='text-muted-foreground text-lg'>{m["common.loading"]()}</p>
             </div>
           </div>
         </Main>
@@ -100,11 +100,11 @@ export default function TraceDetailPage() {
             <div className='space-y-6 text-center'>
               <div className='space-y-2'>
                 <Activity className='text-muted-foreground mx-auto h-16 w-16' />
-                <p className='text-muted-foreground text-xl font-medium'>{t('traces.detail.notFound')}</p>
+                <p className='text-muted-foreground text-xl font-medium'>{m["traces.detail.notFound"]()}</p>
               </div>
               <Button onClick={handleBack} size='lg'>
                 <ArrowLeft className='mr-2 h-4 w-4' />
-                {t('common.back')}
+                {m["common.back"]()}
               </Button>
             </div>
           </div>
@@ -120,7 +120,7 @@ export default function TraceDetailPage() {
           <div className='flex items-center space-x-4'>
             <Button variant='ghost' size='sm' onClick={handleBack} className='hover:bg-accent'>
               <ArrowLeft className='mr-2 h-4 w-4' />
-              {t('common.back')}
+              {m["common.back"]()}
             </Button>
             <Separator orientation='vertical' className='h-6' />
             <div className='flex items-center space-x-3'>
@@ -129,7 +129,7 @@ export default function TraceDetailPage() {
               </div>
               <div>
                 <h1 className='text-lg leading-none font-semibold'>
-                  {t('traces.detail.title')} #{extractNumberID(trace.id) || trace.traceID}
+                  {m["traces.detail.title"]()} #{extractNumberID(trace.id) || trace.traceID}
                 </h1>
                 <div className='mt-1 flex items-center gap-2'>
                   <p className='text-muted-foreground text-sm'>{trace.traceID}</p>
@@ -143,12 +143,12 @@ export default function TraceDetailPage() {
             <div className='flex items-center space-x-2'>
               <Switch checked={autoRefresh} onCheckedChange={setAutoRefresh} id='auto-refresh-switch' />
               <label htmlFor='auto-refresh-switch' className='text-muted-foreground cursor-pointer text-sm'>
-                {t('common.autoRefresh')}
+                {m["common.autoRefresh"]()}
               </label>
             </div>
             <Button variant='outline' size='sm' onClick={() => refetch()} disabled={isLoading}>
               <RefreshCw className={`mr-2 h-4 w-4 ${isLoading || autoRefresh ? 'animate-spin' : ''}`} />
-              {t('common.refresh')}
+              {m["common.refresh"]()}
             </Button>
           </div>
         </div>
@@ -161,35 +161,34 @@ export default function TraceDetailPage() {
             <div className='bg-background border-b px-6 py-4'>
               <div className='grid gap-4 md:grid-cols-6'>
                 <div>
-                  <p className='text-muted-foreground text-sm'>{t('traces.detail.totalTokensLabel')}</p>
+                  <p className='text-muted-foreground text-sm'>{m["traces.detail.totalTokensLabel"]()}</p>
                   <p className='text-lg font-semibold'>{(trace.usageMetadata?.totalTokens ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className='text-muted-foreground text-sm'>{t('traces.detail.inputTokensLabel')}</p>
+                  <p className='text-muted-foreground text-sm'>{m["traces.detail.inputTokensLabel"]()}</p>
                   <p className='text-lg font-semibold'>{(trace.usageMetadata?.totalInputTokens ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className='text-muted-foreground text-sm'>{t('traces.detail.outputTokensLabel')}</p>
+                  <p className='text-muted-foreground text-sm'>{m["traces.detail.outputTokensLabel"]()}</p>
                   <p className='text-lg font-semibold'>{(trace.usageMetadata?.totalOutputTokens ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className='text-muted-foreground text-sm'>{t('traces.detail.cachedTokensLabel')}</p>
+                  <p className='text-muted-foreground text-sm'>{m["traces.detail.cachedTokensLabel"]()}</p>
                   <p className='text-lg font-semibold'>{(trace.usageMetadata?.totalCachedTokens ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className='text-muted-foreground text-sm'>{t('traces.detail.cachedWriteTokensLabel')}</p>
+                  <p className='text-muted-foreground text-sm'>{m["traces.detail.cachedWriteTokensLabel"]()}</p>
                   <p className='text-lg font-semibold'>{(trace.usageMetadata?.totalCachedWriteTokens ?? 0).toLocaleString()}</p>
                 </div>
                 <div>
-                  <p className='text-muted-foreground text-sm'>{t('usageLogs.columns.totalCost')}</p>
+                  <p className='text-muted-foreground text-sm'>{m["usageLogs.columns.totalCost"]()}</p>
                   {trace.usageMetadata?.totalCost ? (
                     <p className='text-lg font-semibold'>
-                      {t('currencies.format', {
+                      {m["currencies.format"]({
                         val: trace.usageMetadata.totalCost,
                         currency: settings?.currencyCode,
-                        locale: i18n.language === 'zh' ? 'zh-CN' : 'en-US',
-                        minimumFractionDigits: 6,
-                      })}
+                        locale: getLocale() === 'zh' ? 'zh-CN' : 'en-US',
+                        minimumFractionDigits: 6 })}
                     </p>
                   ) : (
                     <p className='text-muted-foreground text-lg font-semibold'>-</p>
@@ -221,7 +220,7 @@ export default function TraceDetailPage() {
                 <div className='flex h-full items-center justify-center'>
                   <div className='space-y-4 text-center'>
                     <FileText className='text-muted-foreground mx-auto h-16 w-16' />
-                    <p className='text-muted-foreground text-lg'>{t('traces.detail.noTraceData')}</p>
+                    <p className='text-muted-foreground text-lg'>{m["traces.detail.noTraceData"]()}</p>
                   </div>
                 </div>
               </CardContent>

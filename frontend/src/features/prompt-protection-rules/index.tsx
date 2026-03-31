@@ -1,7 +1,6 @@
 import { IconPlus } from '@tabler/icons-react';
 import { SortingState } from '@tanstack/react-table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -16,9 +15,9 @@ import { RulesDialogs } from './components/rules-dialogs';
 import { RulesTable } from './components/rules-table';
 import PromptProtectionRulesProvider, { usePromptProtectionRules } from './context/rules-context';
 import { useQueryPromptProtectionRules } from './data/rules';
+import * as m from '@/paraglide/messages';
 
 function RulesContent() {
-  const { t } = useTranslation();
   const { modelPermissions } = usePermissions();
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
     defaultPageSize: 20,
@@ -96,7 +95,7 @@ function RulesContent() {
     [resetCursor]
   );
 
-  const columns = useMemo(() => createColumns(t, modelPermissions.canWrite), [modelPermissions.canWrite, t]);
+  const columns = useMemo(() => createColumns(modelPermissions.canWrite), [modelPermissions.canWrite, t]);
 
   return (
     <div className='flex flex-1 flex-col overflow-hidden'>
@@ -121,7 +120,6 @@ function RulesContent() {
 }
 
 function CreateButton() {
-  const { t } = useTranslation();
   const { setOpen, setCurrentRow } = usePromptProtectionRules();
 
   return (
@@ -132,7 +130,7 @@ function CreateButton() {
       }}
     >
       <IconPlus className='mr-2 h-4 w-4' />
-      {t('promptProtectionRules.actions.create')}
+      {m["promptProtectionRules.actions.create"]()}
     </Button>
   );
 }
@@ -148,15 +146,13 @@ function ActionButtons() {
 }
 
 export default function PromptProtectionRulesManagement() {
-  const { t } = useTranslation();
-
   return (
     <PromptProtectionRulesProvider>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('promptProtectionRules.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('promptProtectionRules.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["promptProtectionRules.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["promptProtectionRules.description"]()}</p>
           </div>
           <ActionButtons />
         </div>

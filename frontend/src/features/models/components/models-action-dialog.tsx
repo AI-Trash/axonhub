@@ -1,10 +1,11 @@
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
+import * as m from '@/paraglide/messages';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toc } from '@lobehub/icons';
 import { format } from 'date-fns';
 import { CalendarIcon } from 'lucide-react';
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 
 import { AutoComplete } from '@/components/auto-complete';
 import { AutoCompleteSelect } from '@/components/auto-complete-select';
@@ -40,7 +41,6 @@ function isDeveloper(provider: string) {
 }
 
 export function ModelsActionDialog() {
-  const { t } = useTranslation();
   const { open, setOpen, currentRow } = useModels();
   const createModel = useCreateModel();
   const updateModel = useUpdateModel();
@@ -264,8 +264,8 @@ export function ModelsActionDialog() {
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent ref={setDialogContent} className='flex max-h-[90vh] flex-col overflow-hidden sm:max-w-6xl'>
         <DialogHeader className='flex-shrink-0 text-left'>
-          <DialogTitle>{isEdit ? t('models.dialogs.edit.title') : t('models.dialogs.create.title')}</DialogTitle>
-          <DialogDescription>{isEdit ? t('models.dialogs.edit.description') : t('models.dialogs.create.description')}</DialogDescription>
+          <DialogTitle>{isEdit ? m["models.dialogs.edit.title"]() : m["models.dialogs.create.title"]()}</DialogTitle>
+          <DialogDescription>{isEdit ? m["models.dialogs.edit.description"]() : m["models.dialogs.create.description"]()}</DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
@@ -279,7 +279,7 @@ export function ModelsActionDialog() {
                     name='developer'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('models.fields.developer')}</FormLabel>
+                        <FormLabel>{m["models.fields.developer"]()}</FormLabel>
                         <FormControl>
                           <AutoComplete
                             selectedValue={selectedProvider}
@@ -287,8 +287,8 @@ export function ModelsActionDialog() {
                             searchValue={developerSearchValue}
                             onSearchValueChange={setDeveloperSearchValue}
                             items={developerOptions}
-                            placeholder={t('models.fields.selectDeveloper')}
-                            emptyMessage={t('models.fields.noModels')}
+                            placeholder={m["models.fields.selectDeveloper"]()}
+                            emptyMessage={m["models.fields.noModels"]()}
                             portalContainer={dialogContent}
                           />
                         </FormControl>
@@ -302,7 +302,7 @@ export function ModelsActionDialog() {
                     name='modelID'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('models.fields.modelId')}</FormLabel>
+                        <FormLabel>{m["models.fields.modelId"]()}</FormLabel>
                         <FormControl>
                           {selectedProvider && modelIdOptions.length > 0 ? (
                             <AutoComplete
@@ -311,8 +311,8 @@ export function ModelsActionDialog() {
                               searchValue={modelIdSearchValue}
                               onSearchValueChange={setModelIdSearchValue}
                               items={modelIdOptions}
-                              placeholder={t('models.fields.modelIdPlaceholder')}
-                              emptyMessage={t('models.fields.noModels')}
+                              placeholder={m["models.fields.modelIdPlaceholder"]()}
+                              emptyMessage={m["models.fields.noModels"]()}
                               portalContainer={dialogContent}
                             />
                           ) : (
@@ -322,8 +322,8 @@ export function ModelsActionDialog() {
                               searchValue={modelIdSearchValue}
                               onSearchValueChange={setModelIdSearchValue}
                               items={[]}
-                              placeholder={t('models.fields.modelIdPlaceholder')}
-                              emptyMessage={t('models.fields.noModels')}
+                              placeholder={m["models.fields.modelIdPlaceholder"]()}
+                              emptyMessage={m["models.fields.noModels"]()}
                               portalContainer={dialogContent}
                             />
                           )}
@@ -338,7 +338,7 @@ export function ModelsActionDialog() {
                     name='name'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('models.fields.name')}</FormLabel>
+                        <FormLabel>{m["models.fields.name"]()}</FormLabel>
                         <FormControl>
                           <Input {...field} />
                         </FormControl>
@@ -352,14 +352,14 @@ export function ModelsActionDialog() {
                     name='icon'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('models.fields.icon')}</FormLabel>
+                        <FormLabel>{m["models.fields.icon"]()}</FormLabel>
                         <FormControl>
                           <AutoCompleteSelect
                             selectedValue={field.value}
                             onSelectedValueChange={field.onChange}
                             items={iconOptions}
-                            placeholder={t('models.fields.selectIcon')}
-                            emptyMessage={t('models.fields.noIcons')}
+                            placeholder={m["models.fields.selectIcon"]()}
+                            emptyMessage={m["models.fields.noIcons"]()}
                             portalContainer={dialogContent}
                           />
                         </FormControl>
@@ -373,7 +373,7 @@ export function ModelsActionDialog() {
                     name='group'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('models.fields.group')}</FormLabel>
+                        <FormLabel>{m["models.fields.group"]()}</FormLabel>
                         <FormControl>
                           <Input {...field} />
                         </FormControl>
@@ -387,7 +387,7 @@ export function ModelsActionDialog() {
                     name='type'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('models.fields.type')}</FormLabel>
+                        <FormLabel>{m["models.fields.type"]()}</FormLabel>
                         <Select value={field.value} onValueChange={field.onChange}>
                           <FormControl>
                             <SelectTrigger>
@@ -395,11 +395,11 @@ export function ModelsActionDialog() {
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            <SelectItem value='chat'>{t('models.types.chat')}</SelectItem>
-                            <SelectItem value='embedding'>{t('models.types.embedding')}</SelectItem>
-                            <SelectItem value='rerank'>{t('models.types.rerank')}</SelectItem>
-                            <SelectItem value='image_generation'>{t('models.types.image_generation')}</SelectItem>
-                            <SelectItem value='video_generation'>{t('models.types.video_generation')}</SelectItem>
+                            <SelectItem value='chat'>{m["models.types.chat"]()}</SelectItem>
+                            <SelectItem value='embedding'>{m["models.types.embedding"]()}</SelectItem>
+                            <SelectItem value='rerank'>{m["models.types.rerank"]()}</SelectItem>
+                            <SelectItem value='image_generation'>{m["models.types.image_generation"]()}</SelectItem>
+                            <SelectItem value='video_generation'>{m["models.types.video_generation"]()}</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -412,7 +412,7 @@ export function ModelsActionDialog() {
                     name='remark'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('models.fields.remark')}</FormLabel>
+                        <FormLabel>{m["models.fields.remark"]()}</FormLabel>
                         <FormControl>
                           <Textarea {...field} value={field.value || ''} />
                         </FormControl>
@@ -426,10 +426,10 @@ export function ModelsActionDialog() {
               {/* Right Panel - Model Card Fields */}
               <div className='min-h-0 min-w-full flex-1 overflow-y-auto border-l pl-6 md:min-w-0'>
                 <div className='space-y-4 pb-4'>
-                  <h3 className='text-lg font-semibold'>{t('models.modelCard.title')}</h3>
+                  <h3 className='text-lg font-semibold'>{m["models.modelCard.title"]()}</h3>
 
                   <div className='space-y-2'>
-                    <FormLabel>{t('models.modelCard.capabilities')}</FormLabel>
+                    <FormLabel>{m["models.modelCard.capabilities"]()}</FormLabel>
                     <div className='grid grid-cols-2 gap-2'>
                       <FormField
                         control={form.control}
@@ -439,7 +439,7 @@ export function ModelsActionDialog() {
                             <FormControl>
                               <Checkbox checked={field.value || false} onCheckedChange={field.onChange} />
                             </FormControl>
-                            <FormLabel className='font-normal'>{t('models.modelCard.toolCall')}</FormLabel>
+                            <FormLabel className='font-normal'>{m["models.modelCard.toolCall"]()}</FormLabel>
                           </FormItem>
                         )}
                       />
@@ -451,7 +451,7 @@ export function ModelsActionDialog() {
                             <FormControl>
                               <Checkbox checked={field.value || false} onCheckedChange={field.onChange} />
                             </FormControl>
-                            <FormLabel className='font-normal'>{t('models.modelCard.vision')}</FormLabel>
+                            <FormLabel className='font-normal'>{m["models.modelCard.vision"]()}</FormLabel>
                           </FormItem>
                         )}
                       />
@@ -463,7 +463,7 @@ export function ModelsActionDialog() {
                             <FormControl>
                               <Checkbox checked={field.value || false} onCheckedChange={field.onChange} />
                             </FormControl>
-                            <FormLabel className='font-normal'>{t('models.modelCard.temperature')}</FormLabel>
+                            <FormLabel className='font-normal'>{m["models.modelCard.temperature"]()}</FormLabel>
                           </FormItem>
                         )}
                       />
@@ -471,7 +471,7 @@ export function ModelsActionDialog() {
                   </div>
 
                   <div className='space-y-2'>
-                    <FormLabel>{t('models.modelCard.reasoning')}</FormLabel>
+                    <FormLabel>{m["models.modelCard.reasoning"]()}</FormLabel>
                     <div className='grid grid-cols-2 gap-2'>
                       <FormField
                         control={form.control}
@@ -481,7 +481,7 @@ export function ModelsActionDialog() {
                             <FormControl>
                               <Checkbox checked={field.value || false} onCheckedChange={field.onChange} />
                             </FormControl>
-                            <FormLabel className='font-normal'>{t('models.modelCard.reasoningSupported')}</FormLabel>
+                            <FormLabel className='font-normal'>{m["models.modelCard.reasoningSupported"]()}</FormLabel>
                           </FormItem>
                         )}
                       />
@@ -493,7 +493,7 @@ export function ModelsActionDialog() {
                             <FormControl>
                               <Checkbox checked={field.value || false} onCheckedChange={field.onChange} />
                             </FormControl>
-                            <FormLabel className='font-normal'>{t('models.modelCard.reasoningDefault')}</FormLabel>
+                            <FormLabel className='font-normal'>{m["models.modelCard.reasoningDefault"]()}</FormLabel>
                           </FormItem>
                         )}
                       />
@@ -501,7 +501,7 @@ export function ModelsActionDialog() {
                   </div>
 
                   <div className='space-y-2'>
-                    <FormLabel>{t('models.modelCard.modalities')}</FormLabel>
+                    <FormLabel>{m["models.modelCard.modalities"]()}</FormLabel>
                     <div className='grid grid-cols-2 gap-4'>
                       <FormField
                         control={form.control}
@@ -510,7 +510,7 @@ export function ModelsActionDialog() {
                           const modalityOptions = ['text', 'image', 'audio', 'video'];
                           return (
                             <FormItem>
-                              <FormLabel className='text-xs'>{t('models.modelCard.input')}</FormLabel>
+                              <FormLabel className='text-xs'>{m["models.modelCard.input"]()}</FormLabel>
                               <div className='space-y-2'>
                                 {modalityOptions.map((modality) => (
                                   <FormItem key={modality} className='flex items-center space-y-0 space-x-2'>
@@ -527,7 +527,7 @@ export function ModelsActionDialog() {
                                         }}
                                       />
                                     </FormControl>
-                                    <FormLabel className='font-normal'>{t(`models.modelCard.${modality}`)}</FormLabel>
+                                    <FormLabel className='font-normal'>{dynamicTranslation(`models.modelCard.${modality}`)}</FormLabel>
                                   </FormItem>
                                 ))}
                               </div>
@@ -543,7 +543,7 @@ export function ModelsActionDialog() {
                           const modalityOptions = ['text', 'image', 'audio', 'video'];
                           return (
                             <FormItem>
-                              <FormLabel className='text-xs'>{t('models.modelCard.output')}</FormLabel>
+                              <FormLabel className='text-xs'>{m["models.modelCard.output"]()}</FormLabel>
                               <div className='space-y-2'>
                                 {modalityOptions.map((modality) => (
                                   <FormItem key={modality} className='flex items-center space-y-0 space-x-2'>
@@ -560,7 +560,7 @@ export function ModelsActionDialog() {
                                         }}
                                       />
                                     </FormControl>
-                                    <FormLabel className='font-normal'>{t(`models.modelCard.${modality}`)}</FormLabel>
+                                    <FormLabel className='font-normal'>{dynamicTranslation(`models.modelCard.${modality}`)}</FormLabel>
                                   </FormItem>
                                 ))}
                               </div>
@@ -573,15 +573,15 @@ export function ModelsActionDialog() {
                   </div>
 
                   <div className='space-y-2'>
-                    <FormLabel>{t('models.modelCard.cost')} ($/M tokens)</FormLabel>
-                    <p className='text-muted-foreground text-xs'>{t('models.modelCard.costHint')}</p>
+                    <FormLabel>{m["models.modelCard.cost"]()} ($/M tokens)</FormLabel>
+                    <p className='text-muted-foreground text-xs'>{m["models.modelCard.costHint"]()}</p>
                     <div className='grid grid-cols-2 gap-2'>
                       <FormField
                         control={form.control}
                         name='modelCard.cost.input'
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className='text-xs'>{t('models.modelCard.input')}</FormLabel>
+                            <FormLabel className='text-xs'>{m["models.modelCard.input"]()}</FormLabel>
                             <FormControl>
                               <Input
                                 type='number'
@@ -601,7 +601,7 @@ export function ModelsActionDialog() {
                         name='modelCard.cost.output'
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className='text-xs'>{t('models.modelCard.output')}</FormLabel>
+                            <FormLabel className='text-xs'>{m["models.modelCard.output"]()}</FormLabel>
                             <FormControl>
                               <Input
                                 type='number'
@@ -621,7 +621,7 @@ export function ModelsActionDialog() {
                         name='modelCard.cost.cacheRead'
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className='text-xs'>{t('models.modelCard.cacheRead')}</FormLabel>
+                            <FormLabel className='text-xs'>{m["models.modelCard.cacheRead"]()}</FormLabel>
                             <FormControl>
                               <Input
                                 type='number'
@@ -641,7 +641,7 @@ export function ModelsActionDialog() {
                         name='modelCard.cost.cacheWrite'
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className='text-xs'>{t('models.modelCard.cacheWrite')}</FormLabel>
+                            <FormLabel className='text-xs'>{m["models.modelCard.cacheWrite"]()}</FormLabel>
                             <FormControl>
                               <Input
                                 type='number'
@@ -660,7 +660,7 @@ export function ModelsActionDialog() {
                   </div>
 
                   <div className='space-y-2'>
-                    <FormLabel>{t('models.modelCard.limit')}</FormLabel>
+                    <FormLabel>{m["models.modelCard.limit"]()}</FormLabel>
                     <div className='grid grid-cols-2 gap-2'>
                       <FormField
                         control={form.control}
@@ -668,7 +668,7 @@ export function ModelsActionDialog() {
                         render={({ field }) => {
                           return (
                             <FormItem>
-                              <FormLabel className='text-xs'>{t('models.modelCard.context')}</FormLabel>
+                              <FormLabel className='text-xs'>{m["models.modelCard.context"]()}</FormLabel>
                               <FormControl>
                                 <Input
                                   type='number'
@@ -680,7 +680,7 @@ export function ModelsActionDialog() {
                               </FormControl>
                               {field.value && (
                                 <p className='text-muted-foreground text-xs'>
-                                  {t('models.modelCard.context')}: {formatNumber(field.value)}
+                                  {m["models.modelCard.context"]()}: {formatNumber(field.value)}
                                 </p>
                               )}
                               <FormMessage />
@@ -694,7 +694,7 @@ export function ModelsActionDialog() {
                         render={({ field }) => {
                           return (
                             <FormItem>
-                              <FormLabel className='text-xs'>{t('models.modelCard.output')}</FormLabel>
+                              <FormLabel className='text-xs'>{m["models.modelCard.output"]()}</FormLabel>
                               <FormControl>
                                 <Input
                                   type='number'
@@ -706,7 +706,7 @@ export function ModelsActionDialog() {
                               </FormControl>
                               {field.value && (
                                 <p className='text-muted-foreground text-xs'>
-                                  {t('models.modelCard.output')}: {formatNumber(field.value)}
+                                  {m["models.modelCard.output"]()}: {formatNumber(field.value)}
                                 </p>
                               )}
                               <FormMessage />
@@ -718,14 +718,14 @@ export function ModelsActionDialog() {
                   </div>
 
                   <div className='space-y-2'>
-                    <FormLabel>{t('models.modelCard.dates')}</FormLabel>
+                    <FormLabel>{m["models.modelCard.dates"]()}</FormLabel>
                     <div className='grid grid-cols-3 gap-2'>
                       <FormField
                         control={form.control}
                         name='modelCard.knowledge'
                         render={({ field }) => (
                           <FormItem className='flex flex-col'>
-                            <FormLabel className='text-xs'>{t('models.modelCard.knowledge')}</FormLabel>
+                            <FormLabel className='text-xs'>{m["models.modelCard.knowledge"]()}</FormLabel>
                             <Popover>
                               <PopoverTrigger asChild>
                                 <FormControl>
@@ -762,7 +762,7 @@ export function ModelsActionDialog() {
                         name='modelCard.releaseDate'
                         render={({ field }) => (
                           <FormItem className='flex flex-col'>
-                            <FormLabel className='text-xs'>{t('models.modelCard.releaseDate')}</FormLabel>
+                            <FormLabel className='text-xs'>{m["models.modelCard.releaseDate"]()}</FormLabel>
                             <Popover>
                               <PopoverTrigger asChild>
                                 <FormControl>
@@ -793,7 +793,7 @@ export function ModelsActionDialog() {
                         name='modelCard.lastUpdated'
                         render={({ field }) => (
                           <FormItem className='flex flex-col'>
-                            <FormLabel className='text-xs'>{t('models.modelCard.lastUpdated')}</FormLabel>
+                            <FormLabel className='text-xs'>{m["models.modelCard.lastUpdated"]()}</FormLabel>
                             <Popover>
                               <PopoverTrigger asChild>
                                 <FormControl>
@@ -827,10 +827,10 @@ export function ModelsActionDialog() {
 
             <div className='flex flex-shrink-0 justify-end gap-2 border-t pt-4'>
               <Button type='button' variant='outline' onClick={handleClose}>
-                {t('common.buttons.cancel')}
+                {m["common.buttons.cancel"]()}
               </Button>
               <Button type='submit' disabled={createModel.isPending || updateModel.isPending}>
-                {isEdit ? t('common.buttons.save') : t('common.buttons.create')}
+                {isEdit ? m["common.buttons.save"]() : m["common.buttons.create"]()}
               </Button>
             </div>
           </form>

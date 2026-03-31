@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -15,9 +14,9 @@ import { RolesPrimaryButtons } from './components/roles-primary-buttons';
 import { RolesTable } from './components/roles-table';
 import RolesProvider from './context/roles-context';
 import { useRoles } from './data/roles';
+import * as m from '@/paraglide/messages';
 
 function RolesContent() {
-  const { t } = useTranslation();
   const { rolePermissions } = usePermissions();
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
     defaultPageSize: 20,
@@ -30,7 +29,7 @@ function RolesContent() {
   const debouncedSearchFilter = useDebounce(searchFilter, 300);
 
   // Memoize columns to prevent infinite re-renders
-  const columns = useMemo(() => createColumns(t, rolePermissions.canWrite), [t, rolePermissions.canWrite]);
+  const columns = useMemo(() => createColumns(rolePermissions.canWrite), [rolePermissions.canWrite]);
 
   // Build where clause for API filtering with OR logic
   const whereClause = (() => {
@@ -95,15 +94,13 @@ function RolesContent() {
 }
 
 export default function RolesPage() {
-  const { t } = useTranslation();
-
   return (
     <RolesProvider>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('projectRoles.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('projectRoles.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["projectRoles.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["projectRoles.description"]()}</p>
           </div>
           <RolesPrimaryButtons />
         </div>

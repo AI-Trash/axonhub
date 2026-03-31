@@ -1,5 +1,4 @@
 import { useState, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
@@ -10,6 +9,7 @@ import { formatNumber } from '@/utils/format-number';
 
 import { useApiKeyTokenUsageStats } from '../data/apikeys';
 import type { ApiKey } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 type TimeRange = 'today' | 'last7days' | 'all';
 
@@ -22,7 +22,6 @@ interface ApiKeyTokenChartDialogProps {
 }
 
 export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTokenChartDialogProps) {
-  const { t } = useTranslation();
   const [timeRange, setTimeRange] = useState<TimeRange>('today');
 
   const usageDateRangeWhere = useMemo(() => {
@@ -83,13 +82,13 @@ export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTok
       <DialogContent className='flex max-h-[90vh] flex-col sm:max-w-2xl'>
         <DialogHeader className='flex flex-col space-y-3 sm:flex-row sm:items-center sm:justify-between sm:space-y-0'>
           <DialogTitle className='text-base sm:text-lg'>
-            {t('apikeys.tokenUsageChart.title')} - {apiKey?.name}
+            {m["apikeys.tokenUsageChart.title"]()} - {apiKey?.name}
           </DialogTitle>
           <Tabs value={timeRange} onValueChange={(value) => setTimeRange(value as TimeRange)}>
             <TabsList className='grid w-full grid-cols-3 sm:mr-6 sm:w-auto'>
-              <TabsTrigger value='today'>{t('apikeys.tokenUsageChart.today')}</TabsTrigger>
-              <TabsTrigger value='last7days'>{t('apikeys.tokenUsageChart.last7days')}</TabsTrigger>
-              <TabsTrigger value='all'>{t('apikeys.tokenUsageChart.all')}</TabsTrigger>
+              <TabsTrigger value='today'>{m["apikeys.tokenUsageChart.today"]()}</TabsTrigger>
+              <TabsTrigger value='last7days'>{m["apikeys.tokenUsageChart.last7days"]()}</TabsTrigger>
+              <TabsTrigger value='all'>{m["apikeys.tokenUsageChart.all"]()}</TabsTrigger>
             </TabsList>
           </Tabs>
         </DialogHeader>
@@ -97,43 +96,43 @@ export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTok
           {isLoading ? (
             <Skeleton className='h-[200px] w-full' />
           ) : !stat || totalTokens === 0 ? (
-            <div className='text-muted-foreground flex h-[200px] items-center justify-center'>{t('apikeys.tokenUsageChart.noData')}</div>
+            <div className='text-muted-foreground flex h-[200px] items-center justify-center'>{m["apikeys.tokenUsageChart.noData"]()}</div>
           ) : (
             <div className='space-y-4' style={{ opacity: isFetching ? 0.6 : 1, transition: 'opacity 0.2s' }}>
               <div>
-                <h3 className='mb-2 text-sm font-medium'>{t('apikeys.tokenUsageChart.overallUsage')}</h3>
+                <h3 className='mb-2 text-sm font-medium'>{m["apikeys.tokenUsageChart.overallUsage"]()}</h3>
                 <div className='overflow-x-auto rounded-lg border'>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className='w-2/5 whitespace-nowrap'>{t('apikeys.tokenUsageChart.tokenType')}</TableHead>
-                        <TableHead className='w-[30%] text-center whitespace-nowrap'>{t('apikeys.tokenUsageChart.count')}</TableHead>
-                        <TableHead className='w-[30%] text-center whitespace-nowrap'>{t('apikeys.tokenUsageChart.percentage')}</TableHead>
+                        <TableHead className='w-2/5 whitespace-nowrap'>{m["apikeys.tokenUsageChart.tokenType"]()}</TableHead>
+                        <TableHead className='w-[30%] text-center whitespace-nowrap'>{m["apikeys.tokenUsageChart.count"]()}</TableHead>
+                        <TableHead className='w-[30%] text-center whitespace-nowrap'>{m["apikeys.tokenUsageChart.percentage"]()}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       <TableRow>
-                        <TableCell className='font-medium'>{t('apikeys.columns.inputTokens')}</TableCell>
+                        <TableCell className='font-medium'>{m["apikeys.columns.inputTokens"]()}</TableCell>
                         <TableCell className='text-center tabular-nums'>{formatNumber(stat.inputTokens)}</TableCell>
                         <TableCell className='text-center tabular-nums'>{pct(stat.inputTokens, totalTokens)}%</TableCell>
                       </TableRow>
                       <TableRow>
-                        <TableCell className='font-medium'>{t('apikeys.columns.outputTokens')}</TableCell>
+                        <TableCell className='font-medium'>{m["apikeys.columns.outputTokens"]()}</TableCell>
                         <TableCell className='text-center tabular-nums'>{formatNumber(stat.outputTokens)}</TableCell>
                         <TableCell className='text-center tabular-nums'>{pct(stat.outputTokens, totalTokens)}%</TableCell>
                       </TableRow>
                       <TableRow>
-                        <TableCell className='font-medium'>{t('apikeys.columns.cachedTokens')}</TableCell>
+                        <TableCell className='font-medium'>{m["apikeys.columns.cachedTokens"]()}</TableCell>
                         <TableCell className='text-center tabular-nums'>{formatNumber(stat.cachedTokens)}</TableCell>
                         <TableCell className='text-center tabular-nums'>{pct(stat.cachedTokens, totalTokens)}%</TableCell>
                       </TableRow>
                       <TableRow>
-                        <TableCell className='font-medium'>{t('apikeys.columns.reasoningTokens')}</TableCell>
+                        <TableCell className='font-medium'>{m["apikeys.columns.reasoningTokens"]()}</TableCell>
                         <TableCell className='text-center tabular-nums'>{formatNumber(stat.reasoningTokens)}</TableCell>
                         <TableCell className='text-center tabular-nums'>{pct(stat.reasoningTokens, totalTokens)}%</TableCell>
                       </TableRow>
                       <TableRow className='bg-muted/50 font-semibold'>
-                        <TableCell>{t('apikeys.tokenUsageChart.total')}</TableCell>
+                        <TableCell>{m["apikeys.tokenUsageChart.total"]()}</TableCell>
                         <TableCell className='text-center tabular-nums'>{formatNumber(totalTokens)}</TableCell>
                         <TableCell className='text-center tabular-nums'>100%</TableCell>
                       </TableRow>
@@ -145,7 +144,7 @@ export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTok
               {hasTopModels && (
                 <div>
                   <Separator className='mb-4' />
-                  <h3 className='mb-3 text-sm font-medium'>{t('apikeys.tokenUsageChart.topModels')}</h3>
+                  <h3 className='mb-3 text-sm font-medium'>{m["apikeys.tokenUsageChart.topModels"]()}</h3>
                   <div className='space-y-4'>
                     {stat.topModels.map((model, index) => {
                       const modelTotal = model.inputTokens + model.outputTokens + model.cachedTokens + model.reasoningTokens;
@@ -157,7 +156,7 @@ export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTok
                                 #{index + 1} {model.modelId}
                               </span>
                               <span className='text-muted-foreground text-sm whitespace-nowrap'>
-                                {t('apikeys.tokenUsageChart.totalTokens')}: {formatNumber(modelTotal)}
+                                {m["apikeys.tokenUsageChart.totalTokens"]()}: {formatNumber(modelTotal)}
                               </span>
                             </div>
                           </div>
@@ -165,28 +164,28 @@ export function ApiKeyTokenChartDialog({ apiKey, open, onOpenChange }: ApiKeyTok
                             <Table>
                               <TableBody>
                                 <TableRow>
-                                  <TableCell className='w-2/5 font-medium whitespace-nowrap'>{t('apikeys.columns.inputTokens')}</TableCell>
+                                  <TableCell className='w-2/5 font-medium whitespace-nowrap'>{m["apikeys.columns.inputTokens"]()}</TableCell>
                                   <TableCell className='w-[30%] text-center tabular-nums'>{formatNumber(model.inputTokens)}</TableCell>
                                   <TableCell className='w-[30%] text-center whitespace-nowrap tabular-nums'>
                                     {pct(model.inputTokens, modelTotal)}%
                                   </TableCell>
                                 </TableRow>
                                 <TableRow>
-                                  <TableCell className='font-medium whitespace-nowrap'>{t('apikeys.columns.outputTokens')}</TableCell>
+                                  <TableCell className='font-medium whitespace-nowrap'>{m["apikeys.columns.outputTokens"]()}</TableCell>
                                   <TableCell className='text-center tabular-nums'>{formatNumber(model.outputTokens)}</TableCell>
                                   <TableCell className='text-center whitespace-nowrap tabular-nums'>
                                     {pct(model.outputTokens, modelTotal)}%
                                   </TableCell>
                                 </TableRow>
                                 <TableRow>
-                                  <TableCell className='font-medium whitespace-nowrap'>{t('apikeys.columns.cachedTokens')}</TableCell>
+                                  <TableCell className='font-medium whitespace-nowrap'>{m["apikeys.columns.cachedTokens"]()}</TableCell>
                                   <TableCell className='text-center tabular-nums'>{formatNumber(model.cachedTokens)}</TableCell>
                                   <TableCell className='text-center whitespace-nowrap tabular-nums'>
                                     {pct(model.cachedTokens, modelTotal)}%
                                   </TableCell>
                                 </TableRow>
                                 <TableRow>
-                                  <TableCell className='font-medium whitespace-nowrap'>{t('apikeys.columns.reasoningTokens')}</TableCell>
+                                  <TableCell className='font-medium whitespace-nowrap'>{m["apikeys.columns.reasoningTokens"]()}</TableCell>
                                   <TableCell className='text-center tabular-nums'>{formatNumber(model.reasoningTokens)}</TableCell>
                                   <TableCell className='text-center whitespace-nowrap tabular-nums'>
                                     {pct(model.reasoningTokens, modelTotal)}%

@@ -1,15 +1,14 @@
 'use client';
 
 import { IconAlertTriangle } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useBulkArchiveApiKeys } from '../data/apikeys';
+import * as m from '@/paraglide/messages';
 
 export function ApiKeysBulkArchiveDialog() {
-  const { t } = useTranslation();
   const { isDialogOpen, closeDialog, selectedApiKeys, resetRowSelection, setSelectedApiKeys } = useApiKeysContext();
   const bulkArchiveApiKeys = useBulkArchiveApiKeys();
 
@@ -34,12 +33,12 @@ export function ApiKeysBulkArchiveDialog() {
       title={
         <span className='text-destructive'>
           <IconAlertTriangle className='stroke-destructive mr-1 inline-block' size={18} />
-          {t('apikeys.dialogs.bulkArchive.title')}
+          {m["apikeys.dialogs.bulkArchive.title"]()}
         </span>
       }
-      desc={t('apikeys.dialogs.bulkArchive.description', { count: selectedApiKeys.length })}
-      confirmText={t('common.buttons.archive')}
-      cancelBtnText={t('common.buttons.cancel')}
+      desc={m["apikeys.dialogs.bulkArchive.description"]({ count: selectedApiKeys.length })}
+      confirmText={m["common.buttons.archive"]()}
+      cancelBtnText={m["common.buttons.cancel"]()}
     />
   );
 }

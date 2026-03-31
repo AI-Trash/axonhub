@@ -1,6 +1,5 @@
 import { ChevronsUpDown } from 'lucide-react';
 import * as React from 'react';
-import { useTranslation } from 'react-i18next';
 
 import {
   DropdownMenu,
@@ -13,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar';
 import { useBrandSettings } from '@/features/system/data/system';
+import * as m from '@/paraglide/messages';
 
 export function TeamSwitcher({
   teams,
@@ -26,8 +26,6 @@ export function TeamSwitcher({
   const { isMobile } = useSidebar();
   const [activeTeam, setActiveTeam] = React.useState(teams[0]);
   const { data: brandSettings } = useBrandSettings();
-  const { t } = useTranslation();
-
   // Use brand name if available, otherwise fall back to team name
   const displayName = brandSettings?.brandName || activeTeam?.name || 'AxonHub';
 
@@ -76,7 +74,7 @@ export function TeamSwitcher({
               side={isMobile ? 'bottom' : 'right'}
               sideOffset={4}
             >
-              <DropdownMenuLabel className='text-muted-foreground text-xs'>{t('sidebar.teamSwitcher.teams')}</DropdownMenuLabel>
+              <DropdownMenuLabel className='text-muted-foreground text-xs'>{m["sidebar.teamSwitcher.teams"]()}</DropdownMenuLabel>
               {teams.map((team, index) => (
                 <DropdownMenuItem key={team.name} onClick={() => setActiveTeam(team)} className='gap-2 p-2'>
                   <div className='flex size-6 items-center justify-center rounded-sm border'>

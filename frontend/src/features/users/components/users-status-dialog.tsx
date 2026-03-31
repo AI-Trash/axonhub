@@ -2,13 +2,13 @@
 
 import { IconUserCheck, IconUserOff } from '@tabler/icons-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 
 import { User } from '../data/schema';
 import { useUpdateUserStatus } from '../data/users';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   open: boolean;
@@ -17,11 +17,10 @@ interface Props {
 }
 
 export function UsersStatusDialog({ open, onOpenChange, currentRow }: Props) {
-  const { t } = useTranslation();
   const updateUserStatus = useUpdateUserStatus();
   const isActivated = currentRow.status === 'activated';
   const newStatus = isActivated ? 'deactivated' : 'activated';
-  const actionText = isActivated ? t('users.actions.deactivate') : t('users.actions.activate');
+  const actionText = isActivated ? m["users.actions.deactivate"]() : m["users.actions.activate"]();
 
   const handleStatusChange = async () => {
     try {
@@ -31,7 +30,7 @@ export function UsersStatusDialog({ open, onOpenChange, currentRow }: Props) {
       });
       onOpenChange(false);
     } catch (error) {
-      toast.error(t('common.errors.somethingWentWrong'));
+      toast.error(m["common.errors.somethingWentWrong"]());
     }
   };
 
@@ -48,7 +47,7 @@ export function UsersStatusDialog({ open, onOpenChange, currentRow }: Props) {
           ) : (
             <IconUserCheck className='mr-1 inline-block' size={18} />
           )}
-          {t('users.dialogs.statusChange.title', { action: actionText })}
+          {m["users.dialogs.statusChange.title"]({ action: actionText })}
         </span>
       }
       desc={
@@ -60,12 +59,12 @@ export function UsersStatusDialog({ open, onOpenChange, currentRow }: Props) {
             })}
           </p>
           <p className='text-muted-foreground text-sm'>
-            {isActivated ? t('users.dialogs.statusChange.deactivateWarning') : t('users.dialogs.statusChange.activateInfo')}
+            {isActivated ? m["users.dialogs.statusChange.deactivateWarning"]() : m["users.dialogs.statusChange.activateInfo"]()}
           </p>
         </div>
       }
       confirmText={actionText}
-      cancelBtnText={t('common.buttons.cancel')}
+      cancelBtnText={m["common.buttons.cancel"]()}
     />
   );
 }

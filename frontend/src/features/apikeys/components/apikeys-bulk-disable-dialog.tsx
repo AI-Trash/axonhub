@@ -1,16 +1,15 @@
 'use client';
 
 import { IconAlertTriangle } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useBulkDisableApiKeys } from '../data/apikeys';
 import { ApiKey } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 export function ApiKeysBulkDisableDialog() {
-  const { t } = useTranslation();
   const { isDialogOpen, closeDialog, selectedApiKeys, resetRowSelection, setSelectedApiKeys } = useApiKeysContext();
   const bulkDisableApiKeys = useBulkDisableApiKeys();
 
@@ -35,12 +34,12 @@ export function ApiKeysBulkDisableDialog() {
       title={
         <span className='text-destructive'>
           <IconAlertTriangle className='stroke-destructive mr-1 inline-block' size={18} />
-          {t('apikeys.dialogs.bulkDisable.title')}
+          {m["apikeys.dialogs.bulkDisable.title"]()}
         </span>
       }
-      desc={t('apikeys.dialogs.bulkDisable.description', { count: selectedApiKeys.length })}
-      confirmText={t('common.buttons.disable')}
-      cancelBtnText={t('common.buttons.cancel')}
+      desc={m["apikeys.dialogs.bulkDisable.description"]({ count: selectedApiKeys.length })}
+      confirmText={m["common.buttons.disable"]()}
+      cancelBtnText={m["common.buttons.cancel"]()}
     />
   );
 }

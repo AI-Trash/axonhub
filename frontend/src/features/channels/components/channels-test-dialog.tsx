@@ -2,7 +2,6 @@
 
 import { IconSearch, IconPlayerPlay } from '@tabler/icons-react';
 import { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import LongText from '@/components/long-text';
 import { Badge } from '@/components/ui/badge';
@@ -16,6 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useTestChannel, useUpdateChannel } from '../data/channels';
 import { Channel } from '../data/schema';
 import { ErrorDisplay } from '../utils/error-formatter';
+import * as m from '@/paraglide/messages';
 
 type TestStatus = 'not_started' | 'testing' | 'success' | 'failed';
 
@@ -33,7 +33,6 @@ interface Props {
 }
 
 export function ChannelsTestDialog({ open, onOpenChange, channel }: Props) {
-  const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [testResults, setTestResults] = useState<Record<string, ModelTestResult>>({});
@@ -133,17 +132,17 @@ export function ChannelsTestDialog({ open, onOpenChange, channel }: Props) {
   const getStatusBadge = (status: TestStatus) => {
     switch (status) {
       case 'testing':
-        return <Badge variant='secondary'>{t('channels.dialogs.test.testingModel')}</Badge>;
+        return <Badge variant='secondary'>{m["channels.dialogs.test.testingModel"]()}</Badge>;
       case 'success':
         return (
           <Badge variant='default' className='border-green-200 bg-green-100 text-green-800'>
-            {t('channels.dialogs.test.testSuccess')}
+            {m["channels.dialogs.test.testSuccess"]()}
           </Badge>
         );
       case 'failed':
-        return <Badge variant='destructive'>{t('channels.dialogs.test.testFailed')}</Badge>;
+        return <Badge variant='destructive'>{m["channels.dialogs.test.testFailed"]()}</Badge>;
       default:
-        return <Badge variant='outline'>{t('channels.dialogs.test.notStarted')}</Badge>;
+        return <Badge variant='outline'>{m["channels.dialogs.test.notStarted"]()}</Badge>;
     }
   };
 
@@ -175,8 +174,8 @@ export function ChannelsTestDialog({ open, onOpenChange, channel }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='flex max-h-[90vh] flex-col sm:max-w-2xl'>
         <DialogHeader>
-          <DialogTitle>{t('channels.dialogs.test.title')}</DialogTitle>
-          <DialogDescription>{t('channels.dialogs.test.description', { name: channel.name })}</DialogDescription>
+          <DialogTitle>{m["channels.dialogs.test.title"]()}</DialogTitle>
+          <DialogDescription>{m["channels.dialogs.test.description"]({ name: channel.name })}</DialogDescription>
         </DialogHeader>
 
         <div className='min-h-0 flex-1 space-y-4'>
@@ -184,7 +183,7 @@ export function ChannelsTestDialog({ open, onOpenChange, channel }: Props) {
           <div className='relative'>
             <IconSearch className='text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 transform' />
             <Input
-              placeholder={t('channels.dialogs.test.searchPlaceholder')}
+              placeholder={m["channels.dialogs.test.searchPlaceholder"]()}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className='pl-10'
@@ -211,8 +210,8 @@ export function ChannelsTestDialog({ open, onOpenChange, channel }: Props) {
                         }}
                       />
                     </TableHead>
-                    <TableHead>{t('channels.dialogs.test.modelNameColumn')}</TableHead>
-                    <TableHead className='w-32'>{t('channels.dialogs.test.statusColumn')}</TableHead>
+                    <TableHead>{m["channels.dialogs.test.modelNameColumn"]()}</TableHead>
+                    <TableHead className='w-32'>{m["channels.dialogs.test.statusColumn"]()}</TableHead>
                     <TableHead className='w-24'></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -247,7 +246,7 @@ export function ChannelsTestDialog({ open, onOpenChange, channel }: Props) {
                             disabled={result?.status === 'testing' || testChannel.isPending}
                           >
                             <IconPlayerPlay className='mr-1 h-3 w-3' />
-                            {result?.status === 'testing' ? t('channels.dialogs.test.testingModel') : t('channels.dialogs.test.testModel')}
+                            {result?.status === 'testing' ? m["channels.dialogs.test.testingModel"]() : m["channels.dialogs.test.testModel"]()}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -262,23 +261,23 @@ export function ChannelsTestDialog({ open, onOpenChange, channel }: Props) {
         <DialogFooter className='flex items-center justify-between'>
           <div className='flex gap-2'>
             <Button variant='outline' onClick={() => onOpenChange(false)}>
-              {t('common.buttons.cancel')}
+              {m["common.buttons.cancel"]()}
             </Button>
             {failedModels.length > 0 && (
               <Popover open={isRemovePopoverOpen} onOpenChange={setIsRemovePopoverOpen}>
                 <PopoverTrigger asChild>
                   <Button variant='destructive' size='sm'>
-                    {t('channels.dialogs.test.removeFailed')} ({failedModels.length})
+                    {m["channels.dialogs.test.removeFailed"]()} ({failedModels.length})
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className='w-80'>
                   <div className='grid gap-4'>
                     <div className='space-y-2'>
-                      <p className='text-muted-foreground text-sm'>{t('channels.dialogs.test.removeFailedConfirm')}</p>
+                      <p className='text-muted-foreground text-sm'>{m["channels.dialogs.test.removeFailedConfirm"]()}</p>
                     </div>
                     <div className='flex justify-end gap-2'>
                       <Button size='sm' variant='destructive' onClick={handleRemoveFailed} disabled={updateChannel.isPending}>
-                        {updateChannel.isPending ? t('common.buttons.saving') : t('common.buttons.confirm')}
+                        {updateChannel.isPending ? m["common.buttons.saving"]() : m["common.buttons.confirm"]()}
                       </Button>
                     </div>
                   </div>
@@ -288,7 +287,7 @@ export function ChannelsTestDialog({ open, onOpenChange, channel }: Props) {
           </div>
           <Button onClick={handleTestSelected} disabled={selectedModels.length === 0 || isTesting}>
             <IconPlayerPlay className='mr-2 h-4 w-4' />
-            {t('channels.dialogs.test.testAllButton', { count: selectedModels.length })}
+            {m["channels.dialogs.test.testAllButton"]({ count: selectedModels.length })}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,6 +1,5 @@
 import { Copy, Eye, EyeOff, AlertTriangle, Link, CheckIcon } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { MaskedCodeBlock, MaskedCodeBlockCopyButton, highlightMaskedCode } from '@/components/ai-elements/masked-code-block';
@@ -11,15 +10,15 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 import { useApiKeysContext } from '../context/apikeys-context';
+import * as m from '@/paraglide/messages';
 
 function CopyBaseUrlButton({ baseUrl }: { baseUrl: string }) {
-  const { t } = useTranslation();
   const [isCopied, setIsCopied] = useState(false);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(baseUrl);
     setIsCopied(true);
-    toast.success(t('apikeys.messages.baseUrlCopied'));
+    toast.success(m["apikeys.messages.baseUrlCopied"]());
     setTimeout(() => setIsCopied(false), 2000);
   };
 
@@ -36,7 +35,6 @@ function CopyBaseUrlButton({ baseUrl }: { baseUrl: string }) {
 }
 
 export function ApiKeysViewDialog() {
-  const { t } = useTranslation();
   const { isDialogOpen, closeDialog, selectedApiKey } = useApiKeysContext();
   const [isVisible, setIsVisible] = useState(false);
   const [preRenderedCode, setPreRenderedCode] = useState<Record<string, { light: string; dark: string }>>({});
@@ -250,7 +248,7 @@ print(response.text)`,
   const copyToClipboard = () => {
     if (selectedApiKey?.key) {
       navigator.clipboard.writeText(selectedApiKey.key);
-      toast.success(t('apikeys.messages.copied'));
+      toast.success(m["apikeys.messages.copied"]());
     }
   };
 
@@ -260,23 +258,23 @@ print(response.text)`,
     <Dialog open={isDialogOpen.view} onOpenChange={() => closeDialog()}>
       <DialogContent className='flex max-h-[90vh] flex-col sm:max-w-3xl'>
         <DialogHeader>
-          <DialogTitle>{t('apikeys.dialogs.view.title')}</DialogTitle>
-          <DialogDescription>{t('apikeys.dialogs.view.description')}</DialogDescription>
+          <DialogTitle>{m["apikeys.dialogs.view.title"]()}</DialogTitle>
+          <DialogDescription>{m["apikeys.dialogs.view.description"]()}</DialogDescription>
         </DialogHeader>
 
         <Alert className='shrink-0 border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950'>
           <AlertTriangle className='h-4 w-4 text-orange-600 dark:text-orange-400' />
-          <AlertDescription className='text-orange-800 dark:text-orange-200'>{t('apikeys.dialogs.view.warning')}</AlertDescription>
+          <AlertDescription className='text-orange-800 dark:text-orange-200'>{m["apikeys.dialogs.view.warning"]()}</AlertDescription>
         </Alert>
 
         <div className='shrink-0 space-y-4'>
           <div>
-            <label className='text-sm font-medium'>{t('common.columns.name')}</label>
+            <label className='text-sm font-medium'>{m["common.columns.name"]()}</label>
             <div className='bg-muted mt-1 rounded-md p-3'>{selectedApiKey?.name}</div>
           </div>
 
           <div>
-            <label className='text-sm font-medium'>{t('apikeys.columns.key')}</label>
+            <label className='text-sm font-medium'>{m["apikeys.columns.key"]()}</label>
             <div className='mt-1 flex items-center space-x-2'>
               <code className='bg-muted flex-1 rounded-md p-3 font-mono text-sm break-all'>
                 {isVisible ? selectedApiKey?.key : maskedKey}
@@ -292,15 +290,15 @@ print(response.text)`,
         </div>
 
         <div className='flex flex-1 flex-col overflow-hidden'>
-          <label className='text-sm font-medium'>{t('apikeys.dialogs.view.usageExamples')}</label>
+          <label className='text-sm font-medium'>{m["apikeys.dialogs.view.usageExamples"]()}</label>
           {selectedApiKey?.type === 'user' ? (
             <Tabs defaultValue='claudeCode' className='mt-2 flex min-h-0 flex-1 flex-col'>
               <TabsList className='grid w-full shrink-0 grid-cols-5'>
-                <TabsTrigger value='claudeCode'>{t('apikeys.dialogs.view.tabs.claudeCode')}</TabsTrigger>
-                <TabsTrigger value='codex'>{t('apikeys.dialogs.view.tabs.codex')}</TabsTrigger>
-                <TabsTrigger value='anthropicSDK'>{t('apikeys.dialogs.view.tabs.anthropicSDK')}</TabsTrigger>
-                <TabsTrigger value='openAISDK'>{t('apikeys.dialogs.view.tabs.openAISDK')}</TabsTrigger>
-                <TabsTrigger value='geminiSDK'>{t('apikeys.dialogs.view.tabs.geminiSDK')}</TabsTrigger>
+                <TabsTrigger value='claudeCode'>{m["apikeys.dialogs.view.tabs.claudeCode"]()}</TabsTrigger>
+                <TabsTrigger value='codex'>{m["apikeys.dialogs.view.tabs.codex"]()}</TabsTrigger>
+                <TabsTrigger value='anthropicSDK'>{m["apikeys.dialogs.view.tabs.anthropicSDK"]()}</TabsTrigger>
+                <TabsTrigger value='openAISDK'>{m["apikeys.dialogs.view.tabs.openAISDK"]()}</TabsTrigger>
+                <TabsTrigger value='geminiSDK'>{m["apikeys.dialogs.view.tabs.geminiSDK"]()}</TabsTrigger>
               </TabsList>
               <TabsContent value='anthropicSDK' className='mt-3 min-h-0 flex-1 overflow-y-auto'>
                 <MaskedCodeBlock
@@ -365,7 +363,7 @@ print(response.text)`,
             </Tabs>
           ) : (
             <div className='text-muted-foreground mt-2 flex flex-1 items-center justify-center text-sm'>
-              {t('apikeys.dialogs.view.noExamples')}
+              {m["apikeys.dialogs.view.noExamples"]()}
             </div>
           )}
         </div>

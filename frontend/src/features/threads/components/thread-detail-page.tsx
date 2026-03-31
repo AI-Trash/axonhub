@@ -3,7 +3,6 @@ import { format } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
 import { ArrowLeft, Activity } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -18,6 +17,8 @@ import { extractNumberID } from '@/lib/utils';
 import { useThreadDetail } from '../data/threads';
 import { TraceCard } from './trace-card';
 import { TraceDrawer } from './trace-drawer';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
 
 const THREAD_CURSOR_OPTIONS = {
   startCursorKey: 'threadTracesStart',
@@ -32,8 +33,7 @@ export default function ThreadDetailPage() {
     threadId: string;
   };
   const navigate = useNavigate();
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language === 'zh' ? zhCN : enUS;
+  const locale = getLocale() === 'zh' ? zhCN : enUS;
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
@@ -95,7 +95,7 @@ export default function ThreadDetailPage() {
           <div className='flex h-full items-center justify-center'>
             <div className='space-y-4 text-center'>
               <div className='border-primary mx-auto h-12 w-12 animate-spin rounded-full border-b-2'></div>
-              <p className='text-muted-foreground text-lg'>{t('common.loading')}</p>
+              <p className='text-muted-foreground text-lg'>{m["common.loading"]()}</p>
             </div>
           </div>
         </Main>
@@ -112,11 +112,11 @@ export default function ThreadDetailPage() {
             <div className='space-y-6 text-center'>
               <div className='space-y-2'>
                 <Activity className='text-muted-foreground mx-auto h-16 w-16' />
-                <p className='text-muted-foreground text-xl font-medium'>{t('threads.detail.notFound')}</p>
+                <p className='text-muted-foreground text-xl font-medium'>{m["threads.detail.notFound"]()}</p>
               </div>
               <Button onClick={handleBack} size='lg'>
                 <ArrowLeft className='mr-2 h-4 w-4' />
-                {t('common.back')}
+                {m["common.back"]()}
               </Button>
             </div>
           </div>
@@ -134,7 +134,7 @@ export default function ThreadDetailPage() {
         <div className='flex items-center space-x-4'>
           <Button variant='ghost' size='sm' onClick={handleBack} className='hover:bg-accent'>
             <ArrowLeft className='mr-2 h-4 w-4' />
-            {t('common.back')}
+            {m["common.back"]()}
           </Button>
           <Separator orientation='vertical' className='h-6' />
           <div className='flex items-center space-x-3'>
@@ -143,7 +143,7 @@ export default function ThreadDetailPage() {
             </div>
             <div>
               <h1 className='text-lg leading-none font-semibold'>
-                {t('threads.detail.title')} #{extractNumberID(thread.id) || thread.threadID}
+                {m["threads.detail.title"]()} #{extractNumberID(thread.id) || thread.threadID}
               </h1>
               <div className='mt-1 flex items-center gap-2'>
                 <p className='text-muted-foreground text-sm'>{thread.threadID}</p>
@@ -160,35 +160,34 @@ export default function ThreadDetailPage() {
           <Card className='border-0 shadow-sm'>
             <CardContent className='grid gap-4 p-6 md:grid-cols-6'>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('traces.detail.totalTokensLabel')}</p>
+                <p className='text-muted-foreground text-sm'>{m["traces.detail.totalTokensLabel"]()}</p>
                 <p className='text-lg font-semibold'>{(thread.usageMetadata?.totalTokens ?? 0).toLocaleString()}</p>
               </div>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('traces.detail.inputTokensLabel')}</p>
+                <p className='text-muted-foreground text-sm'>{m["traces.detail.inputTokensLabel"]()}</p>
                 <p className='text-lg font-semibold'>{(thread.usageMetadata?.totalInputTokens ?? 0).toLocaleString()}</p>
               </div>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('traces.detail.outputTokensLabel')}</p>
+                <p className='text-muted-foreground text-sm'>{m["traces.detail.outputTokensLabel"]()}</p>
                 <p className='text-lg font-semibold'>{(thread.usageMetadata?.totalOutputTokens ?? 0).toLocaleString()}</p>
               </div>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('traces.detail.cachedTokensLabel')}</p>
+                <p className='text-muted-foreground text-sm'>{m["traces.detail.cachedTokensLabel"]()}</p>
                 <p className='text-lg font-semibold'>{(thread.usageMetadata?.totalCachedTokens ?? 0).toLocaleString()}</p>
               </div>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('traces.detail.cachedWriteTokensLabel')}</p>
+                <p className='text-muted-foreground text-sm'>{m["traces.detail.cachedWriteTokensLabel"]()}</p>
                 <p className='text-lg font-semibold'>{(thread.usageMetadata?.totalCachedWriteTokens ?? 0).toLocaleString()}</p>
               </div>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('usageLogs.columns.totalCost')}</p>
+                <p className='text-muted-foreground text-sm'>{m["usageLogs.columns.totalCost"]()}</p>
                 {thread.usageMetadata?.totalCost ? (
                   <p className='text-lg font-semibold'>
-                    {t('currencies.format', {
+                    {m["currencies.format"]({
                       val: thread.usageMetadata.totalCost,
                       currency: settings?.currencyCode,
-                      locale: i18n.language === 'zh' ? 'zh-CN' : 'en-US',
-                      minimumFractionDigits: 6,
-                    })}
+                      locale: getLocale() === 'zh' ? 'zh-CN' : 'en-US',
+                      minimumFractionDigits: 6 })}
                   </p>
                 ) : (
                   <p className='text-muted-foreground text-lg font-semibold'>-</p>
@@ -200,19 +199,19 @@ export default function ThreadDetailPage() {
           {/* <Card className='border-0 shadow-sm'>
             <CardContent className='grid gap-4 p-6 md:grid-cols-3'>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('threads.detail.project')}</p>
-                <p className='font-medium'>{thread.project?.name || t('threads.detail.unknownProject')}</p>
+                <p className='text-muted-foreground text-sm'>{m["threads.detail.project"]()}</p>
+                <p className='font-medium'>{thread.project?.name || m["threads.detail.unknownProject"]()}</p>
               </div>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('threads.detail.createdAt')}</p>
+                <p className='text-muted-foreground text-sm'>{m["threads.detail.createdAt"]()}</p>
                 <p className='font-medium'>{createdAtLabel}</p>
               </div>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('threads.detail.updatedAt')}</p>
+                <p className='text-muted-foreground text-sm'>{m["threads.detail.updatedAt"]()}</p>
                 <p className='font-medium'>{updatedAtLabel}</p>
               </div>
               <div>
-                <p className='text-muted-foreground text-sm'>{t('threads.detail.traceCount')}</p>
+                <p className='text-muted-foreground text-sm'>{m["threads.detail.traceCount"]()}</p>
                 <p className='font-medium'>{thread.tracesSummary?.totalCount ?? 0}</p>
               </div>
             </CardContent>
@@ -221,12 +220,12 @@ export default function ThreadDetailPage() {
           <div className='flex flex-col gap-6'>
             <div className='flex items-center justify-between'>
               <div>
-                <h2 className='text-xl font-semibold'>{t('threads.detail.tracesTitle')}</h2>
-                <p className='text-muted-foreground text-sm'>{t('threads.detail.tracesSubtitle')}</p>
+                <h2 className='text-xl font-semibold'>{m["threads.detail.tracesTitle"]()}</h2>
+                <p className='text-muted-foreground text-sm'>{m["threads.detail.tracesSubtitle"]()}</p>
               </div>
               <div className='flex items-center gap-2'>
                 <Button variant='outline' size='sm' onClick={() => refetch()} disabled={isLoading}>
-                  {t('common.refresh')}
+                  {m["common.refresh"]()}
                 </Button>
               </div>
             </div>
@@ -246,7 +245,7 @@ export default function ThreadDetailPage() {
                     <div className='flex h-full items-center justify-center'>
                       <div className='space-y-4 text-center'>
                         <Activity className='text-muted-foreground mx-auto h-16 w-16' />
-                        <p className='text-muted-foreground text-lg'>{t('threads.detail.noTraces')}</p>
+                        <p className='text-muted-foreground text-lg'>{m["threads.detail.noTraces"]()}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -258,14 +257,14 @@ export default function ThreadDetailPage() {
             {totalCount && totalCount > 0 && (
               <div className='flex items-center justify-between'>
                 <div className='text-muted-foreground text-sm'>
-                  {t('common.showing')} {traces.length} {t('common.of')} {totalCount} {t('threads.detail.traces')}
+                  {m["common.showing"]()} {traces.length} {m["common.of"]()} {totalCount} {m["threads.detail.traces"]()}
                 </div>
                 <div className='flex items-center gap-2'>
                   <Button variant='outline' size='sm' onClick={handlePreviousPage} disabled={!pageInfo?.hasPreviousPage}>
-                    {t('common.previous')}
+                    {m["common.previous"]()}
                   </Button>
                   <Button variant='outline' size='sm' onClick={handleNextPage} disabled={!pageInfo?.hasNextPage}>
-                    {t('common.next')}
+                    {m["common.next"]()}
                   </Button>
                 </div>
               </div>

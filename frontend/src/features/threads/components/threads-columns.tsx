@@ -5,7 +5,6 @@ import { format } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
 import { FileText } from 'lucide-react';
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import { Badge } from '@/components/ui/badge';
@@ -14,16 +13,17 @@ import { usePaginationSearch } from '@/hooks/use-pagination-search';
 import { extractNumberID } from '@/lib/utils';
 
 import type { Thread } from '../data/schema';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
 
 export function useThreadsColumns(): ColumnDef<Thread>[] {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language === 'zh' ? zhCN : enUS;
+  const locale = getLocale() === 'zh' ? zhCN : enUS;
   const { navigateWithSearch } = usePaginationSearch({ defaultPageSize: 20 });
 
   const columns: ColumnDef<Thread>[] = [
     {
       accessorKey: 'id',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.id')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.id"]()} />,
       cell: ({ row }) => {
         const handleClick = useCallback(() => {
           navigateWithSearch({
@@ -43,7 +43,7 @@ export function useThreadsColumns(): ColumnDef<Thread>[] {
     },
     {
       accessorKey: 'threadID',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('threads.columns.threadId')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["threads.columns.threadId"]()} />,
       cell: ({ row }) => {
         const threadID = row.getValue('threadID') as string;
         return (
@@ -56,7 +56,7 @@ export function useThreadsColumns(): ColumnDef<Thread>[] {
     },
     {
       accessorKey: 'firstUserQuery',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('threads.columns.firstUserQuery')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["threads.columns.firstUserQuery"]()} />,
       cell: ({ row }) => {
         const query = row.getValue('firstUserQuery') as string | null | undefined;
         return (
@@ -69,12 +69,12 @@ export function useThreadsColumns(): ColumnDef<Thread>[] {
     },
     // {
     //   id: 'project',
-    //   header: ({ column }) => <DataTableColumnHeader column={column} title={t('threads.columns.project')} />,
+    //   header: ({ column }) => <DataTableColumnHeader column={column} title={m["threads.columns.project"]()} />,
     //   cell: ({ row }) => {
     //     const project = row.original.project
     //     return (
     //       <div className='max-w-48 truncate text-xs' title={project?.name || ''}>
-    //         {project?.name || t('threads.columns.unknownProject')}
+    //         {project?.name || m["threads.columns.unknownProject"]()}
     //       </div>
     //     )
     //   },
@@ -82,7 +82,7 @@ export function useThreadsColumns(): ColumnDef<Thread>[] {
     // },
     {
       id: 'traceCount',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('threads.columns.traceCount')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["threads.columns.traceCount"]()} />,
       cell: ({ row }) => {
         const count = row.original.tracesSummary?.totalCount ?? 0;
         return (
@@ -96,7 +96,7 @@ export function useThreadsColumns(): ColumnDef<Thread>[] {
 
     {
       accessorKey: 'createdAt',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.createdAt')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.createdAt"]()} />,
       cell: ({ row }) => {
         const date = new Date(row.getValue('createdAt'));
         return <div className='text-xs'>{format(date, 'yyyy-MM-dd HH:mm:ss', { locale })}</div>;
@@ -104,7 +104,7 @@ export function useThreadsColumns(): ColumnDef<Thread>[] {
     },
     {
       id: 'details',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('threads.columns.details')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["threads.columns.details"]()} />,
       cell: ({ row }) => {
         const handleViewDetails = () => {
           navigateWithSearch({
@@ -116,7 +116,7 @@ export function useThreadsColumns(): ColumnDef<Thread>[] {
         return (
           <Button variant='outline' size='sm' onClick={handleViewDetails}>
             <FileText className='mr-2 h-4 w-4' />
-            {t('threads.actions.viewDetails')}
+            {m["threads.actions.viewDetails"]()}
           </Button>
         );
       },

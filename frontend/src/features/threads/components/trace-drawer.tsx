@@ -1,5 +1,4 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -7,6 +6,7 @@ import { SpanSection } from '@/features/traces/components/span-section';
 import { TraceFlatTimeline } from '@/features/traces/components/trace-flat-timeline';
 import { useTraceWithSegments } from '@/features/traces/data';
 import { Segment, Span, parseRawRootSegment } from '@/features/traces/data/schema';
+import * as m from '@/paraglide/messages';
 
 interface TraceDrawerProps {
   open: boolean;
@@ -15,7 +15,6 @@ interface TraceDrawerProps {
 }
 
 export function TraceDrawer({ open, onOpenChange, traceId }: TraceDrawerProps) {
-  const { t } = useTranslation();
   const [selectedTrace, setSelectedTrace] = useState<Segment | null>(null);
   const [selectedSpan, setSelectedSpan] = useState<Span | null>(null);
   const [selectedSpanType, setSelectedSpanType] = useState<'request' | 'response' | null>(null);
@@ -60,14 +59,14 @@ export function TraceDrawer({ open, onOpenChange, traceId }: TraceDrawerProps) {
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side='right' className='w-full p-0 sm:max-w-[min(90vw,calc(100vw-400px))]'>
         <SheetHeader className='border-b px-6 py-4'>
-          <SheetTitle>{t('traces.detail.title')}</SheetTitle>
+          <SheetTitle>{m["traces.detail.title"]()}</SheetTitle>
         </SheetHeader>
 
         {isLoading ? (
           <div className='flex h-[calc(100vh-80px)] items-center justify-center'>
             <div className='space-y-4 text-center'>
               <div className='border-primary mx-auto h-12 w-12 animate-spin rounded-full border-b-2'></div>
-              <p className='text-muted-foreground text-lg'>{t('common.loading')}</p>
+              <p className='text-muted-foreground text-lg'>{m["common.loading"]()}</p>
             </div>
           </div>
         ) : effectiveRootSegment ? (
@@ -88,7 +87,7 @@ export function TraceDrawer({ open, onOpenChange, traceId }: TraceDrawerProps) {
           </div>
         ) : (
           <div className='flex h-[calc(100vh-80px)] items-center justify-center'>
-            <p className='text-muted-foreground text-lg'>{t('traces.detail.noTraceData')}</p>
+            <p className='text-muted-foreground text-lg'>{m["traces.detail.noTraceData"]()}</p>
           </div>
         )}
       </SheetContent>

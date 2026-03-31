@@ -1,7 +1,6 @@
 import { ChevronLeftIcon, ChevronRightIcon, DoubleArrowLeftIcon, DoubleArrowRightIcon } from '@radix-ui/react-icons';
 import { Layers, Copy, Check, Download } from 'lucide-react';
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 import { ChunkItem } from './chunk-item';
+import * as m from '@/paraglide/messages';
 
 interface ChunksDialogProps {
   open: boolean;
@@ -22,7 +22,6 @@ const PAGE_SIZE_OPTIONS = [10, 20, 30, 50];
 const DEFAULT_PAGE_SIZE = 20;
 
 export function ChunksDialog({ open, onOpenChange, chunks, title }: ChunksDialogProps) {
-  const { t } = useTranslation();
   const [chunksPage, setChunksPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [pageInputValue, setPageInputValue] = useState('1');
@@ -112,9 +111,9 @@ export function ChunksDialog({ open, onOpenChange, chunks, title }: ChunksDialog
         <DialogHeader>
           <DialogTitle className='flex items-center gap-2'>
             <Layers className='h-5 w-5' />
-            {title || t('requests.dialogs.jsonViewer.responseChunks')}
+            {title || m["requests.dialogs.jsonViewer.responseChunks"]()}
             <Badge variant='secondary' className='ml-2'>
-              {chunks.length} {t('requests.columns.responseChunks')}
+              {chunks.length} {m["requests.columns.responseChunks"]()}
             </Badge>
             <Button variant='ghost' size='icon' className='h-8 w-8' onClick={handleCopyAll}>
               {copied ? <Check className='h-4 w-4 text-green-500' /> : <Copy className='h-4 w-4' />}
@@ -139,15 +138,14 @@ export function ChunksDialog({ open, onOpenChange, chunks, title }: ChunksDialog
             {totalChunksPages > 1 && (
               <div className='flex items-center justify-between border-t pt-4'>
                 <div className='text-muted-foreground flex-1 text-sm'>
-                  {t('pagination.showing', {
+                  {m["pagination.showing"]({
                     start: (chunksPage - 1) * pageSize + 1,
                     end: Math.min(chunksPage * pageSize, chunks.length),
-                    total: chunks.length,
-                  })}
+                    total: chunks.length })}
                 </div>
                 <div className='flex items-center space-x-6'>
                   <div className='flex items-center space-x-2'>
-                    <p className='text-sm font-medium'>{t('pagination.rowsPerPage')}</p>
+                    <p className='text-sm font-medium'>{m["pagination.rowsPerPage"]()}</p>
                     <Select value={`${pageSize}`} onValueChange={(value) => handlePageSizeChange(Number(value))}>
                       <SelectTrigger className='h-8 w-[70px]'>
                         <SelectValue placeholder={pageSize} />
@@ -173,7 +171,7 @@ export function ChunksDialog({ open, onOpenChange, chunks, title }: ChunksDialog
                   </div>
                   <div className='flex items-center space-x-2'>
                     <Button variant='outline' className='h-8 w-8 p-0' onClick={() => handleChunksPageChange(1)} disabled={chunksPage === 1}>
-                      <span className='sr-only'>{t('pagination.firstPage')}</span>
+                      <span className='sr-only'>{m["pagination.firstPage"]()}</span>
                       <DoubleArrowLeftIcon className='h-4 w-4' />
                     </Button>
                     <Button
@@ -182,7 +180,7 @@ export function ChunksDialog({ open, onOpenChange, chunks, title }: ChunksDialog
                       onClick={() => handleChunksPageChange(chunksPage - 1)}
                       disabled={chunksPage === 1}
                     >
-                      <span className='sr-only'>{t('pagination.previousPage')}</span>
+                      <span className='sr-only'>{m["pagination.previousPage"]()}</span>
                       <ChevronLeftIcon className='h-4 w-4' />
                     </Button>
                     <Button
@@ -191,7 +189,7 @@ export function ChunksDialog({ open, onOpenChange, chunks, title }: ChunksDialog
                       onClick={() => handleChunksPageChange(chunksPage + 1)}
                       disabled={chunksPage === totalChunksPages}
                     >
-                      <span className='sr-only'>{t('pagination.nextPage')}</span>
+                      <span className='sr-only'>{m["pagination.nextPage"]()}</span>
                       <ChevronRightIcon className='h-4 w-4' />
                     </Button>
                     <Button
@@ -200,7 +198,7 @@ export function ChunksDialog({ open, onOpenChange, chunks, title }: ChunksDialog
                       onClick={() => handleChunksPageChange(totalChunksPages)}
                       disabled={chunksPage === totalChunksPages}
                     >
-                      <span className='sr-only'>{t('pagination.lastPage')}</span>
+                      <span className='sr-only'>{m["pagination.lastPage"]()}</span>
                       <DoubleArrowRightIcon className='h-4 w-4' />
                     </Button>
                   </div>
@@ -212,7 +210,7 @@ export function ChunksDialog({ open, onOpenChange, chunks, title }: ChunksDialog
           <div className='flex h-full items-center justify-center'>
             <div className='space-y-3 text-center'>
               <Layers className='text-muted-foreground mx-auto h-12 w-12' />
-              <p className='text-muted-foreground text-base'>{t('requests.detail.noResponse')}</p>
+              <p className='text-muted-foreground text-base'>{m["requests.detail.noResponse"]()}</p>
             </div>
           </div>
         )}

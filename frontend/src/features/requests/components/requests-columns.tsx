@@ -5,7 +5,6 @@ import { ColumnDef } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
 import { ArrowLeftRight, FileText } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import { Badge } from '@/components/ui/badge';
@@ -20,14 +19,16 @@ import { useRequestPermissions } from '../../../hooks/useRequestPermissions';
 import { Request } from '../data/schema';
 import { calculateTokensPerSecond, useDisplayMode } from '../utils/tokens-per-second';
 import { getStatusColor } from './help';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 interface UseRequestsColumnsOptions {
   onBodyClick?: (requestId: string, index: number) => void;
 }
 
 export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnDef<Request>[] {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language === 'zh' ? zhCN : enUS;
+  const locale = getLocale() === 'zh' ? zhCN : enUS;
   const permissions = useRequestPermissions();
   const { data: settings } = useGeneralSettings();
   const { navigateWithSearch } = usePaginationSearch({ defaultPageSize: 20 });
@@ -37,7 +38,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
   const columns: ColumnDef<Request>[] = [
     {
       accessorKey: 'id',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.id')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.id"]()} />,
       cell: ({ row }) => {
         return (
           <button
@@ -54,11 +55,11 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
 
     {
       id: 'modelID',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.modelId')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.modelId"]()} />,
       enableSorting: false,
       cell: ({ row }) => {
         const request = row.original;
-        const originalModelId = request.modelID || t('requests.columns.unknown');
+        const originalModelId = request.modelID || m["requests.columns.unknown"]();
 
         // Check if there are any executions with different model IDs
         const executions = request.executions?.edges?.map((edge) => edge.node) || [];
@@ -80,7 +81,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
               </TooltipTrigger>
               <TooltipContent side='right' className='border-amber-200 bg-white dark:bg-zinc-900'>
                 <div className='flex items-center gap-2 p-2'>
-                  <span className='text-muted-foreground text-xs whitespace-nowrap'>{t('requests.columns.executedModelId')}:</span>
+                  <span className='text-muted-foreground text-xs whitespace-nowrap'>{m["requests.columns.executedModelId"]()}:</span>
                   <span className='rounded bg-amber-100 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-amber-800 dark:bg-amber-900/40 dark:text-amber-200'>
                     {executionModelIds[0]}
                   </span>
@@ -97,7 +98,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
     {
       id: 'stream',
       accessorKey: 'stream',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.stream')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.stream"]()} />,
       enableSorting: false,
       cell: ({ row }) => {
         const isStream = row.original.stream;
@@ -109,7 +110,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
                 : 'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-800 dark:bg-gray-900/20 dark:text-gray-300'
             }
           >
-            {isStream ? t('requests.stream.streaming') : t('requests.stream.nonStreaming')}
+            {isStream ? m["requests.stream.streaming"]() : m["requests.stream.nonStreaming"]()}
           </Badge>
         );
       },
@@ -121,7 +122,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
     {
       id: 'source',
       accessorKey: 'source',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.source')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.source"]()} />,
       enableSorting: false,
       cell: ({ row }) => {
         const source = row.getValue('source') as string;
@@ -137,7 +138,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
               'border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-800 dark:bg-gray-900/20 dark:text-gray-300'
             }
           >
-            {t(`requests.source.${source}`)}
+            {dynamicTranslation(`requests.source.${source}`)}
           </Badge>
         );
       },
@@ -148,7 +149,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
     {
       id: 'clientIP',
       accessorKey: 'clientIP',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.clientIP')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.clientIP"]()} />,
       enableSorting: false,
       cell: ({ row }) => {
         const clientIP = row.getValue('clientIP') as string;
@@ -161,7 +162,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
           {
             id: 'channel',
             accessorFn: (row) => row.channel?.id || '',
-            header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.channel')} />,
+            header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.channel"]()} />,
             enableSorting: false,
             cell: ({ row }) => {
               const request = row.original;
@@ -198,7 +199,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
                         <div className='flex flex-col gap-1 border-b bg-rose-50/50 p-3 dark:bg-rose-900/10'>
                           <div className='flex items-center gap-2 text-xs font-bold tracking-wider text-rose-900 uppercase dark:text-rose-300'>
                             <IconArrowsJoin2 className='h-3.5 w-3.5' />
-                            {t('requests.columns.retryProcess')}
+                            {m["requests.columns.retryProcess"]()}
                           </div>
                         </div>
                         <div className='flex flex-col gap-1 p-2'>
@@ -208,11 +209,11 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
                               className='hover:bg-muted/50 flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors'
                             >
                               <Badge className={`${getStatusColor(exe.status || '')} h-5 shrink-0 px-1.5 text-[10px] font-bold uppercase`}>
-                                {t(`requests.status.${exe.status}`)}
+                                {dynamicTranslation(`requests.status.${exe.status}`)}
                               </Badge>
                               <div className='flex min-w-0 flex-col'>
                                 <span className='text-foreground truncate text-xs font-semibold'>
-                                  {exe.channel?.name || t('requests.columns.unknown')}
+                                  {exe.channel?.name || m["requests.columns.unknown"]()}
                                 </span>
                                 {exe.createdAt && (
                                   <span className='text-muted-foreground text-[10px]'>
@@ -248,7 +249,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
       ? ([
           {
             accessorKey: 'apiKey',
-            header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.apiKey')} />,
+            header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.apiKey"]()} />,
             enableSorting: false,
             cell: ({ row }) => {
               return <div className='font-mono text-xs'>{row.original.apiKey?.name || '-'}</div>;
@@ -259,10 +260,10 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
 
     {
       accessorKey: 'status',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.status')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.status"]()} />,
       cell: ({ row }) => {
         const status = row.getValue('status') as string;
-        return <Badge className={getStatusColor(status)}>{t(`requests.status.${status}`)}</Badge>;
+        return <Badge className={getStatusColor(status)}>{dynamicTranslation(`requests.status.${status}`)}</Badge>;
       },
       filterFn: (row, id, value) => {
         return value.includes(row.getValue(id));
@@ -276,7 +277,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
         const usageLog = row.usageLogs?.edges?.[0]?.node;
         return (usageLog?.promptTokens || 0) + (usageLog?.completionTokens || 0);
       },
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.tokens')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.tokens"]()} />,
       cell: ({ row }) => {
         const request = row.original;
         const usageLog = request.usageLogs?.edges?.[0]?.node;
@@ -292,11 +293,11 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
         return (
           <div className='space-y-0.5 text-xs'>
             <div className='text-sm font-medium'>
-              {t('requests.columns.totalTokens')}
+              {m["requests.columns.totalTokens"]()}
               {(totalTokens || 0).toLocaleString()}
             </div>
             <div className='text-muted-foreground'>
-              {t('requests.columns.input')}: {promptTokens.toLocaleString()} | {t('requests.columns.output')}:{' '}
+              {m["requests.columns.input"]()}: {promptTokens.toLocaleString()} | {m["requests.columns.output"]()}:{' '}
               {completionTokens.toLocaleString()}
             </div>
           </div>
@@ -317,7 +318,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
     {
       id: 'readCache',
       accessorFn: (row) => row.usageLogs?.edges?.[0]?.node?.promptCachedTokens || 0,
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.readCache')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.readCache"]()} />,
       cell: ({ row }) => {
         const request = row.original;
         const usageLog = request.usageLogs?.edges?.[0]?.node;
@@ -337,9 +338,8 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
           <div className='text-xs'>
             <div className='text-sm font-medium'>{cachedTokens.toLocaleString()}</div>
             <div className='text-muted-foreground'>
-              {t('requests.columns.cacheHitRate', {
-                rate: promptTokens > 0 ? ((cachedTokens / promptTokens) * 100).toFixed(1) : '0.0',
-              })}
+              {m["requests.columns.cacheHitRate"]({
+                rate: promptTokens > 0 ? ((cachedTokens / promptTokens) * 100).toFixed(1) : '0.0' })}
             </div>
           </div>
         );
@@ -355,7 +355,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
     {
       id: 'writeCache',
       accessorFn: (row) => row.usageLogs?.edges?.[0]?.node?.promptWriteCachedTokens || 0,
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.writeCache')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.writeCache"]()} />,
       cell: ({ row }) => {
         const request = row.original;
         const usageLog = request.usageLogs?.edges?.[0]?.node;
@@ -375,9 +375,8 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
           <div className='text-xs'>
             <div className='text-sm font-medium'>{writeCachedTokens.toLocaleString()}</div>
             <div className='text-muted-foreground'>
-              {t('requests.columns.writeCacheRate', {
-                rate: promptTokens > 0 ? ((writeCachedTokens / promptTokens) * 100).toFixed(1) : '0.0',
-              })}
+              {m["requests.columns.writeCacheRate"]({
+                rate: promptTokens > 0 ? ((writeCachedTokens / promptTokens) * 100).toFixed(1) : '0.0' })}
             </div>
           </div>
         );
@@ -396,7 +395,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
         const usageLog = row.usageLogs?.edges?.[0]?.node;
         return usageLog?.totalCost ?? null;
       },
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.cost')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.cost"]()} />,
       enableSorting: false,
       enableHiding: true,
       cell: ({ row }) => {
@@ -406,12 +405,11 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
 
         return (
           <div className='font-mono text-xs font-medium'>
-            {t('currencies.format', {
+            {m["currencies.format"]({
               val: cost,
               currency: settings?.currencyCode,
-              locale: i18n.language === 'zh' ? 'zh-CN' : 'en-US',
-              minimumFractionDigits: 6,
-            })}
+              locale: getLocale() === 'zh' ? 'zh-CN' : 'en-US',
+              minimumFractionDigits: 6 })}
           </div>
         );
       },
@@ -422,9 +420,9 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
       header: ({ column }) => (
         <div className='flex items-center gap-1'>
           {displayMode === 'latency' ? (
-            <DataTableColumnHeader column={column} title={t('requests.columns.latency')} />
+            <DataTableColumnHeader column={column} title={m["requests.columns.latency"]()} />
           ) : (
-            <span className='text-sm font-medium uppercase'>{t('requests.columns.tokensPerSecond')}</span>
+            <span className='text-sm font-medium uppercase'>{m["requests.columns.tokensPerSecond"]()}</span>
           )}
           <button
             onClick={(e) => {
@@ -432,7 +430,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
               setDisplayMode((prev) => (prev === 'latency' ? 'tokensPerSecond' : 'latency'));
             }}
             className='hover:text-primary cursor-pointer transition-colors'
-            title={displayMode === 'latency' ? t('requests.columns.showTokensPerSecond') : t('requests.columns.showLatency')}
+            title={displayMode === 'latency' ? m["requests.columns.showTokensPerSecond"]() : m["requests.columns.showLatency"]()}
             type='button'
           >
             <ArrowLeftRight className='text-muted-foreground h-3 w-3' />
@@ -476,7 +474,7 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
     },
     {
       id: 'details',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('requests.columns.details')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["requests.columns.details"]()} />,
       cell: ({ row }) => (
         <Button
           variant='outline'
@@ -489,14 +487,14 @@ export function useRequestsColumns(options?: UseRequestsColumnsOptions): ColumnD
           }
         >
           <FileText className='mr-2 h-4 w-4' />
-          {t('requests.actions.viewDetails')}
+          {m["requests.actions.viewDetails"]()}
         </Button>
       ),
       enableHiding: true,
     },
     {
       accessorKey: 'createdAt',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.createdAt')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.createdAt"]()} />,
       cell: ({ row }) => {
         const date = new Date(row.getValue('createdAt'));
         return <div className='text-xs'>{format(date, 'yyyy-MM-dd HH:mm:ss', { locale })}</div>;

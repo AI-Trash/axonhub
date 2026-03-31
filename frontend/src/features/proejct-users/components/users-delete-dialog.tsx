@@ -2,7 +2,6 @@
 
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -12,6 +11,7 @@ import { Label } from '@/components/ui/label';
 
 import { User } from '../data/schema';
 import { useRemoveUserFromProject } from '../data/users';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   open: boolean;
@@ -20,7 +20,6 @@ interface Props {
 }
 
 export function UsersDeleteDialog({ open, onOpenChange, currentRow }: Props) {
-  const { t } = useTranslation();
   const [confirmText, setConfirmText] = useState('');
   const removeUser = useRemoveUserFromProject();
 
@@ -31,11 +30,11 @@ export function UsersDeleteDialog({ open, onOpenChange, currentRow }: Props) {
 
     try {
       await removeUser.mutateAsync(currentRow.id);
-      toast.success(t('users.messages.removeFromProjectSuccess'));
+      toast.success(m["users.messages.removeFromProjectSuccess"]());
       onOpenChange(false);
       setConfirmText('');
     } catch (error) {
-      toast.error(t('common.errors.somethingWentWrong'));
+      toast.error(m["common.errors.somethingWentWrong"]());
     }
   };
 
@@ -50,30 +49,30 @@ export function UsersDeleteDialog({ open, onOpenChange, currentRow }: Props) {
       disabled={confirmText.trim() !== fullName || removeUser.isPending}
       title={
         <span className='text-destructive'>
-          <IconAlertTriangle className='stroke-destructive mr-1 inline-block' size={18} /> {t('users.dialogs.remove.title')}
+          <IconAlertTriangle className='stroke-destructive mr-1 inline-block' size={18} /> {m["users.dialogs.remove.title"]()}
         </span>
       }
       desc={
         <div className='space-y-4'>
-          <p className='mb-2'>{t('users.dialogs.remove.description', { name: fullName })}</p>
+          <p className='mb-2'>{m["users.dialogs.remove.description"]({ name: fullName })}</p>
 
           <Label className='my-2'>
-            {t('users.dialogs.remove.confirmLabel')}
+            {m["users.dialogs.remove.confirmLabel"]()}
             <Input
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
-              placeholder={t('users.dialogs.remove.confirmPlaceholder')}
+              placeholder={m["users.dialogs.remove.confirmPlaceholder"]()}
               data-testid='remove-confirmation-input'
             />
           </Label>
 
           <Alert variant='destructive'>
-            <AlertTitle>{t('users.dialogs.remove.warningTitle')}</AlertTitle>
-            <AlertDescription>{t('users.dialogs.remove.warningDescription')}</AlertDescription>
+            <AlertTitle>{m["users.dialogs.remove.warningTitle"]()}</AlertTitle>
+            <AlertDescription>{m["users.dialogs.remove.warningDescription"]()}</AlertDescription>
           </Alert>
         </div>
       }
-      confirmText={removeUser.isPending ? t('users.buttons.removing') : t('users.buttons.remove')}
+      confirmText={removeUser.isPending ? m["users.buttons.removing"]() : m["users.buttons.remove"]()}
       destructive
       data-testid='remove-dialog'
     />

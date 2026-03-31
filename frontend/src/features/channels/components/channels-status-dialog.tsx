@@ -2,7 +2,6 @@
 
 import { IconAlertTriangle, IconFlask, IconLoader2 } from '@tabler/icons-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 import { Button } from '@/components/ui/button';
@@ -10,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useUpdateChannelStatus, useTestChannel } from '../data/channels';
 import { Channel } from '../data/schema';
 import { ErrorDisplay } from '../utils/error-formatter';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   open: boolean;
@@ -18,7 +18,6 @@ interface Props {
 }
 
 export function ChannelsStatusDialog({ open, onOpenChange, currentRow }: Props) {
-  const { t } = useTranslation();
   const updateChannelStatus = useUpdateChannelStatus();
   const testChannel = useTestChannel();
   const [testResult, setTestResult] = useState<{
@@ -62,16 +61,16 @@ export function ChannelsStatusDialog({ open, onOpenChange, currentRow }: Props) 
   };
 
   const isDisabling = currentRow.status === 'enabled';
-  const title = isDisabling ? t('channels.dialogs.status.disable.title') : t('channels.dialogs.status.enable.title');
+  const title = isDisabling ? m["channels.dialogs.status.disable.title"]() : m["channels.dialogs.status.enable.title"]();
 
   // Enhanced description with warning for enabling
   const getDescription = () => {
     if (isDisabling) {
-      return t('channels.dialogs.status.disable.description', { name: currentRow.name });
+      return m["channels.dialogs.status.disable.description"]({ name: currentRow.name });
     }
 
-    const baseDescription = t('channels.dialogs.status.enable.description', { name: currentRow.name });
-    const warningText = t('channels.dialogs.status.enable.warning');
+    const baseDescription = m["channels.dialogs.status.enable.description"]({ name: currentRow.name });
+    const warningText = m["channels.dialogs.status.enable.warning"]();
     return (
       <div className='space-y-3'>
         <p>{baseDescription}</p>
@@ -79,7 +78,7 @@ export function ChannelsStatusDialog({ open, onOpenChange, currentRow }: Props) 
           <div className='flex items-start space-x-2'>
             <IconAlertTriangle className='mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400' />
             <div className='text-sm text-amber-800 dark:text-amber-200'>
-              <p className='font-medium'>{t('channels.dialogs.status.enable.warningTitle')}</p>
+              <p className='font-medium'>{m["channels.dialogs.status.enable.warningTitle"]()}</p>
               <p className='mt-1'>{warningText}</p>
             </div>
           </div>
@@ -89,10 +88,10 @@ export function ChannelsStatusDialog({ open, onOpenChange, currentRow }: Props) 
         {currentRow.defaultTestModel && (
           <div className='space-y-2'>
             <div className='flex items-center justify-between'>
-              <span className='text-sm font-medium'>{t('channels.dialogs.status.enable.testRecommended')}</span>
+              <span className='text-sm font-medium'>{m["channels.dialogs.status.enable.testRecommended"]()}</span>
               <Button variant='outline' size='sm' onClick={handleTestChannel} disabled={testChannel.isPending} className='h-8'>
                 {testChannel.isPending ? <IconLoader2 className='mr-1 h-3 w-3 animate-spin' /> : <IconFlask className='mr-1 h-3 w-3' />}
-                {t('channels.dialogs.status.enable.testButton')}
+                {m["channels.dialogs.status.enable.testButton"]()}
               </Button>
             </div>
 
@@ -107,21 +106,21 @@ export function ChannelsStatusDialog({ open, onOpenChange, currentRow }: Props) 
                 <div className='space-y-2'>
                   <div className='font-medium'>
                     {testResult.success
-                      ? t('channels.dialogs.status.enable.testSuccess', { latency: testResult.latency?.toFixed(2) })
-                      : t('channels.dialogs.status.enable.testFailed')}
+                      ? m["channels.dialogs.status.enable.testSuccess"]({ latency: testResult.latency?.toFixed(2) })
+                      : m["channels.dialogs.status.enable.testFailed"]()}
                   </div>
 
                   {/* Show test message if available */}
                   {testResult.message && testResult.success && (
                     <div className='text-xs opacity-75'>
-                      <span className='font-medium'>{t('channels.dialogs.status.enable.testMessage')}:</span> {testResult.message}
+                      <span className='font-medium'>{m["channels.dialogs.status.enable.testMessage"]()}:</span> {testResult.message}
                     </div>
                   )}
 
                   {/* Show detailed error if test failed */}
                   {testResult.error && !testResult.success && (
                     <div className='text-xs'>
-                      <span className='font-medium'>{t('channels.dialogs.status.enable.errorDetails')}:</span>
+                      <span className='font-medium'>{m["channels.dialogs.status.enable.errorDetails"]()}:</span>
                       <div className='mt-1 rounded border-l-2 border-red-400 bg-red-100 p-2 dark:border-red-600 dark:bg-red-900/30'>
                         <ErrorDisplay error={testResult.error} messageClassName='text-xs font-medium text-red-800 dark:text-red-200' />
                       </div>
@@ -136,7 +135,7 @@ export function ChannelsStatusDialog({ open, onOpenChange, currentRow }: Props) 
     );
   };
 
-  const actionText = isDisabling ? t('common.buttons.disable') : t('common.buttons.enable');
+  const actionText = isDisabling ? m["common.buttons.disable"]() : m["common.buttons.enable"]();
 
   return (
     <ConfirmDialog
@@ -152,7 +151,7 @@ export function ChannelsStatusDialog({ open, onOpenChange, currentRow }: Props) 
       }
       desc={getDescription()}
       confirmText={actionText}
-      cancelBtnText={t('common.buttons.cancel')}
+      cancelBtnText={m["common.buttons.cancel"]()}
     />
   );
 }

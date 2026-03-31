@@ -1,13 +1,12 @@
 import { IconPlus } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { PermissionGuard } from '@/components/permission-guard';
 import { Button } from '@/components/ui/button';
 
 import { useRolesContext } from '../context/roles-context';
+import * as m from '@/paraglide/messages';
 
 export function RolesPrimaryButtons() {
-  const { t } = useTranslation();
   const { openDialog } = useRolesContext();
 
   return (
@@ -16,7 +15,7 @@ export function RolesPrimaryButtons() {
       <PermissionGuard requiredScope='write_roles'>
         <Button onClick={() => openDialog('create')}>
           <IconPlus className='mr-2 h-4 w-4' />
-          {t('roles.createRole')}
+          {m["roles.createRole"]()}
         </Button>
       </PermissionGuard>
     </div>

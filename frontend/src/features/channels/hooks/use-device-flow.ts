@@ -1,8 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { copilotOAuthStart, copilotOAuthPoll, DeviceFlowStartResult, DeviceFlowPollResult } from '../data/copilot';
+import * as m from '@/paraglide/messages';
 
 export interface UseDeviceFlowOptions {
   /**
@@ -63,8 +63,6 @@ export interface UseDeviceFlowActions {
  */
 export function useDeviceFlow(options: UseDeviceFlowOptions = {}): UseDeviceFlowState & UseDeviceFlowActions {
   const { projectId, onSuccess } = options;
-  const { t } = useTranslation();
-
   const [userCode, setUserCode] = useState<string | null>(null);
   const [verificationUri, setVerificationUri] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -92,7 +90,7 @@ export function useDeviceFlow(options: UseDeviceFlowOptions = {}): UseDeviceFlow
 
   const start = useCallback(async () => {
     if (!projectId) {
-      toast.error(t('channels.dialogs.oauth.errors.projectRequired'));
+      toast.error(m["channels.dialogs.oauth.errors.projectRequired"]());
       return;
     }
 
@@ -132,7 +130,7 @@ export function useDeviceFlow(options: UseDeviceFlowOptions = {}): UseDeviceFlow
 
       if (Date.now() >= expiry) {
         setIsPolling(false);
-        setError(t('channels.dialogs.oauth.errors.deviceFlowExpired'));
+        setError(m["channels.dialogs.oauth.errors.deviceFlowExpired"]());
         return;
       }
 
@@ -147,7 +145,7 @@ export function useDeviceFlow(options: UseDeviceFlowOptions = {}): UseDeviceFlow
             onSuccessRef.current(result.access_token);
           }
 
-          toast.success(t('channels.dialogs.oauth.messages.credentialsImported'));
+          toast.success(m["channels.dialogs.oauth.messages.credentialsImported"]());
         } else if (result.status) {
           if (result.status === 'pending') {
             pollingTimeoutRef.current = window.setTimeout(() => {

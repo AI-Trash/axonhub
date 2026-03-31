@@ -1,8 +1,8 @@
 import { useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { ProxyType } from '../components/channels-proxy-dialog';
+import * as m from '@/paraglide/messages';
 
 export interface ProxyConfig {
   type: ProxyType;
@@ -89,8 +89,6 @@ export interface OAuthFlowActions {
  */
 export function useOAuthFlow(options: OAuthFlowOptions): OAuthFlowState & OAuthFlowActions {
   const { startFn, exchangeFn, projectId, proxyConfig, onSuccess } = options;
-  const { t } = useTranslation();
-
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
   const [callbackUrl, setCallbackUrl] = useState('');
@@ -99,7 +97,7 @@ export function useOAuthFlow(options: OAuthFlowOptions): OAuthFlowState & OAuthF
 
   const start = useCallback(async () => {
     if (!projectId) {
-      toast.error(t('channels.dialogs.oauth.errors.projectRequired'));
+      toast.error(m["channels.dialogs.oauth.errors.projectRequired"]());
       return;
     }
 
@@ -117,17 +115,17 @@ export function useOAuthFlow(options: OAuthFlowOptions): OAuthFlowState & OAuthF
 
   const exchange = useCallback(async () => {
     if (!projectId) {
-      toast.error(t('channels.dialogs.oauth.errors.projectRequired'));
+      toast.error(m["channels.dialogs.oauth.errors.projectRequired"]());
       return;
     }
 
     if (!sessionId) {
-      toast.error(t('channels.dialogs.oauth.errors.sessionMissing'));
+      toast.error(m["channels.dialogs.oauth.errors.sessionMissing"]());
       return;
     }
 
     if (!callbackUrl.trim()) {
-      toast.error(t('channels.dialogs.oauth.errors.callbackUrlRequired'));
+      toast.error(m["channels.dialogs.oauth.errors.callbackUrlRequired"]());
       return;
     }
 
@@ -154,7 +152,7 @@ export function useOAuthFlow(options: OAuthFlowOptions): OAuthFlowState & OAuthF
         onSuccess(result.credentials);
       }
 
-      toast.success(t('channels.dialogs.oauth.messages.credentialsImported'));
+      toast.success(m["channels.dialogs.oauth.messages.credentialsImported"]());
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {

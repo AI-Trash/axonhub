@@ -1,5 +1,4 @@
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import {
   AlertDialog,
@@ -14,9 +13,9 @@ import {
 
 import { usePrompts } from '../context/prompts-context';
 import { useBulkDeletePrompts } from '../data/prompts';
+import * as m from '@/paraglide/messages';
 
 export function PromptsBulkDeleteDialog() {
-  const { t } = useTranslation();
   const { open, setOpen, selectedPrompts, resetRowSelection } = usePrompts();
   const bulkDeleteMutation = useBulkDeletePrompts();
 
@@ -31,17 +30,17 @@ export function PromptsBulkDeleteDialog() {
     <AlertDialog open={open === 'bulkDelete'} onOpenChange={(isOpen) => !isOpen && setOpen(null)}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('prompts.dialogs.bulkDelete.title')}</AlertDialogTitle>
-          <AlertDialogDescription>{t('prompts.dialogs.bulkDelete.description', { count: selectedPrompts.length })}</AlertDialogDescription>
+          <AlertDialogTitle>{m["prompts.dialogs.bulkDelete.title"]()}</AlertDialogTitle>
+          <AlertDialogDescription>{m["prompts.dialogs.bulkDelete.description"]({ count: selectedPrompts.length })}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('common.buttons.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel>{m["common.buttons.cancel"]()}</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
             disabled={bulkDeleteMutation.isPending}
             className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
           >
-            {t('common.buttons.delete')}
+            {m["common.buttons.delete"]()}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -3,8 +3,8 @@ import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
-import i18n from '@/lib/i18n';
 import { getTokenFromStorage } from '@/stores/authStore';
+import * as m from '@/paraglide/messages';
 
 // GraphQL queries and mutations
 const SYSTEM_VERSION_QUERY = `
@@ -304,7 +304,7 @@ export function useBrandSettings() {
         const data = await graphqlRequest<{ brandSettings: BrandSettings }>(BRAND_SETTINGS_QUERY);
         return data.brandSettings;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -321,7 +321,7 @@ export function useStoragePolicy() {
         const data = await graphqlRequest<{ storagePolicy: StoragePolicy }>(STORAGE_POLICY_QUERY);
         return data.storagePolicy;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -338,10 +338,10 @@ export function useUpdateBrandSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['brandSettings'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -356,10 +356,10 @@ export function useUpdateStoragePolicy() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['storagePolicy'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -371,10 +371,10 @@ export function useTriggerGcCleanup() {
       return data.triggerGcCleanup;
     },
     onSuccess: () => {
-      toast.success(i18n.t('system.storage.policy.runCleanupSuccess'));
+      toast.success(m["system.storage.policy.runCleanupSuccess"]());
     },
     onError: () => {
-      toast.error(i18n.t('system.storage.policy.runCleanupError'));
+      toast.error(m["system.storage.policy.runCleanupError"]());
     },
   });
 }
@@ -389,7 +389,7 @@ export function useRetryPolicy() {
         const data = await graphqlRequest<{ retryPolicy: RetryPolicy }>(RETRY_POLICY_QUERY);
         return data.retryPolicy;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -406,10 +406,10 @@ export function useUpdateRetryPolicy() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['retryPolicy'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -424,7 +424,7 @@ export function useDefaultDataStorageID() {
         const data = await graphqlRequest<{ defaultDataStorageID: string | null }>(DEFAULT_DATA_STORAGE_QUERY);
         return data.defaultDataStorageID;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -441,10 +441,10 @@ export function useUpdateDefaultDataStorage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['defaultDataStorageID'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -478,7 +478,7 @@ export function useCompleteOnboarding() {
       queryClient.invalidateQueries({ queryKey: ['onboardingInfo'] });
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.onboardingFailed'));
+      toast.error(m["common.errors.onboardingFailed"]());
     },
   });
 }
@@ -498,7 +498,7 @@ export function useCompleteSystemModelSettingOnboarding() {
       queryClient.invalidateQueries({ queryKey: ['onboardingInfo'] });
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.onboardingFailed'));
+      toast.error(m["common.errors.onboardingFailed"]());
     },
   });
 }
@@ -518,7 +518,7 @@ export function useCompleteAutoDisableChannelOnboarding() {
       queryClient.invalidateQueries({ queryKey: ['onboardingInfo'] });
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.onboardingFailed'));
+      toast.error(m["common.errors.onboardingFailed"]());
     },
   });
 }
@@ -630,7 +630,7 @@ export function useModelSettings() {
         const data = await graphqlRequest<{ systemModelSettings: ModelSettings }>(MODEL_SETTINGS_QUERY);
         return data.systemModelSettings;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -647,10 +647,10 @@ export function useUpdateModelSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['modelSettings'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -685,7 +685,7 @@ export function useChannelSetting() {
         const data = await graphqlRequest<{ systemChannelSettings: ChannelSetting }>(CHANNEL_SETTINGS_QUERY);
         return data.systemChannelSettings;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -703,10 +703,10 @@ export function useUpdateChannelSetting() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['channelSetting'] });
       queryClient.invalidateQueries({ queryKey: ['channelProbeData'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -721,7 +721,7 @@ export function useGeneralSettings() {
         const data = await graphqlRequest<{ systemGeneralSettings: SystemGeneralSettings }>(SYSTEM_GENERAL_SETTINGS_QUERY);
         return data.systemGeneralSettings;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -739,10 +739,10 @@ export function useUpdateGeneralSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['generalSettings'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -757,7 +757,7 @@ export function useVideoStorageSettings() {
         const data = await graphqlRequest<{ videoStorageSettings: VideoStorageSettings }>(VIDEO_STORAGE_SETTINGS_QUERY);
         return data.videoStorageSettings;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -774,10 +774,10 @@ export function useUpdateVideoStorageSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['videoStorageSettings'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -849,13 +849,13 @@ export function useBackup() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        toast.success(data.message || i18n.t('system.backup.success'));
+        toast.success(data.message || m["system.backup.success"]());
       } else {
-        toast.error(data.message || i18n.t('system.backup.failed'));
+        toast.error(data.message || m["system.backup.failed"]());
       }
     },
     onError: () => {
-      toast.error(i18n.t('system.backup.failed'));
+      toast.error(m["system.backup.failed"]());
     },
   });
 }
@@ -894,13 +894,13 @@ export function useRestore() {
     onSuccess: (data) => {
       if (data.success) {
         queryClient.invalidateQueries();
-        toast.success(data.message || i18n.t('system.restore.success'));
+        toast.success(data.message || m["system.restore.success"]());
       } else {
-        toast.error(data.message || i18n.t('system.restore.failed'));
+        toast.error(data.message || m["system.restore.failed"]());
       }
     },
     onError: (error: Error) => {
-      toast.error(error.message || i18n.t('system.restore.failed'));
+      toast.error(error.message || m["system.restore.failed"]());
     },
   });
 }
@@ -974,7 +974,7 @@ export function useAutoBackupSettings() {
         const data = await graphqlRequest<{ autoBackupSettings: AutoBackupSettings }>(AUTO_BACKUP_SETTINGS_QUERY);
         return data.autoBackupSettings;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -991,10 +991,10 @@ export function useUpdateAutoBackupSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['autoBackupSettings'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -1010,13 +1010,13 @@ export function useTriggerAutoBackup() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['autoBackupSettings'] });
       if (data.success) {
-        toast.success(i18n.t('system.autoBackup.triggerSuccess'));
+        toast.success(m["system.autoBackup.triggerSuccess"]());
       } else {
-        toast.error(data.message || i18n.t('system.autoBackup.triggerFailed'));
+        toast.error(data.message || m["system.autoBackup.triggerFailed"]());
       }
     },
     onError: () => {
-      toast.error(i18n.t('system.autoBackup.triggerFailed'));
+      toast.error(m["system.autoBackup.triggerFailed"]());
     },
   });
 }
@@ -1066,7 +1066,7 @@ export function useProxyPresets() {
         const data = await graphqlRequest<{ proxyPresets: ProxyPreset[] }>(PROXY_PRESETS_QUERY);
         return data.proxyPresets;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -1085,7 +1085,7 @@ export function useSaveProxyPreset() {
       queryClient.invalidateQueries({ queryKey: ['proxyPresets'] });
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
@@ -1100,10 +1100,10 @@ export function useDeleteProxyPreset() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['proxyPresets'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }

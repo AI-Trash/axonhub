@@ -1,8 +1,8 @@
 'use client';
 
+import * as m from '@/paraglide/messages';
 import { Download, Upload, Loader2, AlertCircle, CheckCircle2, Clock, Play } from 'lucide-react';
 import React, { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,7 +26,6 @@ import {
 } from '../data/system';
 
 export function BackupSettings() {
-  const { t } = useTranslation();
   const backup = useBackup();
   const restore = useRestore();
   const autoBackupSettings = useAutoBackupSettings();
@@ -136,14 +135,14 @@ export function BackupSettings() {
         <CardHeader>
           <CardTitle className='flex items-center gap-2'>
             <Download className='h-5 w-5' />
-            {t('system.backup.title')}
+            {m["system.backup.title"]()}
           </CardTitle>
-          <CardDescription>{t('system.backup.description')}</CardDescription>
+          <CardDescription>{m["system.backup.description"]()}</CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
           <div className='space-y-4'>
             <div className='flex items-center justify-between'>
-              <Label htmlFor='include-channels'>{t('system.backup.includeChannels')}</Label>
+              <Label htmlFor='include-channels'>{m["system.backup.includeChannels"]()}</Label>
               <Switch
                 id='include-channels'
                 checked={backupOptions.includeChannels}
@@ -151,7 +150,7 @@ export function BackupSettings() {
               />
             </div>
             <div className='flex items-center justify-between'>
-              <Label htmlFor='include-model-prices'>{t('system.backup.includeModelPrices')}</Label>
+              <Label htmlFor='include-model-prices'>{m["system.backup.includeModelPrices"]()}</Label>
               <Switch
                 id='include-model-prices'
                 checked={backupOptions.includeModelPrices}
@@ -159,7 +158,7 @@ export function BackupSettings() {
               />
             </div>
             <div className='flex items-center justify-between'>
-              <Label htmlFor='include-models'>{t('system.backup.includeModels')}</Label>
+              <Label htmlFor='include-models'>{m["system.backup.includeModels"]()}</Label>
               <Switch
                 id='include-models'
                 checked={backupOptions.includeModels}
@@ -167,7 +166,7 @@ export function BackupSettings() {
               />
             </div>
             <div className='flex items-center justify-between'>
-              <Label htmlFor='include-apikeys'>{t('system.backup.includeAPIKeys')}</Label>
+              <Label htmlFor='include-apikeys'>{m["system.backup.includeAPIKeys"]()}</Label>
               <Switch
                 id='include-apikeys'
                 checked={backupOptions.includeAPIKeys}
@@ -179,12 +178,12 @@ export function BackupSettings() {
             {backup.isPending ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                {t('system.backup.backingUp')}
+                {m["system.backup.backingUp"]()}
               </>
             ) : (
               <>
                 <Download className='mr-2 h-4 w-4' />
-                {t('system.backup.createBackup')}
+                {m["system.backup.createBackup"]()}
               </>
             )}
           </Button>
@@ -195,13 +194,13 @@ export function BackupSettings() {
         <CardHeader>
           <CardTitle className='flex items-center gap-2'>
             <Upload className='h-5 w-5' />
-            {t('system.restore.title')}
+            {m["system.restore.title"]()}
           </CardTitle>
-          <CardDescription>{t('system.restore.description')}</CardDescription>
+          <CardDescription>{m["system.restore.description"]()}</CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
           <div className='space-y-2'>
-            <Label htmlFor='backup-file'>{t('system.restore.selectFile')}</Label>
+            <Label htmlFor='backup-file'>{m["system.restore.selectFile"]()}</Label>
             <input
               id='backup-file'
               type='file'
@@ -219,7 +218,7 @@ export function BackupSettings() {
           <div className='space-y-4'>
             <div className='flex items-center gap-4'>
               <div className='flex flex-1 items-center justify-between'>
-                <Label htmlFor='restore-include-channels'>{t('system.backup.includeChannels')}</Label>
+                <Label htmlFor='restore-include-channels'>{m["system.backup.includeChannels"]()}</Label>
                 <Switch
                   id='restore-include-channels'
                   checked={restoreOptions.includeChannels}
@@ -238,15 +237,15 @@ export function BackupSettings() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value='skip'>{t('system.restore.strategies.skip')}</SelectItem>
-                  <SelectItem value='overwrite'>{t('system.restore.strategies.overwrite')}</SelectItem>
-                  <SelectItem value='error'>{t('system.restore.strategies.error')}</SelectItem>
+                  <SelectItem value='skip'>{m["system.restore.strategies.skip"]()}</SelectItem>
+                  <SelectItem value='overwrite'>{m["system.restore.strategies.overwrite"]()}</SelectItem>
+                  <SelectItem value='error'>{m["system.restore.strategies.error"]()}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className='flex items-center gap-4'>
               <div className='flex flex-1 items-center justify-between'>
-                <Label htmlFor='restore-include-models'>{t('system.backup.includeModels')}</Label>
+                <Label htmlFor='restore-include-models'>{m["system.backup.includeModels"]()}</Label>
                 <Switch
                   id='restore-include-models'
                   checked={restoreOptions.includeModels}
@@ -265,15 +264,15 @@ export function BackupSettings() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value='skip'>{t('system.restore.strategies.skip')}</SelectItem>
-                  <SelectItem value='overwrite'>{t('system.restore.strategies.overwrite')}</SelectItem>
-                  <SelectItem value='error'>{t('system.restore.strategies.error')}</SelectItem>
+                  <SelectItem value='skip'>{m["system.restore.strategies.skip"]()}</SelectItem>
+                  <SelectItem value='overwrite'>{m["system.restore.strategies.overwrite"]()}</SelectItem>
+                  <SelectItem value='error'>{m["system.restore.strategies.error"]()}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className='flex items-center gap-4'>
               <div className='flex flex-1 items-center justify-between'>
-                <Label htmlFor='restore-include-apikeys'>{t('system.backup.includeAPIKeys')}</Label>
+                <Label htmlFor='restore-include-apikeys'>{m["system.backup.includeAPIKeys"]()}</Label>
                 <Switch
                   id='restore-include-apikeys'
                   checked={restoreOptions.includeAPIKeys}
@@ -292,15 +291,15 @@ export function BackupSettings() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value='skip'>{t('system.restore.strategies.skip')}</SelectItem>
-                  <SelectItem value='overwrite'>{t('system.restore.strategies.overwrite')}</SelectItem>
-                  <SelectItem value='error'>{t('system.restore.strategies.error')}</SelectItem>
+                  <SelectItem value='skip'>{m["system.restore.strategies.skip"]()}</SelectItem>
+                  <SelectItem value='overwrite'>{m["system.restore.strategies.overwrite"]()}</SelectItem>
+                  <SelectItem value='error'>{m["system.restore.strategies.error"]()}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className='flex items-center gap-4'>
               <div className='flex flex-1 items-center justify-between'>
-                <Label htmlFor='restore-include-model-prices'>{t('system.backup.includeModelPrices')}</Label>
+                <Label htmlFor='restore-include-model-prices'>{m["system.backup.includeModelPrices"]()}</Label>
                 <Switch
                   id='restore-include-model-prices'
                   checked={restoreOptions.includeModelPrices}
@@ -319,9 +318,9 @@ export function BackupSettings() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value='skip'>{t('system.restore.strategies.skip')}</SelectItem>
-                  <SelectItem value='overwrite'>{t('system.restore.strategies.overwrite')}</SelectItem>
-                  <SelectItem value='error'>{t('system.restore.strategies.error')}</SelectItem>
+                  <SelectItem value='skip'>{m["system.restore.strategies.skip"]()}</SelectItem>
+                  <SelectItem value='overwrite'>{m["system.restore.strategies.overwrite"]()}</SelectItem>
+                  <SelectItem value='error'>{m["system.restore.strategies.error"]()}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -330,18 +329,18 @@ export function BackupSettings() {
             {restore.isPending ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                {t('system.restore.restoring')}
+                {m["system.restore.restoring"]()}
               </>
             ) : (
               <>
                 <Upload className='mr-2 h-4 w-4' />
-                {t('system.restore.restoreBackup')}
+                {m["system.restore.restoreBackup"]()}
               </>
             )}
           </Button>
           <div className='flex items-start gap-2 rounded-md bg-yellow-50 p-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200'>
             <AlertCircle className='mt-0.5 h-4 w-4 flex-shrink-0' />
-            <p>{t('system.restore.warning')}</p>
+            <p>{m["system.restore.warning"]()}</p>
           </div>
         </CardContent>
       </Card>
@@ -350,15 +349,15 @@ export function BackupSettings() {
         <CardHeader>
           <CardTitle className='flex items-center gap-2'>
             <Clock className='h-5 w-5' />
-            {t('system.autoBackup.title')}
+            {m["system.autoBackup.title"]()}
           </CardTitle>
-          <CardDescription>{t('system.autoBackup.description')}</CardDescription>
+          <CardDescription>{m["system.autoBackup.description"]()}</CardDescription>
         </CardHeader>
         <CardContent className='space-y-6'>
           <div className='flex items-center justify-between'>
             <div className='space-y-0.5'>
-              <Label htmlFor='auto-backup-enabled'>{t('system.autoBackup.enabled.label')}</Label>
-              <p className='text-muted-foreground text-sm'>{t('system.autoBackup.enabled.description')}</p>
+              <Label htmlFor='auto-backup-enabled'>{m["system.autoBackup.enabled.label"]()}</Label>
+              <p className='text-muted-foreground text-sm'>{m["system.autoBackup.enabled.description"]()}</p>
             </div>
             <Switch
               id='auto-backup-enabled'
@@ -368,7 +367,7 @@ export function BackupSettings() {
           </div>
 
           <div className='space-y-2'>
-            <Label htmlFor='backup-frequency'>{t('system.autoBackup.frequency.label')}</Label>
+            <Label htmlFor='backup-frequency'>{m["system.autoBackup.frequency.label"]()}</Label>
             <Select
               value={autoBackupForm.frequency}
               onValueChange={(value: BackupFrequency) => setAutoBackupForm({ ...autoBackupForm, frequency: value })}
@@ -377,21 +376,21 @@ export function BackupSettings() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='daily'>{t('system.autoBackup.frequency.daily')}</SelectItem>
-                <SelectItem value='weekly'>{t('system.autoBackup.frequency.weekly')}</SelectItem>
-                <SelectItem value='monthly'>{t('system.autoBackup.frequency.monthly')}</SelectItem>
+                <SelectItem value='daily'>{m["system.autoBackup.frequency.daily"]()}</SelectItem>
+                <SelectItem value='weekly'>{m["system.autoBackup.frequency.weekly"]()}</SelectItem>
+                <SelectItem value='monthly'>{m["system.autoBackup.frequency.monthly"]()}</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div className='space-y-2'>
-            <Label htmlFor='data-storage'>{t('system.autoBackup.dataStorage.label')}</Label>
+            <Label htmlFor='data-storage'>{m["system.autoBackup.dataStorage.label"]()}</Label>
             <Select
               value={autoBackupForm.dataStorageID ? String(autoBackupForm.dataStorageID) : ''}
               onValueChange={(value) => setAutoBackupForm({ ...autoBackupForm, dataStorageID: parseInt(value) || 0 })}
             >
               <SelectTrigger id='data-storage'>
-                <SelectValue placeholder={t('system.autoBackup.dataStorage.placeholder')} />
+                <SelectValue placeholder={m["system.autoBackup.dataStorage.placeholder"]()} />
               </SelectTrigger>
               <SelectContent>
                 {availableStorages.map((storage) => (
@@ -401,13 +400,13 @@ export function BackupSettings() {
                 ))}
               </SelectContent>
             </Select>
-            <p className='text-muted-foreground text-sm'>{t('system.autoBackup.dataStorage.description')}</p>
+            <p className='text-muted-foreground text-sm'>{m["system.autoBackup.dataStorage.description"]()}</p>
           </div>
 
           <div className='space-y-4'>
-            <Label className='text-base font-medium'>{t('system.autoBackup.options.title')}</Label>
+            <Label className='text-base font-medium'>{m["system.autoBackup.options.title"]()}</Label>
             <div className='flex items-center justify-between'>
-              <Label htmlFor='auto-include-channels'>{t('system.backup.includeChannels')}</Label>
+              <Label htmlFor='auto-include-channels'>{m["system.backup.includeChannels"]()}</Label>
               <Switch
                 id='auto-include-channels'
                 checked={autoBackupForm.includeChannels}
@@ -415,7 +414,7 @@ export function BackupSettings() {
               />
             </div>
             <div className='flex items-center justify-between'>
-              <Label htmlFor='auto-include-models'>{t('system.backup.includeModels')}</Label>
+              <Label htmlFor='auto-include-models'>{m["system.backup.includeModels"]()}</Label>
               <Switch
                 id='auto-include-models'
                 checked={autoBackupForm.includeModels}
@@ -423,7 +422,7 @@ export function BackupSettings() {
               />
             </div>
             <div className='flex items-center justify-between'>
-              <Label htmlFor='auto-include-apikeys'>{t('system.backup.includeAPIKeys')}</Label>
+              <Label htmlFor='auto-include-apikeys'>{m["system.backup.includeAPIKeys"]()}</Label>
               <Switch
                 id='auto-include-apikeys'
                 checked={autoBackupForm.includeAPIKeys}
@@ -431,7 +430,7 @@ export function BackupSettings() {
               />
             </div>
             <div className='flex items-center justify-between'>
-              <Label htmlFor='auto-include-model-prices'>{t('system.backup.includeModelPrices')}</Label>
+              <Label htmlFor='auto-include-model-prices'>{m["system.backup.includeModelPrices"]()}</Label>
               <Switch
                 id='auto-include-model-prices'
                 checked={autoBackupForm.includeModelPrices}
@@ -441,7 +440,7 @@ export function BackupSettings() {
           </div>
 
           <div className='space-y-2'>
-            <Label htmlFor='retention-days'>{t('system.autoBackup.retentionDays')}</Label>
+            <Label htmlFor='retention-days'>{m["system.autoBackup.retentionDays"]()}</Label>
             <Input
               id='retention-days'
               type='number'
@@ -450,7 +449,7 @@ export function BackupSettings() {
               value={autoBackupForm.retentionDays}
               onChange={(e) => setAutoBackupForm({ ...autoBackupForm, retentionDays: parseInt(e.target.value) || 0 })}
             />
-            <p className='text-muted-foreground text-sm'>{t('system.autoBackup.retentionDaysDescription')}</p>
+            <p className='text-muted-foreground text-sm'>{m["system.autoBackup.retentionDaysDescription"]()}</p>
           </div>
 
           {autoBackupSettings.data?.lastBackupAt && (
@@ -458,7 +457,7 @@ export function BackupSettings() {
               <div className='flex items-center gap-2'>
                 <CheckCircle2 className='h-4 w-4 text-green-500' />
                 <span>
-                  {t('system.autoBackup.lastBackup.time')}: {new Date(autoBackupSettings.data.lastBackupAt).toLocaleString()}
+                  {m["system.autoBackup.lastBackup.time"]()}: {new Date(autoBackupSettings.data.lastBackupAt).toLocaleString()}
                 </span>
               </div>
             </div>
@@ -480,10 +479,10 @@ export function BackupSettings() {
               {updateAutoBackupSettings.isPending ? (
                 <>
                   <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                  {t('system.buttons.saving')}
+                  {m["system.buttons.saving"]()}
                 </>
               ) : (
-                t('system.buttons.save')
+                m["system.buttons.save"]()
               )}
             </Button>
             <Tooltip>
@@ -497,12 +496,12 @@ export function BackupSettings() {
                     {triggerBackup.isPending ? (
                       <>
                         <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                        {t('system.autoBackup.triggeringBackup')}
+                        {m["system.autoBackup.triggeringBackup"]()}
                       </>
                     ) : (
                       <>
                         <Play className='mr-2 h-4 w-4' />
-                        {t('system.autoBackup.triggerNow')}
+                        {m["system.autoBackup.triggerNow"]()}
                       </>
                     )}
                   </Button>
@@ -510,7 +509,7 @@ export function BackupSettings() {
               </TooltipTrigger>
               {(!isStorageSelected || isDirty) && (
                 <TooltipContent>
-                  <p>{!isStorageSelected ? t('system.autoBackup.triggerNowTooltip') : t('system.autoBackup.saveFirstTooltip')}</p>
+                  <p>{!isStorageSelected ? m["system.autoBackup.triggerNowTooltip"]() : m["system.autoBackup.saveFirstTooltip"]()}</p>
                 </TooltipContent>
               )}
             </Tooltip>

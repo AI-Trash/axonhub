@@ -2,7 +2,6 @@
 
 import { Loader2, Save, Upload, X } from 'lucide-react';
 import React, { useState, useRef } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -12,9 +11,9 @@ import { Label } from '@/components/ui/label';
 
 import { useSystemContext } from '../context/system-context';
 import { useBrandSettings, useUpdateBrandSettings } from '../data/system';
+import * as m from '@/paraglide/messages';
 
 export function BrandSettings() {
-  const { t } = useTranslation();
   const { data: settings, isLoading: isLoadingSettings } = useBrandSettings();
   const updateSettings = useUpdateBrandSettings();
   const { isLoading, setIsLoading } = useSystemContext();
@@ -37,13 +36,13 @@ export function BrandSettings() {
 
     // Validate file type
     if (!['image/png', 'image/jpeg', 'image/jpg', 'image/webp'].includes(file.type)) {
-      toast.error(t('system.brand.brandLogo.invalidFormat'));
+      toast.error(m["system.brand.brandLogo.invalidFormat"]());
       return;
     }
 
     // Validate file size (max 2MB to match description)
     if (file.size > 2 * 1024 * 1024) {
-      toast.error(t('system.brand.brandLogo.fileTooLarge'));
+      toast.error(m["system.brand.brandLogo.fileTooLarge"]());
       return;
     }
 
@@ -53,7 +52,7 @@ export function BrandSettings() {
       img.onload = () => {
         // Check if image is square
         if (img.width !== img.height) {
-          toast.error(t('system.brand.brandLogo.notSquare'));
+          toast.error(m["system.brand.brandLogo.notSquare"]());
           return;
         }
         setBrandLogo(e.target?.result as string);
@@ -88,7 +87,7 @@ export function BrandSettings() {
     return (
       <div className='flex h-32 items-center justify-center'>
         <Loader2 className='h-6 w-6 animate-spin' />
-        <span className='text-muted-foreground ml-2'>{t('common.loading')}</span>
+        <span className='text-muted-foreground ml-2'>{m["common.loading"]()}</span>
       </div>
     );
   }
@@ -97,26 +96,26 @@ export function BrandSettings() {
     <div className='space-y-6'>
       <Card>
         <CardHeader>
-          <CardTitle>{t('system.brand.title')}</CardTitle>
-          <CardDescription>{t('system.brand.description')}</CardDescription>
+          <CardTitle>{m["system.brand.title"]()}</CardTitle>
+          <CardDescription>{m["system.brand.description"]()}</CardDescription>
         </CardHeader>
         <CardContent className='space-y-6'>
           <div className='space-y-2'>
-            <Label htmlFor='brand-name'>{t('system.brand.brandName.label')}</Label>
+            <Label htmlFor='brand-name'>{m["system.brand.brandName.label"]()}</Label>
             <Input
               id='brand-name'
               type='text'
-              placeholder={t('system.brand.brandName.placeholder')}
+              placeholder={m["system.brand.brandName.placeholder"]()}
               value={brandName}
               onChange={(e) => setBrandName(e.target.value)}
               disabled={isLoading}
               className='max-w-md'
             />
-            <div className='text-muted-foreground text-sm'>{t('system.brand.brandName.description')}</div>
+            <div className='text-muted-foreground text-sm'>{m["system.brand.brandName.description"]()}</div>
           </div>
 
           <div className='space-y-2'>
-            <Label htmlFor='brand-logo'>{t('system.brand.brandLogo.label')}</Label>
+            <Label htmlFor='brand-logo'>{m["system.brand.brandLogo.label"]()}</Label>
             {brandLogo && (
               <div className='mb-4 flex justify-start'>
                 <div className='relative'>
@@ -159,9 +158,9 @@ export function BrandSettings() {
                 className='w-full max-w-md'
               >
                 <Upload className='mr-2 h-4 w-4' />
-                {t('system.brand.brandLogo.upload')}
+                {m["system.brand.brandLogo.upload"]()}
               </Button>
-              <div className='text-muted-foreground text-sm'>{t('system.brand.brandLogo.description')}</div>
+              <div className='text-muted-foreground text-sm'>{m["system.brand.brandLogo.description"]()}</div>
             </div>
           </div>
         </CardContent>
@@ -173,12 +172,12 @@ export function BrandSettings() {
             {isLoading || updateSettings.isPending ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                {t('system.buttons.saving')}
+                {m["system.buttons.saving"]()}
               </>
             ) : (
               <>
                 <Save className='mr-2 h-4 w-4' />
-                {t('system.buttons.save')}
+                {m["system.buttons.save"]()}
               </>
             )}
           </Button>

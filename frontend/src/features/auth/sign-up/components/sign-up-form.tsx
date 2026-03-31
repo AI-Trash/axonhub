@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import * as m from '@/paraglide/messages';
 
 type SignUpFormProps = HTMLAttributes<HTMLFormElement>;
 
@@ -30,11 +31,8 @@ const formSchema = z
     path: ['confirmPassword'],
   });
 
-import { useTranslation } from 'react-i18next';
 
 export function SignUpForm({ className, ...props }: SignUpFormProps) {
-  const { t } = useTranslation();
-
   const [isLoading, setIsLoading] = useState(false);
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -88,7 +86,7 @@ export function SignUpForm({ className, ...props }: SignUpFormProps) {
           name='confirmPassword'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('users.form.confirmPassword')}</FormLabel>
+              <FormLabel>{m["users.form.confirmPassword"]()}</FormLabel>
               <FormControl>
                 <PasswordInput placeholder='********' {...field} />
               </FormControl>

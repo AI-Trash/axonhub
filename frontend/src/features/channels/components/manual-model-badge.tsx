@@ -1,7 +1,7 @@
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import * as m from '@/paraglide/messages';
 
 interface ManualModelBadgeProps {
   isManual?: boolean;
@@ -15,8 +15,6 @@ interface ManualModelBadgeProps {
  * - Auto models: Models fetched from provider API
  */
 export function ManualModelBadge({ isManual = false, className }: ManualModelBadgeProps) {
-  const { t } = useTranslation();
-
   if (!isManual) {
     return null;
   }
@@ -29,7 +27,7 @@ export function ManualModelBadge({ isManual = false, className }: ManualModelBad
         className
       )}
     >
-      {t('channels.models.manual')}
+      {m["channels.models.manual"]()}
     </Badge>
   );
 }

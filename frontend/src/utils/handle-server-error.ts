@@ -1,12 +1,12 @@
 import { toast } from 'sonner';
+import * as m from '@/paraglide/messages';
 
-import i18n from '@/lib/i18n';
 
 export function handleServerError(error: unknown) {
-  let errMsg = i18n.t('common.errors.somethingWentWrong');
+  let errMsg = m["common.errors.somethingWentWrong"]();
 
   if (error && typeof error === 'object' && 'status' in error && Number(error.status) === 204) {
-    errMsg = i18n.t('common.errors.contentNotFound');
+    errMsg = m["common.errors.contentNotFound"]();
   }
 
   // Handle fetch API errors (Response objects) or objects with data property

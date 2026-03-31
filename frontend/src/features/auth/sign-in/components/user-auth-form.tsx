@@ -2,7 +2,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Link } from '@tanstack/react-router';
 import { HTMLAttributes, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 
 import { PasswordInput } from '@/components/password-input';
@@ -12,18 +11,18 @@ import { Input } from '@/components/ui/input';
 import { useSignIn } from '@/features/auth/data/auth';
 import { cn } from '@/lib/utils';
 import { passwordSchema } from '@/lib/validation';
+import * as m from '@/paraglide/messages';
 
 type UserAuthFormProps = HTMLAttributes<HTMLFormElement>;
 
 // Create form schema with dynamic validation messages
-const createFormSchema = (t: (key: string) => string) =>
+const createFormSchema = () =>
   z.object({
-    email: z.email().min(1, { message: t('auth.signIn.validation.emailRequired') }),
+    email: z.email().min(1, { message: m["auth.signIn.validation.emailRequired"]() }),
     password: passwordSchema(t),
   });
 
 export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
-  const { t } = useTranslation();
   const signInMutation = useSignIn();
   const [rememberMe, setRememberMe] = useState(false);
 
@@ -48,11 +47,11 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
           name='email'
           render={({ field }) => (
             <FormItem>
-              <FormLabel className='text-sm font-medium text-slate-700'>{t('auth.signIn.form.email.label')}</FormLabel>
+              <FormLabel className='text-sm font-medium text-slate-700'>{m["auth.signIn.form.email.label"]()}</FormLabel>
               <FormControl>
                 <Input
                   type='email'
-                  placeholder={t('auth.signIn.form.email.placeholder')}
+                  placeholder={m["auth.signIn.form.email.placeholder"]()}
                   className='border-slate-300 !bg-white text-slate-800 transition-all duration-300 placeholder:text-slate-400 focus:border-slate-500 focus:!bg-white focus:ring-2 focus:ring-slate-200'
                   data-testid='sign-in-email'
                   {...field}
@@ -69,17 +68,17 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
           render={({ field }) => (
             <FormItem className='relative'>
               <div className='flex items-center justify-between'>
-                <FormLabel className='text-sm font-medium text-slate-700'>{t('auth.signIn.form.password.label')}</FormLabel>
+                <FormLabel className='text-sm font-medium text-slate-700'>{m["auth.signIn.form.password.label"]()}</FormLabel>
                 <Link
                   to='/forgot-password'
                   className='text-sm font-medium text-slate-500 transition-colors hover:text-slate-700 hover:underline'
                 >
-                  {t('auth.signIn.links.forgotPassword')}
+                  {m["auth.signIn.links.forgotPassword"]()}
                 </Link>
               </div>
               <FormControl>
                 <PasswordInput
-                  placeholder={t('auth.signIn.form.password.placeholder')}
+                  placeholder={m["auth.signIn.form.password.placeholder"]()}
                   className='border-slate-300 bg-white text-slate-800 backdrop-blur-sm transition-all duration-300 placeholder:text-slate-400 focus:border-slate-500 focus:bg-white focus:ring-2 focus:ring-slate-200'
                   data-testid='sign-in-password'
                   {...field}
@@ -103,7 +102,7 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
                 ></div>
               </div>
             </div>
-            <span className='text-sm text-slate-700'>{t('auth.signIn.form.rememberMe')}</span>
+            <span className='text-sm text-slate-700'>{m["auth.signIn.form.rememberMe"]()}</span>
           </label>
         </div>
 
@@ -117,10 +116,10 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
           {signInMutation.isPending ? (
             <div className='flex items-center justify-center gap-2'>
               <div className='h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white'></div>
-              {t('auth.signIn.form.signingIn')}
+              {m["auth.signIn.form.signingIn"]()}
             </div>
           ) : (
-            t('auth.signIn.form.signInButton')
+            m["auth.signIn.form.signInButton"]()
           )}
         </Button>
       </form>

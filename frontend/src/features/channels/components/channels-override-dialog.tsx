@@ -2,7 +2,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Loader2, Save, Download, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
 import { useEffect, useState, useCallback } from 'react';
 import { useForm, useFieldArray, useWatch, Control } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -22,6 +21,7 @@ import { useUpdateChannel } from '../data/channels';
 import { Channel, OverrideOperation, overrideOperationSchema } from '../data/schema';
 import { useChannelOverrideTemplates, useCreateChannelOverrideTemplate, useDeleteChannelOverrideTemplate } from '../data/templates';
 import { mergeChannelSettingsForUpdate, mergeOverrideHeaders, mergeOverrideOperations } from '../utils/merge';
+import * as m from '@/paraglide/messages';
 
 type OpType = OverrideOperation['op'];
 
@@ -47,13 +47,12 @@ interface SaveTemplateDialogProps {
 }
 
 function SaveTemplateDialog({ open, onOpenChange, onSave, isSaving }: SaveTemplateDialogProps) {
-  const { t } = useTranslation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
 
   const handleSave = () => {
     if (!name.trim()) {
-      toast.error(t('channels.templates.validation.nameRequired'));
+      toast.error(m["channels.templates.validation.nameRequired"]());
       return;
     }
     onSave(name.trim(), description.trim() || undefined);
@@ -71,25 +70,25 @@ function SaveTemplateDialog({ open, onOpenChange, onSave, isSaving }: SaveTempla
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className='sm:max-w-[500px]'>
         <DialogHeader>
-          <DialogTitle>{t('channels.templates.dialogs.save.title')}</DialogTitle>
-          <DialogDescription>{t('channels.templates.dialogs.save.description')}</DialogDescription>
+          <DialogTitle>{m["channels.templates.dialogs.save.title"]()}</DialogTitle>
+          <DialogDescription>{m["channels.templates.dialogs.save.description"]()}</DialogDescription>
         </DialogHeader>
         <div className='space-y-4 py-4'>
           <div className='space-y-2'>
-            <Label htmlFor='template-name'>{t('channels.templates.fields.name')}</Label>
+            <Label htmlFor='template-name'>{m["channels.templates.fields.name"]()}</Label>
             <Input
               id='template-name'
-              placeholder={t('channels.templates.fields.namePlaceholder')}
+              placeholder={m["channels.templates.fields.namePlaceholder"]()}
               value={name}
               onChange={(e) => setName(e.target.value)}
               disabled={isSaving}
             />
           </div>
           <div className='space-y-2'>
-            <Label htmlFor='template-description'>{t('channels.templates.fields.description')}</Label>
+            <Label htmlFor='template-description'>{m["channels.templates.fields.description"]()}</Label>
             <Textarea
               id='template-description'
-              placeholder={t('channels.templates.fields.descriptionPlaceholder')}
+              placeholder={m["channels.templates.fields.descriptionPlaceholder"]()}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               disabled={isSaving}
@@ -99,18 +98,18 @@ function SaveTemplateDialog({ open, onOpenChange, onSave, isSaving }: SaveTempla
         </div>
         <DialogFooter>
           <Button variant='outline' onClick={() => handleOpenChange(false)} disabled={isSaving}>
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           <Button onClick={handleSave} disabled={isSaving}>
             {isSaving ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                {t('common.buttons.saving')}
+                {m["common.buttons.saving"]()}
               </>
             ) : (
               <>
                 <Save className='mr-2 h-4 w-4' />
-                {t('common.buttons.save')}
+                {m["common.buttons.save"]()}
               </>
             )}
           </Button>
@@ -143,7 +142,6 @@ interface OperationRowProps {
 }
 
 function OperationRow({ index, control, fieldName, onUpdate, onRemove }: OperationRowProps) {
-  const { t } = useTranslation();
   const field = useWatch({ control, name: `${fieldName}.${index}` }) as OverrideOperation;
   const [showCondition, setShowCondition] = useState(!!field?.condition);
 
@@ -157,7 +155,7 @@ function OperationRow({ index, control, fieldName, onUpdate, onRemove }: Operati
     <div className='space-y-3 rounded-lg border p-3'>
       <div className='flex items-center gap-3'>
         <div className='w-36'>
-          <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.body.op')}</Label>
+          <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.body.op"]()}</Label>
           <Select value={field.op} onValueChange={(v) => onUpdate(index, { op: v as OpType })}>
             <SelectTrigger data-testid={`op-type-${index}`} className='mt-1'>
               <SelectValue />
@@ -174,11 +172,11 @@ function OperationRow({ index, control, fieldName, onUpdate, onRemove }: Operati
 
         {needsPathOnly && (
           <div className='flex-1'>
-            <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.body.path')}</Label>
+            <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.body.path"]()}</Label>
             <Input
               data-testid={`op-path-${index}`}
               className='mt-1 font-mono'
-              placeholder={t('channels.dialogs.settings.overrides.body.pathPlaceholder')}
+              placeholder={m["channels.dialogs.settings.overrides.body.pathPlaceholder"]()}
               value={field.path || ''}
               onChange={(e) => onUpdate(index, { path: e.target.value })}
             />
@@ -188,21 +186,21 @@ function OperationRow({ index, control, fieldName, onUpdate, onRemove }: Operati
         {needsFromTo && (
           <>
             <div className='flex-1'>
-              <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.body.from')}</Label>
+              <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.body.from"]()}</Label>
               <Input
                 data-testid={`op-from-${index}`}
                 className='mt-1 font-mono'
-                placeholder={t('channels.dialogs.settings.overrides.body.fromPlaceholder')}
+                placeholder={m["channels.dialogs.settings.overrides.body.fromPlaceholder"]()}
                 value={field.from || ''}
                 onChange={(e) => onUpdate(index, { from: e.target.value })}
               />
             </div>
             <div className='flex-1'>
-              <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.body.to')}</Label>
+              <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.body.to"]()}</Label>
               <Input
                 data-testid={`op-to-${index}`}
                 className='mt-1 font-mono'
-                placeholder={t('channels.dialogs.settings.overrides.body.toPlaceholder')}
+                placeholder={m["channels.dialogs.settings.overrides.body.toPlaceholder"]()}
                 value={field.to || ''}
                 onChange={(e) => onUpdate(index, { to: e.target.value })}
               />
@@ -219,18 +217,18 @@ function OperationRow({ index, control, fieldName, onUpdate, onRemove }: Operati
             className='px-3'
             data-testid={`remove-op-${index}`}
           >
-            {t('common.buttons.remove')}
+            {m["common.buttons.remove"]()}
           </Button>
         </div>
       </div>
 
       {needsValue && (
         <div>
-          <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.body.value')}</Label>
+          <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.body.value"]()}</Label>
           <Input
             data-testid={`op-value-${index}`}
             className='mt-1 font-mono'
-            placeholder={t('channels.dialogs.settings.overrides.body.valuePlaceholder')}
+            placeholder={m["channels.dialogs.settings.overrides.body.valuePlaceholder"]()}
             value={parseValueForDisplay(field.value)}
             onChange={(e) => onUpdate(index, { value: e.target.value })}
           />
@@ -246,13 +244,13 @@ function OperationRow({ index, control, fieldName, onUpdate, onRemove }: Operati
           onClick={() => setShowCondition(!showCondition)}
         >
           {showCondition ? <ChevronUp className='mr-1 h-3 w-3' /> : <ChevronDown className='mr-1 h-3 w-3' />}
-          {t('channels.dialogs.settings.overrides.body.condition')}
+          {m["channels.dialogs.settings.overrides.body.condition"]()}
         </Button>
         {showCondition && (
           <Input
             data-testid={`op-condition-${index}`}
             className='mt-1 font-mono text-sm'
-            placeholder={t('channels.dialogs.settings.overrides.body.conditionPlaceholder')}
+            placeholder={m["channels.dialogs.settings.overrides.body.conditionPlaceholder"]()}
             value={field.condition || ''}
             onChange={(e) => onUpdate(index, { condition: e.target.value })}
           />
@@ -270,7 +268,6 @@ interface HeaderOperationRowProps {
 }
 
 function HeaderOperationRow({ index, control, onUpdate, onRemove }: HeaderOperationRowProps) {
-  const { t } = useTranslation();
   const field = useWatch({ control, name: `headerOverrideOperations.${index}` }) as OverrideOperation;
   const [showCondition, setShowCondition] = useState(!!field?.condition);
 
@@ -288,7 +285,7 @@ function HeaderOperationRow({ index, control, onUpdate, onRemove }: HeaderOperat
     <div className='space-y-3 rounded-lg border p-3'>
       <div className='flex items-center gap-3'>
         <div className='w-36'>
-          <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.body.op')}</Label>
+          <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.body.op"]()}</Label>
           <Select value={opType} onValueChange={(v) => onUpdate(index, { op: v as OpType })}>
             <SelectTrigger data-testid={`header-op-type-${index}`} className='mt-1'>
               <SelectValue />
@@ -305,17 +302,17 @@ function HeaderOperationRow({ index, control, onUpdate, onRemove }: HeaderOperat
 
         {needsPathOnly && (
           <div className='flex-1'>
-            <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.headers.key')}</Label>
+            <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.headers.key"]()}</Label>
             <Input
               data-testid={`header-op-path-${index}`}
               className='mt-1 font-mono'
-              placeholder={t('channels.dialogs.settings.overrides.headers.keyPlaceholder')}
+              placeholder={m["channels.dialogs.settings.overrides.headers.keyPlaceholder"]()}
               value={field.path || ''}
               onChange={(e) => onUpdate(index, { path: e.target.value })}
             />
             {isAuthHeader && (
               <p className='text-destructive mt-1 text-sm' role='alert'>
-                {t('channels.dialogs.settings.overrides.headers.sensitiveWarning')}
+                {m["channels.dialogs.settings.overrides.headers.sensitiveWarning"]()}
               </p>
             )}
           </div>
@@ -324,21 +321,21 @@ function HeaderOperationRow({ index, control, onUpdate, onRemove }: HeaderOperat
         {needsFromTo && (
           <>
             <div className='flex-1'>
-              <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.headers.from')}</Label>
+              <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.headers.from"]()}</Label>
               <Input
                 data-testid={`header-op-from-${index}`}
                 className='mt-1 font-mono'
-                placeholder={t('channels.dialogs.settings.overrides.headers.fromPlaceholder')}
+                placeholder={m["channels.dialogs.settings.overrides.headers.fromPlaceholder"]()}
                 value={field.from || ''}
                 onChange={(e) => onUpdate(index, { from: e.target.value })}
               />
             </div>
             <div className='flex-1'>
-              <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.headers.to')}</Label>
+              <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.headers.to"]()}</Label>
               <Input
                 data-testid={`header-op-to-${index}`}
                 className='mt-1 font-mono'
-                placeholder={t('channels.dialogs.settings.overrides.headers.toPlaceholder')}
+                placeholder={m["channels.dialogs.settings.overrides.headers.toPlaceholder"]()}
                 value={field.to || ''}
                 onChange={(e) => onUpdate(index, { to: e.target.value })}
               />
@@ -355,18 +352,18 @@ function HeaderOperationRow({ index, control, onUpdate, onRemove }: HeaderOperat
             className='px-3'
             data-testid={`remove-header-op-${index}`}
           >
-            {t('common.buttons.remove')}
+            {m["common.buttons.remove"]()}
           </Button>
         </div>
       </div>
 
       {needsValue && (
         <div>
-          <Label className='text-sm font-medium'>{t('channels.dialogs.settings.overrides.headers.value')}</Label>
+          <Label className='text-sm font-medium'>{m["channels.dialogs.settings.overrides.headers.value"]()}</Label>
           <Input
             data-testid={`header-op-value-${index}`}
             className='mt-1 font-mono'
-            placeholder={t('channels.dialogs.settings.overrides.headers.valuePlaceholder')}
+            placeholder={m["channels.dialogs.settings.overrides.headers.valuePlaceholder"]()}
             value={parseValueForDisplay(field.value)}
             onChange={(e) => onUpdate(index, { value: e.target.value })}
           />
@@ -382,13 +379,13 @@ function HeaderOperationRow({ index, control, onUpdate, onRemove }: HeaderOperat
           onClick={() => setShowCondition(!showCondition)}
         >
           {showCondition ? <ChevronUp className='mr-1 h-3 w-3' /> : <ChevronDown className='mr-1 h-3 w-3' />}
-          {t('channels.dialogs.settings.overrides.body.condition')}
+          {m["channels.dialogs.settings.overrides.body.condition"]()}
         </Button>
         {showCondition && (
           <Input
             data-testid={`header-op-condition-${index}`}
             className='mt-1 font-mono text-sm'
-            placeholder={t('channels.dialogs.settings.overrides.body.conditionPlaceholder')}
+            placeholder={m["channels.dialogs.settings.overrides.body.conditionPlaceholder"]()}
             value={field.condition || ''}
             onChange={(e) => onUpdate(index, { condition: e.target.value })}
           />
@@ -399,7 +396,6 @@ function HeaderOperationRow({ index, control, onUpdate, onRemove }: HeaderOperat
 }
 
 export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props) {
-  const { t } = useTranslation();
   const updateChannel = useUpdateChannel();
   const createTemplate = useCreateChannelOverrideTemplate();
   const deleteTemplate = useDeleteChannelOverrideTemplate();
@@ -509,13 +505,13 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
       const op = bodyOps[i];
       if (op.op === 'set' || op.op === 'delete') {
         if (!op.path?.trim()) {
-          toast.error(t('channels.dialogs.settings.overrides.validation.emptyPath', { index: i + 1, op: op.op }));
+          toast.error(m["channels.dialogs.settings.overrides.validation.emptyPath"]({ index: i + 1, op: op.op }));
           return;
         }
       }
       if (op.op === 'rename' || op.op === 'copy') {
         if (!op.from?.trim() || !op.to?.trim()) {
-          toast.error(t('channels.dialogs.settings.overrides.validation.emptyFromTo', { index: i + 1, op: op.op }));
+          toast.error(m["channels.dialogs.settings.overrides.validation.emptyFromTo"]({ index: i + 1, op: op.op }));
           return;
         }
       }
@@ -526,13 +522,13 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
       const op = headerOps[i];
       if (op.op === 'set' || op.op === 'delete') {
         if (!op.path?.trim()) {
-          toast.error(t('channels.dialogs.settings.overrides.validation.emptyHeaderPath', { index: i + 1, op: op.op }));
+          toast.error(m["channels.dialogs.settings.overrides.validation.emptyHeaderPath"]({ index: i + 1, op: op.op }));
           return;
         }
       }
       if (op.op === 'rename' || op.op === 'copy') {
         if (!op.from?.trim() || !op.to?.trim()) {
-          toast.error(t('channels.dialogs.settings.overrides.validation.emptyHeaderFromTo', { index: i + 1, op: op.op }));
+          toast.error(m["channels.dialogs.settings.overrides.validation.emptyHeaderFromTo"]({ index: i + 1, op: op.op }));
           return;
         }
       }
@@ -560,10 +556,10 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
           settings: nextSettings,
         },
       });
-      toast.success(t('channels.messages.updateSuccess'));
+      toast.success(m["channels.messages.updateSuccess"]());
       onOpenChange(false);
     } catch (_error) {
-      toast.error(t('channels.messages.updateError'));
+      toast.error(m["channels.messages.updateError"]());
     }
   };
 
@@ -589,9 +585,9 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
         replaceHeaders(mergedHeaders);
         replaceBodies(mergedBodyOps);
 
-        toast.success(t('channels.templates.messages.applied'));
+        toast.success(m["channels.templates.messages.applied"]());
       } catch (error) {
-        toast.error(t('channels.templates.messages.applyError'));
+        toast.error(m["channels.templates.messages.applyError"]());
       } finally {
         setIsApplyingTemplate(false);
       }
@@ -649,8 +645,8 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
       <DialogContent className='h-[85vh] p-0 sm:max-w-[900px]'>
         <DialogHeader className='flex flex-row items-center justify-between border-b px-6 py-4 pr-12'>
           <div className='space-y-0.5'>
-            <DialogTitle data-testid='override-dialog-title'>{t('channels.dialogs.settings.overrides.title')}</DialogTitle>
-            <DialogDescription>{t('channels.templates.section.description')}</DialogDescription>
+            <DialogTitle data-testid='override-dialog-title'>{m["channels.dialogs.settings.overrides.title"]()}</DialogTitle>
+            <DialogDescription>{m["channels.templates.section.description"]()}</DialogDescription>
           </div>
           <div className='flex items-center gap-2'>
             <Popover open={templateSearchOpen} onOpenChange={setTemplateSearchOpen}>
@@ -664,7 +660,7 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
                   type='button'
                 >
                   <span className='truncate'>
-                    {selectedTemplateId ? templates.find((t) => t.id === selectedTemplateId)?.name : t('channels.templates.selectTemplate')}
+                    {selectedTemplateId ? templates.find((t) => t.id === selectedTemplateId)?.name : m["channels.templates.selectTemplate"]()}
                   </span>
                   <ChevronDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
                 </Button>
@@ -672,12 +668,12 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
               <PopoverContent className='w-[300px] p-0' align='end'>
                 <Command>
                   <CommandInput
-                    placeholder={t('channels.templates.searchPlaceholder')}
+                    placeholder={m["channels.templates.searchPlaceholder"]()}
                     value={templateSearchValue}
                     onValueChange={setTemplateSearchValue}
                   />
                   <CommandList>
-                    <CommandEmpty>{t('channels.templates.noTemplates')}</CommandEmpty>
+                    <CommandEmpty>{m["channels.templates.noTemplates"]()}</CommandEmpty>
                     <CommandGroup>
                       {templates.map((template) => (
                         <CommandItem
@@ -721,7 +717,7 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
               size='sm'
               onClick={() => setShowSaveTemplateDialog(true)}
               disabled={headerOpsCount === 0 && bodyOpsCount === 0}
-              title={t('channels.templates.saveAsTemplate')}
+              title={m["channels.templates.saveAsTemplate"]()}
               className='h-9 px-3'
             >
               <Save className='h-4 w-4' />
@@ -734,15 +730,15 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
             {/* Override Tabs */}
             <Tabs defaultValue='body' className='flex min-h-0 w-full flex-1 flex-col overflow-hidden'>
               <TabsList className='grid w-full shrink-0 grid-cols-2'>
-                <TabsTrigger value='body'>{t('channels.dialogs.settings.overrides.body.title')}</TabsTrigger>
-                <TabsTrigger value='headers'>{t('channels.dialogs.settings.overrides.headers.title')}</TabsTrigger>
+                <TabsTrigger value='body'>{m["channels.dialogs.settings.overrides.body.title"]()}</TabsTrigger>
+                <TabsTrigger value='headers'>{m["channels.dialogs.settings.overrides.headers.title"]()}</TabsTrigger>
               </TabsList>
 
               <TabsContent value='headers' className='mt-4 flex flex-1 flex-col overflow-hidden'>
                 <Card data-testid='override-headers-section' className='flex flex-1 flex-col overflow-hidden'>
                   <CardHeader className='shrink-0'>
-                    <CardTitle className='text-lg'>{t('channels.dialogs.settings.overrides.headers.title')}</CardTitle>
-                    <CardDescription>{t('channels.dialogs.settings.overrides.headers.description')}</CardDescription>
+                    <CardTitle className='text-lg'>{m["channels.dialogs.settings.overrides.headers.title"]()}</CardTitle>
+                    <CardDescription>{m["channels.dialogs.settings.overrides.headers.description"]()}</CardDescription>
                   </CardHeader>
                   <CardContent className='min-h-0 flex-1 space-y-3 overflow-y-auto'>
                     {headerFields.map((field, index) => (
@@ -756,7 +752,7 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
                     ))}
 
                     <Button type='button' variant='outline' onClick={addHeaderOp} className='w-full' data-testid='add-header-button'>
-                      {t('channels.dialogs.settings.overrides.addButton')}
+                      {m["channels.dialogs.settings.overrides.addButton"]()}
                     </Button>
 
                     {form.formState.errors.headerOverrideOperations?.message && (
@@ -769,8 +765,8 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
               <TabsContent value='body' className='mt-4 flex flex-1 flex-col overflow-hidden'>
                 <Card data-testid='override-parameters-section' className='flex flex-1 flex-col overflow-hidden'>
                   <CardHeader className='shrink-0'>
-                    <CardTitle className='text-lg'>{t('channels.dialogs.settings.overrides.body.title')}</CardTitle>
-                    <CardDescription>{t('channels.dialogs.settings.overrides.body.description')}</CardDescription>
+                    <CardTitle className='text-lg'>{m["channels.dialogs.settings.overrides.body.title"]()}</CardTitle>
+                    <CardDescription>{m["channels.dialogs.settings.overrides.body.description"]()}</CardDescription>
                   </CardHeader>
                   <CardContent className='min-h-0 flex-1 space-y-3 overflow-y-auto'>
                     {bodyFields.map((field, index) => (
@@ -785,7 +781,7 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
                     ))}
 
                     <Button type='button' variant='outline' onClick={addBodyOperation} className='w-full' data-testid='add-param-button'>
-                      {t('channels.dialogs.settings.overrides.addButton')}
+                      {m["channels.dialogs.settings.overrides.addButton"]()}
                     </Button>
 
                     {form.formState.errors.bodyOverrideOperations?.message && (
@@ -799,10 +795,10 @@ export function ChannelsOverrideDialog({ open, onOpenChange, currentRow }: Props
 
           <DialogFooter className='mt-6 shrink-0 border-t px-6 py-4'>
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)} data-testid='override-cancel-button'>
-              {t('common.buttons.cancel')}
+              {m["common.buttons.cancel"]()}
             </Button>
             <Button type='submit' disabled={updateChannel.isPending} data-testid='override-save-button'>
-              {updateChannel.isPending ? t('common.buttons.saving') : t('common.buttons.save')}
+              {updateChannel.isPending ? m["common.buttons.saving"]() : m["common.buttons.save"]()}
             </Button>
           </DialogFooter>
         </form>

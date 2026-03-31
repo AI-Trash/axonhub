@@ -1,5 +1,4 @@
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import {
   AlertDialog,
@@ -14,6 +13,8 @@ import {
 
 import { useUpdatePromptProtectionRuleStatus } from '../data/rules';
 import { PromptProtectionRule } from '../data/schema';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 interface RulesStatusDialogProps {
   open: boolean;
@@ -22,7 +23,6 @@ interface RulesStatusDialogProps {
 }
 
 export function RulesStatusDialog({ open, onOpenChange, currentRow }: RulesStatusDialogProps) {
-  const { t } = useTranslation();
   const updateStatusMutation = useUpdatePromptProtectionRuleStatus();
   const newStatus = currentRow.status === 'enabled' ? 'disabled' : 'enabled';
 
@@ -38,15 +38,15 @@ export function RulesStatusDialog({ open, onOpenChange, currentRow }: RulesStatu
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('promptProtectionRules.dialogs.statusChange.title')}</AlertDialogTitle>
+          <AlertDialogTitle>{m["promptProtectionRules.dialogs.statusChange.title"]()}</AlertDialogTitle>
           <AlertDialogDescription>
-            {t(`promptProtectionRules.dialogs.statusChange.description.${newStatus}`, { name: currentRow.name })}
+            {dynamicTranslation(`promptProtectionRules.dialogs.statusChange.description.${newStatus}`, { name: currentRow.name })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('common.buttons.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel>{m["common.buttons.cancel"]()}</AlertDialogCancel>
           <AlertDialogAction onClick={handleConfirm} disabled={updateStatusMutation.isPending}>
-            {t('common.buttons.confirm')}
+            {m["common.buttons.confirm"]()}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

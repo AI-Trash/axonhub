@@ -1,7 +1,6 @@
 import { IconPlus, IconSettings, IconAlertCircle } from '@tabler/icons-react';
 import { SortingState } from '@tanstack/react-table';
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -18,10 +17,10 @@ import { ModelsTable } from './components/models-table';
 import ModelsProvider, { useModels } from './context/models-context';
 import { useQueryAllModels } from './data/models';
 import { useDevelopersData } from './data/providers';
+import * as m from '@/paraglide/messages';
 
 function ModelsContent() {
   useDevelopersData();
-  const { t } = useTranslation();
   const { modelPermissions } = usePermissions();
   const [nameFilter, setNameFilter] = useState<string>('');
   const [sorting, setSorting] = useState<SortingState>(() => {
@@ -62,7 +61,7 @@ function ModelsContent() {
     [setNameFilter]
   );
 
-  const columns = useMemo(() => createColumns(t, modelPermissions.canWrite), [t, modelPermissions.canWrite]);
+  const columns = useMemo(() => createColumns(modelPermissions.canWrite), [modelPermissions.canWrite]);
 
   return (
     <div className='flex flex-1 flex-col overflow-hidden'>
@@ -82,49 +81,45 @@ function ModelsContent() {
 }
 
 function CreateButton() {
-  const { t } = useTranslation();
   const { setOpen } = useModels();
 
   return (
     <Button onClick={() => setOpen('create')}>
       <IconPlus className='mr-2 h-4 w-4' />
-      {t('models.actions.create')}
+      {m["models.actions.create"]()}
     </Button>
   );
 }
 
 function BulkAddButton() {
-  const { t } = useTranslation();
   const { setOpen } = useModels();
 
   return (
     <Button variant='outline' onClick={() => setOpen('batchCreate')}>
       <IconPlus className='mr-2 h-4 w-4' />
-      {t('models.actions.bulkAdd')}
+      {m["models.actions.bulkAdd"]()}
     </Button>
   );
 }
 
 function SettingsButton() {
-  const { t } = useTranslation();
   const { setOpen } = useModels();
 
   return (
     <Button variant='outline' onClick={() => setOpen('settings')} data-settings-button>
       <IconSettings className='mr-2 h-4 w-4' />
-      {t('models.actions.settings')}
+      {m["models.actions.settings"]()}
     </Button>
   );
 }
 
 function DetectUnassociatedButton() {
-  const { t } = useTranslation();
   const { setOpen } = useModels();
 
   return (
     <Button variant='outline' onClick={() => setOpen('unassociated')}>
       <IconAlertCircle className='mr-2 h-4 w-4' />
-      {t('models.actions.detectUnassociated')}
+      {m["models.actions.detectUnassociated"]()}
     </Button>
   );
 }
@@ -145,7 +140,6 @@ function ActionButtons() {
 }
 
 export default function ModelsManagement() {
-  const { t } = useTranslation();
   const { data: onboardingInfo } = useOnboardingInfo();
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -166,8 +160,8 @@ export default function ModelsManagement() {
       <Header fixed>
         <div className='flex w-full flex-1 flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-0'>
           <div className='min-w-0'>
-            <h2 className='text-xl font-bold tracking-tight'>{t('models.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('models.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["models.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["models.description"]()}</p>
           </div>
           <ActionButtons />
         </div>

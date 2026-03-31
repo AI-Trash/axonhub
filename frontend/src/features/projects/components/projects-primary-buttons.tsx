@@ -1,13 +1,12 @@
 import { IconPlus } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { PermissionGuard } from '@/components/permission-guard';
 import { Button } from '@/components/ui/button';
 
 import { useProjectsContext } from '../context/projects-context';
+import * as m from '@/paraglide/messages';
 
 export function ProjectsPrimaryButtons() {
-  const { t } = useTranslation();
   const { setIsCreateDialogOpen } = useProjectsContext();
 
   return (
@@ -16,7 +15,7 @@ export function ProjectsPrimaryButtons() {
       <PermissionGuard requiredScope='write_projects'>
         <Button onClick={() => setIsCreateDialogOpen(true)}>
           <IconPlus className='mr-2 h-4 w-4' />
-          {t('projects.createProject')}
+          {m["projects.createProject"]()}
         </Button>
       </PermissionGuard>
     </div>

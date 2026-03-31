@@ -1,7 +1,6 @@
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { memo, useEffect, useMemo } from 'react';
 import { useFieldArray, useFormContext, useWatch, type Control, type FieldArrayPath, type FieldPath } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
@@ -9,6 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 const priceItemCodes = ['prompt_tokens', 'completion_tokens', 'prompt_cached_tokens', 'prompt_write_cached_tokens'] as const;
 const promptWriteCacheVariantCodes = ['five_min', 'one_hour'] as const;
@@ -87,7 +88,6 @@ export const ModelPriceEditor = memo(function ChannelModelPriceEditor({
   onAddVariant,
   onRemoveVariant,
 }: ModelPriceEditorProps) {
-  const { t } = useTranslation();
   const { fields } = useFieldArray({
     control,
     name: asFieldArrayPath(`prices.${priceIndex}.price.items`),
@@ -97,7 +97,7 @@ export const ModelPriceEditor = memo(function ChannelModelPriceEditor({
     <div className='min-w-0 space-y-4'>
       {!hideHeader && (
         <div className='flex h-8 items-center'>
-          <Label className='text-sm font-medium'>{t('price.items')}</Label>
+          <Label className='text-sm font-medium'>{m["price.items"]()}</Label>
         </div>
       )}
       {/* <Separator /> */}
@@ -122,7 +122,7 @@ export const ModelPriceEditor = memo(function ChannelModelPriceEditor({
             className='w-full'
             size='sm'
             onClick={() => onAddItem(priceIndex)}
-            title={t('price.addItem')}
+            title={m["price.addItem"]()}
           >
             <IconPlus size={14} />
           </Button>
@@ -151,7 +151,6 @@ const PriceItemRow = memo(function PriceItemRow({
   onAddVariant: (priceIndex: number, itemIndex: number) => void;
   onRemoveVariant: (priceIndex: number, itemIndex: number, variantIndex: number) => void;
 }) {
-  const { t } = useTranslation();
   const itemCode = usePriceEditorWatch<PriceItem['itemCode'] | undefined>(
     control,
     `prices.${priceIndex}.price.items.${itemIndex}.itemCode`
@@ -175,7 +174,7 @@ const PriceItemRow = memo(function PriceItemRow({
   });
   const tiers = usePriceEditorWatch<Tier[] | undefined>(control, `prices.${priceIndex}.price.items.${itemIndex}.pricing.usageTiered.tiers`);
   const { setValue } = useFormContext<PriceEditorFormValues>();
-  const requiredMessage = t('price.validation.priceRequired');
+  const requiredMessage = m["price.validation.priceRequired"]();
 
   useEffect(() => {
     if (pricingMode === 'usage_tiered' && tierFields.length === 0) {
@@ -206,7 +205,7 @@ const PriceItemRow = memo(function PriceItemRow({
 
   const currencyPrefix = useMemo(() => {
     if (!currencyCode) return '';
-    const formatted = t('currencies.format', { val: 0, currency: currencyCode, locale: 'en-US' });
+    const formatted = m["currencies.format"]({ val: 0, currency: currencyCode, locale: 'en-US' });
     // Remove numbers, separators, spaces and any uppercase letters (country codes like HK, CN)
     return formatted.replace(/[0.,\s]+/g, '').replace(/[A-Z]/g, '');
   }, [currencyCode, t]);
@@ -223,13 +222,13 @@ const PriceItemRow = memo(function PriceItemRow({
                 <Select onValueChange={field.onChange} value={field.value as unknown as string | undefined}>
                   <FormControl>
                     <SelectTrigger size='sm' className='h-8 w-full min-w-0'>
-                      <SelectValue placeholder={t('price.itemCode')} className='truncate' />
+                      <SelectValue placeholder={m["price.itemCode"]()} className='truncate' />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
                     {availableItemCodes.map((code) => (
                       <SelectItem key={code} value={code}>
-                        {t(`price.itemCodes.${code}`, { defaultValue: code })}
+                        {dynamicTranslation(`price.itemCodes.${code}`)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -248,13 +247,13 @@ const PriceItemRow = memo(function PriceItemRow({
                 <Select onValueChange={field.onChange} value={field.value as unknown as string | undefined}>
                   <FormControl>
                     <SelectTrigger size='sm' className='h-8 w-full min-w-0'>
-                      <SelectValue placeholder={t('price.mode')} className='truncate' />
+                      <SelectValue placeholder={m["price.mode"]()} className='truncate' />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
-                    <SelectItem value='flat_fee'>{t('price.mode_flat_fee')}</SelectItem>
-                    <SelectItem value='usage_per_unit'>{t('price.mode_usage_per_unit')}</SelectItem>
-                    <SelectItem value='usage_tiered'>{t('price.mode_usage_tiered')}</SelectItem>
+                    <SelectItem value='flat_fee'>{m["price.mode_flat_fee"]()}</SelectItem>
+                    <SelectItem value='usage_per_unit'>{m["price.mode_usage_per_unit"]()}</SelectItem>
+                    <SelectItem value='usage_tiered'>{m["price.mode_usage_tiered"]()}</SelectItem>
                   </SelectContent>
                 </Select>
               </FormItem>
@@ -329,7 +328,7 @@ const PriceItemRow = memo(function PriceItemRow({
         {pricingMode === 'usage_tiered' && (
           <div className='col-span-full mt-2 ml-4 min-w-0 space-y-2 rounded-md border border-dashed p-3'>
             <div className='text-muted-foreground flex items-center justify-between text-xs'>
-              <span>{t('price.tiers')}</span>
+              <span>{m["price.tiers"]()}</span>
               <Button type='button' variant='outline' size='icon-sm' onClick={() => appendTier({ upTo: null, pricePerUnit: '0' })}>
                 <IconPlus size={14} />
               </Button>
@@ -351,7 +350,7 @@ const PriceItemRow = memo(function PriceItemRow({
                             onChange={(e) =>
                               isLastTier ? field.onChange(null) : field.onChange(e.target.value ? parseInt(e.target.value) : null)
                             }
-                            placeholder={isLastTier ? '∞' : t('price.upTo')}
+                            placeholder={isLastTier ? '∞' : m["price.upTo"]()}
                             disabled={isLastTier}
                             className='h-7 text-xs'
                           />
@@ -383,7 +382,7 @@ const PriceItemRow = memo(function PriceItemRow({
                           <Input
                             {...field}
                             value={(field.value as unknown as string | null | undefined) || ''}
-                            placeholder={t('price.pricePerUnit')}
+                            placeholder={m["price.pricePerUnit"]()}
                             className={`h-7 text-right text-xs ${currencyPrefix ? 'pl-7' : ''}`}
                           />
                         </div>
@@ -405,14 +404,14 @@ const PriceItemRow = memo(function PriceItemRow({
       {itemCode === 'prompt_write_cached_tokens' && (
         <div className='ml-4 min-w-0 space-y-2 overflow-hidden rounded-md border border-dashed p-3'>
           <div className='text-muted-foreground flex items-center justify-between text-xs'>
-            <span>{t('price.promptWriteCacheVariants')}</span>
+            <span>{m["price.promptWriteCacheVariants"]()}</span>
             <Button
               type='button'
               variant='outline'
               size='icon-sm'
               disabled={variantFields.length >= promptWriteCacheVariantCodes.length}
               onClick={() => onAddVariant(priceIndex, itemIndex)}
-              title={t('price.addVariant')}
+              title={m["price.addVariant"]()}
             >
               <IconPlus size={14} />
             </Button>
@@ -451,7 +450,6 @@ const PriceVariantRow = memo(function PriceVariantRow({
   currencyCode?: string;
   onRemoveVariant: (priceIndex: number, itemIndex: number, variantIndex: number) => void;
 }) {
-  const { t } = useTranslation();
   const pricingMode = usePriceEditorWatch<PriceItemVariant['pricing']['mode'] | undefined>(
     control,
     `prices.${priceIndex}.price.items.${itemIndex}.promptWriteCacheVariants.${variantIndex}.pricing.mode`
@@ -479,7 +477,7 @@ const PriceVariantRow = memo(function PriceVariantRow({
     `prices.${priceIndex}.price.items.${itemIndex}.promptWriteCacheVariants.${variantIndex}.pricing.usageTiered.tiers`
   );
   const { setValue } = useFormContext<PriceEditorFormValues>();
-  const requiredMessage = t('price.validation.priceRequired');
+  const requiredMessage = m["price.validation.priceRequired"]();
 
   const availableVariantCodes = promptWriteCacheVariantCodes.filter((code) => {
     if (code === variantCode) return true;
@@ -490,7 +488,7 @@ const PriceVariantRow = memo(function PriceVariantRow({
 
   const currencyPrefix = useMemo(() => {
     if (!currencyCode) return '';
-    const formatted = t('currencies.format', { val: 0, currency: currencyCode, locale: 'en-US' });
+    const formatted = m["currencies.format"]({ val: 0, currency: currencyCode, locale: 'en-US' });
     // Remove numbers, separators, spaces and any uppercase letters (country codes like HK, CN)
     return formatted.replace(/[0.,\s]+/g, '').replace(/[A-Z]/g, '');
   }, [currencyCode, t]);
@@ -528,13 +526,13 @@ const PriceVariantRow = memo(function PriceVariantRow({
               <Select onValueChange={field.onChange} value={field.value as unknown as string | undefined}>
                 <FormControl>
                   <SelectTrigger size='sm' className='h-7 text-xs'>
-                    <SelectValue placeholder={t('price.variantCode')} />
+                    <SelectValue placeholder={m["price.variantCode"]()} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
                   {availableVariantCodes.map((code) => (
                     <SelectItem key={code} value={code}>
-                      {t(`price.variantCodes.${code}`, { defaultValue: code })}
+                      {dynamicTranslation(`price.variantCodes.${code}`)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -551,13 +549,13 @@ const PriceVariantRow = memo(function PriceVariantRow({
               <Select onValueChange={field.onChange} value={field.value as unknown as string | undefined}>
                 <FormControl>
                   <SelectTrigger size='sm' className='h-7 text-xs'>
-                    <SelectValue placeholder={t('price.mode')} />
+                    <SelectValue placeholder={m["price.mode"]()} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value='flat_fee'>{t('price.mode_flat_fee')}</SelectItem>
-                  <SelectItem value='usage_per_unit'>{t('price.mode_usage_per_unit')}</SelectItem>
-                  <SelectItem value='usage_tiered'>{t('price.mode_usage_tiered')}</SelectItem>
+                  <SelectItem value='flat_fee'>{m["price.mode_flat_fee"]()}</SelectItem>
+                  <SelectItem value='usage_per_unit'>{m["price.mode_usage_per_unit"]()}</SelectItem>
+                  <SelectItem value='usage_tiered'>{m["price.mode_usage_tiered"]()}</SelectItem>
                 </SelectContent>
               </Select>
             </FormItem>
@@ -623,7 +621,7 @@ const PriceVariantRow = memo(function PriceVariantRow({
       {pricingMode === 'usage_tiered' && (
         <div className='ml-4 space-y-2 rounded-md border border-dashed p-2'>
           <div className='text-muted-foreground flex items-center justify-between text-[10px]'>
-            <span>{t('price.tiers')}</span>
+            <span>{m["price.tiers"]()}</span>
             <Button
               type='button'
               variant='outline'
@@ -653,7 +651,7 @@ const PriceVariantRow = memo(function PriceVariantRow({
                           onChange={(e) =>
                             isLastTier ? field.onChange(null) : field.onChange(e.target.value ? parseInt(e.target.value) : null)
                           }
-                          placeholder={isLastTier ? '∞' : t('price.upTo')}
+                          placeholder={isLastTier ? '∞' : m["price.upTo"]()}
                           disabled={isLastTier}
                           className='h-6 text-[10px]'
                         />
@@ -687,7 +685,7 @@ const PriceVariantRow = memo(function PriceVariantRow({
                         <Input
                           {...field}
                           value={(field.value as unknown as string | null | undefined) || ''}
-                          placeholder={t('price.pricePerUnit')}
+                          placeholder={m["price.pricePerUnit"]()}
                           className={`h-6 text-right text-[10px] ${currencyPrefix ? 'pl-6' : ''}`}
                         />
                       </div>

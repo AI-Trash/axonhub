@@ -1,15 +1,14 @@
-import { useTranslation } from 'react-i18next';
 
 import { useChannelPerformanceStats } from '../data/dashboard';
 import { PerformanceChart } from './performance-chart';
 import type { PerformanceDataPoint } from './performance-chart';
+import * as m from '@/paraglide/messages';
 
 interface ChannelPerformanceStatsProps {
   onTotalRequestsChange?: (total: number) => void;
 }
 
 export function ChannelPerformanceStats({ onTotalRequestsChange }: ChannelPerformanceStatsProps) {
-  const { t } = useTranslation();
   const { data: performanceStats, isLoading, error } = useChannelPerformanceStats();
 
   const mappedData = performanceStats?.map((stat) => ({
@@ -27,8 +26,8 @@ export function ChannelPerformanceStats({ onTotalRequestsChange }: ChannelPerfor
       isLoading={isLoading}
       error={error}
       onTotalRequestsChange={onTotalRequestsChange}
-      emptyMessage={t('dashboard.charts.noChannelData')}
-      errorMessage={t('dashboard.charts.errorLoadingChannelData')}
+      emptyMessage={m["dashboard.charts.noChannelData"]()}
+      errorMessage={m["dashboard.charts.errorLoadingChannelData"]()}
       idField='channelId'
       nameField='channelName'
     />

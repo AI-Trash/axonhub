@@ -1,5 +1,4 @@
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import {
   AlertDialog,
@@ -14,9 +13,9 @@ import {
 
 import { usePromptProtectionRules } from '../context/rules-context';
 import { useBulkDisablePromptProtectionRules } from '../data/rules';
+import * as m from '@/paraglide/messages';
 
 export function RulesBulkDisableDialog() {
-  const { t } = useTranslation();
   const { open, setOpen, selectedRules, resetRowSelection } = usePromptProtectionRules();
   const mutation = useBulkDisablePromptProtectionRules();
 
@@ -30,15 +29,15 @@ export function RulesBulkDisableDialog() {
     <AlertDialog open={open === 'bulkDisable'} onOpenChange={(isOpen) => !isOpen && setOpen(null)}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('promptProtectionRules.dialogs.bulkDisable.title')}</AlertDialogTitle>
+          <AlertDialogTitle>{m["promptProtectionRules.dialogs.bulkDisable.title"]()}</AlertDialogTitle>
           <AlertDialogDescription>
-            {t('promptProtectionRules.dialogs.bulkDisable.description', { count: selectedRules.length })}
+            {m["promptProtectionRules.dialogs.bulkDisable.description"]({ count: selectedRules.length })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('common.buttons.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel>{m["common.buttons.cancel"]()}</AlertDialogCancel>
           <AlertDialogAction onClick={handleConfirm} disabled={mutation.isPending}>
-            {t('common.buttons.confirm')}
+            {m["common.buttons.confirm"]()}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

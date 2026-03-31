@@ -1,7 +1,6 @@
 import { CheckIcon, PlusCircledIcon } from '@radix-ui/react-icons';
 import { Column } from '@tanstack/react-table';
 import * as React from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +8,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
+import * as m from '@/paraglide/messages';
 
 interface DataTableFacetedFilterProps<TData, TValue> {
   column?: Column<TData, TValue>;
@@ -29,8 +29,6 @@ export function DataTableFacetedFilter<TData, TValue>({
   singleSelect = false,
   footer,
 }: DataTableFacetedFilterProps<TData, TValue>) {
-  const { t } = useTranslation();
-
   const facets = column?.getFacetedUniqueValues() || new Map();
   const filterValue = column?.getFilterValue();
   const selectedValues = singleSelect ? new Set(filterValue ? [filterValue as string] : []) : new Set((filterValue || []) as string[]);
@@ -50,7 +48,7 @@ export function DataTableFacetedFilter<TData, TValue>({
               <div className='hidden space-x-1 lg:flex'>
                 {selectedValues.size > 2 ? (
                   <Badge variant='secondary' className='rounded-sm px-1 font-normal'>
-                    {t('common.selectedItems', { count: selectedValues.size })}
+                    {m["common.selectedItems"]({ count: selectedValues.size })}
                   </Badge>
                 ) : (
                   options
@@ -70,7 +68,7 @@ export function DataTableFacetedFilter<TData, TValue>({
         <Command>
           <CommandInput placeholder={title} />
           <CommandList>
-            <CommandEmpty>{t('common.noResultsFound')}</CommandEmpty>
+            <CommandEmpty>{m["common.noResultsFound"]()}</CommandEmpty>
             <CommandGroup>
               {options?.map((option) => {
                 const isSelected = selectedValues.has(option.value);
@@ -121,7 +119,7 @@ export function DataTableFacetedFilter<TData, TValue>({
                 <CommandSeparator />
                 <CommandGroup>
                   <CommandItem onSelect={() => column?.setFilterValue(undefined)} className='justify-center text-center'>
-                    {t('common.clearFilters')}
+                    {m["common.clearFilters"]()}
                   </CommandItem>
                 </CommandGroup>
               </>

@@ -2,7 +2,6 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -13,6 +12,7 @@ import { graphqlRequest } from '@/gql/graphql';
 import { UPDATE_USER_MUTATION } from '@/gql/users';
 
 import { User, changePasswordFormSchema } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   currentRow?: User;
@@ -21,7 +21,6 @@ interface Props {
 }
 
 export function UsersChangePasswordDialog({ currentRow, open, onOpenChange }: Props) {
-  const { t } = useTranslation();
   const form = useForm({
     resolver: zodResolver(changePasswordFormSchema(t)),
     defaultValues: {
@@ -44,11 +43,11 @@ export function UsersChangePasswordDialog({ currentRow, open, onOpenChange }: Pr
         },
       });
 
-      toast.success(t('users.messages.passwordChangeSuccess'));
+      toast.success(m["users.messages.passwordChangeSuccess"]());
       form.reset();
       onOpenChange(false);
     } catch (error) {
-      toast.error(t('users.messages.passwordChangeError'));
+      toast.error(m["users.messages.passwordChangeError"]());
     }
   };
 
@@ -64,7 +63,7 @@ export function UsersChangePasswordDialog({ currentRow, open, onOpenChange }: Pr
     >
       <DialogContent className='sm:max-w-md'>
         <DialogHeader className='text-left'>
-          <DialogTitle>{t('users.dialogs.changePassword.title')}</DialogTitle>
+          <DialogTitle>{m["users.dialogs.changePassword.title"]()}</DialogTitle>
           <DialogDescription>
             {t('users.dialogs.changePassword.description', {
               firstName: currentRow?.firstName || '',
@@ -82,9 +81,9 @@ export function UsersChangePasswordDialog({ currentRow, open, onOpenChange }: Pr
               name='newPassword'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('users.form.newPassword')}</FormLabel>
+                  <FormLabel>{m["users.form.newPassword"]()}</FormLabel>
                   <FormControl>
-                    <Input type='password' placeholder={t('users.form.placeholders.newPassword')} {...field} />
+                    <Input type='password' placeholder={m["users.form.placeholders.newPassword"]()} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -96,9 +95,9 @@ export function UsersChangePasswordDialog({ currentRow, open, onOpenChange }: Pr
               name='confirmPassword'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('users.form.confirmNewPassword')}</FormLabel>
+                  <FormLabel>{m["users.form.confirmNewPassword"]()}</FormLabel>
                   <FormControl>
-                    <Input type='password' placeholder={t('users.form.placeholders.confirmNewPassword')} {...field} />
+                    <Input type='password' placeholder={m["users.form.placeholders.confirmNewPassword"]()} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -109,10 +108,10 @@ export function UsersChangePasswordDialog({ currentRow, open, onOpenChange }: Pr
 
         <DialogFooter>
           <Button variant='outline' onClick={() => onOpenChange(false)}>
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           <Button type='submit' form='change-password-form' disabled={form.formState.isSubmitting}>
-            {form.formState.isSubmitting ? t('users.buttons.changing') : t('users.buttons.changePassword')}
+            {form.formState.isSubmitting ? m["users.buttons.changing"]() : m["users.buttons.changePassword"]()}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -13,7 +13,6 @@ import {
 } from '@tanstack/react-table';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -24,6 +23,7 @@ import type { DateTimeRangeValue } from '@/utils/date-range';
 import { Thread, ThreadConnection } from '../data/schema';
 import { ThreadsTableToolbar } from './data-table-toolbar';
 import { useThreadsColumns } from './threads-columns';
+import * as m from '@/paraglide/messages';
 
 const MotionTableRow = motion(TableRow);
 
@@ -71,7 +71,6 @@ export function ThreadsTable({
   autoRefresh = false,
   onAutoRefreshChange,
 }: ThreadsTableProps) {
-  const { t } = useTranslation();
   const threadsColumns = useThreadsColumns();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -170,7 +169,7 @@ export function ThreadsTable({
             ) : (
               <TableRow className='!bg-[var(--table-background)]'>
                 <TableCell colSpan={threadsColumns.length} className='h-24 !bg-[var(--table-background)] text-center'>
-                  {t('common.noData')}
+                  {m["common.noData"]()}
                 </TableCell>
               </TableRow>
             )}

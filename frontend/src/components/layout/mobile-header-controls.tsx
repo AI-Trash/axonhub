@@ -1,14 +1,13 @@
-import { useTranslation } from 'react-i18next';
 
 import { LanguageSwitch } from '@/components/language-switch';
 import { ThemeSwitch } from '@/components/theme-switch';
+import * as m from '@/paraglide/messages';
 
 export function MobileHeaderControls() {
-  const { t } = useTranslation();
   return (
     <div
       role='toolbar'
-      aria-label={t('sidebar.settingsControls')}
+      aria-label={m["sidebar.settingsControls"]()}
       className='flex flex-row items-center justify-end gap-2'
       data-testid='mobile-header-controls'
     >

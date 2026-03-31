@@ -1,13 +1,12 @@
 import { ActivityIcon, CheckCircle2Icon, XCircleIcon } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatNumber } from '@/utils/format-number';
 
 import { useChannelSuccessRates } from '../data/dashboard';
+import * as m from '@/paraglide/messages';
 
 export function ChannelSuccessRate() {
-  const { t } = useTranslation();
   const { data: channels, isLoading, error } = useChannelSuccessRates();
 
   if (isLoading) {
@@ -30,13 +29,13 @@ export function ChannelSuccessRate() {
   if (error) {
     return (
       <div className='text-sm text-red-500'>
-        {t('dashboard.charts.errorLoadingChannelSuccessRate')} {error.message}
+        {m["dashboard.charts.errorLoadingChannelSuccessRate"]()} {error.message}
       </div>
     );
   }
 
   if (!channels || channels.length === 0) {
-    return <div className='text-muted-foreground text-sm'>{t('dashboard.charts.noChannelData')}</div>;
+    return <div className='text-muted-foreground text-sm'>{m["dashboard.charts.noChannelData"]()}</div>;
   }
 
   return (

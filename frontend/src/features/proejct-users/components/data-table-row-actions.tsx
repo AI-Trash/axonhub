@@ -1,7 +1,6 @@
 import { DotsHorizontalIcon } from '@radix-ui/react-icons';
 import { IconEdit, IconUserMinus } from '@tabler/icons-react';
 import { Row } from '@tanstack/react-table';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -15,13 +14,13 @@ import { usePermissions } from '@/hooks/usePermissions';
 
 import { useUsers } from '../context/users-context';
 import { User } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface DataTableRowActionsProps {
   row: Row<User>;
 }
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
-  const { t } = useTranslation();
   const { setOpen, setCurrentRow } = useUsers();
   const { userPermissions } = usePermissions();
 
@@ -36,7 +35,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <DropdownMenuTrigger asChild>
           <Button variant='ghost' className='data-[state=open]:bg-muted flex h-8 w-8 p-0'>
             <DotsHorizontalIcon className='h-4 w-4' />
-            <span className='sr-only'>{t('common.actions.openMenu')}</span>
+            <span className='sr-only'>{m["common.actions.openMenu"]()}</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-[160px]'>
@@ -49,7 +48,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               }}
             >
               <IconEdit size={16} className='mr-2' />
-              {t('common.actions.edit')}
+              {m["common.actions.edit"]()}
             </DropdownMenuItem>
           )}
 
@@ -66,7 +65,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               className='text-red-500!'
             >
               <IconUserMinus size={16} className='mr-2' />
-              {t('users.actions.removeFromProject')}
+              {m["users.actions.removeFromProject"]()}
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>

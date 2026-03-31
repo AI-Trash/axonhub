@@ -13,7 +13,6 @@ import {
 } from '@tanstack/react-table';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -24,6 +23,7 @@ import type { DateTimeRangeValue } from '@/utils/date-range';
 import { Trace, TraceConnection } from '../data/schema';
 import { DataTableToolbar } from './data-table-toolbar';
 import { useTracesColumns } from './traces-columns';
+import * as m from '@/paraglide/messages';
 
 const MotionTableRow = motion.create(TableRow);
 const MotionExpandedRow = motion.create(TableRow);
@@ -72,7 +72,6 @@ export function TracesTable({
   autoRefresh = false,
   onAutoRefreshChange,
 }: TracesTableProps) {
-  const { t } = useTranslation();
   const tracesColumns = useTracesColumns();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -173,7 +172,7 @@ export function TracesTable({
             ) : (
               <TableRow className='!bg-[var(--table-background)]'>
                 <TableCell colSpan={tracesColumns.length} className='h-24 !bg-[var(--table-background)] text-center'>
-                  {t('common.noData')}
+                  {m["common.noData"]()}
                 </TableCell>
               </TableRow>
             )}

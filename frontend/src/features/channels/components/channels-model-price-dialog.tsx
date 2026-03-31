@@ -1,9 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { IconPlus, IconTrash, IconCopy } from '@tabler/icons-react';
-import type { TFunction } from 'i18next';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useFieldArray, useForm, useWatch, type Control } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -23,17 +21,18 @@ import { useGeneralSettings } from '@/features/system/data/system';
 import { useChannels } from '../context/channels-context';
 import { useChannelModelPrices, useSaveChannelModelPrices } from '../data/channels';
 import { PricingMode, PriceItemCode } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 const priceItemCodes = ['prompt_tokens', 'completion_tokens', 'prompt_cached_tokens', 'prompt_write_cached_tokens'] as const;
 const pricingModes = ['flat_fee', 'usage_per_unit', 'usage_tiered'] as const;
 const promptWriteCacheVariantCodes = ['five_min', 'one_hour'] as const;
 
-const createPriceFormSchema = (t: (key: string) => string) =>
+const createPriceFormSchema = () =>
   z
     .object({
       prices: z.array(
         z.object({
-          modelId: z.string().min(1, { message: t('price.validation.modelRequired') }),
+          modelId: z.string().min(1, { message: m["price.validation.modelRequired"]() }),
           price: z.object({
             items: z.array(
               z.object({
@@ -99,7 +98,7 @@ const createPriceFormSchema = (t: (key: string) => string) =>
       };
 
       const validatePricing = (pricing: PricingLike | null | undefined, pathPrefix: Array<string | number>) => {
-        const requiredMsg = t('price.validation.priceRequired');
+        const requiredMsg = m["price.validation.priceRequired"]();
         const { mode, flatFee, usagePerUnit, usageTiered } = pricing || {};
         if (mode === 'flat_fee' && !flatFee) {
           ctx.addIssue({
@@ -173,7 +172,7 @@ const createPriceFormSchema = (t: (key: string) => string) =>
             indexes.forEach((index) => {
               ctx.addIssue({
                 code: z.ZodIssueCode.custom,
-                message: t('price.duplicateItemCode'),
+                message: m["price.duplicateItemCode"](),
                 path: ['prices', priceIndex, 'price', 'items', index, 'itemCode'],
               });
             });
@@ -196,7 +195,7 @@ const createPriceFormSchema = (t: (key: string) => string) =>
               indexes.forEach((index) => {
                 ctx.addIssue({
                   code: z.ZodIssueCode.custom,
-                  message: t('price.duplicateVariantCode'),
+                  message: m["price.duplicateVariantCode"](),
                   path: ['prices', priceIndex, 'price', 'items', itemIndex, 'promptWriteCacheVariants', index, 'variantCode'],
                 });
               });
@@ -393,7 +392,6 @@ const PriceCard = memo(function PriceCard({
 }: {
   availableModels: string[];
   control: Control<PriceFormData>;
-  t: TFunction;
   priceIndex: number;
   currencyCode?: string;
   onAddItem: (priceIndex: number) => void;
@@ -410,14 +408,14 @@ const PriceCard = memo(function PriceCard({
         {/* Mobile: single column layout */}
         <div className='flex flex-col gap-3 md:hidden'>
           <div className='flex h-8 items-center justify-between'>
-            <FormLabel className='truncate pr-2'>{t('price.model')}</FormLabel>
+            <FormLabel className='truncate pr-2'>{m["price.model"]()}</FormLabel>
             <div className='flex gap-1'>
               <Button
                 type='button'
                 variant='ghost'
                 size='icon-sm'
                 onClick={() => onDuplicatePrice(priceIndex)}
-                title={t('common.actions.duplicate')}
+                title={m["common.actions.duplicate"]()}
               >
                 <IconCopy size={14} />
               </Button>
@@ -440,7 +438,7 @@ const PriceCard = memo(function PriceCard({
                 >
                   <FormControl>
                     <SelectTrigger size='sm' className='h-8 w-full' title={field.value || ''}>
-                      <SelectValue placeholder={t('price.model')} className='truncate' />
+                      <SelectValue placeholder={m["price.model"]()} className='truncate' />
                     </SelectTrigger>
                   </FormControl>
                   <SelectContent>
@@ -456,7 +454,7 @@ const PriceCard = memo(function PriceCard({
             )}
           />
           <div className='flex h-8 items-center'>
-            <FormLabel className='truncate'>{t('price.items')}</FormLabel>
+            <FormLabel className='truncate'>{m["price.items"]()}</FormLabel>
           </div>
           <ModelPriceEditor
             control={control}
@@ -473,20 +471,20 @@ const PriceCard = memo(function PriceCard({
         {/* Desktop: grid layout */}
         <div className='hidden md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,3fr)_auto] md:gap-x-4 md:gap-y-3'>
           <div className='flex h-8 min-w-0 items-center justify-between'>
-            <FormLabel className='truncate pr-2'>{t('price.model')}</FormLabel>
+            <FormLabel className='truncate pr-2'>{m["price.model"]()}</FormLabel>
             <Button
               type='button'
               variant='ghost'
               size='icon-sm'
               onClick={() => onDuplicatePrice(priceIndex)}
-              title={t('common.actions.duplicate')}
+              title={m["common.actions.duplicate"]()}
             >
               <IconCopy size={14} />
             </Button>
           </div>
 
           <div className='flex h-8 min-w-0 items-center'>
-            <FormLabel className='truncate'>{t('price.items')}</FormLabel>
+            <FormLabel className='truncate'>{m["price.items"]()}</FormLabel>
           </div>
 
           <div className='flex items-start justify-end'>
@@ -510,7 +508,7 @@ const PriceCard = memo(function PriceCard({
                   >
                     <FormControl>
                       <SelectTrigger size='sm' className='h-8 w-full min-w-0' title={field.value || ''}>
-                        <SelectValue placeholder={t('price.model')} className='truncate' />
+                        <SelectValue placeholder={m["price.model"]()} className='truncate' />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
@@ -548,7 +546,6 @@ const PriceCard = memo(function PriceCard({
 });
 
 export function ChannelsModelPriceDialog() {
-  const { t } = useTranslation();
   const { open, setOpen, currentRow } = useChannels();
   const { data: settings } = useGeneralSettings();
   const isOpen = open === 'price';
@@ -556,7 +553,7 @@ export function ChannelsModelPriceDialog() {
   const savePrices = useSaveChannelModelPrices();
   const [dialogContent, setDialogContent] = useState<HTMLDivElement | null>(null);
 
-  const formSchema = useMemo(() => createPriceFormSchema(t), [t]);
+  const formSchema = useMemo(() => createPriceFormSchema(), []);
   const form = useForm<PriceFormData>({
     resolver: zodResolver(formSchema),
     mode: 'onChange',
@@ -716,7 +713,7 @@ export function ChannelsModelPriceDialog() {
       if (!providersData) return;
       const found = findProviderModelById(providersData, modelId, providerId);
       if (!found) {
-        toast.error(t('price.apply.notFound', { modelId }));
+        toast.error(m["price.apply.notFound"]({ modelId }));
         return;
       }
 
@@ -724,7 +721,7 @@ export function ChannelsModelPriceDialog() {
       const existingIndex = prices.findIndex((p) => p?.modelId === modelId);
       if (existingIndex >= 0) {
         applyProviderModelToIndex(existingIndex, found.model);
-        toast.success(t('price.apply.applied', { modelId }));
+        toast.success(m["price.apply.applied"]({ modelId }));
         return;
       }
 
@@ -732,7 +729,7 @@ export function ChannelsModelPriceDialog() {
         modelId,
         price: { items: buildItemsFromProviderModel(found.model, multiplier) },
       });
-      toast.success(t('price.apply.added', { modelId }));
+      toast.success(m["price.apply.added"]({ modelId }));
     },
     [append, applyProviderModelToIndex, getValues, providersData, t, multiplier]
   );
@@ -744,7 +741,7 @@ export function ChannelsModelPriceDialog() {
       const found = findProviderModelById(providersData, modelId, preferredProviderId);
       if (!found) return;
       applyProviderModelToIndex(priceIndex, found.model);
-      toast.success(t('price.apply.applied', { modelId }));
+      toast.success(m["price.apply.applied"]({ modelId }));
     },
     [applyProviderModelToIndex, defaultProviderId, providersData, selectedProviderId, t]
   );
@@ -826,7 +823,7 @@ export function ChannelsModelPriceDialog() {
         modelId: '',
         price: structuredClone(priceData),
       });
-      toast.success(t('common.success.duplicated'));
+      toast.success(m["common.success.duplicated"]());
     },
     [getValues, append, t]
   );
@@ -835,18 +832,18 @@ export function ChannelsModelPriceDialog() {
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent ref={setDialogContent} className='flex h-[85vh] max-h-[800px] flex-col overflow-hidden sm:max-w-4xl'>
         <DialogHeader>
-          <DialogTitle>{t('price.title')}</DialogTitle>
-          <DialogDescription>{t('price.description', { name: currentRow?.name })}</DialogDescription>
+          <DialogTitle>{m["price.title"]()}</DialogTitle>
+          <DialogDescription>{m["price.description"]({ name: currentRow?.name })}</DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className='flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden'>
             <Card className='mb-4 max-h-[15vh] shrink-0 overflow-y-auto md:max-h-none md:overflow-visible'>
               <CardContent className='pt-0 md:pt-4'>
-                <div className='text-muted-foreground mb-3 text-xs'>{t('price.apply.usdHint')}</div>
+                <div className='text-muted-foreground mb-3 text-xs'>{m["price.apply.usdHint"]()}</div>
                 <div className='grid grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_80px_auto] md:items-end'>
                   <div className='min-w-0'>
-                    <FormLabel className='text-sm'>{t('price.apply.provider')}</FormLabel>
+                    <FormLabel className='text-sm'>{m["price.apply.provider"]()}</FormLabel>
                     <AutoCompleteSelect
                       selectedValue={selectedProviderId}
                       onSelectedValueChange={(value) => {
@@ -854,14 +851,14 @@ export function ChannelsModelPriceDialog() {
                         setSelectedModelId('');
                       }}
                       items={providerOptions}
-                      placeholder={t('price.apply.providerPlaceholder')}
-                      emptyMessage={t('price.apply.empty')}
+                      placeholder={m["price.apply.providerPlaceholder"]()}
+                      emptyMessage={m["price.apply.empty"]()}
                       portalContainer={dialogContent}
                       inputClassName='h-8'
                     />
                   </div>
                   <div className='min-w-0'>
-                    <FormLabel className='text-sm'>{t('price.apply.model')}</FormLabel>
+                    <FormLabel className='text-sm'>{m["price.apply.model"]()}</FormLabel>
                     <AutoCompleteSelect
                       selectedValue={selectedModelId}
                       onSelectedValueChange={(value) => {
@@ -869,14 +866,14 @@ export function ChannelsModelPriceDialog() {
                         if (value) applyProviderModelById(value, selectedProviderId);
                       }}
                       items={providerModelOptions}
-                      placeholder={t('price.apply.modelPlaceholder')}
-                      emptyMessage={t('price.apply.empty')}
+                      placeholder={m["price.apply.modelPlaceholder"]()}
+                      emptyMessage={m["price.apply.empty"]()}
                       portalContainer={dialogContent}
                       inputClassName='h-8'
                     />
                   </div>
                   <div className='min-w-0'>
-                    <FormLabel className='text-sm'>{t('price.apply.multiplier')}</FormLabel>
+                    <FormLabel className='text-sm'>{m["price.apply.multiplier"]()}</FormLabel>
                     <Input
                       type='number'
                       value={multiplier}
@@ -921,16 +918,16 @@ export function ChannelsModelPriceDialog() {
                         });
 
                         if (applied || added) {
-                          toast.success(t('price.apply.bulkSuccess', { applied, added }));
+                          toast.success(m["price.apply.bulkSuccess"]({ applied, added }));
                         }
                         if (missed) {
-                          toast.warning(t('price.apply.bulkMissed', { missed }));
+                          toast.warning(m["price.apply.bulkMissed"]({ missed }));
                         }
                       }}
                       disabled={supportedModels.length === 0}
-                      title={t('price.apply.bulk')}
+                      title={m["price.apply.bulk"]()}
                     >
-                      {t('price.apply.bulk')}
+                      {m["price.apply.bulk"]()}
                     </Button>
                   </div>
                 </div>
@@ -943,7 +940,6 @@ export function ChannelsModelPriceDialog() {
                     key={field.id}
                     availableModels={availableModelsByIndex[index] || supportedModels}
                     control={control}
-                    t={t}
                     priceIndex={index}
                     currencyCode={settings?.currencyCode}
                     onAddItem={addItem}
@@ -958,7 +954,7 @@ export function ChannelsModelPriceDialog() {
 
                 {fields.length === 0 && !isLoading && (
                   <div className='text-muted-foreground flex flex-col items-center justify-center py-12'>
-                    <p>{t('price.noPrices')}</p>
+                    <p>{m["price.noPrices"]()}</p>
                   </div>
                 )}
               </div>
@@ -967,14 +963,14 @@ export function ChannelsModelPriceDialog() {
             <DialogFooter className='mt-6 shrink-0 gap-2 sm:justify-between'>
               <Button type='button' variant='outline' onClick={addPrice}>
                 <IconPlus className='mr-2 h-4 w-4' />
-                {t('price.addPrice')}
+                {m["price.addPrice"]()}
               </Button>
               <div className='flex gap-2'>
                 <Button type='button' variant='ghost' onClick={handleClose}>
-                  {t('common.buttons.cancel')}
+                  {m["common.buttons.cancel"]()}
                 </Button>
                 <Button type='submit' disabled={savePrices.isPending}>
-                  {t('common.buttons.save')}
+                  {m["common.buttons.save"]()}
                 </Button>
               </div>
             </DialogFooter>

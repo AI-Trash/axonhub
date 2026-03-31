@@ -1,20 +1,18 @@
 import { format } from 'date-fns';
 import { memo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { formatDuration } from '@/utils/format-duration';
 
 import { ChannelProbePoint } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface ChannelHealthCellProps {
   points: ChannelProbePoint[];
 }
 
 export const ChannelHealthCell = memo(({ points }: ChannelHealthCellProps) => {
-  const { t } = useTranslation();
-
   if (!points || points.length === 0) {
     return <span className='text-muted-foreground text-xs'>-</span>;
   }
@@ -51,17 +49,17 @@ export const ChannelHealthCell = memo(({ points }: ChannelHealthCellProps) => {
             <TooltipContent>
               <div className='space-y-1 text-xs'>
                 <div>
-                  {t('channels.columns.healthTooltip.probeTime')}: {probeTime}
+                  {m["channels.columns.healthTooltip.probeTime"]()}: {probeTime}
                 </div>
                 <div>
-                  {t('channels.columns.healthTooltip.successRate')}: {point.successRequestCount}/{point.totalRequestCount}
+                  {m["channels.columns.healthTooltip.successRate"]()}: {point.successRequestCount}/{point.totalRequestCount}
                 </div>
                 <div>
-                  {t('channels.columns.healthTooltip.firstTokenLatency')}:{' '}
+                  {m["channels.columns.healthTooltip.firstTokenLatency"]()}:{' '}
                   {point.avgTimeToFirstTokenMs != null ? formatDuration(point.avgTimeToFirstTokenMs) : '-'}
                 </div>
                 <div>
-                  {t('channels.columns.healthTooltip.tokensPerSecond')}:{' '}
+                  {m["channels.columns.healthTooltip.tokensPerSecond"]()}:{' '}
                   {point.avgTokensPerSecond != null ? point.avgTokensPerSecond.toFixed(1) : '-'}
                 </div>
               </div>

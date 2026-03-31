@@ -14,16 +14,15 @@ import {
   IconNote,
 } from '@tabler/icons-react';
 import { Command } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 import { useMe } from '@/features/auth/data/auth';
 import { useRoutePermissions } from '@/hooks/useRoutePermissions';
 import { useAuthStore } from '@/stores/authStore';
 
 import { type SidebarData, type NavGroup, type NavLink } from './components/layout/types';
+import * as m from '@/paraglide/messages';
 
 export function useSidebarData(): SidebarData {
-  const { t } = useTranslation();
   const { user: authUser } = useAuthStore((state) => state.auth);
   const { data: meData } = useMe();
   const { filterNavGroups } = useRoutePermissions();
@@ -63,45 +62,45 @@ export function useSidebarData(): SidebarData {
   // 原始导航组配置
   const rawNavGroups: NavGroup[] = [
     {
-      title: t('sidebar.groups.admin'),
+      title: m["sidebar.groups.admin"](),
       items: [
         {
-          title: t('sidebar.items.dashboard'),
+          title: m["sidebar.items.dashboard"](),
           url: '/',
           icon: IconLayoutDashboard,
         } as NavLink,
         {
-          title: t('sidebar.items.projects'),
+          title: m["sidebar.items.projects"](),
           url: '/projects',
           icon: IconPackages,
         } as NavLink,
         {
-          title: t('sidebar.items.channels'),
+          title: m["sidebar.items.channels"](),
           url: '/channels',
           icon: IconAi,
         } as NavLink,
         {
-          title: t('sidebar.items.models'),
+          title: m["sidebar.items.models"](),
           url: '/models',
           icon: IconRobot,
         } as NavLink,
         {
-          title: t('sidebar.items.promptProtectionRules'),
+          title: m["sidebar.items.promptProtectionRules"](),
           url: '/prompt-protection-rules',
           icon: IconShield,
         } as NavLink,
         {
-          title: t('sidebar.items.dataStorages'),
+          title: m["sidebar.items.dataStorages"](),
           url: '/data-storages',
           icon: IconDatabase,
         } as NavLink,
         {
-          title: t('sidebar.items.users'),
+          title: m["sidebar.items.users"](),
           url: '/users',
           icon: IconUsers,
         } as NavLink,
         {
-          title: t('sidebar.items.roles'),
+          title: m["sidebar.items.roles"](),
           url: '/roles',
           icon: IconShield,
         } as NavLink,
@@ -113,61 +112,61 @@ export function useSidebarData(): SidebarData {
       ],
     },
     {
-      title: t('sidebar.groups.project'),
+      title: m["sidebar.groups.project"](),
       items: [
         {
-          title: t('sidebar.items.apiKeys'),
+          title: m["sidebar.items.apiKeys"](),
           url: '/project/api-keys',
           icon: IconKey,
         } as NavLink,
         {
-          title: t('sidebar.items.prompts'),
+          title: m["sidebar.items.prompts"](),
           url: '/project/prompts',
           icon: IconNote,
         } as NavLink,
         {
-          title: t('sidebar.items.requests'),
+          title: m["sidebar.items.requests"](),
           url: '/project/requests',
           icon: IconActivity,
         } as NavLink,
         // {
-        //   title: t('sidebar.items.usageLogs'),
+        //   title: m["sidebar.items.usageLogs"](),
         //   url: '/project/usage-logs',
         //   icon: IconActivityHeartbeat,
         // } as NavLink,
         {
-          title: t('sidebar.items.traces'),
+          title: m["sidebar.items.traces"](),
           url: '/project/traces',
           icon: IconAB2,
         } as NavLink,
         {
-          title: t('sidebar.items.threads'),
+          title: m["sidebar.items.threads"](),
           url: '/project/threads',
           icon: IconBaselineDensityMedium,
         } as NavLink,
 
         {
-          title: t('sidebar.items.users'),
+          title: m["sidebar.items.users"](),
           url: '/project/users',
           icon: IconUsers,
         } as NavLink,
         {
-          title: t('sidebar.items.roles'),
+          title: m["sidebar.items.roles"](),
           url: '/project/roles',
           icon: IconShield,
         } as NavLink,
         {
-          title: t('sidebar.items.playground'),
+          title: m["sidebar.items.playground"](),
           url: '/project/playground',
           icon: IconRobot,
         } as NavLink,
       ],
     },
     {
-      title: t('sidebar.groups.settings'),
+      title: m["sidebar.groups.settings"](),
       items: [
         {
-          title: t('sidebar.items.system'),
+          title: m["sidebar.items.system"](),
           url: '/system',
           icon: IconSettings,
           mobileOnly: true,
@@ -202,11 +201,11 @@ export function useSidebarData(): SidebarData {
     },
     teams: [
       {
-        name: t('sidebar.team.name'),
+        name: m["sidebar.team.name"](),
         logo: Command,
         description: '',
         // DO NOT USE THIS
-        // plan: t('sidebar.team.plan'),
+        // plan: m["sidebar.team.plan"](),
       },
     ],
     navGroups: filteredNavGroups,

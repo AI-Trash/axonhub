@@ -1,10 +1,11 @@
 import { useMemo, memo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/lib/utils';
 
 import type { ChannelTypeCount } from '../data/channels';
 import { CHANNEL_CONFIGS } from '../data/config_channels';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 interface ChannelsTypeTabsProps {
   typeCounts: ChannelTypeCount[];
@@ -48,8 +49,6 @@ function groupTypesByPrefix(typeCounts: ChannelTypeCount[]): GroupedTypeCount[] 
 }
 
 export const ChannelsTypeTabs = memo(function ChannelsTypeTabs({ typeCounts, selectedTab, onTabChange }: ChannelsTypeTabsProps) {
-  const { t } = useTranslation();
-
   // Group types by prefix and get top 8
   const groupedTypes = useMemo(() => {
     const groups = groupTypesByPrefix(typeCounts);
@@ -89,7 +88,7 @@ export const ChannelsTypeTabs = memo(function ChannelsTypeTabs({ typeCounts, sel
               : 'bg-card border-border text-foreground hover:border-primary hover:text-primary border'
           )}
         >
-          {t('channels.tabs.all')}{' '}
+          {m["channels.tabs.all"]()}{' '}
           <span
             className={cn(
               'bg-muted text-muted-foreground ml-1 rounded-full px-1.5 text-xs',
@@ -115,7 +114,7 @@ export const ChannelsTypeTabs = memo(function ChannelsTypeTabs({ typeCounts, sel
               )}
             >
               {Icon && <Icon size={16} />}
-              {t(`channels.types.${prefix}`)}{' '}
+              {dynamicTranslation(`channels.types.${prefix}`)}{' '}
               <span
                 className={cn(
                   'bg-muted text-muted-foreground rounded-full px-1.5 text-xs',

@@ -3,7 +3,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useState, useEffect, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -18,6 +17,7 @@ import { graphqlRequest } from '@/gql/graphql';
 import { ROLES_QUERY } from '@/gql/roles';
 
 import { User } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 // GraphQL query to get user's existing projects
 const USER_PROJECTS_QUERY = `
@@ -46,9 +46,9 @@ const ADD_USER_TO_PROJECT_MUTATION = `
   }
 `;
 
-const createFormSchema = (t: (key: string) => string) =>
+const createFormSchema = () =>
   z.object({
-    projectId: z.string().min(1, t('users.validation.projectRequired')),
+    projectId: z.string().min(1, m["users.validation.projectRequired"]()),
     isOwner: z.boolean().optional(),
     roleIDs: z.array(z.string()).optional(),
     scopes: z.array(z.string()).optional(),
@@ -68,7 +68,6 @@ interface Props {
 }
 
 export function UsersAddToProjectDialog({ currentRow, open, onOpenChange }: Props) {
-  const { t } = useTranslation();
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -149,12 +148,12 @@ export function UsersAddToProjectDialog({ currentRow, open, onOpenChange }: Prop
 
         setRoles(rolesResponse.roles.edges.map((edge) => edge.node));
       } catch (error) {
-        toast.error(t('common.errors.userLoadFailed'));
+        toast.error(m["common.errors.userLoadFailed"]());
       } finally {
         setLoading(false);
       }
     },
-    [t]
+    []
   );
 
   useEffect(() => {
@@ -183,11 +182,11 @@ export function UsersAddToProjectDialog({ currentRow, open, onOpenChange }: Prop
         headers
       );
 
-      toast.success(t('users.messages.addToProjectSuccess'));
+      toast.success(m["users.messages.addToProjectSuccess"]());
       form.reset();
       onOpenChange(false);
     } catch (error) {
-      toast.error(t('common.errors.somethingWentWrong'));
+      toast.error(m["common.errors.somethingWentWrong"]());
     } finally {
       setSubmitting(false);
     }
@@ -219,13 +218,12 @@ export function UsersAddToProjectDialog({ currentRow, open, onOpenChange }: Prop
     >
       <DialogContent className='sm:max-w-2xl' ref={setDialogContent}>
         <DialogHeader className='text-left'>
-          <DialogTitle>{t('users.dialogs.addToProject.title')}</DialogTitle>
+          <DialogTitle>{m["users.dialogs.addToProject.title"]()}</DialogTitle>
           <DialogDescription>
             {currentRow &&
-              t('users.dialogs.addToProject.description', {
+              m["users.dialogs.addToProject.description"]({
                 firstName: currentRow.firstName,
-                lastName: currentRow.lastName,
-              })}
+                lastName: currentRow.lastName })}
           </DialogDescription>
         </DialogHeader>
 
@@ -237,11 +235,11 @@ export function UsersAddToProjectDialog({ currentRow, open, onOpenChange }: Prop
                 name='projectId'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('users.form.selectProject')}</FormLabel>
+                    <FormLabel>{m["users.form.selectProject"]()}</FormLabel>
                     <SelectDropdown
                       defaultValue={field.value}
                       onValueChange={field.onChange}
-                      placeholder={t('users.form.selectProjectPlaceholder')}
+                      placeholder={m["users.form.selectProjectPlaceholder"]()}
                       items={projects}
                     />
                     <FormMessage />
@@ -260,8 +258,8 @@ export function UsersAddToProjectDialog({ currentRow, open, onOpenChange }: Prop
                           <Checkbox checked={field.value} onCheckedChange={field.onChange} />
                         </FormControl>
                         <div className='space-y-1 leading-none'>
-                          <FormLabel>{t('users.form.isOwner')}</FormLabel>
-                          <p className='text-muted-foreground text-sm'>{t('users.form.ownerDescription')}</p>
+                          <FormLabel>{m["users.form.isOwner"]()}</FormLabel>
+                          <p className='text-muted-foreground text-sm'>{m["users.form.ownerDescription"]()}</p>
                         </div>
                       </FormItem>
                     )}
@@ -269,11 +267,11 @@ export function UsersAddToProjectDialog({ currentRow, open, onOpenChange }: Prop
 
                   {/* Roles Section */}
                   <div className='space-y-3'>
-                    <FormLabel>{t('users.form.projectRoles')}</FormLabel>
+                    <FormLabel>{m["users.form.projectRoles"]()}</FormLabel>
                     {loading ? (
-                      <div>{t('users.form.loadingRoles')}</div>
+                      <div>{m["users.form.loadingRoles"]()}</div>
                     ) : roles.length === 0 ? (
-                      <div className='text-muted-foreground text-sm'>{t('users.form.noProjectRoles')}</div>
+                      <div className='text-muted-foreground text-sm'>{m["users.form.noProjectRoles"]()}</div>
                     ) : (
                       <div className='grid grid-cols-2 gap-2'>
                         {roles.map((role) => (
@@ -301,7 +299,7 @@ export function UsersAddToProjectDialog({ currentRow, open, onOpenChange }: Prop
                     name='scopes'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('users.form.projectScopes')}</FormLabel>
+                        <FormLabel>{m["users.form.projectScopes"]()}</FormLabel>
                         <FormControl>
                           <ScopesSelect value={field.value || []} onChange={field.onChange} portalContainer={dialogContent} />
                         </FormControl>
@@ -317,7 +315,7 @@ export function UsersAddToProjectDialog({ currentRow, open, onOpenChange }: Prop
 
         <DialogFooter>
           <Button type='submit' form='add-to-project-form' disabled={submitting}>
-            {submitting ? t('users.buttons.adding') : t('users.buttons.addToProject')}
+            {submitting ? m["users.buttons.adding"]() : m["users.buttons.addToProject"]()}
           </Button>
         </DialogFooter>
       </DialogContent>

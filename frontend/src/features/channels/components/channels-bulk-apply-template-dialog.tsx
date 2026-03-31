@@ -1,6 +1,5 @@
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
@@ -10,6 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 
 import { Channel } from '../data/schema';
 import { useChannelOverrideTemplates, useApplyChannelOverrideTemplate } from '../data/templates';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   open: boolean;
@@ -18,7 +18,6 @@ interface Props {
 }
 
 export function ChannelsBulkApplyTemplateDialog({ open, onOpenChange, selectedChannels }: Props) {
-  const { t } = useTranslation();
   const applyTemplate = useApplyChannelOverrideTemplate();
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [templateSearchOpen, setTemplateSearchOpen] = useState(false);
@@ -62,14 +61,14 @@ export function ChannelsBulkApplyTemplateDialog({ open, onOpenChange, selectedCh
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className='sm:max-w-[600px]'>
         <DialogHeader>
-          <DialogTitle>{t('channels.templates.bulk.title')}</DialogTitle>
-          <DialogDescription>{t('channels.templates.bulk.description', { count: selectedChannels.length })}</DialogDescription>
+          <DialogTitle>{m["channels.templates.bulk.title"]()}</DialogTitle>
+          <DialogDescription>{m["channels.templates.bulk.description"]({ count: selectedChannels.length })}</DialogDescription>
         </DialogHeader>
 
         <div className='space-y-4 py-4'>
           {/* Template Selector */}
           <div className='space-y-2'>
-            <Label>{t('channels.templates.selectTemplate')}</Label>
+            <Label>{m["channels.templates.selectTemplate"]()}</Label>
             <Popover open={templateSearchOpen} onOpenChange={setTemplateSearchOpen}>
               <PopoverTrigger asChild>
                 <Button
@@ -82,24 +81,24 @@ export function ChannelsBulkApplyTemplateDialog({ open, onOpenChange, selectedCh
                   {isLoading ? (
                     <>
                       <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                      {t('common.loading')}
+                      {m["common.loading"]()}
                     </>
                   ) : selectedTemplateId ? (
                     templates.find((t) => t.id === selectedTemplateId)?.name
                   ) : (
-                    t('channels.templates.selectTemplate')
+                    m["channels.templates.selectTemplate"]()
                   )}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className='w-[550px] p-0'>
                 <Command>
                   <CommandInput
-                    placeholder={t('channels.templates.searchPlaceholder')}
+                    placeholder={m["channels.templates.searchPlaceholder"]()}
                     value={templateSearchValue}
                     onValueChange={setTemplateSearchValue}
                   />
                   <CommandList>
-                    <CommandEmpty>{t('channels.templates.noTemplates')}</CommandEmpty>
+                    <CommandEmpty>{m["channels.templates.noTemplates"]()}</CommandEmpty>
                     <CommandGroup>
                       {templates.map((template) => (
                         <CommandItem
@@ -126,23 +125,23 @@ export function ChannelsBulkApplyTemplateDialog({ open, onOpenChange, selectedCh
           {/* Info Message */}
           {selectedTemplateId && (
             <div className='bg-muted/50 rounded-md border p-3'>
-              <p className='text-muted-foreground text-sm'>{t('channels.templates.bulk.applyInfo')}</p>
+              <p className='text-muted-foreground text-sm'>{m["channels.templates.bulk.applyInfo"]()}</p>
             </div>
           )}
         </div>
 
         <DialogFooter>
           <Button variant='outline' onClick={handleClose} disabled={applyTemplate.isPending}>
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           <Button onClick={handleApply} disabled={!selectedTemplateId || applyTemplate.isPending}>
             {applyTemplate.isPending ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                {t('channels.templates.bulk.applying')}
+                {m["channels.templates.bulk.applying"]()}
               </>
             ) : (
-              t('channels.templates.bulk.apply', { count: selectedChannels.length })
+              m["channels.templates.bulk.apply"]({ count: selectedChannels.length })
             )}
           </Button>
         </DialogFooter>

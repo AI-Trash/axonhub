@@ -2,7 +2,6 @@ import { IconSettings } from '@tabler/icons-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { LanguageSwitch } from '@/components/language-switch';
@@ -15,10 +14,10 @@ import { checkProviderQuotas } from '@/features/system/data/quotas';
 import { useBrandSettings } from '@/features/system/data/system';
 
 import { ProjectSwitcher } from './project-switcher';
+import * as m from '@/paraglide/messages';
 
 export function AppHeader() {
   const { data: brandSettings } = useBrandSettings();
-  const { t } = useTranslation();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const queryClient = useQueryClient();
   const { isMobile } = useSidebar();
@@ -30,10 +29,10 @@ export function AppHeader() {
     },
     onSuccess: () => {
       void queryClient.refetchQueries({ queryKey: ['provider-quotas'] });
-      toast.success(t('system.providerQuota.refresh.success'));
+      toast.success(m["system.providerQuota.refresh.success"]());
     },
     onError: (error: any) => {
-      toast.error(error.message || t('system.providerQuota.refresh.failure'));
+      toast.error(error.message || m["system.providerQuota.refresh.failure"]());
     },
   });
 

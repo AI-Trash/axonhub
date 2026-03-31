@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 
 import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
 import { useSelectedProjectId } from '@/stores/projectStore';
 
 import { ThreadConnection, ThreadDetail, threadConnectionSchema, threadDetailSchema } from './schema';
+import * as m from '@/paraglide/messages';
 
 type ThreadOrderField = 'CREATED_AT' | 'UPDATED_AT';
 
@@ -128,7 +128,6 @@ function buildThreadDetailQuery() {
 }
 
 export function useThreads(variables?: { first?: number; after?: string; orderBy?: ThreadOrder; where?: ThreadWhereInput }) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
   const selectedProjectId = useSelectedProjectId();
 
@@ -149,7 +148,7 @@ export function useThreads(variables?: { first?: number; after?: string; orderBy
         const data = await graphqlRequest<{ threads: ThreadConnection }>(query, finalVariables, headers);
         return threadConnectionSchema.parse(data?.threads);
       } catch (error) {
-        handleError(error, t('threads.errors.fetchList'));
+        handleError(error, m["threads.errors.fetchList"]());
         throw error;
       }
     },
@@ -171,7 +170,6 @@ export function useThreadDetail({
     direction: OrderDirection;
   };
 }) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
   const selectedProjectId = useSelectedProjectId();
 
@@ -191,12 +189,12 @@ export function useThreadDetail({
 
         const data = await graphqlRequest<{ node?: ThreadDetail | null }>(query, variables, headers);
         if (!data?.node) {
-          throw new Error(t('threads.errors.notFound'));
+          throw new Error(m["threads.errors.notFound"]());
         }
 
         return threadDetailSchema.parse(data.node);
       } catch (error) {
-        handleError(error, t('threads.errors.fetchDetail'));
+        handleError(error, m["threads.errors.fetchDetail"]());
         throw error;
       }
     },

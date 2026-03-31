@@ -4,16 +4,15 @@ import { driver } from 'driver.js';
 import { useEffect, useRef } from 'react';
 
 import 'driver.js/dist/driver.css';
-import { useTranslation } from 'react-i18next';
 
 import { useCompleteSystemModelSettingOnboarding } from '@/features/system/data/system';
+import * as m from '@/paraglide/messages';
 
 interface ModelsOnboardingFlowProps {
   onComplete?: () => void;
 }
 
 export function ModelsOnboardingFlow({ onComplete }: ModelsOnboardingFlowProps) {
-  const { t } = useTranslation();
   const completeOnboarding = useCompleteSystemModelSettingOnboarding();
   const hasStartedRef = useRef(false);
 
@@ -41,8 +40,8 @@ export function ModelsOnboardingFlow({ onComplete }: ModelsOnboardingFlowProps) 
           {
             element: '[data-settings-button]',
             popover: {
-              title: t('models.onboarding.steps.settingsButton.title'),
-              description: t('models.onboarding.steps.settingsButton.description'),
+              title: m["models.onboarding.steps.settingsButton.title"](),
+              description: m["models.onboarding.steps.settingsButton.description"](),
               side: 'bottom',
               align: 'end',
               showButtons: [],

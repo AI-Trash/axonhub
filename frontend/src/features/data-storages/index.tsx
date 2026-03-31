@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -13,9 +12,9 @@ import { DataStoragesPrimaryButtons } from './components/data-storages-primary-b
 import { DataStoragesTable } from './components/data-storages-table';
 import DataStoragesProvider from './context/data-storages-context';
 import { useDataStorages } from './data/data-storages';
+import * as m from '@/paraglide/messages';
 
 function DataStoragesContent() {
-  const { t } = useTranslation();
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
     defaultPageSize: 20,
     pageSizeStorageKey: 'data-storages-table-page-size',
@@ -87,7 +86,7 @@ function DataStoragesContent() {
     resetCursor();
   };
 
-  const columns = createColumns(t, defaultDataStorageID ?? undefined);
+  const columns = createColumns(defaultDataStorageID ?? undefined);
 
   return (
     <div className='flex flex-1 flex-col overflow-hidden'>
@@ -112,16 +111,14 @@ function DataStoragesContent() {
 }
 
 export default function DataStoragesManagement() {
-  const { t } = useTranslation();
-
   return (
     <DataStoragesProvider>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('dataStorages.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('dataStorages.description')}</p>
-            <p className='text-muted-foreground text-sm'>{t('dataStorages.llmStorageHint')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["dataStorages.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["dataStorages.description"]()}</p>
+            <p className='text-muted-foreground text-sm'>{m["dataStorages.llmStorageHint"]()}</p>
           </div>
           <DataStoragesPrimaryButtons />
         </div>

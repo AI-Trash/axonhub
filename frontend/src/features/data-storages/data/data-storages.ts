@@ -1,5 +1,5 @@
+import * as m from '@/paraglide/messages';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
@@ -132,7 +132,6 @@ const UPDATE_DATA_STORAGE_STATUS_MUTATION = `
 
 // Hooks
 export function useDataStorages(variables?: Record<string, any>) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
 
   return useQuery({
@@ -142,7 +141,7 @@ export function useDataStorages(variables?: Record<string, any>) {
         const data = await graphqlRequest<{ dataStorages: DataStoragesConnection }>(DATA_STORAGES_QUERY, variables);
         return dataStoragesConnectionSchema.parse(data.dataStorages);
       } catch (error) {
-        handleError(error, t('dataStorages.errors.fetchData'));
+        handleError(error, m["dataStorages.errors.fetchData"]());
         throw error;
       }
     },
@@ -150,7 +149,6 @@ export function useDataStorages(variables?: Record<string, any>) {
 }
 
 export function useArchiveDataStorage() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -166,16 +164,15 @@ export function useArchiveDataStorage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dataStorages'] });
-      toast.success(t('dataStorages.messages.archiveSuccess'));
+      toast.success(m["dataStorages.messages.archiveSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('dataStorages.messages.archiveError'));
+      toast.error(m["dataStorages.messages.archiveError"]());
     },
   });
 }
 
 export function useCreateDataStorage() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -190,16 +187,15 @@ export function useCreateDataStorage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dataStorages'] });
-      toast.success(t('common.messages.success'));
+      toast.success(m["common.messages.success"]());
     },
     onError: (error: any) => {
-      toast.error(t('dataStorages.errors.createError'));
+      toast.error(m["dataStorages.errors.createError"]());
     },
   });
 }
 
 export function useUpdateDataStorage() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -215,10 +211,10 @@ export function useUpdateDataStorage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dataStorages'] });
-      toast.success(t('common.messages.success'));
+      toast.success(m["common.messages.success"]());
     },
     onError: (error: any) => {
-      toast.error(t('dataStorages.errors.updateError'));
+      toast.error(m["dataStorages.errors.updateError"]());
     },
   });
 }

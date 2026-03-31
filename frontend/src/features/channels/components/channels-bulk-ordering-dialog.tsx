@@ -4,7 +4,6 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, ArrowUpToLine, ArrowDownToLine } from 'lucide-react';
 import { useState, useEffect, memo, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,6 +13,8 @@ import { Separator } from '@/components/ui/separator';
 
 import { useAllChannelsForOrdering, useBulkUpdateChannelOrdering } from '../data/channels';
 import { ChannelOrderingItem } from '../data/schema';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 const WEIGHT_PRECISION = 0;
 const MIN_WEIGHT = 0;
@@ -59,7 +60,6 @@ const ChannelOrderingItemComponent = memo(function ChannelOrderingItemComponent(
   onWeightChange,
 }: ChannelOrderingItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: channel.id });
-  const { t } = useTranslation();
   const [localWeight, setLocalWeight] = useState(orderingWeight.toString());
 
   useEffect(() => {
@@ -142,7 +142,7 @@ const ChannelOrderingItemComponent = memo(function ChannelOrderingItemComponent(
               {getTypeDisplayName(channel.type)}
             </Badge>
             <Badge variant='outline' className={`h-3.5 px-1 text-[10px] font-normal ${getStatusColor(channel.status)}`}>
-              {t(`channels.status.${channel.status}`)}
+              {dynamicTranslation(`channels.status.${channel.status}`)}
             </Badge>
           </div>
         </div>
@@ -156,7 +156,7 @@ const ChannelOrderingItemComponent = memo(function ChannelOrderingItemComponent(
       {/* Controls */}
       <div className='flex items-center gap-1 pr-1'>
         <div className='bg-muted/30 hidden items-center gap-1.5 rounded px-1.5 py-0.5 sm:flex'>
-          <span className='text-muted-foreground text-[10px]'>{t('channels.dialogs.bulkOrdering.orderingWeight')}</span>
+          <span className='text-muted-foreground text-[10px]'>{m["channels.dialogs.bulkOrdering.orderingWeight"]()}</span>
           <Input
             type='number'
             inputMode='decimal'
@@ -184,7 +184,7 @@ const ChannelOrderingItemComponent = memo(function ChannelOrderingItemComponent(
             className='text-muted-foreground hover:text-foreground h-6 w-6'
             onClick={() => onMoveToTop(index)}
             disabled={index === 0}
-            title={t('common.moveToTop', 'Move to top')}
+            title={m["common.moveToTop"]()}
           >
             <ArrowUpToLine className='h-3.5 w-3.5' />
           </Button>
@@ -194,7 +194,7 @@ const ChannelOrderingItemComponent = memo(function ChannelOrderingItemComponent(
             className='text-muted-foreground hover:text-foreground h-6 w-6'
             onClick={() => onMoveToBottom(index)}
             disabled={index === total - 1}
-            title={t('common.moveToBottom', 'Move to bottom')}
+            title={m["common.moveToBottom"]()}
           >
             <ArrowDownToLine className='h-3.5 w-3.5' />
           </Button>
@@ -210,8 +210,6 @@ interface ChannelsBulkOrderingDialogProps {
 }
 
 export function ChannelsBulkOrderingDialog({ open, onOpenChange }: ChannelsBulkOrderingDialogProps) {
-  const { t } = useTranslation();
-
   // Only fetch channels when dialog is open (lazy loading)
   const { data: channelsData, isLoading } = useAllChannelsForOrdering({
     enabled: open, // Only fetch when dialog is open
@@ -362,9 +360,9 @@ export function ChannelsBulkOrderingDialog({ open, onOpenChange }: ChannelsBulkO
         <DialogHeader className='flex-shrink-0 text-left'>
           <DialogTitle className='flex items-center gap-2'>
             <GripVertical className='text-muted-foreground h-5 w-5' />
-            {t('channels.dialogs.bulkOrdering.title')}
+            {m["channels.dialogs.bulkOrdering.title"]()}
           </DialogTitle>
-          <DialogDescription className='text-muted-foreground text-sm'>{t('channels.dialogs.bulkOrdering.description')}</DialogDescription>
+          <DialogDescription className='text-muted-foreground text-sm'>{m["channels.dialogs.bulkOrdering.description"]()}</DialogDescription>
         </DialogHeader>
 
         <Separator className='flex-shrink-0' />
@@ -374,14 +372,14 @@ export function ChannelsBulkOrderingDialog({ open, onOpenChange }: ChannelsBulkO
             <div className='flex items-center justify-center py-12'>
               <div className='flex flex-col items-center gap-3'>
                 <div className='border-primary h-8 w-8 animate-spin rounded-full border-b-2'></div>
-                <div className='text-muted-foreground text-sm'>{t('common.loading', 'Loading')}...</div>
+                <div className='text-muted-foreground text-sm'>{m["common.loading"]()}...</div>
               </div>
             </div>
           ) : orderedChannels.length === 0 ? (
             <div className='flex items-center justify-center py-12'>
               <div className='flex flex-col items-center gap-3 text-center'>
                 <GripVertical className='text-muted-foreground/30 h-12 w-12' />
-                <div className='text-muted-foreground text-sm'>{t('channels.dialogs.bulkOrdering.noChannels')}</div>
+                <div className='text-muted-foreground text-sm'>{m["channels.dialogs.bulkOrdering.noChannels"]()}</div>
               </div>
             </div>
           ) : (
@@ -389,18 +387,17 @@ export function ChannelsBulkOrderingDialog({ open, onOpenChange }: ChannelsBulkO
               {/* Summary Header */}
               <div className='flex items-center justify-between px-1 py-2'>
                 <div className='text-muted-foreground flex items-center gap-4 text-sm'>
-                  <span>{t('channels.dialogs.bulkOrdering.dragHint')}</span>
+                  <span>{m["channels.dialogs.bulkOrdering.dragHint"]()}</span>
                   <Badge variant='secondary' className='font-mono'>
-                    {t('channels.dialogs.bulkOrdering.channelCount', {
-                      count: orderedChannels.length,
-                    })}
+                    {m["channels.dialogs.bulkOrdering.channelCount"]({
+                      count: orderedChannels.length })}
                   </Badge>
                   {hasChanges && (
                     <Badge
                       variant='outline'
                       className='border-amber-200 bg-amber-50 text-amber-600 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-400'
                     >
-                      {t('common.unsavedChanges', 'Unsaved changes')}
+                      {m["common.unsavedChanges"]()}
                     </Badge>
                   )}
                 </div>
@@ -435,22 +432,22 @@ export function ChannelsBulkOrderingDialog({ open, onOpenChange }: ChannelsBulkO
               {hasChanges && (
                 <span className='flex items-center gap-1'>
                   <div className='h-2 w-2 rounded-full bg-amber-500'></div>
-                  {t('common.unsavedChanges', 'You have unsaved changes')}
+                  {m["common.unsavedChanges"]()}
                 </span>
               )}
             </div>
             <div className='flex items-center gap-2'>
               <Button variant='outline' onClick={handleCancel}>
-                {t('common.buttons.cancel')}
+                {m["common.buttons.cancel"]()}
               </Button>
               <Button onClick={handleSave} disabled={!hasChanges || bulkUpdateMutation.isPending} className='min-w-[120px]'>
                 {bulkUpdateMutation.isPending ? (
                   <div className='flex items-center gap-2'>
                     <div className='h-4 w-4 animate-spin rounded-full border-b-2 border-white'></div>
-                    {t('common.buttons.saving')}
+                    {m["common.buttons.saving"]()}
                   </div>
                 ) : (
-                  t('channels.dialogs.bulkOrdering.saveButton')
+                  m["channels.dialogs.bulkOrdering.saveButton"]()
                 )}
               </Button>
             </div>

@@ -1,19 +1,18 @@
 import { IconUserPlus } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { PermissionGuard } from '@/components/permission-guard';
 import { Button } from '@/components/ui/button';
 
 import { useUsers } from '../context/users-context';
+import * as m from '@/paraglide/messages';
 
 export function UsersPrimaryButtons() {
-  const { t } = useTranslation();
   const { setOpen } = useUsers();
   return (
     <div className='flex gap-2'>
       <PermissionGuard requiredScope='write_users'>
         <Button className='space-x-1' onClick={() => setOpen('add')}>
-          <span>{t('users.addUser')}</span> <IconUserPlus size={18} />
+          <span>{m["users.addUser"]()}</span> <IconUserPlus size={18} />
         </Button>
       </PermissionGuard>
     </div>

@@ -1,6 +1,5 @@
 import { SortingState } from '@tanstack/react-table';
 import { useState, useMemo, useCallback, useEffect, lazy, Suspense } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -16,11 +15,11 @@ import { ChannelsTable } from './components/channels-table';
 import { ChannelsTypeTabs } from './components/channels-type-tabs';
 import ChannelsProvider from './context/channels-context';
 import { useQueryChannels, useChannelTypes, useErrorChannelsCount, useChannelProbeData } from './data/channels';
+import * as m from '@/paraglide/messages';
 
 const ChannelsDialogs = lazy(() => import('./components/channels-dialogs').then((m) => ({ default: m.ChannelsDialogs })));
 
 function ChannelsContent() {
-  const { t } = useTranslation();
   useProvidersData();
   const { channelPermissions } = usePermissions();
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
@@ -246,7 +245,7 @@ function ChannelsContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const columns = useMemo(() => createColumns(t, channelPermissions.canWrite), [t, channelPermissions.canWrite]);
+  const columns = useMemo(() => createColumns(channelPermissions.canWrite), [channelPermissions.canWrite]);
 
   return (
     <div className='flex flex-1 flex-col overflow-hidden'>
@@ -291,15 +290,13 @@ function ChannelsContent() {
 }
 
 export default function ChannelsManagement() {
-  const { t } = useTranslation();
-
   return (
     <ChannelsProvider>
       <Header fixed>
         <div className='flex w-full flex-1 flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-0'>
           <div className='min-w-0'>
-            <h2 className='text-xl font-bold tracking-tight'>{t('channels.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('channels.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["channels.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["channels.description"]()}</p>
           </div>
           <ChannelsPrimaryButtons />
         </div>

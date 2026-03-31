@@ -21,7 +21,6 @@ import {
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import { useCallback, useState, memo, useRef, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +45,8 @@ import { CHANNEL_CONFIGS, getProvider } from '../data/config_channels';
 import { Channel } from '../data/schema';
 import { ChannelHealthCell } from './channel-health-cell';
 import { ChannelsStatusDialog } from './channels-status-dialog';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 const WEIGHT_PRECISION = 4;
 const MIN_WEIGHT = 0;
@@ -80,7 +81,6 @@ StatusSwitchCell.displayName = 'StatusSwitchCell';
 
 // Action Cell Component to handle hooks properly
 const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
-  const { t } = useTranslation();
   const channel = row.original;
   const { setOpen, setCurrentRow } = useChannels();
   const { channelPermissions } = usePermissions();
@@ -124,7 +124,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
         <DropdownMenuContent align='end' className='w-[160px]'>
           <DropdownMenuItem onClick={handleOpenTestDialog}>
             <IconPlayerPlay size={16} className='mr-2' />
-            {t('channels.actions.test')}
+            {m["channels.actions.test"]()}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
 
@@ -135,7 +135,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             }}
           >
             <IconCopy size={16} className='mr-2' />
-            {t('common.actions.duplicate')}
+            {m["common.actions.duplicate"]()}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => {
@@ -144,7 +144,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             }}
           >
             <IconRoute size={16} className='mr-2' />
-            {t('channels.dialogs.settings.modelMapping.title')}
+            {m["channels.dialogs.settings.modelMapping.title"]()}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => {
@@ -153,7 +153,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             }}
           >
             <IconCoin size={16} className='mr-2' />
-            {t('channels.actions.modelPrice')}
+            {m["channels.actions.modelPrice"]()}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => {
@@ -162,7 +162,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             }}
           >
             <IconAdjustments size={16} className='mr-2' />
-            {t('channels.dialogs.settings.overrides.action')}
+            {m["channels.dialogs.settings.overrides.action"]()}
           </DropdownMenuItem>
 
           <DropdownMenuItem
@@ -172,7 +172,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             }}
           >
             <IconNetwork size={16} className='mr-2' />
-            {t('channels.dialogs.proxy.action')}
+            {m["channels.dialogs.proxy.action"]()}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => {
@@ -181,7 +181,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             }}
           >
             <IconTransform size={16} className='mr-2' />
-            {t('channels.dialogs.transformOptions.action')}
+            {m["channels.dialogs.transformOptions.action"]()}
           </DropdownMenuItem>
           {hasDisabledAPIKeys && (
             <DropdownMenuItem
@@ -192,7 +192,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
               className='text-orange-500!'
             >
               <IconKeyOff size={16} className='mr-2' />
-              {t('channels.actions.disabledAPIKeys', { count: channel.disabledAPIKeys?.length ?? 0 })}
+              {m["channels.actions.disabledAPIKeys"]({ count: channel.disabledAPIKeys?.length ?? 0 })}
             </DropdownMenuItem>
           )}
           {hasError && (
@@ -204,7 +204,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
               className='text-green-600!'
             >
               <IconCheck size={16} className='mr-2' />
-              {t('channels.actions.markErrorResolved')}
+              {m["channels.actions.markErrorResolved"]()}
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
@@ -216,7 +216,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             className='text-orange-500!'
           >
             <IconArchive size={16} className='mr-2' />
-            {t('common.buttons.archive')}
+            {m["common.buttons.archive"]()}
           </DropdownMenuItem>
           <DropdownMenuItem
             onClick={() => {
@@ -226,7 +226,7 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
             className='text-red-500!'
           >
             <IconTrash size={16} className='mr-2' />
-            {t('common.buttons.delete')}
+            {m["common.buttons.delete"]()}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -265,7 +265,6 @@ function getChannelWebsiteURL(baseURL: string): string | null {
 
 // Memoized cell components to avoid recreating on every render
 const NameCell = memo(({ row }: { row: Row<Channel> }) => {
-  const { t } = useTranslation();
   const channel = row.original;
   const hasError = !!channel.errorMessage;
   const disabledKeysCount = channel.disabledAPIKeys?.length ?? 0;
@@ -303,9 +302,7 @@ const NameCell = memo(({ row }: { row: Row<Channel> }) => {
         <TooltipContent>
           <div className='space-y-1'>
             <p className='text-destructive text-sm'>
-              {t(`channels.messages.${channel.errorMessage}`, {
-                defaultValue: channel.errorMessage,
-              })}
+              {dynamicTranslation(`channels.messages.${channel.errorMessage}`)}
             </p>
           </div>
         </TooltipContent>
@@ -318,7 +315,7 @@ const NameCell = memo(({ row }: { row: Row<Channel> }) => {
       <Tooltip>
         <TooltipTrigger asChild>{content}</TooltipTrigger>
         <TooltipContent>
-          <p className='text-sm text-amber-500'>{t('channels.actions.disabledAPIKeys', { count: disabledKeysCount })}</p>
+          <p className='text-sm text-amber-500'>{m["channels.actions.disabledAPIKeys"]({ count: disabledKeysCount })}</p>
         </TooltipContent>
       </Tooltip>
     );
@@ -330,7 +327,6 @@ const NameCell = memo(({ row }: { row: Row<Channel> }) => {
 NameCell.displayName = 'NameCell';
 
 const ProviderCell = memo(({ row }: { row: Row<Channel> }) => {
-  const { t } = useTranslation();
   const type = row.original.type;
   const config = CHANNEL_CONFIGS[type];
   const provider = getProvider(type);
@@ -340,7 +336,7 @@ const ProviderCell = memo(({ row }: { row: Row<Channel> }) => {
       <Badge variant='outline' className={cn('capitalize', config.color)}>
         <div className='flex items-center gap-2'>
           <IconComponent size={16} className='shrink-0' />
-          <span>{t(`channels.providers.${provider}`)}</span>
+          <span>{dynamicTranslation(`channels.providers.${provider}`)}</span>
         </div>
       </Badge>
     </div>
@@ -377,7 +373,6 @@ const TagsCell = memo(({ row }: { row: Row<Channel> }) => {
 TagsCell.displayName = 'TagsCell';
 
 const SupportedModelsCell = memo(({ row }: { row: Row<Channel> }) => {
-  const { t } = useTranslation();
   const channel = row.original;
   const models = row.getValue('supportedModels') as string[];
   const { setOpen, setCurrentRow } = useChannels();
@@ -400,7 +395,7 @@ const SupportedModelsCell = memo(({ row }: { row: Row<Channel> }) => {
             variant='secondary'
             className='hover:bg-primary hover:text-primary-foreground cursor-pointer text-xs transition-colors'
             onClick={handleOpenModelsDialog}
-            title={t('channels.actions.viewModels')}
+            title={m["channels.actions.viewModels"]()}
           >
             +{models.length - 5}
           </Badge>
@@ -519,7 +514,7 @@ const CreatedAtCell = memo(({ row }: { row: Row<Channel> }) => {
 
 CreatedAtCell.displayName = 'CreatedAtCell';
 
-export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrite: boolean = true): ColumnDef<Channel>[] => {
+export const createColumns = (t: (key: string, params?: Record<string, unknown>) => string, canWrite: boolean = true): ColumnDef<Channel>[] => {
   return [
     {
       id: 'expand',
@@ -540,7 +535,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
                 <Checkbox
                   checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')}
                   onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-                  aria-label={t('common.columns.selectAll')}
+                  aria-label={m["common.columns.selectAll"]()}
                   className='translate-y-[2px]'
                 />
               </div>
@@ -550,7 +545,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
                 <Checkbox
                   checked={row.getIsSelected()}
                   onCheckedChange={(value) => row.toggleSelected(!!value)}
-                  aria-label={t('common.columns.selectRow')}
+                  aria-label={m["common.columns.selectRow"]()}
                   className='translate-y-[2px]'
                 />
               </div>
@@ -565,7 +560,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
       : []),
     {
       accessorKey: 'name',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.name')} className='justify-center' />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.name"]()} className='justify-center' />,
       cell: NameCell,
       meta: {
         className: 'md:table-cell min-w-48 text-center',
@@ -576,7 +571,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     {
       id: 'provider',
       accessorKey: 'type',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('channels.columns.provider')} className='justify-center' />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["channels.columns.provider"]()} className='justify-center' />,
       cell: ProviderCell,
       meta: {
         className: 'text-center',
@@ -589,7 +584,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'status',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.status')} className='justify-center' />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.status"]()} className='justify-center' />,
       cell: StatusSwitchCell,
       meta: {
         className: 'text-center',
@@ -600,7 +595,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
 
     {
       accessorKey: 'tags',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('channels.columns.tags')} className='justify-center' />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["channels.columns.tags"]()} className='justify-center' />,
       cell: TagsCell,
       meta: {
         className: 'text-center',
@@ -627,7 +622,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     {
       accessorKey: 'supportedModels',
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('channels.columns.supportedModels')} className='justify-center' />
+        <DataTableColumnHeader column={column} title={m["channels.columns.supportedModels"]()} className='justify-center' />
       ),
       cell: SupportedModelsCell,
       meta: {
@@ -638,7 +633,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     {
       id: 'health',
       accessorKey: 'health',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('channels.columns.health')} className='justify-center' />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["channels.columns.health"]()} className='justify-center' />,
       cell: ({ row }: { row: Row<Channel> }) => {
         const probePoints = (row.original as any).probePoints || [];
         return (
@@ -656,7 +651,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     {
       accessorKey: 'orderingWeight',
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('channels.columns.orderingWeight')} className='justify-center' />
+        <DataTableColumnHeader column={column} title={m["channels.columns.orderingWeight"]()} className='justify-center' />
       ),
       cell: OrderingWeightCell,
       meta: {
@@ -668,7 +663,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'createdAt',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.createdAt')} className='justify-center' />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.createdAt"]()} className='justify-center' />,
       cell: CreatedAtCell,
       meta: {
         className: 'text-center',
@@ -681,7 +676,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
           {
             id: 'action',
             header: ({ column }: { column: any }) => (
-              <DataTableColumnHeader column={column} title={t('common.columns.actions')} className='justify-center' />
+              <DataTableColumnHeader column={column} title={m["common.columns.actions"]()} className='justify-center' />
             ),
             cell: ActionCell,
             meta: {

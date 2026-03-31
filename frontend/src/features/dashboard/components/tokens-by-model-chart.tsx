@@ -1,7 +1,6 @@
 'use client';
 
 import { Loader2 } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipProps } from 'recharts';
 
 import type { TimePeriod } from '@/components/time-period-selector';
@@ -10,6 +9,7 @@ import { formatNumber } from '@/utils/format-number';
 
 import { useTokensByModel } from '../data/dashboard';
 import { ChartLegend } from './chart-legend';
+import * as m from '@/paraglide/messages';
 
 const TOKEN_COLORS = {
   input: 'var(--chart-1)',
@@ -24,7 +24,6 @@ interface TokensByModelChartProps {
 }
 
 export function TokensByModelChart({ timePeriod }: TokensByModelChartProps) {
-  const { t } = useTranslation();
   const { data: tokenData, isLoading, isFetching, error } = useTokensByModel(timePeriod);
 
   if (isLoading) {
@@ -84,19 +83,19 @@ export function TokensByModelChart({ timePeriod }: TokensByModelChartProps) {
         <div className='text-foreground mb-1 text-sm font-medium'>{data.name}</div>
         <div className='space-y-1'>
           <div className='flex justify-between gap-4'>
-            <span className='text-muted-foreground'>{t('dashboard.stats.inputTokens')}:</span>
+            <span className='text-muted-foreground'>{m["dashboard.stats.inputTokens"]()}:</span>
             <span className='font-medium'>{formatNumber(data.inputTokens)}</span>
           </div>
           <div className='flex justify-between gap-4'>
-            <span className='text-muted-foreground'>{t('dashboard.stats.outputTokens')}:</span>
+            <span className='text-muted-foreground'>{m["dashboard.stats.outputTokens"]()}:</span>
             <span className='font-medium'>{formatNumber(data.outputTokens)}</span>
           </div>
           <div className='flex justify-between gap-4'>
-            <span className='text-muted-foreground'>{t('dashboard.stats.cachedTokens')}:</span>
+            <span className='text-muted-foreground'>{m["dashboard.stats.cachedTokens"]()}:</span>
             <span className='font-medium'>{formatNumber(data.cachedTokens)}</span>
           </div>
           <div className='flex justify-between gap-4 border-t pt-1'>
-            <span className='text-foreground font-medium'>{t('dashboard.stats.totalTokens')}:</span>
+            <span className='text-foreground font-medium'>{m["dashboard.stats.totalTokens"]()}:</span>
             <span className='font-semibold'>
               {formatNumber(data.totalTokens)} ({percent.toFixed(1)}%)
             </span>
@@ -111,12 +110,12 @@ export function TokensByModelChart({ timePeriod }: TokensByModelChartProps) {
       {hasError ? (
         <div className='flex h-[300px] items-center justify-center'>
           <div className='text-sm text-red-500'>
-            {t('dashboard.charts.errorLoadingTokenData')} {error.message}
+            {m["dashboard.charts.errorLoadingTokenData"]()} {error.message}
           </div>
         </div>
       ) : chartData.length === 0 ? (
         <div className='flex h-[300px] items-center justify-center'>
-          <div className='text-muted-foreground text-sm'>{t('dashboard.charts.noTokenData')}</div>
+          <div className='text-muted-foreground text-sm'>{m["dashboard.charts.noTokenData"]()}</div>
         </div>
       ) : (
         <>
@@ -135,21 +134,21 @@ export function TokensByModelChart({ timePeriod }: TokensByModelChartProps) {
               <Bar
                 dataKey='inputTokens'
                 fill={TOKEN_COLORS.input}
-                name={t('dashboard.stats.inputTokens')}
+                name={m["dashboard.stats.inputTokens"]()}
                 radius={[6, 6, 0, 0]}
                 isAnimationActive={false}
               />
               <Bar
                 dataKey='outputTokens'
                 fill={TOKEN_COLORS.output}
-                name={t('dashboard.stats.outputTokens')}
+                name={m["dashboard.stats.outputTokens"]()}
                 radius={[6, 6, 0, 0]}
                 isAnimationActive={false}
               />
               <Bar
                 dataKey='cachedTokens'
                 fill={TOKEN_COLORS.cached}
-                name={t('dashboard.stats.cachedTokens')}
+                name={m["dashboard.stats.cachedTokens"]()}
                 radius={[6, 6, 0, 0]}
                 isAnimationActive={false}
               />

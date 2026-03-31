@@ -1,7 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useCallback, useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
@@ -14,6 +13,8 @@ import { Textarea } from '@/components/ui/textarea';
 
 import { usePromptProtectionRules } from '../context/rules-context';
 import { useCreatePromptProtectionRule, useUpdatePromptProtectionRule } from '../data/rules';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 const defaultValues = {
   name: '',
@@ -24,12 +25,12 @@ const defaultValues = {
   scopes: ['user'],
 };
 
-const createFormSchema = (t: ReturnType<typeof useTranslation>['t']) =>
+const createFormSchema = (t: (key: string, params?: Record<string, unknown>) => string) =>
   z
     .object({
-      name: z.string().min(1, t('promptProtectionRules.validation.nameRequired')),
+      name: z.string().min(1, m["promptProtectionRules.validation.nameRequired"]()),
       description: z.string().optional(),
-      pattern: z.string().min(1, t('promptProtectionRules.validation.patternRequired')),
+      pattern: z.string().min(1, m["promptProtectionRules.validation.patternRequired"]()),
       action: z.enum(['mask', 'reject']),
       replacement: z.string().optional(),
       scopes: z.array(z.string()).default([]),
@@ -39,7 +40,7 @@ const createFormSchema = (t: ReturnType<typeof useTranslation>['t']) =>
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['replacement'],
-          message: t('promptProtectionRules.validation.replacementRequired'),
+          message: m["promptProtectionRules.validation.replacementRequired"](),
         });
       }
     });
@@ -49,14 +50,13 @@ type FormData = z.infer<ReturnType<typeof createFormSchema>>;
 const scopeOptions = ['system', 'developer', 'user', 'assistant', 'tool'] as const;
 
 export function RulesActionDialog() {
-  const { t } = useTranslation();
   const { open, setOpen, currentRow, setCurrentRow, resetRowSelection } = usePromptProtectionRules();
   const createMutation = useCreatePromptProtectionRule();
   const updateMutation = useUpdatePromptProtectionRule();
 
   const isEdit = open === 'edit';
   const isOpen = open === 'create' || open === 'edit';
-  const formSchema = useMemo(() => createFormSchema(t), [t]);
+  const formSchema = useMemo(() => createFormSchema(t), []);
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -131,10 +131,10 @@ export function RulesActionDialog() {
       <DialogContent className='sm:max-w-[680px]'>
         <DialogHeader>
           <DialogTitle>
-            {isEdit ? t('promptProtectionRules.dialogs.edit.title') : t('promptProtectionRules.dialogs.create.title')}
+            {isEdit ? m["promptProtectionRules.dialogs.edit.title"]() : m["promptProtectionRules.dialogs.create.title"]()}
           </DialogTitle>
           <DialogDescription>
-            {isEdit ? t('promptProtectionRules.dialogs.edit.description') : t('promptProtectionRules.dialogs.create.description')}
+            {isEdit ? m["promptProtectionRules.dialogs.edit.description"]() : m["promptProtectionRules.dialogs.create.description"]()}
           </DialogDescription>
         </DialogHeader>
 
@@ -145,7 +145,7 @@ export function RulesActionDialog() {
               name='name'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('promptProtectionRules.fields.name')}</FormLabel>
+                  <FormLabel>{m["promptProtectionRules.fields.name"]()}</FormLabel>
                   <FormControl>
                     <Input {...field} />
                   </FormControl>
@@ -159,7 +159,7 @@ export function RulesActionDialog() {
               name='description'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('common.columns.description')}</FormLabel>
+                  <FormLabel>{m["common.columns.description"]()}</FormLabel>
                   <FormControl>
                     <Input {...field} value={field.value ?? ''} />
                   </FormControl>
@@ -173,7 +173,7 @@ export function RulesActionDialog() {
               name='pattern'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('promptProtectionRules.fields.pattern')}</FormLabel>
+                  <FormLabel>{m["promptProtectionRules.fields.pattern"]()}</FormLabel>
                   <FormControl>
                     <Textarea {...field} rows={4} className='font-mono text-xs' />
                   </FormControl>
@@ -188,7 +188,7 @@ export function RulesActionDialog() {
                 name='action'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('promptProtectionRules.fields.action')}</FormLabel>
+                    <FormLabel>{m["promptProtectionRules.fields.action"]()}</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
@@ -196,8 +196,8 @@ export function RulesActionDialog() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value='mask'>{t('promptProtectionRules.actions.mask')}</SelectItem>
-                        <SelectItem value='reject'>{t('promptProtectionRules.actions.reject')}</SelectItem>
+                        <SelectItem value='mask'>{m["promptProtectionRules.actions.mask"]()}</SelectItem>
+                        <SelectItem value='reject'>{m["promptProtectionRules.actions.reject"]()}</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -210,7 +210,7 @@ export function RulesActionDialog() {
                 name='replacement'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('promptProtectionRules.fields.replacement')}</FormLabel>
+                    <FormLabel>{m["promptProtectionRules.fields.replacement"]()}</FormLabel>
                     <FormControl>
                       <Input {...field} value={field.value ?? ''} disabled={action !== 'mask'} />
                     </FormControl>
@@ -225,7 +225,7 @@ export function RulesActionDialog() {
               name='scopes'
               render={() => (
                 <FormItem>
-                  <FormLabel>{t('promptProtectionRules.fields.scopes')}</FormLabel>
+                  <FormLabel>{m["promptProtectionRules.fields.scopes"]()}</FormLabel>
                   <div className='grid gap-2 md:grid-cols-5'>
                     {scopeOptions.map((scope) => (
                       <FormField
@@ -244,7 +244,7 @@ export function RulesActionDialog() {
                               />
                             </FormControl>
                             <FormLabel className='m-0 cursor-pointer text-sm font-normal'>
-                              {t(`promptProtectionRules.scopes.${scope}`)}
+                              {dynamicTranslation(`promptProtectionRules.scopes.${scope}`)}
                             </FormLabel>
                           </FormItem>
                         )}
@@ -258,10 +258,10 @@ export function RulesActionDialog() {
 
             <DialogFooter>
               <Button type='button' variant='outline' onClick={() => handleOpenChange(false)}>
-                {t('common.buttons.cancel')}
+                {m["common.buttons.cancel"]()}
               </Button>
               <Button type='submit' disabled={createMutation.isPending || updateMutation.isPending}>
-                {isEdit ? t('common.buttons.update') : t('common.buttons.create')}
+                {isEdit ? m["common.buttons.update"]() : m["common.buttons.create"]()}
               </Button>
             </DialogFooter>
           </form>

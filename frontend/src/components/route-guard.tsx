@@ -1,11 +1,11 @@
 import { IconShieldX, IconArrowLeft } from '@tabler/icons-react';
 import { useRouter } from '@tanstack/react-router';
 import { useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { useRoutePermissions } from '@/hooks/useRoutePermissions';
+import * as m from '@/paraglide/messages';
 
 interface RouteGuardProps {
   children: React.ReactNode;
@@ -39,8 +39,6 @@ export function RouteGuard({ children, requiredScopes = [], fallbackPath = '/', 
 }
 
 function ForbiddenPage({ onGoBack }: { onGoBack: () => void }) {
-  const { t } = useTranslation();
-
   return (
     <div className='flex h-screen items-center justify-center'>
       <div className='max-w-md text-center'>
@@ -50,13 +48,13 @@ function ForbiddenPage({ onGoBack }: { onGoBack: () => void }) {
 
         <Alert className='mb-6'>
           <IconShieldX className='h-4 w-4' />
-          <AlertTitle>{t('common.routeGuard.accessDenied')}</AlertTitle>
-          <AlertDescription>{t('common.routeGuard.noPermission')}</AlertDescription>
+          <AlertTitle>{m["common.routeGuard.accessDenied"]()}</AlertTitle>
+          <AlertDescription>{m["common.routeGuard.noPermission"]()}</AlertDescription>
         </Alert>
 
         <Button onClick={onGoBack} variant='outline' className='gap-2'>
           <IconArrowLeft className='h-4 w-4' />
-          {t('common.routeGuard.goBack')}
+          {m["common.routeGuard.goBack"]()}
         </Button>
       </div>
     </div>

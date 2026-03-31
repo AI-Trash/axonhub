@@ -1,7 +1,6 @@
 import { format } from 'date-fns';
 import { Activity } from 'lucide-react';
 import { useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { JsonViewer } from '@/components/json-tree-view';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +8,8 @@ import { formatNumber } from '@/utils/format-number';
 
 import type { Segment, Span } from '../data/schema';
 import { getSpanDisplayLabels, getLocalizedSpanType } from '../utils/span-display';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 interface SpanSectionProps {
   selectedTrace: Segment | null;
@@ -17,8 +18,6 @@ interface SpanSectionProps {
 }
 
 export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: SpanSectionProps) {
-  const { t } = useTranslation();
-
   const spanSections = useMemo(() => {
     if (!selectedSpan?.value) return [];
 
@@ -38,11 +37,11 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
 
     if (query?.text) {
       sections.push({
-        title: t('traces.detail.requestQuery'),
+        title: m["traces.detail.requestQuery"](),
         content: (
           <div className='space-y-3'>
             <div>
-              <p className='text-muted-foreground text-xs tracking-wide uppercase'>{t('traces.detail.promptLabel')}</p>
+              <p className='text-muted-foreground text-xs tracking-wide uppercase'>{m["traces.detail.promptLabel"]()}</p>
               <pre className='bg-muted/40 mt-2 max-h-160 overflow-auto rounded-lg p-3 text-sm whitespace-pre-wrap'>{query.text}</pre>
             </div>
           </div>
@@ -52,14 +51,14 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
 
     if (text?.text) {
       sections.push({
-        title: t('traces.detail.textOutput'),
+        title: m["traces.detail.textOutput"](),
         content: <pre className='bg-muted/40 max-h-160 overflow-auto rounded-lg p-3 text-sm whitespace-pre-wrap'>{text.text}</pre>,
       });
     }
 
     if (thinking?.thinking) {
       sections.push({
-        title: t('traces.detail.thinking'),
+        title: m["traces.detail.thinking"](),
         content: (
           <pre className='bg-muted/30 max-h-160 overflow-auto rounded-lg p-3 text-sm whitespace-pre-wrap italic'>{thinking.thinking}</pre>
         ),
@@ -68,28 +67,28 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
 
     if (toolUse) {
       sections.push({
-        title: t('traces.detail.functionCall'),
+        title: m["traces.detail.functionCall"](),
         content: (
           <div className='space-y-3'>
             <div className='bg-background/70 flex items-center justify-between rounded-lg border px-3 py-2 text-sm'>
-              <span className='text-muted-foreground'>{t('traces.detail.nameLabel')}</span>
+              <span className='text-muted-foreground'>{m["traces.detail.nameLabel"]()}</span>
               <span className='font-medium'>{toolUse.name}</span>
             </div>
             {toolUse.type && (
               <div className='bg-background/70 flex items-center justify-between rounded-lg border px-3 py-2 text-sm'>
-                <span className='text-muted-foreground'>{t('traces.detail.typeLabel')}</span>
+                <span className='text-muted-foreground'>{m["traces.detail.typeLabel"]()}</span>
                 <span className='font-mono text-xs'>{toolUse.type}</span>
               </div>
             )}
             {toolUse.id && (
               <div className='bg-background/70 flex items-center justify-between rounded-lg border px-3 py-2 text-sm'>
-                <span className='text-muted-foreground'>{t('traces.detail.idLabel')}</span>
+                <span className='text-muted-foreground'>{m["traces.detail.idLabel"]()}</span>
                 <span className='font-mono text-xs'>{toolUse.id}</span>
               </div>
             )}
             {toolUse.arguments && (
               <div>
-                <p className='text-muted-foreground text-xs tracking-wide uppercase'>{t('traces.detail.argumentsLabel')}</p>
+                <p className='text-muted-foreground text-xs tracking-wide uppercase'>{m["traces.detail.argumentsLabel"]()}</p>
                 <div className='bg-muted/40 mt-2 max-h-80 overflow-auto rounded-lg p-3'>
                   <JsonViewer
                     data={(() => {
@@ -113,12 +112,12 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
 
     if (toolResult) {
       sections.push({
-        title: t('traces.detail.functionResult'),
+        title: m["traces.detail.functionResult"](),
         content: (
           <div className='space-y-3'>
             {toolResult.isError && (
               <Badge variant='destructive' className='w-fit text-xs'>
-                {t('traces.detail.error')}
+                {m["traces.detail.error"]()}
               </Badge>
             )}
             {toolResult.text && (
@@ -131,11 +130,11 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
 
     if (userImageUrl?.url) {
       sections.push({
-        title: t('traces.detail.userImage'),
+        title: m["traces.detail.userImage"](),
         content: (
           <img
             src={userImageUrl.url || ''}
-            alt={t('traces.detail.userImageAlt')}
+            alt={m["traces.detail.userImageAlt"]()}
             className='max-h-96 w-full rounded-lg border object-contain'
           />
         ),
@@ -147,12 +146,12 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
         userInputAudio.data && userInputAudio.format ? `data:audio/${userInputAudio.format};base64,${userInputAudio.data}` : undefined;
 
       sections.push({
-        title: t('traces.detail.userInputAudio'),
+        title: m["traces.detail.userInputAudio"](),
         content: (
           <div className='space-y-3'>
             {userInputAudio.format && (
               <div className='bg-background/70 flex items-center justify-between rounded-lg border px-3 py-2 text-sm'>
-                <span className='text-muted-foreground'>{t('traces.detail.formatLabel')}</span>
+                <span className='text-muted-foreground'>{m["traces.detail.formatLabel"]()}</span>
                 <span className='font-mono text-xs'>{userInputAudio.format}</span>
               </div>
             )}
@@ -164,9 +163,9 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
 
     if (imageUrl?.url) {
       sections.push({
-        title: t('traces.detail.image'),
+        title: m["traces.detail.image"](),
         content: (
-          <img src={imageUrl.url || ''} alt={t('traces.detail.imageAlt')} className='max-h-96 w-full rounded-lg border object-contain' />
+          <img src={imageUrl.url || ''} alt={m["traces.detail.imageAlt"]()} className='max-h-96 w-full rounded-lg border object-contain' />
         ),
       });
     }
@@ -176,25 +175,25 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
       const audioSrc = audio?.data ? `data:${audioMime};base64,${audio.data}` : undefined;
 
       sections.push({
-        title: t('traces.detail.audio'),
+        title: m["traces.detail.audio"](),
         content: (
           <div className='space-y-3'>
             {audio.id && (
               <div className='bg-background/70 flex items-center justify-between rounded-lg border px-3 py-2 text-sm'>
-                <span className='text-muted-foreground'>{t('traces.detail.idLabel')}</span>
+                <span className='text-muted-foreground'>{m["traces.detail.idLabel"]()}</span>
                 <span className='font-mono text-xs'>{audio.id}</span>
               </div>
             )}
             {audio.format && (
               <div className='bg-background/70 flex items-center justify-between rounded-lg border px-3 py-2 text-sm'>
-                <span className='text-muted-foreground'>{t('traces.detail.formatLabel')}</span>
+                <span className='text-muted-foreground'>{m["traces.detail.formatLabel"]()}</span>
                 <span className='font-mono text-xs'>{audio.format}</span>
               </div>
             )}
             {audioSrc ? <audio controls src={audioSrc} className='w-full' /> : null}
             {audio.transcript ? (
               <div>
-                <p className='text-muted-foreground text-xs tracking-wide uppercase'>{t('traces.detail.transcriptLabel')}</p>
+                <p className='text-muted-foreground text-xs tracking-wide uppercase'>{m["traces.detail.transcriptLabel"]()}</p>
                 <pre className='bg-muted/40 mt-2 max-h-160 overflow-auto rounded-lg p-3 text-sm whitespace-pre-wrap'>
                   {audio.transcript}
                 </pre>
@@ -207,7 +206,7 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
 
     if (systemInstruction?.instruction) {
       sections.push({
-        title: t('traces.detail.systemInstruction'),
+        title: m["traces.detail.systemInstruction"](),
         content: (
           <pre className='bg-muted/40 max-h-160 overflow-auto rounded-lg p-3 text-sm whitespace-pre-wrap'>
             {systemInstruction.instruction}
@@ -222,7 +221,7 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
   if (!selectedTrace || !selectedSpan) {
     return (
       <div className='text-muted-foreground flex h-full items-center justify-center px-6 py-12 text-sm'>
-        {t('traces.detail.selectSpanHint')}
+        {m["traces.detail.selectSpanHint"]()}
       </div>
     );
   }
@@ -238,7 +237,7 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
               </div>
               <div>
                 <p className='text-muted-foreground text-xs tracking-wide uppercase'>
-                  {selectedSpanType ? t(`traces.common.badges.${selectedSpanType}`) : t('traces.common.badges.trace')}
+                  {selectedSpanType ? dynamicTranslation(`traces.common.badges.${selectedSpanType}`) : m["traces.common.badges.trace"]()}
                 </p>
                 <span className='text-lg leading-tight font-semibold'>{getSpanDisplayLabels(selectedSpan, t).primary}</span>
                 <div className='text-muted-foreground text-xs'>{getLocalizedSpanType(selectedSpan.type, t)}</div>
@@ -257,10 +256,9 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
                 <>
                   <span>•</span>
                   <span>
-                    {t('traces.detail.segmentTime', {
+                    {m["traces.detail.segmentTime"]({
                       start: format(new Date(selectedTrace.startTime), 'HH:mm:ss.SSS'),
-                      end: format(new Date(selectedTrace.endTime), 'HH:mm:ss.SSS'),
-                    })}
+                      end: format(new Date(selectedTrace.endTime), 'HH:mm:ss.SSS') })}
                   </span>
                 </>
               )}
@@ -268,18 +266,16 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
             <div className='text-muted-foreground flex flex-wrap items-center gap-2 text-xs'>
               {selectedTrace.metadata?.inputTokens && (
                 <span>
-                  {t('traces.detail.tokenSummary.input', {
-                    value: formatNumber(selectedTrace.metadata.inputTokens),
-                  })}
+                  {m["traces.detail.tokenSummary.input"]({
+                    value: formatNumber(selectedTrace.metadata.inputTokens) })}
                 </span>
               )}
               {selectedTrace.metadata?.outputTokens && (
                 <>
                   <span>•</span>
                   <span>
-                    {t('traces.detail.tokenSummary.output', {
-                      value: formatNumber(selectedTrace.metadata.outputTokens),
-                    })}
+                    {m["traces.detail.tokenSummary.output"]({
+                      value: formatNumber(selectedTrace.metadata.outputTokens) })}
                   </span>
                 </>
               )}
@@ -287,9 +283,8 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
                 <>
                   <span>•</span>
                   <span>
-                    {t('traces.detail.tokenSummary.cached', {
-                      value: formatNumber(selectedTrace.metadata.cachedTokens),
-                    })}
+                    {m["traces.detail.tokenSummary.cached"]({
+                      value: formatNumber(selectedTrace.metadata.cachedTokens) })}
                   </span>
                 </>
               )}
@@ -308,7 +303,7 @@ export function SpanSection({ selectedTrace, selectedSpan, selectedSpanType }: S
           ))
         ) : (
           <div className='bg-muted/30 text-muted-foreground flex min-h-[200px] flex-col items-center justify-center rounded-lg border border-dashed p-6 text-center text-sm'>
-            {t('traces.detail.noSpanContent')}
+            {m["traces.detail.noSpanContent"]()}
           </div>
         )}
       </div>

@@ -1,10 +1,10 @@
 import { Terminal, Copy, Check, CopyX } from 'lucide-react';
 import { useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import * as m from '@/paraglide/messages';
 
 interface CurlPreviewDialogProps {
   open: boolean;
@@ -14,7 +14,6 @@ interface CurlPreviewDialogProps {
 }
 
 export function CurlPreviewDialog({ open, onOpenChange, curlCommand, title }: CurlPreviewDialogProps) {
-  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [nonStreamCopied, setNonStreamCopied] = useState(false);
 
@@ -52,7 +51,7 @@ export function CurlPreviewDialog({ open, onOpenChange, curlCommand, title }: Cu
         <DialogHeader>
           <DialogTitle className='flex items-center gap-2'>
             <Terminal className='h-5 w-5' />
-            {title || t('requests.dialogs.curlPreview.title')}
+            {title || m["requests.dialogs.curlPreview.title"]()}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -61,7 +60,7 @@ export function CurlPreviewDialog({ open, onOpenChange, curlCommand, title }: Cu
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>{t('requests.actions.copy')}</p>
+                  <p>{m["requests.actions.copy"]()}</p>
                 </TooltipContent>
               </Tooltip>
 
@@ -72,7 +71,7 @@ export function CurlPreviewDialog({ open, onOpenChange, curlCommand, title }: Cu
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>{t('requests.dialogs.curlPreview.copyNonStream')}</p>
+                  <p>{m["requests.dialogs.curlPreview.copyNonStream"]()}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

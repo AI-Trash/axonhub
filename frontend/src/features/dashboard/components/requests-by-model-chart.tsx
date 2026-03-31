@@ -2,7 +2,6 @@
 
 import { Loader2 } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipProps } from 'recharts';
 
 import type { TimePeriod } from '@/components/time-period-selector';
@@ -12,6 +11,8 @@ import { formatNumber } from '@/utils/format-number';
 import { useGeneralSettings } from '../../system/data/system';
 import { useRequestsByModel, useCostByModel } from '../data/dashboard';
 import { ChartLegend } from './chart-legend';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
 
 const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)'];
 
@@ -20,7 +21,6 @@ interface RequestsByModelChartProps {
 }
 
 export function RequestsByModelChart({ timePeriod }: RequestsByModelChartProps) {
-  const { t, i18n } = useTranslation();
   const {
     data: modelData,
     isLoading: isRequestsLoading,
@@ -35,17 +35,16 @@ export function RequestsByModelChart({ timePeriod }: RequestsByModelChartProps) 
   const error = requestsError || costError;
 
   const currencyCode = generalSettings?.currencyCode || 'USD';
-  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
+  const locale = getLocale().startsWith('zh') ? 'zh-CN' : 'en-US';
 
   const formatCurrency = useCallback(
     (val: number, fractionDigits: number) =>
-      t('currencies.format', {
+      m["currencies.format"]({
         val,
         currency: currencyCode,
         locale,
         minimumFractionDigits: fractionDigits,
-        maximumFractionDigits: fractionDigits,
-      }),
+        maximumFractionDigits: fractionDigits }),
     [currencyCode, locale, t]
   );
 
@@ -114,13 +113,13 @@ export function RequestsByModelChart({ timePeriod }: RequestsByModelChartProps) 
         <div className='text-foreground mb-1 text-sm font-medium'>{data.name}</div>
         <div className='space-y-1'>
           <div className='flex justify-between gap-4'>
-            <span className='text-muted-foreground'>{t('dashboard.stats.requests')}:</span>
+            <span className='text-muted-foreground'>{m["dashboard.stats.requests"]()}:</span>
             <span className='font-medium'>
               {formatNumber(data.requests)} ({reqPercent.toFixed(0)}%)
             </span>
           </div>
           <div className='flex justify-between gap-4'>
-            <span className='text-muted-foreground'>{t('dashboard.stats.totalCost')}:</span>
+            <span className='text-muted-foreground'>{m["dashboard.stats.totalCost"]()}:</span>
             <span className='font-medium'>
               {formatCurrency(data.cost, 4)} ({costPercent.toFixed(0)}%)
             </span>
@@ -135,12 +134,12 @@ export function RequestsByModelChart({ timePeriod }: RequestsByModelChartProps) 
       {hasError ? (
         <div className='flex h-[300px] items-center justify-center'>
           <div className='text-sm text-red-500'>
-            {t('dashboard.charts.errorLoadingModelData')} {error.message}
+            {m["dashboard.charts.errorLoadingModelData"]()} {error.message}
           </div>
         </div>
       ) : chartData.length === 0 ? (
         <div className='flex h-[300px] items-center justify-center'>
-          <div className='text-muted-foreground text-sm'>{t('dashboard.charts.noModelData')}</div>
+          <div className='text-muted-foreground text-sm'>{m["dashboard.charts.noModelData"]()}</div>
         </div>
       ) : (
         <>

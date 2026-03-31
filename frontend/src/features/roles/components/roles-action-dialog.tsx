@@ -3,7 +3,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import React from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
@@ -16,10 +15,10 @@ import { Input } from '@/components/ui/input';
 import { useRolesContext } from '../context/roles-context';
 import { useCreateRole, useUpdateRole, useDeleteRole, useBulkDeleteRoles } from '../data/roles';
 import { createRoleInputSchema, updateRoleInputSchema } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 // Create Role Dialog
 export function CreateRoleDialog() {
-  const { t } = useTranslation();
   const { isDialogOpen, closeDialog } = useRolesContext();
   const createRole = useCreateRole();
   const [dialogContent, setDialogContent] = React.useState<HTMLDivElement | null>(null);
@@ -51,8 +50,8 @@ export function CreateRoleDialog() {
     <Dialog open={isDialogOpen.create} onOpenChange={handleClose}>
       <DialogContent className='max-w-2xl' ref={setDialogContent}>
         <DialogHeader>
-          <DialogTitle>{t('roles.dialogs.create.title')}</DialogTitle>
-          <DialogDescription>{t('roles.dialogs.create.description')}</DialogDescription>
+          <DialogTitle>{m["roles.dialogs.create.title"]()}</DialogTitle>
+          <DialogDescription>{m["roles.dialogs.create.description"]()}</DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
@@ -61,11 +60,11 @@ export function CreateRoleDialog() {
               name='name'
               render={({ field, fieldState }) => (
                 <FormItem>
-                  <FormLabel>{t('roles.dialogs.fields.name.label')}</FormLabel>
+                  <FormLabel>{m["roles.dialogs.fields.name.label"]()}</FormLabel>
                   <FormControl>
-                    <Input placeholder={t('roles.dialogs.fields.name.placeholder')} aria-invalid={!!fieldState.error} {...field} />
+                    <Input placeholder={m["roles.dialogs.fields.name.placeholder"]()} aria-invalid={!!fieldState.error} {...field} />
                   </FormControl>
-                  <FormDescription>{t('roles.dialogs.fields.name.description')}</FormDescription>
+                  <FormDescription>{m["roles.dialogs.fields.name.description"]()}</FormDescription>
                   <div className='min-h-[1.25rem]'>
                     <FormMessage />
                   </div>
@@ -79,8 +78,8 @@ export function CreateRoleDialog() {
               render={({ field }) => (
                 <FormItem>
                   <div className='mb-4'>
-                    <FormLabel className='text-base'>{t('roles.dialogs.fields.scopes.label')}</FormLabel>
-                    <FormDescription>{t('roles.dialogs.fields.scopes.description')}</FormDescription>
+                    <FormLabel className='text-base'>{m["roles.dialogs.fields.scopes.label"]()}</FormLabel>
+                    <FormDescription>{m["roles.dialogs.fields.scopes.description"]()}</FormDescription>
                   </div>
                   <FormControl>
                     <ScopesSelect
@@ -98,10 +97,10 @@ export function CreateRoleDialog() {
 
             <DialogFooter>
               <Button type='button' variant='outline' onClick={handleClose}>
-                {t('common.buttons.cancel')}
+                {m["common.buttons.cancel"]()}
               </Button>
               <Button type='submit' disabled={createRole.isPending}>
-                {createRole.isPending ? t('common.buttons.creating') : t('common.buttons.create')}
+                {createRole.isPending ? m["common.buttons.creating"]() : m["common.buttons.create"]()}
               </Button>
             </DialogFooter>
           </form>
@@ -113,7 +112,6 @@ export function CreateRoleDialog() {
 
 // Edit Role Dialog
 export function EditRoleDialog() {
-  const { t } = useTranslation();
   const { editingRole, isDialogOpen, closeDialog } = useRolesContext();
   const updateRole = useUpdateRole();
   const [dialogContent, setDialogContent] = React.useState<HTMLDivElement | null>(null);
@@ -157,8 +155,8 @@ export function EditRoleDialog() {
     <Dialog open={isDialogOpen.edit} onOpenChange={handleClose}>
       <DialogContent className='max-w-2xl' ref={setDialogContent}>
         <DialogHeader>
-          <DialogTitle>{t('roles.dialogs.edit.title')}</DialogTitle>
-          <DialogDescription>{t('roles.dialogs.edit.description')}</DialogDescription>
+          <DialogTitle>{m["roles.dialogs.edit.title"]()}</DialogTitle>
+          <DialogDescription>{m["roles.dialogs.edit.description"]()}</DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className='space-y-6'>
@@ -167,11 +165,11 @@ export function EditRoleDialog() {
               name='name'
               render={({ field, fieldState }) => (
                 <FormItem>
-                  <FormLabel>{t('roles.dialogs.fields.name.label')}</FormLabel>
+                  <FormLabel>{m["roles.dialogs.fields.name.label"]()}</FormLabel>
                   <FormControl>
-                    <Input placeholder={t('roles.dialogs.fields.name.placeholder')} aria-invalid={!!fieldState.error} {...field} />
+                    <Input placeholder={m["roles.dialogs.fields.name.placeholder"]()} aria-invalid={!!fieldState.error} {...field} />
                   </FormControl>
-                  <FormDescription>{t('roles.dialogs.fields.name.description')}</FormDescription>
+                  <FormDescription>{m["roles.dialogs.fields.name.description"]()}</FormDescription>
                   <div className='min-h-[1.25rem]'>
                     <FormMessage />
                   </div>
@@ -185,8 +183,8 @@ export function EditRoleDialog() {
               render={({ field }) => (
                 <FormItem>
                   <div className='mb-4'>
-                    <FormLabel className='text-base'>{t('roles.dialogs.fields.scopes.label')}</FormLabel>
-                    <FormDescription>{t('roles.dialogs.fields.scopes.description')}</FormDescription>
+                    <FormLabel className='text-base'>{m["roles.dialogs.fields.scopes.label"]()}</FormLabel>
+                    <FormDescription>{m["roles.dialogs.fields.scopes.description"]()}</FormDescription>
                   </div>
                   <FormControl>
                     <ScopesSelect
@@ -204,10 +202,10 @@ export function EditRoleDialog() {
 
             <DialogFooter>
               <Button type='button' variant='outline' onClick={handleClose}>
-                {t('common.buttons.cancel')}
+                {m["common.buttons.cancel"]()}
               </Button>
               <Button type='submit' disabled={updateRole.isPending}>
-                {updateRole.isPending ? t('common.buttons.saving') : t('common.buttons.save')}
+                {updateRole.isPending ? m["common.buttons.saving"]() : m["common.buttons.save"]()}
               </Button>
             </DialogFooter>
           </form>
@@ -219,7 +217,6 @@ export function EditRoleDialog() {
 
 // Delete Role Dialog
 export function DeleteRoleDialog() {
-  const { t } = useTranslation();
   const { deletingRole, isDialogOpen, closeDialog } = useRolesContext();
   const deleteRole = useDeleteRole();
 
@@ -238,10 +235,10 @@ export function DeleteRoleDialog() {
     <ConfirmDialog
       open={isDialogOpen.delete}
       onOpenChange={() => closeDialog('delete')}
-      title={t('roles.dialogs.delete.title')}
-      desc={t('roles.dialogs.delete.description', { name: deletingRole?.name })}
-      confirmText={t('common.buttons.delete')}
-      cancelBtnText={t('common.buttons.cancel')}
+      title={m["roles.dialogs.delete.title"]()}
+      desc={m["roles.dialogs.delete.description"]({ name: deletingRole?.name })}
+      confirmText={m["common.buttons.delete"]()}
+      cancelBtnText={m["common.buttons.cancel"]()}
       handleConfirm={handleConfirm}
       isLoading={deleteRole.isPending}
       destructive
@@ -251,7 +248,6 @@ export function DeleteRoleDialog() {
 
 // Bulk Delete Roles Dialog
 export function BulkDeleteRolesDialog() {
-  const { t } = useTranslation();
   const { isDialogOpen, closeDialog, selectedRoles, resetRowSelection } = useRolesContext();
   const bulkDeleteRoles = useBulkDeleteRoles();
 
@@ -272,10 +268,10 @@ export function BulkDeleteRolesDialog() {
     <ConfirmDialog
       open={isDialogOpen.bulkDelete}
       onOpenChange={() => closeDialog('bulkDelete')}
-      title={t('roles.dialogs.bulkDelete.title')}
-      desc={t('roles.dialogs.bulkDelete.description', { count: selectedRoles.length })}
-      confirmText={t('common.buttons.delete')}
-      cancelBtnText={t('common.buttons.cancel')}
+      title={m["roles.dialogs.bulkDelete.title"]()}
+      desc={m["roles.dialogs.bulkDelete.description"]({ count: selectedRoles.length })}
+      confirmText={m["common.buttons.delete"]()}
+      cancelBtnText={m["common.buttons.cancel"]()}
       handleConfirm={handleConfirm}
       isLoading={bulkDeleteRoles.isPending}
       destructive

@@ -2,17 +2,16 @@
 
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import * as m from '@/paraglide/messages';
 
 interface ScopesCellProps {
   scopes: string[];
 }
 
 export function ScopesCell({ scopes }: ScopesCellProps) {
-  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (scopes.length === 0) {
@@ -41,11 +40,11 @@ export function ScopesCell({ scopes }: ScopesCellProps) {
           {isExpanded ? (
             <>
               <IconChevronUp className='mr-1 h-3 w-3' />
-              {t('roles.columns.showLess')}
+              {m["roles.columns.showLess"]()}
             </>
           ) : (
             <>
-              <IconChevronDown className='mr-1 h-3 w-3' />+{scopes.length - 3} {t('roles.columns.moreScopes')}
+              <IconChevronDown className='mr-1 h-3 w-3' />+{scopes.length - 3} {m["roles.columns.moreScopes"]()}
             </>
           )}
         </Button>

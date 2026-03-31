@@ -14,7 +14,6 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { useState, useEffect, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { PermissionGuard } from '@/components/permission-guard';
 import { ServerSidePagination } from '@/components/server-side-pagination';
@@ -25,6 +24,7 @@ import { TableSkeleton } from '@/components/ui/table-skeleton';
 
 import { usePrompts } from '../context/prompts-context';
 import { Prompt, PromptConnection } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface PromptsTableProps {
   columns: ColumnDef<Prompt>[];
@@ -59,7 +59,6 @@ export function PromptsTable({
   onNameFilterChange,
   canWrite = true,
 }: PromptsTableProps) {
-  const { t } = useTranslation();
   const { setSelectedPrompts, setResetRowSelection, setOpen } = usePrompts();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -148,7 +147,7 @@ export function PromptsTable({
       <div className='mb-4 flex items-center justify-between'>
         <div className='flex flex-1 items-center space-x-2'>
           <Input
-            placeholder={t('prompts.filters.filterByName')}
+            placeholder={m["prompts.filters.filterByName"]()}
             value={(table.getColumn('name')?.getFilterValue() as string) ?? ''}
             onChange={(event) => table.getColumn('name')?.setFilterValue(event.target.value)}
             className='h-8 w-[150px] lg:w-[250px]'
@@ -195,7 +194,7 @@ export function PromptsTable({
             ) : (
               <TableRow className='!bg-[var(--table-background)]'>
                 <TableCell colSpan={columns.length} className='h-24 !bg-[var(--table-background)] text-center'>
-                  {t('common.noData')}
+                  {m["common.noData"]()}
                 </TableCell>
               </TableRow>
             )}
@@ -227,7 +226,7 @@ export function PromptsTable({
               <span className='bg-primary text-primary-foreground flex h-6 min-w-6 items-center justify-center rounded px-1.5 text-xs font-medium'>
                 {selectedCount}
               </span>
-              <span className='text-muted-foreground text-sm'>{t('common.selected')}</span>
+              <span className='text-muted-foreground text-sm'>{m["common.selected"]()}</span>
             </div>
             <div className='bg-border mx-2 h-6 w-px' />
             <PermissionGuard requiredScope='write_prompts'>
@@ -237,7 +236,7 @@ export function PromptsTable({
                   size='icon'
                   className='h-8 w-8 text-green-600 hover:bg-green-100 hover:text-green-700'
                   onClick={() => setOpen('bulkEnable')}
-                  title={t('common.buttons.enable')}
+                  title={m["common.buttons.enable"]()}
                 >
                   <IconCheck className='h-4 w-4' />
                 </Button>
@@ -246,7 +245,7 @@ export function PromptsTable({
                   size='icon'
                   className='h-8 w-8 text-amber-600 hover:bg-amber-100 hover:text-amber-700'
                   onClick={() => setOpen('bulkDisable')}
-                  title={t('common.buttons.disable')}
+                  title={m["common.buttons.disable"]()}
                 >
                   <IconBan className='h-4 w-4' />
                 </Button>
@@ -255,7 +254,7 @@ export function PromptsTable({
                   size='icon'
                   className='text-destructive h-8 w-8 hover:bg-red-100 hover:text-red-700'
                   onClick={() => setOpen('bulkDelete')}
-                  title={t('common.buttons.delete')}
+                  title={m["common.buttons.delete"]()}
                 >
                   <IconTrash className='h-4 w-4' />
                 </Button>

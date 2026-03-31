@@ -1,7 +1,6 @@
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { Table } from '@tanstack/react-table';
 import { RefreshCw, X } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 import { DateRangePicker } from '@/components/date-range-picker';
 import { Button } from '@/components/ui/button';
@@ -10,6 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import type { DateTimeRangeValue } from '@/utils/date-range';
 
 import { DataTableViewOptions } from './data-table-view-options';
+import * as m from '@/paraglide/messages';
 
 interface DataTableToolbarProps<TData> {
   table: Table<TData>;
@@ -34,7 +34,6 @@ export function DataTableToolbar<TData>({
   autoRefresh = false,
   onAutoRefreshChange,
 }: DataTableToolbarProps<TData>) {
-  const { t } = useTranslation();
   const hasDateRange = !!dateRange?.from || !!dateRange?.to;
   const isFiltered = table.getState().columnFilters.length > 0 || hasDateRange || !!traceIdFilter.trim();
 
@@ -42,7 +41,7 @@ export function DataTableToolbar<TData>({
     <div className='flex items-center justify-between'>
       <div className='flex flex-1 items-center space-x-2'>
         <Input
-          placeholder={t('traces.filters.filterTraceId')}
+          placeholder={m["traces.filters.filterTraceId"]()}
           value={traceIdFilter}
           onChange={(event) => onTraceIdFilterChange(event.target.value)}
           className='h-8 w-[150px] lg:w-[250px]'
@@ -63,7 +62,7 @@ export function DataTableToolbar<TData>({
             }}
             className='h-8 px-2 lg:px-3'
           >
-            {t('common.filters.reset')}
+            {m["common.filters.reset"]()}
             <Cross2Icon className='ml-2 h-4 w-4' />
           </Button>
         )}
@@ -73,14 +72,14 @@ export function DataTableToolbar<TData>({
           <div className='flex items-center space-x-2'>
             <Switch checked={autoRefresh} onCheckedChange={onAutoRefreshChange} id='auto-refresh-switch' />
             <label htmlFor='auto-refresh-switch' className='text-muted-foreground cursor-pointer text-sm'>
-              {t('common.autoRefresh')}
+              {m["common.autoRefresh"]()}
             </label>
           </div>
         )}
         {showRefresh && onRefresh && (
           <Button variant='outline' size='sm' onClick={onRefresh}>
             <RefreshCw className={`mr-2 h-4 w-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-            {t('common.refresh')}
+            {m["common.refresh"]()}
           </Button>
         )}
         {/* <DataTableViewOptions table={table} /> */}

@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
+import * as m from '@/paraglide/messages';
 
 import {
   CreatePromptProtectionRuleInput,
@@ -142,7 +142,6 @@ export function useQueryPromptProtectionRules(args: QueryRulesArgs) {
 }
 
 export function useCreatePromptProtectionRule() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -152,16 +151,15 @@ export function useCreatePromptProtectionRule() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-protection-rules'] });
-      toast.success(t('promptProtectionRules.messages.createSuccess'));
+      toast.success(m["promptProtectionRules.messages.createSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('promptProtectionRules.messages.createError', { error: error.message }));
+      toast.error(m["promptProtectionRules.messages.createError"]({ error: error.message }));
     },
   });
 }
 
 export function useUpdatePromptProtectionRule() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -171,16 +169,15 @@ export function useUpdatePromptProtectionRule() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-protection-rules'] });
-      toast.success(t('promptProtectionRules.messages.updateSuccess'));
+      toast.success(m["promptProtectionRules.messages.updateSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('promptProtectionRules.messages.updateError', { error: error.message }));
+      toast.error(m["promptProtectionRules.messages.updateError"]({ error: error.message }));
     },
   });
 }
 
 export function useDeletePromptProtectionRule() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -189,16 +186,15 @@ export function useDeletePromptProtectionRule() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-protection-rules'] });
-      toast.success(t('promptProtectionRules.messages.deleteSuccess'));
+      toast.success(m["promptProtectionRules.messages.deleteSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('promptProtectionRules.messages.deleteError', { error: error.message }));
+      toast.error(m["promptProtectionRules.messages.deleteError"]({ error: error.message }));
     },
   });
 }
 
 export function useUpdatePromptProtectionRuleStatus() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -207,16 +203,15 @@ export function useUpdatePromptProtectionRuleStatus() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-protection-rules'] });
-      toast.success(t('promptProtectionRules.messages.statusUpdateSuccess'));
+      toast.success(m["promptProtectionRules.messages.statusUpdateSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('promptProtectionRules.messages.statusUpdateError', { error: error.message }));
+      toast.error(m["promptProtectionRules.messages.statusUpdateError"]({ error: error.message }));
     },
   });
 }
 
 export function useBulkDeletePromptProtectionRules() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -225,16 +220,15 @@ export function useBulkDeletePromptProtectionRules() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-protection-rules'] });
-      toast.success(t('promptProtectionRules.messages.bulkDeleteSuccess'));
+      toast.success(m["promptProtectionRules.messages.bulkDeleteSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('promptProtectionRules.messages.bulkDeleteError', { error: error.message }));
+      toast.error(m["promptProtectionRules.messages.bulkDeleteError"]({ error: error.message }));
     },
   });
 }
 
 export function useBulkEnablePromptProtectionRules() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -243,16 +237,15 @@ export function useBulkEnablePromptProtectionRules() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-protection-rules'] });
-      toast.success(t('promptProtectionRules.messages.bulkEnableSuccess'));
+      toast.success(m["promptProtectionRules.messages.bulkEnableSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('promptProtectionRules.messages.bulkEnableError', { error: error.message }));
+      toast.error(m["promptProtectionRules.messages.bulkEnableError"]({ error: error.message }));
     },
   });
 }
 
 export function useBulkDisablePromptProtectionRules() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -261,10 +254,10 @@ export function useBulkDisablePromptProtectionRules() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompt-protection-rules'] });
-      toast.success(t('promptProtectionRules.messages.bulkDisableSuccess'));
+      toast.success(m["promptProtectionRules.messages.bulkDisableSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('promptProtectionRules.messages.bulkDisableError', { error: error.message }));
+      toast.error(m["promptProtectionRules.messages.bulkDisableError"]({ error: error.message }));
     },
   });
 }

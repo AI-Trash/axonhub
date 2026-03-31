@@ -1,7 +1,6 @@
 import { DotsHorizontalIcon } from '@radix-ui/react-icons';
 import { IconEdit, IconArchive, IconTrash, IconNote } from '@tabler/icons-react';
 import { Row } from '@tanstack/react-table';
-import { useTranslation } from 'react-i18next';
 
 import { PermissionGuard } from '@/components/permission-guard';
 import { Button } from '@/components/ui/button';
@@ -16,13 +15,13 @@ import { usePermissions } from '@/hooks/usePermissions';
 
 import { useModels } from '../context/models-context';
 import { Model } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface DataTableRowActionsProps {
   row: Row<Model>;
 }
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
-  const { t } = useTranslation();
   const { setOpen, setCurrentRow } = useModels();
   const { channelPermissions } = usePermissions();
   const model = row.original;
@@ -43,13 +42,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         data-testid='row-edit-button'
       >
         <IconEdit size={16} />
-        <span className='sr-only'>{t('common.actions.edit')}</span>
+        <span className='sr-only'>{m["common.actions.edit"]()}</span>
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant='ghost' className='data-[state=open]:bg-muted flex h-8 w-8 p-0' data-testid='row-actions'>
             <DotsHorizontalIcon className='h-4 w-4' />
-            <span className='sr-only'>{t('common.actions.openMenu')}</span>
+            <span className='sr-only'>{m["common.actions.openMenu"]()}</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-[160px]'>
@@ -62,7 +61,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
                 }}
               >
                 <IconEdit size={16} className='mr-2' />
-                {t('common.actions.edit')}
+                {m["common.actions.edit"]()}
               </DropdownMenuItem>
 
               <DropdownMenuItem
@@ -72,7 +71,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
                 }}
               >
                 <IconNote size={16} className='mr-2' />
-                {t('models.actions.manageAssociation')}
+                {m["models.actions.manageAssociation"]()}
               </DropdownMenuItem>
 
               {channelPermissions.canRead && <DropdownMenuSeparator />}
@@ -86,7 +85,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
                   className='text-orange-500!'
                 >
                   <IconArchive size={16} className='mr-2' />
-                  {t('common.buttons.archive')}
+                  {m["common.buttons.archive"]()}
                 </DropdownMenuItem>
               )}
 
@@ -98,7 +97,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
                 className='text-red-500!'
               >
                 <IconTrash size={16} className='mr-2' />
-                {t('common.buttons.delete')}
+                {m["common.buttons.delete"]()}
               </DropdownMenuItem>
             </>
           </PermissionGuard>

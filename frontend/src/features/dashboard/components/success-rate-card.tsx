@@ -1,5 +1,4 @@
 import { ShieldCheck } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -7,9 +6,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatNumber } from '@/utils/format-number';
 
 import { useDashboardStats } from '../data/dashboard';
+import * as m from '@/paraglide/messages';
 
 export function SuccessRateCard() {
-  const { t } = useTranslation();
   const { data: stats, isLoading, error } = useDashboardStats();
 
   if (isLoading) {
@@ -38,11 +37,11 @@ export function SuccessRateCard() {
             <div className='bg-primary/10 text-primary dark:bg-primary/20 rounded-lg p-1.5'>
               <ShieldCheck className='h-4 w-4' />
             </div>
-            <CardTitle className='text-sm font-medium'>{t('dashboard.cards.successRate')}</CardTitle>
+            <CardTitle className='text-sm font-medium'>{m["dashboard.cards.successRate"]()}</CardTitle>
           </div>
         </CardHeader>
         <CardContent>
-          <div className='text-sm text-red-500'>{t('common.loadError')}</div>
+          <div className='text-sm text-red-500'>{m["common.loadError"]()}</div>
         </CardContent>
       </Card>
     );
@@ -58,7 +57,7 @@ export function SuccessRateCard() {
           <div className='bg-primary/10 text-primary dark:bg-primary/20 rounded-lg p-1.5'>
             <ShieldCheck className='h-4 w-4' />
           </div>
-          <CardTitle className='text-sm font-medium'>{t('dashboard.cards.successRate')}</CardTitle>
+          <CardTitle className='text-sm font-medium'>{m["dashboard.cards.successRate"]()}</CardTitle>
         </div>
       </CardHeader>
       <CardContent>
@@ -72,9 +71,9 @@ export function SuccessRateCard() {
           <Progress value={parseFloat(successRate)} className='h-2' />
           <div className='flex justify-between text-xs'>
             <span className='text-muted-foreground'>
-              {formatNumber(stats?.failedRequests || 0)} {t('dashboard.stats.failedRequests')}
+              {formatNumber(stats?.failedRequests || 0)} {m["dashboard.stats.failedRequests"]()}
             </span>
-            <span className='text-primary font-medium'>{t('dashboard.stats.average')}</span>
+            <span className='text-primary font-medium'>{m["dashboard.stats.average"]()}</span>
           </div>
         </div>
       </CardContent>

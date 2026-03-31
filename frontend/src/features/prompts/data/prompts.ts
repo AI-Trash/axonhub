@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
 import { useSelectedProjectId } from '@/stores/projectStore';
 
 import { Prompt, PromptConnection, CreatePromptInput, UpdatePromptInput, promptConnectionSchema, promptSchema } from './schema';
+import * as m from '@/paraglide/messages';
 
 const PROMPTS_QUERY = `
   query GetPrompts(
@@ -173,7 +173,6 @@ export function useQueryPrompts(args: QueryPromptsArgs) {
 }
 
 export function useCreatePrompt() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -185,16 +184,15 @@ export function useCreatePrompt() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompts'] });
-      toast.success(t('prompts.messages.createSuccess'));
+      toast.success(m["prompts.messages.createSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('prompts.messages.createError', { error: error.message }));
+      toast.error(m["prompts.messages.createError"]({ error: error.message }));
     },
   });
 }
 
 export function useUpdatePrompt() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -206,16 +204,15 @@ export function useUpdatePrompt() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompts'] });
-      toast.success(t('prompts.messages.updateSuccess'));
+      toast.success(m["prompts.messages.updateSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('prompts.messages.updateError', { error: error.message }));
+      toast.error(m["prompts.messages.updateError"]({ error: error.message }));
     },
   });
 }
 
 export function useDeletePrompt() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -226,16 +223,15 @@ export function useDeletePrompt() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompts'] });
-      toast.success(t('prompts.messages.deleteSuccess'));
+      toast.success(m["prompts.messages.deleteSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('prompts.messages.deleteError', { error: error.message }));
+      toast.error(m["prompts.messages.deleteError"]({ error: error.message }));
     },
   });
 }
 
 export function useUpdatePromptStatus() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -246,16 +242,15 @@ export function useUpdatePromptStatus() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['prompts'] });
-      toast.success(t('prompts.messages.statusUpdateSuccess'));
+      toast.success(m["prompts.messages.statusUpdateSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('prompts.messages.statusUpdateError', { error: error.message }));
+      toast.error(m["prompts.messages.statusUpdateError"]({ error: error.message }));
     },
   });
 }
 
 export function useBulkDeletePrompts() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -267,16 +262,15 @@ export function useBulkDeletePrompts() {
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['prompts'] });
-      toast.success(t('prompts.messages.bulkDeleteSuccess', { count: variables.length }));
+      toast.success(m["prompts.messages.bulkDeleteSuccess"]({ count: variables.length }));
     },
     onError: (error: Error) => {
-      toast.error(t('prompts.messages.bulkDeleteError', { error: error.message }));
+      toast.error(m["prompts.messages.bulkDeleteError"]({ error: error.message }));
     },
   });
 }
 
 export function useBulkDisablePrompts() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -288,16 +282,15 @@ export function useBulkDisablePrompts() {
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['prompts'] });
-      toast.success(t('prompts.messages.bulkDisableSuccess', { count: variables.length }));
+      toast.success(m["prompts.messages.bulkDisableSuccess"]({ count: variables.length }));
     },
     onError: (error: Error) => {
-      toast.error(t('prompts.messages.bulkDisableError', { error: error.message }));
+      toast.error(m["prompts.messages.bulkDisableError"]({ error: error.message }));
     },
   });
 }
 
 export function useBulkEnablePrompts() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -309,10 +302,10 @@ export function useBulkEnablePrompts() {
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['prompts'] });
-      toast.success(t('prompts.messages.bulkEnableSuccess', { count: variables.length }));
+      toast.success(m["prompts.messages.bulkEnableSuccess"]({ count: variables.length }));
     },
     onError: (error: Error) => {
-      toast.error(t('prompts.messages.bulkEnableError', { error: error.message }));
+      toast.error(m["prompts.messages.bulkEnableError"]({ error: error.message }));
     },
   });
 }

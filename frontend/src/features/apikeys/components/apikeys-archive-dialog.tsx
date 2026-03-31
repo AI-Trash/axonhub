@@ -1,15 +1,14 @@
 'use client';
 
 import { IconArchive, IconInfoCircle } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useUpdateApiKeyStatus } from '../data/apikeys';
+import * as m from '@/paraglide/messages';
 
 export function ApiKeysArchiveDialog() {
-  const { t } = useTranslation();
   const { isDialogOpen, closeDialog, selectedApiKey, resetRowSelection } = useApiKeysContext();
   const updateApiKeyStatus = useUpdateApiKeyStatus();
 
@@ -29,8 +28,8 @@ export function ApiKeysArchiveDialog() {
   };
 
   const getDescription = () => {
-    const baseDescription = t('apikeys.dialogs.archive.description', { name: selectedApiKey.name });
-    const warningText = t('apikeys.dialogs.archive.warning');
+    const baseDescription = m["apikeys.dialogs.archive.description"]({ name: selectedApiKey.name });
+    const warningText = m["apikeys.dialogs.archive.warning"]();
 
     return (
       <div className='space-y-3'>
@@ -56,12 +55,12 @@ export function ApiKeysArchiveDialog() {
       title={
         <span className='text-orange-600'>
           <IconArchive className='mr-1 inline-block stroke-orange-600' size={18} />
-          {t('apikeys.dialogs.archive.title')}
+          {m["apikeys.dialogs.archive.title"]()}
         </span>
       }
       desc={getDescription()}
-      confirmText={t('common.buttons.archive')}
-      cancelBtnText={t('common.buttons.cancel')}
+      confirmText={m["common.buttons.archive"]()}
+      cancelBtnText={m["common.buttons.cancel"]()}
     />
   );
 }

@@ -1,7 +1,6 @@
 import { IconPlus } from '@tabler/icons-react';
 import { SortingState } from '@tanstack/react-table';
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -16,9 +15,9 @@ import { PromptsDialogs } from './components/prompts-dialogs';
 import { PromptsTable } from './components/prompts-table';
 import PromptsProvider, { usePrompts } from './context/prompts-context';
 import { useQueryPrompts } from './data/prompts';
+import * as m from '@/paraglide/messages';
 
 function PromptsContent() {
-  const { t } = useTranslation();
   const { hasScope } = usePermissions();
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs } = usePaginationSearch({
     defaultPageSize: 20,
@@ -104,7 +103,7 @@ function PromptsContent() {
   );
 
   const canWrite = hasScope('write_prompts');
-  const columns = useMemo(() => createColumns(t, canWrite), [t, canWrite]);
+  const columns = useMemo(() => createColumns(canWrite), [canWrite]);
 
   return (
     <div className='flex flex-1 flex-col overflow-hidden'>
@@ -129,13 +128,12 @@ function PromptsContent() {
 }
 
 function CreateButton() {
-  const { t } = useTranslation();
   const { setOpen } = usePrompts();
 
   return (
     <Button onClick={() => setOpen('create')}>
       <IconPlus className='mr-2 h-4 w-4' />
-      {t('prompts.actions.create')}
+      {m["prompts.actions.create"]()}
     </Button>
   );
 }
@@ -151,15 +149,13 @@ function ActionButtons() {
 }
 
 export default function PromptsManagement() {
-  const { t } = useTranslation();
-
   return (
     <PromptsProvider>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('prompts.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('prompts.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["prompts.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["prompts.description"]()}</p>
           </div>
           <ActionButtons />
         </div>

@@ -1,12 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
-import i18n from '@/lib/i18n';
 
 import { Project, ProjectConnection, CreateProjectInput, UpdateProjectInput, projectConnectionSchema, projectSchema } from './schema';
+import * as m from '@/paraglide/messages';
 
 // GraphQL queries and mutations
 const PROJECTS_QUERY = `
@@ -96,8 +95,6 @@ export function useProjects(
   } = {}
 ) {
   const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
-
   const queryVariables = {
     ...variables,
     orderBy: variables.orderBy || { field: 'CREATED_AT', direction: 'DESC' },
@@ -110,7 +107,7 @@ export function useProjects(
         const data = await graphqlRequest<{ projects: ProjectConnection }>(PROJECTS_QUERY, queryVariables);
         return projectConnectionSchema.parse(data?.projects);
       } catch (error) {
-        handleError(error, t('projects.errors.loadProjectsFailed'));
+        handleError(error, m["projects.errors.loadProjectsFailed"]());
         throw error;
       }
     },
@@ -119,8 +116,6 @@ export function useProjects(
 
 export function useProject(id: string) {
   const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
-
   return useQuery({
     queryKey: ['project', id],
     queryFn: async () => {
@@ -132,7 +127,7 @@ export function useProject(id: string) {
         }
         return projectSchema.parse(project);
       } catch (error) {
-        handleError(error, t('projects.errors.loadProjectDetailFailed'));
+        handleError(error, m["projects.errors.loadProjectDetailFailed"]());
         throw error;
       }
     },
@@ -142,8 +137,6 @@ export function useProject(id: string) {
 
 export function useMyProjects() {
   const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
-
   return useQuery({
     queryKey: ['myProjects'],
     queryFn: async () => {
@@ -159,7 +152,7 @@ export function useMyProjects() {
 
         return projects;
       } catch (error) {
-        handleError(error, t('projects.errors.loadMyProjectsFailed'));
+        handleError(error, m["projects.errors.loadMyProjectsFailed"]());
         return [];
       }
     },
@@ -177,14 +170,14 @@ export function useCreateProject() {
         const data = await graphqlRequest<{ createProject: Project }>(CREATE_PROJECT_MUTATION, { input });
         return projectSchema.parse(data.createProject);
       } catch (error) {
-        handleError(error, i18n.t('projects.errors.createProjectFailed'));
+        handleError(error, m["projects.errors.createProjectFailed"]());
         throw error;
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
-      toast.success(i18n.t('common.success.projectCreated'));
+      toast.success(m["common.success.projectCreated"]());
     },
   });
 }
@@ -199,7 +192,7 @@ export function useUpdateProject() {
         const data = await graphqlRequest<{ updateProject: Project }>(UPDATE_PROJECT_MUTATION, { id, input });
         return projectSchema.parse(data.updateProject);
       } catch (error) {
-        handleError(error, i18n.t('projects.errors.updateProjectFailed'));
+        handleError(error, m["projects.errors.updateProjectFailed"]());
         throw error;
       }
     },
@@ -207,7 +200,7 @@ export function useUpdateProject() {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       queryClient.invalidateQueries({ queryKey: ['project'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
-      toast.success(i18n.t('common.success.projectUpdated'));
+      toast.success(m["common.success.projectUpdated"]());
     },
   });
 }
@@ -225,7 +218,7 @@ export function useArchiveProject() {
         });
         return projectSchema.parse(data.updateProjectStatus);
       } catch (error) {
-        handleError(error, i18n.t('projects.errors.archiveProjectFailed'));
+        handleError(error, m["projects.errors.archiveProjectFailed"]());
         throw error;
       }
     },
@@ -233,7 +226,7 @@ export function useArchiveProject() {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       queryClient.invalidateQueries({ queryKey: ['project'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
-      toast.success(i18n.t('common.success.projectArchived'));
+      toast.success(m["common.success.projectArchived"]());
     },
   });
 }
@@ -251,7 +244,7 @@ export function useActivateProject() {
         });
         return projectSchema.parse(data.updateProjectStatus);
       } catch (error) {
-        handleError(error, i18n.t('projects.errors.activateProjectFailed'));
+        handleError(error, m["projects.errors.activateProjectFailed"]());
         throw error;
       }
     },
@@ -259,7 +252,7 @@ export function useActivateProject() {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
       queryClient.invalidateQueries({ queryKey: ['project'] });
       queryClient.invalidateQueries({ queryKey: ['myProjects'] });
-      toast.success(i18n.t('common.success.projectActivated'));
+      toast.success(m["common.success.projectActivated"]());
     },
   });
 }

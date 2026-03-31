@@ -16,7 +16,6 @@ import {
 } from '@tanstack/react-table';
 import { motion, AnimatePresence } from 'framer-motion';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Button } from '@/components/ui/button';
@@ -27,6 +26,7 @@ import { useChannels } from '../context/channels-context';
 import { Channel, ChannelConnection } from '../data/schema';
 import { ChannelExpandedRow } from './channel-expanded-row';
 import { DataTableToolbar } from './data-table-toolbar';
+import * as m from '@/paraglide/messages';
 
 const MotionTableRow = motion.create(TableRow);
 const MotionExpandedRow = motion.create(TableRow);
@@ -97,7 +97,6 @@ export function ChannelsTable({
   onHealthColumnVisibilityChange,
   canWrite = true,
 }: DataTableProps) {
-  const { t } = useTranslation();
   const { setSelectedChannels, setResetRowSelection, setOpen } = useChannels();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [expanded, setExpanded] = useState<ExpandedState>({});
@@ -244,7 +243,7 @@ export function ChannelsTable({
       const label = t(key);
       return label === key ? apiFormat : label;
     },
-    [t]
+    []
   );
 
   const selectedCount = useMemo(() => filteredSelectedRows.length, [filteredSelectedRows]);
@@ -366,7 +365,7 @@ export function ChannelsTable({
               ) : (
                 <TableRow className='!bg-[var(--table-background)]'>
                   <TableCell colSpan={columns.length} className='h-24 !bg-[var(--table-background)] text-center'>
-                    {t('common.noData')}
+                    {m["common.noData"]()}
                   </TableCell>
                 </TableRow>
               )}
@@ -398,7 +397,7 @@ export function ChannelsTable({
               <span className='bg-primary text-primary-foreground flex h-6 min-w-6 items-center justify-center rounded px-1.5 text-xs font-medium'>
                 {selectedCount}
               </span>
-              <span className='text-muted-foreground text-sm'>{t('common.selected')}</span>
+              <span className='text-muted-foreground text-sm'>{m["common.selected"]()}</span>
             </div>
             <div className='bg-border mx-2 h-6 w-px' />
             <Button
@@ -406,7 +405,7 @@ export function ChannelsTable({
               size='icon'
               className='h-8 w-8 text-blue-600 hover:bg-blue-100 hover:text-blue-700'
               onClick={() => setOpen('bulkApplyTemplate')}
-              title={t('channels.templates.bulk.applyButton')}
+              title={m["channels.templates.bulk.applyButton"]()}
             >
               <IconTemplate className='h-4 w-4' />
             </Button>
@@ -415,7 +414,7 @@ export function ChannelsTable({
               size='icon'
               className='h-8 w-8 text-green-600 hover:bg-green-100 hover:text-green-700'
               onClick={() => setOpen('bulkEnable')}
-              title={t('common.buttons.enable')}
+              title={m["common.buttons.enable"]()}
             >
               <IconCheck className='h-4 w-4' />
             </Button>
@@ -424,7 +423,7 @@ export function ChannelsTable({
               size='icon'
               className='h-8 w-8 text-amber-600 hover:bg-amber-100 hover:text-amber-700'
               onClick={() => setOpen('bulkDisable')}
-              title={t('common.buttons.disable')}
+              title={m["common.buttons.disable"]()}
             >
               <IconBan className='h-4 w-4' />
             </Button>
@@ -433,7 +432,7 @@ export function ChannelsTable({
               size='icon'
               className='h-8 w-8 text-orange-600 hover:bg-orange-100 hover:text-orange-700'
               onClick={() => setOpen('bulkArchive')}
-              title={t('common.buttons.archive')}
+              title={m["common.buttons.archive"]()}
             >
               <IconArchive className='h-4 w-4' />
             </Button>
@@ -442,7 +441,7 @@ export function ChannelsTable({
               size='icon'
               className='text-destructive h-8 w-8 hover:bg-red-100 hover:text-red-700'
               onClick={() => setOpen('bulkDelete')}
-              title={t('common.buttons.delete')}
+              title={m["common.buttons.delete"]()}
             >
               <IconTrash className='h-4 w-4' />
             </Button>

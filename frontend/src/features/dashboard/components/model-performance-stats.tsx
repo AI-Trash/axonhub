@@ -1,15 +1,14 @@
 import { useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { useModelPerformanceStats, ModelPerformanceStat } from '../data/dashboard';
 import { PerformanceChart, PerformanceDataPoint } from './performance-chart';
+import * as m from '@/paraglide/messages';
 
 interface ModelPerformanceStatsProps {
   onTotalRequestsChange?: (total: number) => void;
 }
 
 export function ModelPerformanceStats({ onTotalRequestsChange }: ModelPerformanceStatsProps) {
-  const { t } = useTranslation();
   const { data: performanceStats, isLoading, error } = useModelPerformanceStats();
 
   const mappedData: PerformanceDataPoint[] | undefined = useMemo(
@@ -31,8 +30,8 @@ export function ModelPerformanceStats({ onTotalRequestsChange }: ModelPerformanc
       isLoading={isLoading}
       error={error}
       onTotalRequestsChange={onTotalRequestsChange}
-      emptyMessage={t('dashboard.charts.noModelData')}
-      errorMessage={t('dashboard.charts.errorLoadingModelData')}
+      emptyMessage={m["dashboard.charts.noModelData"]()}
+      errorMessage={m["dashboard.charts.errorLoadingModelData"]()}
       idField='modelId'
     />
   );

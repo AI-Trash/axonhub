@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import * as m from '@/paraglide/messages';
 
 type UseCopyToClipboardProps = {
   text: string;
@@ -8,7 +8,6 @@ type UseCopyToClipboardProps = {
 };
 
 export function useCopyToClipboard({ text, copyMessage = 'Copied to clipboard!' }: UseCopyToClipboardProps) {
-  const { t } = useTranslation();
   const [isCopied, setIsCopied] = useState(false);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -16,7 +15,7 @@ export function useCopyToClipboard({ text, copyMessage = 'Copied to clipboard!' 
     navigator.clipboard
       .writeText(text)
       .then(() => {
-        toast.success(t('common.success.copiedToClipboard'));
+        toast.success(m["common.success.copiedToClipboard"]());
         setIsCopied(true);
         if (timeoutRef.current) {
           clearTimeout(timeoutRef.current);
@@ -27,7 +26,7 @@ export function useCopyToClipboard({ text, copyMessage = 'Copied to clipboard!' 
         }, 2000);
       })
       .catch(() => {
-        toast.error(t('common.errors.copyFailed'));
+        toast.error(m["common.errors.copyFailed"]());
       });
   }, [text, copyMessage, t]);
 

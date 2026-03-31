@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -13,6 +12,7 @@ import { GeneralSettings } from './general-settings';
 import { ProxyPresetsSettings } from './proxy-presets-settings';
 import { RetrySettings } from './retry-settings';
 import { StorageSettings } from './storage-settings';
+import * as m from '@/paraglide/messages';
 
 type SystemTabKey = 'general' | 'brand' | 'storage' | 'retry' | 'proxy' | 'backup' | 'about';
 
@@ -21,7 +21,6 @@ interface SystemSettingsTabsProps {
 }
 
 export function SystemSettingsTabs({ initialTab }: SystemSettingsTabsProps) {
-  const { t } = useTranslation();
   const { isOwner } = usePermissions();
   const [activeTab, setActiveTab] = useState<SystemTabKey>('general');
 
@@ -37,27 +36,27 @@ export function SystemSettingsTabs({ initialTab }: SystemSettingsTabsProps) {
         className={`shadow-soft border-border bg-background grid w-full rounded-2xl border ${isOwner ? 'grid-cols-7' : 'grid-cols-6'}`}
       >
         <TabsTrigger value='general' data-value='general'>
-          {t('system.tabs.general')}
+          {m["system.tabs.general"]()}
         </TabsTrigger>
         <TabsTrigger value='brand' data-value='brand'>
-          {t('system.tabs.brand')}
+          {m["system.tabs.brand"]()}
         </TabsTrigger>
         <TabsTrigger value='retry' data-value='retry'>
-          {t('system.tabs.retry')}
+          {m["system.tabs.retry"]()}
         </TabsTrigger>
         <TabsTrigger value='storage' data-value='storage'>
-          {t('system.tabs.storage')}
+          {m["system.tabs.storage"]()}
         </TabsTrigger>
         <TabsTrigger value='proxy' data-value='proxy'>
-          {t('system.tabs.proxy')}
+          {m["system.tabs.proxy"]()}
         </TabsTrigger>
         {isOwner && (
           <TabsTrigger value='backup' data-value='backup'>
-            {t('system.tabs.backup')}
+            {m["system.tabs.backup"]()}
           </TabsTrigger>
         )}
         <TabsTrigger value='about' data-value='about'>
-          {t('system.tabs.about')}
+          {m["system.tabs.about"]()}
         </TabsTrigger>
       </TabsList>
       <div className='shadow-soft border-border bg-card mt-6 rounded-2xl border p-6'>

@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
@@ -9,6 +8,7 @@ import { useRequestPermissions } from '@/hooks/useRequestPermissions';
 import { useSelectedProjectId } from '@/stores/projectStore';
 
 import { User, UserConnection, ProjectUser, CreateUserInput, UpdateUserInput, userSchema, projectUserSchema } from './schema';
+import * as m from '@/paraglide/messages';
 
 // Dynamic GraphQL query builder for project-level users
 // This query fetches users with their project-specific information (owner status and scopes)
@@ -124,7 +124,6 @@ export function useUsers(
     disableAutoFetch?: boolean;
   }
 ) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
   const permissions = useRequestPermissions();
   const selectedProjectId = useSelectedProjectId();
@@ -181,7 +180,7 @@ export function useUsers(
           },
         };
       } catch (error) {
-        handleError(error, t('users.messages.loadUsersError'));
+        handleError(error, m["users.messages.loadUsersError"]());
         throw error;
       }
     },
@@ -190,7 +189,6 @@ export function useUsers(
 }
 
 export function useUser(id: string) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
   const selectedProjectId = useSelectedProjectId();
 
@@ -202,11 +200,11 @@ export function useUser(id: string) {
         const data = await graphqlRequest<{ users: UserConnection }>(USERS_QUERY, { where: { id } }, headers);
         const user = data.users.edges[0]?.node;
         if (!user) {
-          throw new Error(t('users.messages.userNotFound'));
+          throw new Error(m["users.messages.userNotFound"]());
         }
         return userSchema.parse(user);
       } catch (error) {
-        handleError(error, t('users.messages.loadUserError'));
+        handleError(error, m["users.messages.loadUserError"]());
         throw error;
       }
     },
@@ -216,7 +214,6 @@ export function useUser(id: string) {
 
 // Mutation hooks
 export function useCreateUser() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -228,16 +225,15 @@ export function useCreateUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success(t('users.messages.createSuccess'));
+      toast.success(m["users.messages.createSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.createError') + `: ${error.message}`);
+      toast.error(m["users.messages.createError"]() + `: ${error.message}`);
     },
   });
 }
 
 export function useUpdateUser() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -249,16 +245,15 @@ export function useUpdateUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success(t('users.messages.updateSuccess'));
+      toast.success(m["users.messages.updateSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.updateError') + `: ${error.message}`);
+      toast.error(m["users.messages.updateError"]() + `: ${error.message}`);
     },
   });
 }
 
 export function useUpdateUserStatus() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -271,17 +266,16 @@ export function useUpdateUserStatus() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['user', variables.id] });
-      const statusText = variables.status === 'activated' ? t('users.status.activated') : t('users.status.deactivated');
-      toast.success(t('users.messages.statusUpdateSuccess', { status: statusText }));
+      const statusText = variables.status === 'activated' ? m["users.status.activated"]() : m["users.status.deactivated"]();
+      toast.success(m["users.messages.statusUpdateSuccess"]({ status: statusText }));
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.statusUpdateError') + `: ${error.message}`);
+      toast.error(m["users.messages.statusUpdateError"]() + `: ${error.message}`);
     },
   });
 }
 
 export function useDeleteUser() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -291,17 +285,16 @@ export function useDeleteUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success(t('users.messages.deleteSuccess'));
+      toast.success(m["users.messages.deleteSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.deleteError') + `: ${error.message}`);
+      toast.error(m["users.messages.deleteError"]() + `: ${error.message}`);
     },
   });
 }
 
 // Add user to project
 export function useAddUserToProject() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -328,17 +321,16 @@ export function useAddUserToProject() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-users', selectedProjectId] });
-      toast.success(t('users.messages.addToProjectSuccess'));
+      toast.success(m["users.messages.addToProjectSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.addToProjectError') + `: ${error.message}`);
+      toast.error(m["users.messages.addToProjectError"]() + `: ${error.message}`);
     },
   });
 }
 
 // Remove user from project
 export function useRemoveUserFromProject() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -362,17 +354,16 @@ export function useRemoveUserFromProject() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-users', selectedProjectId] });
-      toast.success(t('users.messages.removeFromProjectSuccess'));
+      toast.success(m["users.messages.removeFromProjectSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.removeFromProjectError') + `: ${error.message}`);
+      toast.error(m["users.messages.removeFromProjectError"]() + `: ${error.message}`);
     },
   });
 }
 
 // Update project user (for editing roles/scopes)
 export function useUpdateProjectUser() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const selectedProjectId = useSelectedProjectId();
 
@@ -406,17 +397,16 @@ export function useUpdateProjectUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-users', selectedProjectId] });
-      toast.success(t('users.messages.updateSuccess'));
+      toast.success(m["users.messages.updateSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.updateError') + `: ${error.message}`);
+      toast.error(m["users.messages.updateError"]() + `: ${error.message}`);
     },
   });
 }
 
 // Get all users (for adding to project)
 export function useAllUsers(variables?: { first?: number; after?: string; where?: Record<string, any> }, options?: { enabled?: boolean }) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
 
   return useQuery({
@@ -426,7 +416,7 @@ export function useAllUsers(variables?: { first?: number; after?: string; where?
         const data = await graphqlRequest<{ users: UserConnection }>(ALL_USERS_QUERY, variables);
         return data.users;
       } catch (error) {
-        handleError(error, t('users.messages.loadUsersError'));
+        handleError(error, m["users.messages.loadUsersError"]());
         throw error;
       }
     },

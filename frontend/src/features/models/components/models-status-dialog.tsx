@@ -1,4 +1,3 @@
-import { useTranslation } from 'react-i18next';
 
 import {
   AlertDialog,
@@ -13,6 +12,7 @@ import {
 
 import { useUpdateModel } from '../data/models';
 import { Model } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface ModelsStatusDialogProps {
   open: boolean;
@@ -21,7 +21,6 @@ interface ModelsStatusDialogProps {
 }
 
 export function ModelsStatusDialog({ open, onOpenChange, currentRow }: ModelsStatusDialogProps) {
-  const { t } = useTranslation();
   const updateModel = useUpdateModel();
 
   const isEnabled = currentRow.status === 'enabled';
@@ -42,18 +41,18 @@ export function ModelsStatusDialog({ open, onOpenChange, currentRow }: ModelsSta
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {isEnabled ? t('models.dialogs.status.disableTitle') : t('models.dialogs.status.enableTitle')}
+            {isEnabled ? m["models.dialogs.status.disableTitle"]() : m["models.dialogs.status.enableTitle"]()}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {isEnabled
-              ? t('models.dialogs.status.disableDescription', { name: currentRow.name })
-              : t('models.dialogs.status.enableDescription', { name: currentRow.name })}
+              ? m["models.dialogs.status.disableDescription"]({ name: currentRow.name })
+              : m["models.dialogs.status.enableDescription"]({ name: currentRow.name })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('common.buttons.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel>{m["common.buttons.cancel"]()}</AlertDialogCancel>
           <AlertDialogAction onClick={handleConfirm} disabled={updateModel.isPending}>
-            {t('common.buttons.confirm')}
+            {m["common.buttons.confirm"]()}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

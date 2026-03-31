@@ -1,14 +1,12 @@
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { ZodError } from 'zod';
+import * as m from '@/paraglide/messages';
 
 export function useErrorHandler() {
-  const { t } = useTranslation();
-
   const handleError = useCallback(
     (error: unknown, context?: string) => {
-      let errorMessage = t('common.errors.unknownError');
+      let errorMessage = m["common.errors.unknownError"]();
 
       if (error instanceof ZodError) {
         // Schema validation error
@@ -20,9 +18,9 @@ export function useErrorHandler() {
             })
             .join(', ') || 'Validation failed';
 
-        errorMessage = t('common.errors.validationFailed', { details: fieldErrors });
+        errorMessage = m["common.errors.validationFailed"]({ details: fieldErrors });
 
-        toast.error(t('common.errors.validationError'), {
+        toast.error(m["common.errors.validationError"](), {
           description: errorMessage,
           duration: 5000,
         });
@@ -30,7 +28,7 @@ export function useErrorHandler() {
         errorMessage = error.message;
 
         if (context) {
-          toast.error(t('common.errors.operationFailed', { operation: context }), {
+          toast.error(m["common.errors.operationFailed"]({ operation: context }), {
             description: errorMessage,
             duration: 4000,
           });
@@ -40,7 +38,7 @@ export function useErrorHandler() {
       } else {
         // Unknown error type
         if (context) {
-          toast.error(t('common.errors.operationFailed', { operation: context }), {
+          toast.error(m["common.errors.operationFailed"]({ operation: context }), {
             description: errorMessage,
             duration: 4000,
           });
@@ -49,7 +47,7 @@ export function useErrorHandler() {
         }
       }
     },
-    [t]
+    []
   );
 
   return { handleError };

@@ -1,10 +1,10 @@
 import { IconSearch } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { useSearch } from '@/context/search-context';
 import { cn } from '@/lib/utils';
 
 import { Button } from './ui/button';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   className?: string;
@@ -14,8 +14,7 @@ interface Props {
 
 export function Search({ className = '', placeholder }: Props) {
   const { setOpen } = useSearch();
-  const { t } = useTranslation();
-  const defaultPlaceholder = placeholder || t('search.placeholder');
+  const defaultPlaceholder = placeholder || m["search.placeholder"]();
   return (
     <Button
       variant='outline'

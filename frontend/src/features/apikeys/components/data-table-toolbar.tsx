@@ -1,7 +1,6 @@
 import { Cross2Icon } from '@radix-ui/react-icons';
 import { Table } from '@tanstack/react-table';
 import { useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { DataTableFacetedFilter } from '@/components/data-table-faceted-filter';
 import { DateRangePicker } from '@/components/date-range-picker';
@@ -13,6 +12,7 @@ import { useAuthStore } from '@/stores/authStore';
 import type { DateTimeRangeValue } from '@/utils/date-range';
 
 import { ApiKeyStatus } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface DataTableToolbarProps<TData> {
   table: Table<TData>;
@@ -22,7 +22,6 @@ interface DataTableToolbarProps<TData> {
 }
 
 export function DataTableToolbar<TData>({ table, dateRange, onDateRangeChange, onResetFilters }: DataTableToolbarProps<TData>) {
-  const { t } = useTranslation();
   const hasDateRange = !!dateRange?.from || !!dateRange?.to;
   const isFiltered = table.getState().columnFilters.length > 0 || hasDateRange;
 
@@ -56,15 +55,15 @@ export function DataTableToolbar<TData>({ table, dateRange, onDateRangeChange, o
   const statusOptions = [
     {
       value: 'enabled' as ApiKeyStatus,
-      label: t('apikeys.status.enabled'),
+      label: m["apikeys.status.enabled"](),
     },
     {
       value: 'disabled' as ApiKeyStatus,
-      label: t('apikeys.status.disabled'),
+      label: m["apikeys.status.disabled"](),
     },
     {
       value: 'archived' as ApiKeyStatus,
-      label: t('apikeys.status.archived'),
+      label: m["apikeys.status.archived"](),
     },
   ];
 
@@ -72,16 +71,16 @@ export function DataTableToolbar<TData>({ table, dateRange, onDateRangeChange, o
     <div className='flex items-center justify-between'>
       <div className='flex flex-1 items-center space-x-2'>
         <Input
-          placeholder={t('apikeys.filters.filterName')}
+          placeholder={m["apikeys.filters.filterName"]()}
           value={(table.getColumn('name')?.getFilterValue() as string) ?? ''}
           onChange={(event) => table.getColumn('name')?.setFilterValue(event.target.value)}
           className='h-8 w-[150px] lg:w-[250px]'
         />
         {table.getColumn('status') && (
-          <DataTableFacetedFilter column={table.getColumn('status')} title={t('apikeys.filters.status')} options={statusOptions} />
+          <DataTableFacetedFilter column={table.getColumn('status')} title={m["apikeys.filters.status"]()} options={statusOptions} />
         )}
         {canViewUsers && table.getColumn('creator') && userOptions.length > 0 && usersData?.edges && (
-          <DataTableFacetedFilter column={table.getColumn('creator')} title={t('apikeys.filters.creator')} options={userOptions} />
+          <DataTableFacetedFilter column={table.getColumn('creator')} title={m["apikeys.filters.creator"]()} options={userOptions} />
         )}
         <DateRangePicker value={dateRange} onChange={onDateRangeChange} />
         {isFiltered && (
@@ -94,7 +93,7 @@ export function DataTableToolbar<TData>({ table, dateRange, onDateRangeChange, o
             }}
             className='h-8 px-2 lg:px-3'
           >
-            {t('common.filters.reset')}
+            {m["common.filters.reset"]()}
             <Cross2Icon className='ml-2 h-4 w-4' />
           </Button>
         )}

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { CartesianGrid, ResponsiveContainer, XAxis, YAxis, Tooltip, Area, AreaChart, Legend } from 'recharts';
 
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,9 +8,10 @@ import { formatNumber } from '@/utils/format-number';
 
 import { useGeneralSettings } from '../../system/data/system';
 import { useDailyRequestStats } from '../data/dashboard';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
 
 export function DailyRequestStats() {
-  const { t, i18n } = useTranslation();
   const { data: dailyStats, isLoading: isStatsLoading, error } = useDailyRequestStats();
   const { data: generalSettings, isLoading: isSettingsLoading } = useGeneralSettings();
 
@@ -19,17 +19,16 @@ export function DailyRequestStats() {
 
   const currencyCode = generalSettings?.currencyCode || 'USD';
   const timezone = generalSettings?.timezone || 'UTC';
-  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
+  const locale = getLocale().startsWith('zh') ? 'zh-CN' : 'en-US';
 
   const formatCurrency = useCallback(
     (val: number, fractionDigits: number) =>
-      t('currencies.format', {
+      m["currencies.format"]({
         val,
         currency: currencyCode,
         locale,
         minimumFractionDigits: fractionDigits,
-        maximumFractionDigits: fractionDigits,
-      }),
+        maximumFractionDigits: fractionDigits }),
     [currencyCode, locale, t]
   );
 
@@ -37,7 +36,7 @@ export function DailyRequestStats() {
 
   const tooltipFormatter = useCallback(
     (value: number | string, name: string) => {
-      if (name === t('dashboard.stats.totalCost')) {
+      if (name === m["dashboard.stats.totalCost"]()) {
         return [formatCurrency(Number(value), 0), name];
       }
       return [formatNumber(Number(value)), name];
@@ -56,7 +55,7 @@ export function DailyRequestStats() {
   if (error) {
     return (
       <div className='flex h-[350px] items-center justify-center text-red-500'>
-        {t('dashboard.charts.errorLoadingChart')} {error.message}
+        {m["dashboard.charts.errorLoadingChart"]()} {error.message}
       </div>
     );
   }
@@ -165,7 +164,7 @@ export function DailyRequestStats() {
           yAxisId='left'
           type='monotone'
           dataKey='requests'
-          name={t('dashboard.stats.requests')}
+          name={m["dashboard.stats.requests"]()}
           stroke='var(--chart-1)'
           strokeWidth={2}
           fillOpacity={1}
@@ -177,7 +176,7 @@ export function DailyRequestStats() {
           yAxisId='tokens'
           type='monotone'
           dataKey='tokens'
-          name={t('dashboard.stats.totalTokens')}
+          name={m["dashboard.stats.totalTokens"]()}
           stroke='var(--chart-2)'
           strokeWidth={2}
           fillOpacity={1}
@@ -189,7 +188,7 @@ export function DailyRequestStats() {
           yAxisId='cost'
           type='monotone'
           dataKey='cost'
-          name={t('dashboard.stats.totalCost')}
+          name={m["dashboard.stats.totalCost"]()}
           stroke='var(--chart-3)'
           strokeWidth={2}
           fillOpacity={1}

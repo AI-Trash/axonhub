@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 
 import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
 import { useSelectedProjectId } from '@/stores/projectStore';
 
 import { Trace, TraceConnection, TraceDetail, traceConnectionSchema, traceDetailSchema } from './schema';
+import * as m from '@/paraglide/messages';
 
 // GraphQL query for traces
 function buildTracesQuery() {
@@ -129,7 +129,6 @@ export function useTraces(variables?: {
   };
 }) {
   const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
   const selectedProjectId = useSelectedProjectId();
 
   return useQuery({
@@ -151,7 +150,7 @@ export function useTraces(variables?: {
         const data = await graphqlRequest<{ traces: TraceConnection }>(query, finalVariables, headers);
         return traceConnectionSchema.parse(data?.traces);
       } catch (error) {
-        handleError(error, t('traces.errors.loadTracesFailed'));
+        handleError(error, m["traces.errors.loadTracesFailed"]());
         throw error;
       }
     },
@@ -161,7 +160,6 @@ export function useTraces(variables?: {
 
 export function useTrace(id: string) {
   const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
   const selectedProjectId = useSelectedProjectId();
 
   return useQuery({
@@ -176,7 +174,7 @@ export function useTrace(id: string) {
         }
         return traceDetailSchema.parse(data.node);
       } catch (error) {
-        handleError(error, t('traces.errors.loadTraceDetailFailed'));
+        handleError(error, m["traces.errors.loadTraceDetailFailed"]());
         throw error;
       }
     },
@@ -186,7 +184,6 @@ export function useTrace(id: string) {
 
 export function useTraceWithSegments(id: string) {
   const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
   const selectedProjectId = useSelectedProjectId();
 
   return useQuery({
@@ -201,7 +198,7 @@ export function useTraceWithSegments(id: string) {
         }
         return traceDetailSchema.parse(data.node);
       } catch (error) {
-        handleError(error, t('traces.errors.loadTraceDetailFailed'));
+        handleError(error, m["traces.errors.loadTraceDetailFailed"]());
         throw error;
       }
     },

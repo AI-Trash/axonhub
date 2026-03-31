@@ -11,7 +11,6 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -19,6 +18,7 @@ import { TableSkeleton } from '@/components/ui/table-skeleton';
 
 import { User, UserConnection } from '../data/schema';
 import { DataTableToolbar } from './data-table-toolbar';
+import * as m from '@/paraglide/messages';
 
 declare module '@tanstack/react-table' {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -62,7 +62,6 @@ export function UsersTable({
   onStatusFilterChange,
   onRoleFilterChange,
 }: DataTableProps) {
-  const { t } = useTranslation();
   const [rowSelection, setRowSelection] = useState({});
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
@@ -172,7 +171,7 @@ export function UsersTable({
             ) : (
               <TableRow className='!bg-[var(--table-background)]'>
                 <TableCell colSpan={columns.length} className='h-24 !bg-[var(--table-background)] text-center'>
-                  {t('common.noData')}
+                  {m["common.noData"]()}
                 </TableCell>
               </TableRow>
             )}

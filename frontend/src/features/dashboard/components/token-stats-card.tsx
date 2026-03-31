@@ -1,7 +1,6 @@
 import { IconInfoCircle } from '@tabler/icons-react';
 import { BarChart4 } from 'lucide-react';
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -11,6 +10,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { formatNumber } from '@/utils/format-number';
 
 import { useTokenStats } from '../data/dashboard';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
 
 type TimeRange = 'allTime' | 'thisMonth' | 'thisWeek' | 'thisDay';
 
@@ -37,7 +38,7 @@ function LastUpdatedInfo({ lastUpdated, locale, t }: LastUpdatedInfoProps) {
   if (!lastUpdated) return null;
 
   const formattedTime = formatLastUpdated(lastUpdated, locale);
-  const label = t('dashboard.stats.updated', { time: formattedTime });
+  const label = m["dashboard.stats.updated"]({ time: formattedTime });
 
   return (
     <>
@@ -72,7 +73,6 @@ function LastUpdatedInfo({ lastUpdated, locale, t }: LastUpdatedInfoProps) {
 }
 
 export function TokenStatsCard() {
-  const { t, i18n } = useTranslation();
   const { data: stats, isLoading, error } = useTokenStats();
   const [timeRange, setTimeRange] = useState<TimeRange>('thisDay');
 
@@ -115,14 +115,14 @@ export function TokenStatsCard() {
             <div className='bg-primary/10 text-primary dark:bg-primary/20 shrink-0 rounded-lg p-1.5'>
               <BarChart4 className='h-4 w-4' />
             </div>
-            <CardTitle className='truncate text-sm font-medium'>{t('dashboard.cards.tokenStats')}</CardTitle>
+            <CardTitle className='truncate text-sm font-medium'>{m["dashboard.cards.tokenStats"]()}</CardTitle>
           </div>
           <div className='flex shrink-0 items-center gap-1'>
-            <span className='bg-primary/10 text-primary dark:bg-primary/20 rounded-md px-2 py-1 text-xs'>{t('dashboard.stats.month')}</span>
+            <span className='bg-primary/10 text-primary dark:bg-primary/20 rounded-md px-2 py-1 text-xs'>{m["dashboard.stats.month"]()}</span>
           </div>
         </CardHeader>
         <CardContent>
-          <div className='text-sm text-red-500'>{t('common.loadError')}</div>
+          <div className='text-sm text-red-500'>{m["common.loadError"]()}</div>
         </CardContent>
       </Card>
     );
@@ -166,45 +166,45 @@ export function TokenStatsCard() {
           <div className='bg-primary/10 text-primary dark:bg-primary/20 shrink-0 rounded-lg p-1.5'>
             <BarChart4 className='h-4 w-4' />
           </div>
-          <CardTitle className='text-sm leading-tight font-medium whitespace-normal'>{t('dashboard.cards.tokenStats')}</CardTitle>
+          <CardTitle className='text-sm leading-tight font-medium whitespace-normal'>{m["dashboard.cards.tokenStats"]()}</CardTitle>
         </div>
         <div className='flex shrink-0 items-center gap-2'>
-          {/* <span className='text-xs text-muted-foreground'>{t('dashboard.stats.this')}</span> */}
+          {/* <span className='text-xs text-muted-foreground'>{m["dashboard.stats.this"]()}</span> */}
           <Tabs value={timeRange} onValueChange={(v) => setTimeRange(v as TimeRange)}>
             <TabsList className='h-6 p-0.5'>
               <TabsTrigger value='allTime' className='h-5 px-2 text-[10px]'>
-                {t('dashboard.stats.all')}
+                {m["dashboard.stats.all"]()}
               </TabsTrigger>
               <TabsTrigger value='thisMonth' className='h-5 px-2 text-[10px]'>
-                {t('dashboard.stats.month')}
+                {m["dashboard.stats.month"]()}
               </TabsTrigger>
               <TabsTrigger value='thisWeek' className='h-5 px-2 text-[10px]'>
-                {t('dashboard.stats.week')}
+                {m["dashboard.stats.week"]()}
               </TabsTrigger>
               <TabsTrigger value='thisDay' className='h-5 px-2 text-[10px]'>
-                {t('dashboard.stats.day')}
+                {m["dashboard.stats.day"]()}
               </TabsTrigger>
             </TabsList>
           </Tabs>
-          {timeRange === 'allTime' && <LastUpdatedInfo lastUpdated={stats?.lastUpdated ?? null} locale={i18n.language} t={t} />}
+          {timeRange === 'allTime' && <LastUpdatedInfo lastUpdated={stats?.lastUpdated ?? null} locale={getLocale()} />}
         </div>
       </CardHeader>
       <CardContent>
         <div className='flex items-end justify-between gap-2 sm:flex-col sm:gap-2 xl:flex-row xl:items-end xl:justify-between'>
           <div className='min-w-0 text-center sm:flex sm:w-full sm:items-center sm:justify-between xl:block xl:flex-1 xl:text-center'>
-            <div className='text-muted-foreground text-xs sm:mb-0 xl:mb-1'>{t('dashboard.stats.input')}</div>
+            <div className='text-muted-foreground text-xs sm:mb-0 xl:mb-1'>{m["dashboard.stats.input"]()}</div>
             <div className='font-mono text-lg font-bold'>{formatNumber(tokens.input)}</div>
           </div>
           <div className='bg-border h-8 w-px shrink-0 sm:hidden xl:block'></div>
           <div className='bg-border hidden h-px w-full shrink-0 sm:block xl:hidden'></div>
           <div className='min-w-0 text-center sm:flex sm:w-full sm:items-center sm:justify-between xl:block xl:flex-1 xl:text-center'>
-            <div className='text-muted-foreground text-xs sm:mb-0 xl:mb-1'>{t('dashboard.stats.output')}</div>
+            <div className='text-muted-foreground text-xs sm:mb-0 xl:mb-1'>{m["dashboard.stats.output"]()}</div>
             <div className='font-mono text-lg font-bold'>{formatNumber(tokens.output)}</div>
           </div>
           <div className='bg-border h-8 w-px shrink-0 sm:hidden xl:block'></div>
           <div className='bg-border hidden h-px w-full shrink-0 sm:block xl:hidden'></div>
           <div className='min-w-0 text-center sm:flex sm:w-full sm:items-center sm:justify-between xl:block xl:flex-1 xl:text-center'>
-            <div className='text-muted-foreground text-xs sm:mb-0 xl:mb-1'>{t('dashboard.stats.cached')}</div>
+            <div className='text-muted-foreground text-xs sm:mb-0 xl:mb-1'>{m["dashboard.stats.cached"]()}</div>
             <div className='text-muted-foreground font-mono text-lg font-bold'>{formatNumber(tokens.cached)}</div>
           </div>
         </div>

@@ -1,13 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
 import { useErrorHandler } from '@/hooks/use-error-handler';
-import i18n from '@/lib/i18n';
 import { useSelectedProjectId } from '@/stores/projectStore';
 
 import { Role, RoleConnection, CreateRoleInput, UpdateRoleInput, roleConnectionSchema, roleSchema } from './schema';
+import * as m from '@/paraglide/messages';
 
 // GraphQL queries and mutations
 const PROJECT_ROLES_QUERY = `
@@ -78,7 +77,6 @@ export function useRoles(
   } = {}
 ) {
   const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
   const selectedProjectId = useSelectedProjectId();
 
   const queryVariables = {
@@ -99,7 +97,7 @@ export function useRoles(
         });
         return roleConnectionSchema.parse(data?.node?.roles);
       } catch (error) {
-        handleError(error, t('projectRoles.errors.loadProjectRolesFailed'));
+        handleError(error, m["projectRoles.errors.loadProjectRolesFailed"]());
         throw error;
       }
     },
@@ -109,7 +107,6 @@ export function useRoles(
 
 export function useRole(id: string) {
   const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
   const selectedProjectId = useSelectedProjectId();
 
   return useQuery({
@@ -129,7 +126,7 @@ export function useRole(id: string) {
         }
         return roleSchema.parse(role);
       } catch (error) {
-        handleError(error, t('projectRoles.errors.loadProjectRoleDetailFailed'));
+        handleError(error, m["projectRoles.errors.loadProjectRoleDetailFailed"]());
         throw error;
       }
     },
@@ -155,13 +152,13 @@ export function useCreateRole() {
         const data = await graphqlRequest<{ createRole: Role }>(CREATE_ROLE_MUTATION, { input: inputWithProjectId });
         return roleSchema.parse(data.createRole);
       } catch (error) {
-        handleError(error, i18n.t('projectRoles.errors.createProjectRoleFailed'));
+        handleError(error, m["projectRoles.errors.createProjectRoleFailed"]());
         throw error;
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-roles'] });
-      toast.success(i18n.t('common.success.roleCreated'));
+      toast.success(m["common.success.roleCreated"]());
     },
   });
 }
@@ -176,14 +173,14 @@ export function useUpdateRole() {
         const data = await graphqlRequest<{ updateRole: Role }>(UPDATE_ROLE_MUTATION, { id, input });
         return roleSchema.parse(data.updateRole);
       } catch (error) {
-        handleError(error, i18n.t('projectRoles.errors.updateProjectRoleFailed'));
+        handleError(error, m["projectRoles.errors.updateProjectRoleFailed"]());
         throw error;
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-roles'] });
       queryClient.invalidateQueries({ queryKey: ['project-role'] });
-      toast.success(i18n.t('common.success.roleUpdated'));
+      toast.success(m["common.success.roleUpdated"]());
     },
   });
 }
@@ -197,13 +194,13 @@ export function useDeleteRole() {
       try {
         await graphqlRequest(DELETE_ROLE_MUTATION, { id });
       } catch (error) {
-        handleError(error, i18n.t('projectRoles.errors.deleteProjectRoleFailed'));
+        handleError(error, m["projectRoles.errors.deleteProjectRoleFailed"]());
         throw error;
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['project-roles'] });
-      toast.success(i18n.t('common.success.roleDeleted'));
+      toast.success(m["common.success.roleDeleted"]());
     },
   });
 }

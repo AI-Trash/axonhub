@@ -1,7 +1,6 @@
 'use client';
 
 import { ColumnDef, flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { useTranslation } from 'react-i18next';
 
 import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Input } from '@/components/ui/input';
@@ -10,6 +9,7 @@ import { TableSkeleton } from '@/components/ui/table-skeleton';
 import type { PageInfo } from '@/gql/pagination';
 
 import { DataStorage } from '../data/data-storages';
+import * as m from '@/paraglide/messages';
 
 interface DataStoragesTableProps {
   data: DataStorage[];
@@ -42,8 +42,6 @@ export function DataStoragesTable({
   onPageSizeChange,
   onNameFilterChange,
 }: DataStoragesTableProps) {
-  const { t } = useTranslation();
-
   const table = useReactTable({
     data,
     columns,
@@ -54,7 +52,7 @@ export function DataStoragesTable({
     <div className='flex flex-1 flex-col overflow-hidden'>
       <div className='flex items-center gap-2'>
         <Input
-          placeholder={t('dataStorages.filters.searchByName')}
+          placeholder={m["dataStorages.filters.searchByName"]()}
           value={nameFilter}
           onChange={(e) => onNameFilterChange(e.target.value)}
           className='max-w-sm'
@@ -94,7 +92,7 @@ export function DataStoragesTable({
             ) : (
               <TableRow className='!bg-[var(--table-background)]'>
                 <TableCell colSpan={columns.length} className='h-24 !bg-[var(--table-background)] text-center'>
-                  {t('common.noData')}
+                  {m["common.noData"]()}
                 </TableCell>
               </TableRow>
             )}

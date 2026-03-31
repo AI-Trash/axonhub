@@ -1,16 +1,15 @@
 'use client';
 
 import { Loader2, Trash2 } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 import { useProxyPresets, useDeleteProxyPreset } from '../data/system';
+import * as m from '@/paraglide/messages';
 
 export function ProxyPresetsSettings() {
-  const { t } = useTranslation();
   const { data: presets, isLoading } = useProxyPresets();
   const deletePreset = useDeleteProxyPreset();
 
@@ -18,7 +17,7 @@ export function ProxyPresetsSettings() {
     return (
       <div className='flex h-32 items-center justify-center'>
         <Loader2 className='h-6 w-6 animate-spin' />
-        <span className='text-muted-foreground ml-2'>{t('common.loading')}</span>
+        <span className='text-muted-foreground ml-2'>{m["common.loading"]()}</span>
       </div>
     );
   }
@@ -27,19 +26,19 @@ export function ProxyPresetsSettings() {
     <div className='space-y-6'>
       <Card>
         <CardHeader>
-          <CardTitle>{t('system.proxy.title')}</CardTitle>
-          <CardDescription>{t('system.proxy.description')}</CardDescription>
+          <CardTitle>{m["system.proxy.title"]()}</CardTitle>
+          <CardDescription>{m["system.proxy.description"]()}</CardDescription>
         </CardHeader>
         <CardContent>
           {!presets || presets.length === 0 ? (
-            <p className='text-muted-foreground text-sm'>{t('system.proxy.empty')}</p>
+            <p className='text-muted-foreground text-sm'>{m["system.proxy.empty"]()}</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t('system.proxy.columns.url')}</TableHead>
-                  <TableHead>{t('system.proxy.columns.username')}</TableHead>
-                  <TableHead className='w-[100px] text-right'>{t('system.proxy.columns.actions')}</TableHead>
+                  <TableHead>{m["system.proxy.columns.url"]()}</TableHead>
+                  <TableHead>{m["system.proxy.columns.username"]()}</TableHead>
+                  <TableHead className='w-[100px] text-right'>{m["system.proxy.columns.actions"]()}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

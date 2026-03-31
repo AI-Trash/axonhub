@@ -1,6 +1,5 @@
 import { Link } from '@tanstack/react-router';
 import { BadgeCheck, ChevronsUpDown, LogOut } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
@@ -14,6 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar';
 import { useSignOut } from '@/features/auth/data/auth';
+import * as m from '@/paraglide/messages';
 
 export function NavUser({
   user,
@@ -26,8 +26,6 @@ export function NavUser({
 }) {
   const { isMobile } = useSidebar();
   const signOut = useSignOut();
-  const { t } = useTranslation();
-
   // Check if avatar is a URL or initials
   const isAvatarUrl = user.avatar.startsWith('http') || user.avatar.startsWith('/') || user.avatar.startsWith('data:');
   const avatarFallback = isAvatarUrl ? user.name.charAt(0).toUpperCase() : user.avatar;
@@ -79,14 +77,14 @@ export function NavUser({
               <DropdownMenuItem asChild>
                 <Link to='/settings/profile'>
                   <BadgeCheck />
-                  {t('sidebar.userMenu.account')}
+                  {m["sidebar.userMenu.account"]()}
                 </Link>
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={signOut}>
               <LogOut />
-              {t('sidebar.userMenu.logOut')}
+              {m["sidebar.userMenu.logOut"]()}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

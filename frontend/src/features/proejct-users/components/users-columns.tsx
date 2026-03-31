@@ -1,7 +1,6 @@
 'use client';
 
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
-import { useTranslation } from 'react-i18next';
 
 import LongText from '@/components/long-text';
 import { Badge } from '@/components/ui/badge';
@@ -9,9 +8,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 
 import { User } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
+import * as m from '@/paraglide/messages';
 
 export const createColumns = (
-  t: ReturnType<typeof useTranslation>['t'],
+  t: (key: string, params?: Record<string, unknown>) => string,
   canWrite: boolean = false,
   canReadRoles: boolean = false
 ): ColumnDef<User>[] => {
@@ -40,28 +40,28 @@ export const createColumns = (
   columns.push(
     {
       accessorKey: 'firstName',
-      header: t('users.columns.firstName'),
+      header: m["users.columns.firstName"](),
       cell: ({ row }) => <LongText>{row.getValue('firstName')}</LongText>,
     },
     {
       accessorKey: 'lastName',
-      header: t('users.columns.lastName'),
+      header: m["users.columns.lastName"](),
       cell: ({ row }) => <LongText>{row.getValue('lastName')}</LongText>,
     },
     {
       accessorKey: 'email',
-      header: t('users.columns.email'),
+      header: m["users.columns.email"](),
       cell: ({ row }) => <LongText>{row.getValue('email')}</LongText>,
     },
     {
       accessorKey: 'isOwner',
-      header: t('users.columns.projectOwner'),
+      header: m["users.columns.projectOwner"](),
       cell: ({ row }) => {
         const isOwner = row.getValue('isOwner') as boolean;
         return isOwner ? (
-          <Badge variant='default'>{t('users.badges.projectOwner')}</Badge>
+          <Badge variant='default'>{m["users.badges.projectOwner"]()}</Badge>
         ) : (
-          <Badge variant='secondary'>{t('users.badges.member')}</Badge>
+          <Badge variant='secondary'>{m["users.badges.member"]()}</Badge>
         );
       },
     }
@@ -71,12 +71,12 @@ export const createColumns = (
   if (canReadRoles) {
     columns.push({
       accessorKey: 'roles',
-      header: t('users.columns.projectRoles'),
+      header: m["users.columns.projectRoles"](),
       cell: ({ row }) => {
         const user = row.original;
         const roles = user.roles?.edges;
         if (!roles || roles.length === 0) {
-          return <span className='text-muted-foreground'>{t('users.badges.noRoles')}</span>;
+          return <span className='text-muted-foreground'>{m["users.badges.noRoles"]()}</span>;
         }
         return (
           <div className='flex flex-wrap gap-1'>
@@ -95,12 +95,12 @@ export const createColumns = (
   columns.push(
     {
       accessorKey: 'scopes',
-      header: t('users.columns.projectScopes'),
+      header: m["users.columns.projectScopes"](),
       cell: ({ row }) => {
         const user = row.original;
         const scopes = user.scopes;
         if (!scopes || scopes.length === 0) {
-          return <span className='text-muted-foreground'>{t('users.badges.noScopes')}</span>;
+          return <span className='text-muted-foreground'>{m["users.badges.noScopes"]()}</span>;
         }
         return (
           <div className='flex flex-wrap gap-1'>
@@ -116,19 +116,19 @@ export const createColumns = (
     },
     {
       accessorKey: 'status',
-      header: t('common.columns.status'),
+      header: m["common.columns.status"](),
       cell: ({ row }) => {
         const status = row.getValue('status') as string;
         return (
           <Badge variant={status === 'activated' ? 'default' : 'secondary'}>
-            {status === 'activated' ? t('users.status.activated') : t('users.status.deactivated')}
+            {status === 'activated' ? m["users.status.activated"]() : m["users.status.deactivated"]()}
           </Badge>
         );
       },
     },
     {
       accessorKey: 'createdAt',
-      header: t('common.columns.createdAt'),
+      header: m["common.columns.createdAt"](),
       cell: ({ row }) => {
         const date = new Date(row.getValue('createdAt'));
         return date.toLocaleDateString();
@@ -136,7 +136,7 @@ export const createColumns = (
     },
     {
       accessorKey: 'updatedAt',
-      header: t('common.columns.updatedAt'),
+      header: m["common.columns.updatedAt"](),
       cell: ({ row }) => {
         const date = new Date(row.getValue('updatedAt'));
         return date.toLocaleDateString();

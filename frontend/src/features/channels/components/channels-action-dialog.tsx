@@ -5,7 +5,6 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { X, RefreshCw, Search, ChevronLeft, ChevronRight, PanelLeft, Plus, Trash2, Eye, EyeOff, Copy, Play, Info } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -62,6 +61,8 @@ import { matchesModelPattern } from '../utils/pattern';
 import { ProxyType } from './channels-proxy-dialog';
 import { CopilotDeviceFlow } from './copilot-device-flow';
 import { ManualModelBadge } from './manual-model-badge';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 interface Props {
   currentRow?: Channel;
@@ -203,7 +204,6 @@ function isOfficialClaudeCodeChannel(channel: { credentials?: { apiKey?: string 
 }
 
 export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpenChange, showModelsPanel = false }: Props) {
-  const { t } = useTranslation();
   const isEdit = !!currentRow;
   const isDuplicate = !!duplicateFromRow && !isEdit;
   const initialRow: Channel | undefined = currentRow || duplicateFromRow;
@@ -434,11 +434,11 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
         })
         .map(([key, config]) => ({
           key,
-          label: t(`channels.providers.${key}`),
+          label: dynamicTranslation(`channels.providers.${key}`),
           icon: config.icon,
           channelTypes: config.channelTypes.filter((t) => !t.endsWith('_fake')),
         })),
-    [t]
+    []
   );
 
   // Get available API formats for selected provider
@@ -448,9 +448,9 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
 
   const getApiFormatLabel = useCallback(
     (format: ApiFormat) => {
-      return t(`channels.dialogs.fields.apiFormat.formats.${format}`);
+      return dynamicTranslation(`channels.dialogs.fields.apiFormat.formats.${format}`);
     },
-    [t]
+    []
   );
 
   // Determine the actual channel type based on provider and API format
@@ -593,12 +593,12 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
             <span className={wrapperClassName}>{children}</span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t('channels.dialogs.fields.unsupported')}</p>
+            <p>{m["channels.dialogs.fields.unsupported"]()}</p>
           </TooltipContent>
         </Tooltip>
       );
     },
-    [t]
+    []
   );
 
   const baseURLPlaceholder = useMemo(() => {
@@ -607,7 +607,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
     if (defaultURL) {
       return defaultURL;
     }
-    return t('channels.dialogs.fields.baseURL.placeholder');
+    return m["channels.dialogs.fields.baseURL.placeholder"]();
   }, [selectedType, derivedChannelType, t]);
 
   // Sync form type when provider or API format changes
@@ -808,54 +808,54 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
         <div className='rounded-md border p-3'>
           <div className='flex flex-wrap items-center gap-2'>
             <Button type='button' variant='secondary' onClick={oauth.start} disabled={oauth.isStarting}>
-              {oauth.isStarting ? t('channels.dialogs.oauth.buttons.starting') : t('channels.dialogs.oauth.buttons.startOAuth')}
+              {oauth.isStarting ? m["channels.dialogs.oauth.buttons.starting"]() : m["channels.dialogs.oauth.buttons.startOAuth"]()}
             </Button>
             {oauth.authUrl && (
               <Button type='button' variant='ghost' onClick={() => window.open(oauth.authUrl || '', '_blank', 'noopener,noreferrer')}>
-                {t('channels.dialogs.oauth.buttons.openOAuthLink')}
+                {m["channels.dialogs.oauth.buttons.openOAuthLink"]()}
               </Button>
             )}
           </div>
 
           {oauth.authUrl && (
             <div className='mt-3 space-y-2'>
-              <FormLabel className='text-sm font-medium'>{t('channels.dialogs.oauth.labels.authorizationUrl')}</FormLabel>
+              <FormLabel className='text-sm font-medium'>{m["channels.dialogs.oauth.labels.authorizationUrl"]()}</FormLabel>
               <Textarea
                 value={oauth.authUrl}
                 readOnly
                 className='min-h-[60px] resize-none font-mono text-xs'
-                placeholder={t('channels.dialogs.oauth.placeholders.authorizationUrl')}
+                placeholder={m["channels.dialogs.oauth.placeholders.authorizationUrl"]()}
               />
             </div>
           )}
 
           <div className='mt-3 space-y-2'>
-            <FormLabel className='text-sm font-medium'>{t('channels.dialogs.oauth.labels.callbackUrl')}</FormLabel>
+            <FormLabel className='text-sm font-medium'>{m["channels.dialogs.oauth.labels.callbackUrl"]()}</FormLabel>
             <Textarea
               value={oauth.callbackUrl}
               onChange={(e) => oauth.setCallbackUrl(e.target.value)}
-              placeholder={t('channels.dialogs.oauth.placeholders.callbackUrl')}
+              placeholder={m["channels.dialogs.oauth.placeholders.callbackUrl"]()}
               className='min-h-[80px] resize-y font-mono text-xs'
             />
             <Button type='button' onClick={oauth.exchange} disabled={oauth.isExchanging || !oauth.sessionId}>
               {oauth.isExchanging
-                ? t('channels.dialogs.oauth.buttons.exchanging')
-                : t('channels.dialogs.oauth.buttons.exchangeAndFillApiKey')}
+                ? m["channels.dialogs.oauth.buttons.exchanging"]()
+                : m["channels.dialogs.oauth.buttons.exchangeAndFillApiKey"]()}
             </Button>
           </div>
 
-          <p className='mt-2 text-xs text-amber-600 dark:text-amber-400'>{t('channels.dialogs.proxy.oauthHint')}</p>
+          <p className='mt-2 text-xs text-amber-600 dark:text-amber-400'>{m["channels.dialogs.proxy.oauthHint"]()}</p>
           <p className='text-muted-foreground mt-2 text-xs'>{description}</p>
         </div>
       </div>
     ),
-    [t]
+    []
   );
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     // Check if there are selected fetched models that haven't been confirmed
     if (selectedFetchedModels.length > 0) {
-      toast.error(t('channels.messages.modelsNotConfirmed'));
+      toast.error(m["channels.messages.modelsNotConfirmed"]());
       return;
     }
 
@@ -1223,7 +1223,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
       const nextKeys = currentKeys.filter((k) => !keysToRemove.includes(k));
       const validNextKeys = nextKeys.filter((k) => k.trim().length > 0);
       if (validNextKeys.length === 0) {
-        toast.error(t('channels.dialogs.fields.apiKey.mustKeepOne'));
+        toast.error(m["channels.dialogs.fields.apiKey.mustKeepOne"]());
         setConfirmRemoveSelectedOpen(false);
         setConfirmRemoveKey(null);
         return;
@@ -1345,9 +1345,9 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
           className={`flex max-h-[90vh] flex-col transition-all duration-300 ${showFetchedModelsPanel || showSupportedModelsPanel || showApiKeysPanel ? 'sm:max-w-6xl' : 'sm:max-w-4xl'}`}
         >
           <DialogHeader className='flex-shrink-0 text-left'>
-            <DialogTitle>{isEdit ? t('channels.dialogs.edit.title') : t('channels.dialogs.create.title')}</DialogTitle>
+            <DialogTitle>{isEdit ? m["channels.dialogs.edit.title"]() : m["channels.dialogs.create.title"]()}</DialogTitle>
             <DialogDescription>
-              {isEdit ? t('channels.dialogs.edit.description') : t('channels.dialogs.create.description')}
+              {isEdit ? m["channels.dialogs.edit.description"]() : m["channels.dialogs.create.description"]()}
             </DialogDescription>
           </DialogHeader>
           <div className='flex min-h-0 flex-1 overflow-hidden md:gap-4'>
@@ -1361,7 +1361,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                   <div className='flex min-h-0 flex-1 flex-col gap-4 overflow-hidden md:flex-row md:gap-6'>
                     <div className='flex max-h-48 min-h-0 w-full flex-shrink-0 flex-col md:max-h-none md:w-60'>
                       <FormItem className='flex min-h-0 flex-1 flex-col space-y-2'>
-                        <FormLabel className='text-base font-semibold'>{t('channels.dialogs.fields.provider.label')}</FormLabel>
+                        <FormLabel className='text-base font-semibold'>{m["channels.dialogs.fields.provider.label"]()}</FormLabel>
                         <div
                           ref={providerListRef}
                           className={`flex-1 overflow-y-auto pr-2 ${isOAuthChannel ? 'cursor-not-allowed opacity-60' : ''}`}
@@ -1416,7 +1416,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                       {selectedProvider !== 'jina' && selectedProvider !== 'codex' && selectedProvider !== 'claudecode' && (
                         <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                           <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                            {t('channels.dialogs.fields.apiFormat.label')}
+                            {m["channels.dialogs.fields.apiFormat.label"]()}
                           </FormLabel>
                           <div className='max-w-64 space-y-1 md:col-span-6 md:max-w-none'>
                             <SelectDropdown
@@ -1424,7 +1424,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                               defaultValue={selectedApiFormat}
                               onValueChange={(value) => handleApiFormatChange(value as ApiFormat)}
                               disabled={!!isOAuthChannel}
-                              placeholder={t('channels.dialogs.fields.apiFormat.placeholder')}
+                              placeholder={m["channels.dialogs.fields.apiFormat.placeholder"]()}
                               data-testid='api-format-select'
                               isControlled={true}
                               items={availableApiFormats.map((format) => ({
@@ -1442,7 +1442,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                     onCheckedChange={(checked) => handleGeminiVertexChange(checked === true)}
                                     disabled={!!isOAuthChannel}
                                   />
-                                  <span>{t('channels.dialogs.fields.apiFormat.geminiVertex.label')}</span>
+                                  <span>{m["channels.dialogs.fields.apiFormat.geminiVertex.label"]()}</span>
                                 </label>
                               </div>
                             )}
@@ -1456,7 +1456,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                     onCheckedChange={(checked) => handleAnthropicAwsChange(checked === true)}
                                     disabled={!!isOAuthChannel}
                                   />
-                                  <span>{t('channels.dialogs.fields.apiFormat.anthropicAWS.label')}</span>
+                                  <span>{m["channels.dialogs.fields.apiFormat.anthropicAWS.label"]()}</span>
                                 </label>
                               </div>
                             )}
@@ -1466,11 +1466,11 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                       {selectedProvider === 'codex' && (
                         <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                           <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                            {t('channels.dialogs.fields.apiFormat.label')}
+                            {m["channels.dialogs.fields.apiFormat.label"]()}
                           </FormLabel>
                           <div className='space-y-1 md:col-span-6'>
                             <div className='text-sm'>{getApiFormatLabel(OPENAI_RESPONSES)}</div>
-                            <p className='text-muted-foreground mt-1 text-xs'>{t('channels.dialogs.fields.apiFormat.editDisabled')}</p>
+                            <p className='text-muted-foreground mt-1 text-xs'>{m["channels.dialogs.fields.apiFormat.editDisabled"]()}</p>
                           </div>
                         </FormItem>
                       )}
@@ -1478,11 +1478,11 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                       {selectedProvider === 'claudecode' && (
                         <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                           <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                            {t('channels.dialogs.fields.apiFormat.label')}
+                            {m["channels.dialogs.fields.apiFormat.label"]()}
                           </FormLabel>
                           <div className='space-y-1 md:col-span-6'>
                             <div className='text-sm'>{getApiFormatLabel(ANTHROPIC_MESSAGES)}</div>
-                            <p className='text-muted-foreground mt-1 text-xs'>{t('channels.dialogs.fields.apiFormat.editDisabled')}</p>
+                            <p className='text-muted-foreground mt-1 text-xs'>{m["channels.dialogs.fields.apiFormat.editDisabled"]()}</p>
                           </div>
                         </FormItem>
                       )}
@@ -1490,11 +1490,11 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                       {selectedProvider === 'antigravity' && (
                         <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                           <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                            {t('channels.dialogs.fields.apiFormat.label')}
+                            {m["channels.dialogs.fields.apiFormat.label"]()}
                           </FormLabel>
                           <div className='space-y-1 md:col-span-6'>
                             <div className='text-sm'>{getApiFormatLabel(GEMINI_CONTENTS)}</div>
-                            <p className='text-muted-foreground mt-1 text-xs'>{t('channels.dialogs.fields.apiFormat.editDisabled')}</p>
+                            <p className='text-muted-foreground mt-1 text-xs'>{m["channels.dialogs.fields.apiFormat.editDisabled"]()}</p>
 
                             <div className='mt-3 space-y-2'>
                               <div className='rounded-md border p-3'>
@@ -1506,8 +1506,8 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                     disabled={antigravityOAuth.isStarting}
                                   >
                                     {antigravityOAuth.isStarting
-                                      ? t('channels.dialogs.antigravity.buttons.starting')
-                                      : t('channels.dialogs.antigravity.buttons.startOAuth')}
+                                      ? m["channels.dialogs.antigravity.buttons.starting"]()
+                                      : m["channels.dialogs.antigravity.buttons.startOAuth"]()}
                                   </Button>
                                   {antigravityOAuth.authUrl && (
                                     <Button
@@ -1515,7 +1515,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                       variant='ghost'
                                       onClick={() => window.open(antigravityOAuth.authUrl || '', '_blank', 'noopener,noreferrer')}
                                     >
-                                      {t('channels.dialogs.antigravity.buttons.openOAuthLink')}
+                                      {m["channels.dialogs.antigravity.buttons.openOAuthLink"]()}
                                     </Button>
                                   )}
                                 </div>
@@ -1523,25 +1523,25 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                 {antigravityOAuth.authUrl && (
                                   <div className='mt-3 space-y-2'>
                                     <FormLabel className='text-sm font-medium'>
-                                      {t('channels.dialogs.antigravity.labels.authorizationUrl')}
+                                      {m["channels.dialogs.antigravity.labels.authorizationUrl"]()}
                                     </FormLabel>
                                     <Textarea
                                       value={antigravityOAuth.authUrl}
                                       readOnly
                                       className='min-h-[60px] resize-none font-mono text-xs'
-                                      placeholder={t('channels.dialogs.antigravity.placeholders.authorizationUrl')}
+                                      placeholder={m["channels.dialogs.antigravity.placeholders.authorizationUrl"]()}
                                     />
                                   </div>
                                 )}
 
                                 <div className='mt-3 space-y-2'>
                                   <FormLabel className='text-sm font-medium'>
-                                    {t('channels.dialogs.antigravity.labels.callbackUrl')}
+                                    {m["channels.dialogs.antigravity.labels.callbackUrl"]()}
                                   </FormLabel>
                                   <Textarea
                                     value={antigravityOAuth.callbackUrl}
                                     onChange={(e) => antigravityOAuth.setCallbackUrl(e.target.value)}
-                                    placeholder={t('channels.dialogs.antigravity.placeholders.callbackUrl')}
+                                    placeholder={m["channels.dialogs.antigravity.placeholders.callbackUrl"]()}
                                     className='min-h-[80px] resize-y font-mono text-xs'
                                   />
                                   <Button
@@ -1550,14 +1550,14 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                     disabled={antigravityOAuth.isExchanging || !antigravityOAuth.sessionId}
                                   >
                                     {antigravityOAuth.isExchanging
-                                      ? t('channels.dialogs.antigravity.buttons.exchanging')
-                                      : t('channels.dialogs.antigravity.buttons.exchangeAndFillApiKey')}
+                                      ? m["channels.dialogs.antigravity.buttons.exchanging"]()
+                                      : m["channels.dialogs.antigravity.buttons.exchangeAndFillApiKey"]()}
                                   </Button>
                                 </div>
 
-                                <p className='mt-2 text-xs text-amber-600 dark:text-amber-400'>{t('channels.dialogs.proxy.oauthHint')}</p>
+                                <p className='mt-2 text-xs text-amber-600 dark:text-amber-400'>{m["channels.dialogs.proxy.oauthHint"]()}</p>
                                 <p className='text-muted-foreground mt-2 text-xs'>
-                                  {t('channels.dialogs.fields.apiFormat.antigravity.description')}
+                                  {m["channels.dialogs.fields.apiFormat.antigravity.description"]()}
                                 </p>
                               </div>
                             </div>
@@ -1593,11 +1593,11 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                         render={({ field, fieldState }) => (
                           <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                             <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                              {t('channels.dialogs.fields.name.label')}
+                              {m["channels.dialogs.fields.name.label"]()}
                             </FormLabel>
                             <div className='space-y-1 md:col-span-6'>
                               <Input
-                                placeholder={t('channels.dialogs.fields.name.placeholder')}
+                                placeholder={m["channels.dialogs.fields.name.placeholder"]()}
                                 autoComplete='off'
                                 aria-invalid={!!fieldState.error}
                                 data-testid='channel-name-input'
@@ -1612,29 +1612,29 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                       {!isEdit && (
                         <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                           <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                            {t('channels.dialogs.proxy.fields.type.label')}
+                            {m["channels.dialogs.proxy.fields.type.label"]()}
                           </FormLabel>
                           <div className='space-y-3 md:col-span-6'>
                             <Select value={proxyType} onValueChange={(value) => setProxyType(value as ProxyType)}>
                               <FormControl>
                                 <SelectTrigger>
-                                  <SelectValue placeholder={t('channels.dialogs.proxy.fields.type.placeholder')} />
+                                  <SelectValue placeholder={m["channels.dialogs.proxy.fields.type.placeholder"]()} />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                <SelectItem value={ProxyType.DISABLED}>{t('channels.dialogs.proxy.types.disabled')}</SelectItem>
-                                <SelectItem value={ProxyType.ENVIRONMENT}>{t('channels.dialogs.proxy.types.environment')}</SelectItem>
-                                <SelectItem value={ProxyType.URL}>{t('channels.dialogs.proxy.types.url')}</SelectItem>
+                                <SelectItem value={ProxyType.DISABLED}>{m["channels.dialogs.proxy.types.disabled"]()}</SelectItem>
+                                <SelectItem value={ProxyType.ENVIRONMENT}>{m["channels.dialogs.proxy.types.environment"]()}</SelectItem>
+                                <SelectItem value={ProxyType.URL}>{m["channels.dialogs.proxy.types.url"]()}</SelectItem>
                               </SelectContent>
                             </Select>
 
                             {proxyType === ProxyType.URL && proxyPresets.length > 0 && (
                               <div className='space-y-1'>
-                                <FormLabel className='text-sm'>{t('channels.dialogs.proxy.presets.label')}</FormLabel>
+                                <FormLabel className='text-sm'>{m["channels.dialogs.proxy.presets.label"]()}</FormLabel>
                                 <Select onValueChange={handleProxyPresetSelect}>
                                   <FormControl>
                                     <SelectTrigger>
-                                      <SelectValue placeholder={t('channels.dialogs.proxy.presets.placeholder')} />
+                                      <SelectValue placeholder={m["channels.dialogs.proxy.presets.placeholder"]()} />
                                     </SelectTrigger>
                                   </FormControl>
                                   <SelectContent>
@@ -1651,28 +1651,28 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                             {proxyType === ProxyType.URL && (
                               <>
                                 <div className='space-y-1'>
-                                  <FormLabel className='text-sm'>{t('channels.dialogs.proxy.fields.url.label')}</FormLabel>
+                                  <FormLabel className='text-sm'>{m["channels.dialogs.proxy.fields.url.label"]()}</FormLabel>
                                   <Input
-                                    placeholder={t('channels.dialogs.proxy.fields.url.placeholder')}
+                                    placeholder={m["channels.dialogs.proxy.fields.url.placeholder"]()}
                                     value={proxyUrl}
                                     onChange={(e) => setProxyUrl(e.target.value)}
                                   />
                                 </div>
 
                                 <div className='space-y-1'>
-                                  <FormLabel className='text-sm'>{t('channels.dialogs.proxy.fields.username.label')}</FormLabel>
+                                  <FormLabel className='text-sm'>{m["channels.dialogs.proxy.fields.username.label"]()}</FormLabel>
                                   <Input
-                                    placeholder={t('channels.dialogs.proxy.fields.username.placeholder')}
+                                    placeholder={m["channels.dialogs.proxy.fields.username.placeholder"]()}
                                     value={proxyUsername}
                                     onChange={(e) => setProxyUsername(e.target.value)}
                                   />
                                 </div>
 
                                 <div className='space-y-1'>
-                                  <FormLabel className='text-sm'>{t('channels.dialogs.proxy.fields.password.label')}</FormLabel>
+                                  <FormLabel className='text-sm'>{m["channels.dialogs.proxy.fields.password.label"]()}</FormLabel>
                                   <Input
                                     type='password'
-                                    placeholder={t('channels.dialogs.proxy.fields.password.placeholder')}
+                                    placeholder={m["channels.dialogs.proxy.fields.password.placeholder"]()}
                                     value={proxyPassword}
                                     onChange={(e) => setProxyPassword(e.target.value)}
                                   />
@@ -1704,19 +1704,19 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                             >
                               <TabsList className='grid w-full grid-cols-2'>
                                 <TabsTrigger value='official' disabled={isEdit}>
-                                  {t('channels.dialogs.authMode.official')}
+                                  {m["channels.dialogs.authMode.official"]()}
                                 </TabsTrigger>
                                 <TabsTrigger value='third-party' disabled={isEdit}>
-                                  {t('channels.dialogs.authMode.thirdParty')}
+                                  {m["channels.dialogs.authMode.thirdParty"]()}
                                 </TabsTrigger>
                               </TabsList>
                             </Tabs>
 
                             {authMode === 'official' && (
                               <div className='space-y-2'>
-                                {isCodexType && renderOAuthSection(codexOAuth, t('channels.dialogs.fields.apiFormat.codex.description'))}
+                                {isCodexType && renderOAuthSection(codexOAuth, m["channels.dialogs.fields.apiFormat.codex.description"]())}
                                 {isClaudeCodeType &&
-                                  renderOAuthSection(claudecodeOAuth, t('channels.dialogs.fields.apiFormat.claudecode.description'))}
+                                  renderOAuthSection(claudecodeOAuth, m["channels.dialogs.fields.apiFormat.claudecode.description"]())}
                               </div>
                             )}
                           </div>
@@ -1729,7 +1729,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                         render={({ field, fieldState }) => (
                           <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                             <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                              {t('channels.dialogs.fields.baseURL.label')}
+                              {m["channels.dialogs.fields.baseURL.label"]()}
                             </FormLabel>
                             <div className='space-y-1 md:col-span-6'>
                               <Input
@@ -1758,7 +1758,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                             render={({ field, fieldState }) => (
                               <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                                 <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                                  {t('channels.dialogs.fields.apiKey.label')}
+                                  {m["channels.dialogs.fields.apiKey.label"]()}
                                 </FormLabel>
                                 <div className='space-y-1 md:col-span-6'>
                                   {isEdit ? (
@@ -1792,7 +1792,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                               field.onBlur();
                                             }}
                                             readOnly={!showApiKey}
-                                            placeholder={t('channels.dialogs.fields.apiKey.editPlaceholder')}
+                                            placeholder={m["channels.dialogs.fields.apiKey.editPlaceholder"]()}
                                             className='min-h-[80px] resize-y pr-10 font-mono text-sm md:col-span-6'
                                             autoComplete='new-password'
                                             data-form-type='other'
@@ -1801,7 +1801,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                           />
                                         </TooltipTrigger>
                                         <TooltipContent>
-                                          <p>{t('channels.dialogs.fields.apiKey.revealToEditHint')}</p>
+                                          <p>{m["channels.dialogs.fields.apiKey.revealToEditHint"]()}</p>
                                         </TooltipContent>
                                       </Tooltip>
                                       <div className='absolute top-2 right-2 flex flex-col gap-1'>
@@ -1837,7 +1837,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                             const keys = field.value || [];
                                             if (keys.length > 0) {
                                               navigator.clipboard.writeText(keys.join('\n'));
-                                              toast.success(t('channels.messages.credentialsCopied'));
+                                              toast.success(m["channels.messages.credentialsCopied"]());
                                             }
                                           }}
                                         >
@@ -1845,7 +1845,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                         </Button>
                                       </div>
                                       <p className='text-muted-foreground mt-1 text-xs'>
-                                        {t('channels.dialogs.fields.apiKey.multiLineHint')}
+                                        {m["channels.dialogs.fields.apiKey.multiLineHint"]()}
                                       </p>
                                     </div>
                                   ) : (
@@ -1868,14 +1868,14 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                           field.onChange(keys);
                                           field.onBlur();
                                         }}
-                                        placeholder={t('channels.dialogs.fields.apiKey.placeholder')}
+                                        placeholder={m["channels.dialogs.fields.apiKey.placeholder"]()}
                                         className='min-h-[80px] resize-y font-mono text-sm md:col-span-6'
                                         autoComplete='new-password'
                                         data-form-type='other'
                                         aria-invalid={!!fieldState.error}
                                         data-testid='channel-api-key-input'
                                       />
-                                      <p className='text-muted-foreground text-xs'>{t('channels.dialogs.fields.apiKey.multiLineHint')}</p>
+                                      <p className='text-muted-foreground text-xs'>{m["channels.dialogs.fields.apiKey.multiLineHint"]()}</p>
                                     </>
                                   )}
                                   <FormMessage />
@@ -1891,19 +1891,19 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                         render={({ field }) => (
                           <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                             <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                              {t('channels.dialogs.fields.streamPolicy.label')}
+                              {m["channels.dialogs.fields.streamPolicy.label"]()}
                             </FormLabel>
                             <div className='space-y-1 md:col-span-6'>
                               <SelectDropdown
                                 defaultValue={(field.value as string) || 'unlimited'}
                                 onValueChange={(value) => field.onChange(value)}
-                                placeholder={t('channels.dialogs.fields.streamPolicy.placeholder')}
+                                placeholder={m["channels.dialogs.fields.streamPolicy.placeholder"]()}
                                 data-testid='channel-stream-policy-select'
                                 isControlled={true}
                                 items={[
-                                  { value: 'unlimited', label: t('channels.dialogs.fields.streamPolicy.options.unlimited') },
-                                  { value: 'require', label: t('channels.dialogs.fields.streamPolicy.options.require') },
-                                  { value: 'forbid', label: t('channels.dialogs.fields.streamPolicy.options.forbid') },
+                                  { value: 'unlimited', label: m["channels.dialogs.fields.streamPolicy.options.unlimited"]() },
+                                  { value: 'require', label: m["channels.dialogs.fields.streamPolicy.options.require"]() },
+                                  { value: 'forbid', label: m["channels.dialogs.fields.streamPolicy.options.forbid"]() },
                                 ]}
                               />
                               <FormMessage />
@@ -1914,7 +1914,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
 
                       <div className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                         <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                          {t('channels.dialogs.fields.supportedModels.label')}
+                          {m["channels.dialogs.fields.supportedModels.label"]()}
                         </FormLabel>
                         <div className='space-y-2 md:col-span-6'>
                           <div className='flex gap-2'>
@@ -1923,11 +1923,11 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                 items={fetchedModels.map((model) => ({ value: model, label: model }))}
                                 selectedValue={newModel}
                                 onSelectedValueChange={setNewModel}
-                                placeholder={t('channels.dialogs.fields.supportedModels.description')}
+                                placeholder={m["channels.dialogs.fields.supportedModels.description"]()}
                               />
                             ) : (
                               <Input
-                                placeholder={t('channels.dialogs.fields.supportedModels.description')}
+                                placeholder={m["channels.dialogs.fields.supportedModels.description"]()}
                                 value={newModel}
                                 onChange={(e) => setNewModel(e.target.value)}
                                 onKeyDown={handleKeyDown}
@@ -1935,22 +1935,22 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                               />
                             )}
                             <Button type='button' onClick={addModel} size='sm'>
-                              {t('channels.dialogs.buttons.add')}
+                              {m["channels.dialogs.buttons.add"]()}
                             </Button>
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button type='button' onClick={batchAddModels} size='sm' variant='outline'>
-                                  {t('channels.dialogs.buttons.batchAdd')}
+                                  {m["channels.dialogs.buttons.batchAdd"]()}
                                 </Button>
                               </TooltipTrigger>
                               <TooltipContent>
-                                <p>{t('channels.dialogs.buttons.batchAddTooltip')}</p>
+                                <p>{m["channels.dialogs.buttons.batchAddTooltip"]()}</p>
                               </TooltipContent>
                             </Tooltip>
                           </div>
 
                           {supportedModels.length === 0 && (
-                            <p className='text-destructive text-sm'>{t('channels.dialogs.fields.supportedModels.required')}</p>
+                            <p className='text-destructive text-sm'>{m["channels.dialogs.fields.supportedModels.required"]()}</p>
                           )}
 
                           {/* Supported models display - limited to 3 with expand button */}
@@ -1977,9 +1977,8 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                 }}
                               >
                                 <ChevronRight className='mr-1 h-3 w-3' />
-                                {t('channels.dialogs.fields.supportedModels.showMore', {
-                                  count: supportedModels.length - MAX_MODELS_DISPLAY,
-                                })}
+                                {m["channels.dialogs.fields.supportedModels.showMore"]({
+                                  count: supportedModels.length - MAX_MODELS_DISPLAY })}
                               </Button>
                             )}
                           </div>
@@ -2008,21 +2007,21 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                     <div className='space-y-0.5'>
                                       <div className='flex items-center gap-1.5'>
                                         <FormLabel className='cursor-pointer text-sm font-normal'>
-                                          {t('channels.dialogs.fields.autoSyncSupportedModels.label')}
+                                          {m["channels.dialogs.fields.autoSyncSupportedModels.label"]()}
                                         </FormLabel>
                                         <Tooltip>
                                           <TooltipTrigger asChild>
                                             <button
                                               type='button'
                                               className='text-muted-foreground hover:text-foreground inline-flex items-center'
-                                              aria-label={t('channels.dialogs.fields.autoSyncSupportedModels.description')}
+                                              aria-label={m["channels.dialogs.fields.autoSyncSupportedModels.description"]()}
                                               data-testid='auto-sync-supported-models-tip'
                                             >
                                               <Info className='h-3.5 w-3.5' />
                                             </button>
                                           </TooltipTrigger>
                                           <TooltipContent>
-                                            <p>{t('channels.dialogs.fields.autoSyncSupportedModels.description')}</p>
+                                            <p>{m["channels.dialogs.fields.autoSyncSupportedModels.description"]()}</p>
                                           </TooltipContent>
                                         </Tooltip>
                                       </div>
@@ -2037,8 +2036,8 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                       >
                                         <Play className={`mr-1 h-3 w-3 ${syncChannelModels.isPending ? 'animate-spin' : ''}`} />
                                         {syncChannelModels.isPending
-                                          ? t('channels.dialogs.buttons.syncingNow')
-                                          : t('channels.dialogs.buttons.syncNow')}
+                                          ? m["channels.dialogs.buttons.syncingNow"]()
+                                          : m["channels.dialogs.buttons.syncNow"]()}
                                       </Button>
                                     )}
                                   </div>
@@ -2054,11 +2053,11 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                 render={({ field }) => (
                                   <FormItem className='mt-2 pl-6'>
                                     <FormLabel className='text-sm font-normal'>
-                                      {t('channels.dialogs.fields.autoSyncModelPattern.label')}
+                                      {m["channels.dialogs.fields.autoSyncModelPattern.label"]()}
                                     </FormLabel>
                                     <FormControl>
                                       <Input
-                                        placeholder={t('channels.dialogs.fields.autoSyncModelPattern.placeholder')}
+                                        placeholder={m["channels.dialogs.fields.autoSyncModelPattern.placeholder"]()}
                                         {...field}
                                         value={field.value || ''}
                                         onChange={(e) => {
@@ -2072,7 +2071,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                               new RegExp(val);
                                               setPatternError(null);
                                             } catch {
-                                              setPatternError(t('channels.dialogs.fields.autoSyncModelPattern.invalid'));
+                                              setPatternError(m["channels.dialogs.fields.autoSyncModelPattern.invalid"]());
                                             }
                                           }
                                         }}
@@ -2080,7 +2079,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                       />
                                     </FormControl>
                                     <p className='text-muted-foreground text-xs'>
-                                      {t('channels.dialogs.fields.autoSyncModelPattern.description')}
+                                      {m["channels.dialogs.fields.autoSyncModelPattern.description"]()}
                                     </p>
                                     {patternError && <p className='text-destructive text-xs'>{patternError}</p>}
                                   </FormItem>
@@ -2092,7 +2091,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                           {/* Quick add models section */}
                           <div className='pt-3'>
                             <div className='mb-2 flex items-center justify-between'>
-                              <span className='text-sm font-medium'>{t('channels.dialogs.fields.supportedModels.defaultModelsLabel')}</span>
+                              <span className='text-sm font-medium'>{m["channels.dialogs.fields.supportedModels.defaultModelsLabel"]()}</span>
                               <div className='flex items-center gap-2'>
                                 <Button
                                   type='button'
@@ -2102,7 +2101,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                   disabled={!canFetchModels() || fetchModels.isPending}
                                 >
                                   <RefreshCw className={`mr-1 h-4 w-4 ${fetchModels.isPending ? 'animate-spin' : ''}`} />
-                                  {t('channels.dialogs.buttons.fetchModels')}
+                                  {m["channels.dialogs.buttons.fetchModels"]()}
                                 </Button>
                                 <Button
                                   type='button'
@@ -2113,7 +2112,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                   data-testid='add-selected-models-button'
                                 >
                                   <Plus className='mr-1 h-4 w-4' />
-                                  {t('channels.dialogs.buttons.addSelected')}
+                                  {m["channels.dialogs.buttons.addSelected"]()}
                                 </Button>
                               </div>
                             </div>
@@ -2141,14 +2140,14 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                         render={({ field }) => (
                           <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                             <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                              {t('channels.dialogs.fields.defaultTestModel.label')}
+                              {m["channels.dialogs.fields.defaultTestModel.label"]()}
                             </FormLabel>
                             <div className='space-y-1 md:col-span-6'>
                               <SelectDropdown
                                 defaultValue={field.value}
                                 onValueChange={field.onChange}
                                 items={supportedModels.map((model) => ({ value: model, label: model }))}
-                                placeholder={t('channels.dialogs.fields.defaultTestModel.description')}
+                                placeholder={m["channels.dialogs.fields.defaultTestModel.description"]()}
                                 className='md:col-span-6'
                                 disabled={supportedModels.length === 0}
                                 isControlled={true}
@@ -2166,17 +2165,17 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                         render={({ field }) => (
                           <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                             <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                              {t('channels.dialogs.fields.tags.label')}
+                              {m["channels.dialogs.fields.tags.label"]()}
                             </FormLabel>
                             <div className='space-y-1 md:col-span-6'>
                               <TagsAutocompleteInput
                                 value={field.value || []}
                                 onChange={field.onChange}
-                                placeholder={t('channels.dialogs.fields.tags.placeholder')}
+                                placeholder={m["channels.dialogs.fields.tags.placeholder"]()}
                                 suggestions={allTags}
                                 isLoading={isLoadingTags}
                               />
-                              <p className='text-muted-foreground text-xs'>{t('channels.dialogs.fields.tags.description')}</p>
+                              <p className='text-muted-foreground text-xs'>{m["channels.dialogs.fields.tags.description"]()}</p>
                               <FormMessage />
                             </div>
                           </FormItem>
@@ -2189,16 +2188,16 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                         render={({ field }) => (
                           <FormItem className='grid grid-cols-1 items-start gap-x-6 gap-y-2 md:grid-cols-8'>
                             <FormLabel className='pt-2 font-medium md:col-span-2 md:text-right'>
-                              {t('channels.dialogs.fields.remark.label')}
+                              {m["channels.dialogs.fields.remark.label"]()}
                             </FormLabel>
                             <div className='space-y-1 md:col-span-6'>
                               <Textarea
-                                placeholder={t('channels.dialogs.fields.remark.placeholder')}
+                                placeholder={m["channels.dialogs.fields.remark.placeholder"]()}
                                 className='min-h-[80px] resize-y'
                                 {...field}
                                 value={field.value || ''}
                               />
-                              <p className='text-muted-foreground text-xs'>{t('channels.dialogs.fields.remark.description')}</p>
+                              <p className='text-muted-foreground text-xs'>{m["channels.dialogs.fields.remark.description"]()}</p>
                               <FormMessage />
                             </div>
                           </FormItem>
@@ -2224,7 +2223,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                 className={`flex h-full min-h-0 flex-col transition-opacity duration-200 ${showFetchedModelsPanel ? 'opacity-100' : 'pointer-events-none absolute opacity-0'}`}
               >
                 <div className='mb-3 flex items-center justify-between'>
-                  <h3 className='text-sm font-semibold'>{t('channels.dialogs.fields.supportedModels.fetchedModelsLabel')}</h3>
+                  <h3 className='text-sm font-semibold'>{m["channels.dialogs.fields.supportedModels.fetchedModelsLabel"]()}</h3>
                   <Button type='button' variant='ghost' size='sm' onClick={closeFetchedModelsPanel}>
                     <ChevronLeft className='h-4 w-4' />
                   </Button>
@@ -2234,7 +2233,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                 <div className='relative mb-3'>
                   <Search className='text-muted-foreground absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2' />
                   <Input
-                    placeholder={t('channels.dialogs.fields.supportedModels.searchPlaceholder')}
+                    placeholder={m["channels.dialogs.fields.supportedModels.searchPlaceholder"]()}
                     value={fetchedModelsSearch}
                     onChange={(e) => setFetchedModelsSearch(e.target.value)}
                     className='h-8 pl-8 text-sm'
@@ -2249,21 +2248,21 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                         checked={showNotAddedModelsOnly}
                         onCheckedChange={(checked) => setShowNotAddedModelsOnly(checked === true)}
                       />
-                      {t('channels.dialogs.fields.supportedModels.showNotAddedOnly')}
+                      {m["channels.dialogs.fields.supportedModels.showNotAddedOnly"]()}
                     </label>
                     {watchedAutoSync && watchedAutoSyncPattern && !patternError && (
                       <label className='flex cursor-pointer items-center gap-2 text-xs'>
                         <Checkbox checked={applyPatternFilter} onCheckedChange={(checked) => setApplyPatternFilter(checked === true)} />
-                        {t('channels.dialogs.fields.supportedModels.filterByPattern')}
+                        {m["channels.dialogs.fields.supportedModels.filterByPattern"]()}
                       </label>
                     )}
                   </div>
                   <div className='flex gap-1'>
                     <Button type='button' variant='outline' size='sm' className='h-6 px-2 text-xs' onClick={selectAllFilteredModels}>
-                      {t('channels.dialogs.buttons.selectAll')}
+                      {m["channels.dialogs.buttons.selectAll"]()}
                     </Button>
                     <Button type='button' variant='outline' size='sm' className='h-6 px-2 text-xs' onClick={deselectAllFetchedModels}>
-                      {t('channels.dialogs.buttons.deselectAll')}
+                      {m["channels.dialogs.buttons.deselectAll"]()}
                     </Button>
                   </div>
                 </div>
@@ -2298,8 +2297,8 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                             isAdded={isAdded}
                             isSelected={isSelected}
                             onToggle={() => toggleFetchedModelSelection(model)}
-                            addedLabel={t('channels.dialogs.fields.supportedModels.added')}
-                            willRemoveLabel={t('channels.dialogs.fields.supportedModels.willRemove')}
+                            addedLabel={m["channels.dialogs.fields.supportedModels.added"]()}
+                            willRemoveLabel={m["channels.dialogs.fields.supportedModels.willRemove"]()}
                           />
                         </div>
                       );
@@ -2317,8 +2316,8 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                     disabled={selectedFetchedModels.length === 0}
                   >
                     {selectedFetchedModels.some((model) => supportedModels.includes(model))
-                      ? t('channels.dialogs.buttons.confirmSelection')
-                      : t('channels.dialogs.buttons.addSelectedCount', { count: selectedFetchedModels.length })}
+                      ? m["channels.dialogs.buttons.confirmSelection"]()
+                      : m["channels.dialogs.buttons.addSelectedCount"]({ count: selectedFetchedModels.length })}
                   </Button>
                   <Button
                     type='button'
@@ -2329,7 +2328,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                     disabled={deprecatedModelsCount === 0}
                   >
                     <Trash2 className='mr-1 h-4 w-4' />
-                    {t('channels.dialogs.buttons.removeDeprecated', { count: deprecatedModelsCount })}
+                    {m["channels.dialogs.buttons.removeDeprecated"]({ count: deprecatedModelsCount })}
                   </Button>
                 </div>
               </div>
@@ -2341,19 +2340,19 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                 className={`flex h-full min-h-0 flex-col transition-opacity duration-200 ${showApiKeysPanel ? 'opacity-100' : 'pointer-events-none absolute opacity-0'}`}
               >
                 <div className='mb-3 flex items-center justify-between'>
-                  <h3 className='text-sm font-semibold'>{t('channels.dialogs.fields.apiKey.panelTitle', { count: apiKeysCount })}</h3>
+                  <h3 className='text-sm font-semibold'>{m["channels.dialogs.fields.apiKey.panelTitle"]({ count: apiKeysCount })}</h3>
                   <Button type='button' variant='ghost' size='sm' onClick={closeApiKeysPanel}>
                     <ChevronLeft className='h-4 w-4' />
                   </Button>
                 </div>
 
-                <p className='text-muted-foreground mb-3 text-xs'>{t('channels.dialogs.fields.apiKey.panelDescription')}</p>
+                <p className='text-muted-foreground mb-3 text-xs'>{m["channels.dialogs.fields.apiKey.panelDescription"]()}</p>
 
                 {/* Search */}
                 <div className='relative mb-3'>
                   <Search className='text-muted-foreground absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2' />
                   <Input
-                    placeholder={t('channels.dialogs.fields.apiKey.searchPlaceholder')}
+                    placeholder={m["channels.dialogs.fields.apiKey.searchPlaceholder"]()}
                     value={apiKeysSearch}
                     onChange={(e) => setApiKeysSearch(e.target.value)}
                     className='h-8 pl-8 text-sm'
@@ -2394,7 +2393,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                       return next;
                                     });
                                   }}
-                                  aria-label={t('common.columns.selectRow')}
+                                  aria-label={m["common.columns.selectRow"]()}
                                 />
 
                                 <div className='min-w-0'>
@@ -2402,12 +2401,12 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                     <code className='bg-muted shrink-0 rounded px-2 py-0.5 font-mono text-xs'>{masked}</code>
                                     {isDisabled && (
                                       <Badge variant='destructive' className='h-5 px-2 text-[10px]'>
-                                        {t('channels.dialogs.fields.apiKey.disabled')}
+                                        {m["channels.dialogs.fields.apiKey.disabled"]()}
                                       </Badge>
                                     )}
                                   </div>
                                   {isDisabled && (
-                                    <p className='text-muted-foreground mt-1 text-xs'>{t('channels.dialogs.fields.apiKey.disabledHint')}</p>
+                                    <p className='text-muted-foreground mt-1 text-xs'>{m["channels.dialogs.fields.apiKey.disabledHint"]()}</p>
                                   )}
                                 </div>
                               </div>
@@ -2428,7 +2427,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                     </span>
                                   </TooltipTrigger>
                                   <TooltipContent>
-                                    <p>{t('channels.dialogs.fields.apiKey.mustKeepOne')}</p>
+                                    <p>{m["channels.dialogs.fields.apiKey.mustKeepOne"]()}</p>
                                   </TooltipContent>
                                 </Tooltip>
                               ) : (
@@ -2443,13 +2442,13 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                                   </PopoverTrigger>
                                   <PopoverContent className='w-72'>
                                     <div className='flex flex-col gap-3'>
-                                      <p className='text-sm'>{t('channels.dialogs.fields.apiKey.confirmRemoveSingle')}</p>
+                                      <p className='text-sm'>{m["channels.dialogs.fields.apiKey.confirmRemoveSingle"]()}</p>
                                       <div className='flex justify-end gap-2'>
                                         <Button size='sm' variant='outline' onClick={() => setConfirmRemoveKey(null)}>
-                                          {t('common.buttons.cancel')}
+                                          {m["common.buttons.cancel"]()}
                                         </Button>
                                         <Button size='sm' variant='destructive' onClick={() => removeApiKeys([key])}>
-                                          {t('common.buttons.confirm')}
+                                          {m["common.buttons.confirm"]()}
                                         </Button>
                                       </div>
                                     </div>
@@ -2469,20 +2468,20 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                     <PopoverTrigger asChild>
                       <Button type='button' variant='destructive' size='sm' className='flex-1' disabled={selectedKeysToRemove.size === 0}>
                         <Trash2 className='mr-1 h-4 w-4' />
-                        {t('channels.dialogs.fields.apiKey.removeSelected', { count: selectedKeysToRemove.size })}
+                        {m["channels.dialogs.fields.apiKey.removeSelected"]({ count: selectedKeysToRemove.size })}
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className='w-80' align='end'>
                       <div className='flex flex-col gap-3'>
                         <p className='text-sm'>
-                          {t('channels.dialogs.fields.apiKey.confirmRemoveSelected', { count: selectedKeysToRemove.size })}
+                          {m["channels.dialogs.fields.apiKey.confirmRemoveSelected"]({ count: selectedKeysToRemove.size })}
                         </p>
                         <div className='flex justify-end gap-2'>
                           <Button size='sm' variant='outline' onClick={() => setConfirmRemoveSelectedOpen(false)}>
-                            {t('common.buttons.cancel')}
+                            {m["common.buttons.cancel"]()}
                           </Button>
                           <Button size='sm' variant='destructive' onClick={() => removeApiKeys(Array.from(selectedKeysToRemove))}>
-                            {t('common.buttons.confirm')}
+                            {m["common.buttons.confirm"]()}
                           </Button>
                         </div>
                       </div>
@@ -2501,7 +2500,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                     }}
                     disabled={selectedKeysToRemove.size === 0}
                   >
-                    {t('channels.dialogs.fields.apiKey.clearSelection')}
+                    {m["channels.dialogs.fields.apiKey.clearSelection"]()}
                   </Button>
                 </div>
               </div>
@@ -2517,11 +2516,10 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                     </Button>
                     <h3 className='text-sm font-semibold'>
                       {manualModels.length > 0
-                        ? t('channels.dialogs.fields.supportedModels.allModelsWithManual', {
+                        ? m["channels.dialogs.fields.supportedModels.allModelsWithManual"]({
                             autoCount: Math.max(0, supportedModels.length - manualModels.length),
-                            manualCount: manualModels.length,
-                          })
-                        : t('channels.dialogs.fields.supportedModels.allModels', { count: supportedModels.length })}
+                            manualCount: manualModels.length })
+                        : m["channels.dialogs.fields.supportedModels.allModels"]({ count: supportedModels.length })}
                     </h3>
                   </div>
                   <Popover open={showClearAllPopover} onOpenChange={setShowClearAllPopover}>
@@ -2533,14 +2531,14 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                     <PopoverContent className='border-destructive/50 bg-background w-80' align='end'>
                       <div className='space-y-3'>
                         <div className='space-y-1'>
-                          <h4 className='leading-none font-medium'>{t('channels.dialogs.fields.supportedModels.clearAllTitle')}</h4>
+                          <h4 className='leading-none font-medium'>{m["channels.dialogs.fields.supportedModels.clearAllTitle"]()}</h4>
                           <p className='text-muted-foreground text-sm'>
-                            {t('channels.dialogs.fields.supportedModels.clearAllDescription', { count: supportedModels.length })}
+                            {m["channels.dialogs.fields.supportedModels.clearAllDescription"]({ count: supportedModels.length })}
                           </p>
                         </div>
                         <div className='flex justify-end gap-2'>
                           <Button type='button' variant='ghost' size='sm' onClick={() => setShowClearAllPopover(false)}>
-                            {t('common.buttons.cancel')}
+                            {m["common.buttons.cancel"]()}
                           </Button>
                           <Button
                             type='button'
@@ -2551,7 +2549,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                               setShowClearAllPopover(false);
                             }}
                           >
-                            {t('channels.dialogs.buttons.clearAll')}
+                            {m["channels.dialogs.buttons.clearAll"]()}
                           </Button>
                         </div>
                       </div>
@@ -2563,7 +2561,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
                 <div className='relative mb-3'>
                   <Search className='text-muted-foreground absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2' />
                   <Input
-                    placeholder={t('channels.dialogs.fields.supportedModels.searchPlaceholder')}
+                    placeholder={m["channels.dialogs.fields.supportedModels.searchPlaceholder"]()}
                     value={supportedModelsSearch}
                     onChange={(e) => setSupportedModelsSearch(e.target.value)}
                     className='h-8 pl-8 text-sm'
@@ -2604,7 +2602,7 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
           </div>
           <DialogFooter className='flex-shrink-0'>
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
-              {t('common.buttons.cancel')}
+              {m["common.buttons.cancel"]()}
             </Button>
             <Button
               type='submit'
@@ -2614,11 +2612,11 @@ export function ChannelsActionDialog({ currentRow, duplicateFromRow, open, onOpe
             >
               {createChannel.isPending || updateChannel.isPending
                 ? isEdit
-                  ? t('common.buttons.editing')
-                  : t('common.buttons.creating')
+                  ? m["common.buttons.editing"]()
+                  : m["common.buttons.creating"]()
                 : isEdit
-                  ? t('common.buttons.edit')
-                  : t('common.buttons.create')}
+                  ? m["common.buttons.edit"]()
+                  : m["common.buttons.create"]()}
             </Button>
           </DialogFooter>
         </DialogContent>

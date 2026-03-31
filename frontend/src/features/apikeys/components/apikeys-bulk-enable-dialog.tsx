@@ -1,15 +1,14 @@
 'use client';
 
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 
 import { useApiKeysContext } from '../context/apikeys-context';
 import { useBulkEnableApiKeys } from '../data/apikeys';
+import * as m from '@/paraglide/messages';
 
 export function ApiKeysBulkEnableDialog() {
-  const { t } = useTranslation();
   const { isDialogOpen, closeDialog, selectedApiKeys, resetRowSelection, setSelectedApiKeys } = useApiKeysContext();
   const bulkEnableApiKeys = useBulkEnableApiKeys();
 
@@ -35,17 +34,17 @@ export function ApiKeysBulkEnableDialog() {
       title={
         <span className='text-primary flex items-center gap-2'>
           <IconAlertTriangle className='h-4 w-4' />
-          {t('apikeys.dialogs.bulkEnable.title')}
+          {m["apikeys.dialogs.bulkEnable.title"]()}
         </span>
       }
-      desc={t('apikeys.dialogs.bulkEnable.description', { count: selectedApiKeys.length })}
-      confirmText={t('common.buttons.enable')}
-      cancelBtnText={t('common.buttons.cancel')}
+      desc={m["apikeys.dialogs.bulkEnable.description"]({ count: selectedApiKeys.length })}
+      confirmText={m["common.buttons.enable"]()}
+      cancelBtnText={m["common.buttons.cancel"]()}
     >
       <div className='flex items-start gap-3 rounded-md border border-green-200 bg-green-50 p-3 text-sm dark:border-green-900 dark:bg-green-900/20'>
         <IconCheck className='mt-0.5 h-4 w-4 text-green-600 dark:text-green-400' />
         <div className='space-y-1 text-left'>
-          <p>{t('apikeys.dialogs.bulkEnable.warning')}</p>
+          <p>{m["apikeys.dialogs.bulkEnable.warning"]()}</p>
         </div>
       </div>
     </ConfirmDialog>

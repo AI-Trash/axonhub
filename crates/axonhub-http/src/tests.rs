@@ -447,6 +447,8 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                             OpenAiV1Route::Responses => "resp_rust",
                             OpenAiV1Route::Embeddings => "embed_rust",
                             OpenAiV1Route::ImagesGenerations => "imggen_rust",
+                            #[allow(unreachable_patterns)]
+                            _ => "other_rust",
                         },
                         "model": request.body["model"].clone(),
                         "project_id": request.project.id,
@@ -646,14 +648,56 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         state
     }
 
-    async fn read_json<B>(response: ServiceResponse<B>) -> Value
-    where
-        B: MessageBody + 'static,
-        B::Error: std::fmt::Debug,
-    {
-        let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
-        serde_json::from_slice(&body).unwrap()
-    }
+async fn read_json<B>(response: ServiceResponse<B>) -> Value
+where
+    B: MessageBody + 'static,
+    B::Error: std::fmt::Debug,
+{
+    let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+async fn assert_json_response<B>(response: ServiceResponse<B>, expected_status: StatusCode) -> Value
+where
+    B: MessageBody + 'static,
+    B::Error: std::fmt::Debug,
+{
+    assert_eq!(response.status(), expected_status);
+    read_json(response).await
+}
+
+async fn assert_rest_error_response<B>(
+    response: ServiceResponse<B>,
+    expected_status: StatusCode,
+    expected_message: &str,
+) -> Value
+where
+    B: MessageBody + 'static,
+    B::Error: std::fmt::Debug,
+{
+    let json = assert_json_response(response, expected_status).await;
+    assert_eq!(json["error"]["message"], expected_message);
+    json
+}
+
+async fn assert_not_implemented_boundary<B>(
+    response: ServiceResponse<B>,
+    expected_status: StatusCode,
+    expected_route_family: &str,
+    expected_path: &str,
+    expected_method: &str,
+) -> Value
+where
+    B: MessageBody + 'static,
+    B::Error: std::fmt::Debug,
+{
+    let json = assert_json_response(response, expected_status).await;
+    assert_eq!(json["error"], "not_implemented");
+    assert_eq!(json["route_family"], expected_route_family);
+    assert_eq!(json["path"], expected_path);
+    assert_eq!(json["method"], expected_method);
+    json
+}
 
     #[tokio::test]
     async fn health_route_reports_progressive_cutover_contract() {
@@ -771,12 +815,14 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-        let json = read_json(response).await;
-        assert_eq!(json["error"], "not_implemented");
-        assert_eq!(json["route_family"], "/admin/system/status");
-        assert_eq!(json["path"], "/admin/system/status");
-        assert_eq!(json["method"], "GET");
+        let json = assert_not_implemented_boundary(
+            response,
+            StatusCode::NOT_IMPLEMENTED,
+            "/admin/system/status",
+            "/admin/system/status",
+            "GET",
+        )
+        .await;
         assert_eq!(
             json["message"],
             "DB-backed admin system status/bootstrap is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3."
@@ -1176,9 +1222,49 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let json = read_json(response).await;
+        let json = assert_rest_error_response(
+            response,
+            StatusCode::UNAUTHORIZED,
+            "Invalid API key",
+        )
+        .await;
         assert_eq!(json["error"]["message"], "Invalid API key");
+    }
+
+    #[tokio::test]
+    async fn rest_assertion_helper_reports_boundary_mismatches_clearly() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/images/edits")
+                    .method(Method::POST)
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = assert_not_implemented_boundary(
+            response,
+            StatusCode::NOT_IMPLEMENTED,
+            "/v1/*",
+            "/v1/images/edits",
+            "POST",
+        )
+        .await;
+        assert_ne!(
+            json["path"],
+            Value::String("/v1/images/variations".to_owned()),
+            "boundary helper should fail loudly if a later slice points at the wrong unsupported route"
+        );
     }
 
     #[tokio::test]
@@ -1440,7 +1526,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     #[tokio::test]
-    async fn thread_resolution_internal_failure_returns_500() {
+    async fn thread_resolution_internal_failure_is_fail_open() {
         let (state, request_context) = test_state_with_request_context(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -1464,14 +1550,16 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.status(), StatusCode::OK);
         let json = read_json(response).await;
-        assert_eq!(json["error"]["type"], "Internal Server Error");
-        assert_eq!(json["error"]["message"], "Failed to resolve thread context");
+        assert_eq!(json["auth"]["mode"], "api_key");
+        assert_eq!(json["project"]["id"], 1);
+        assert_eq!(json["thread"], Value::Null);
+        assert_eq!(json["trace"], Value::Null);
     }
 
     #[tokio::test]
-    async fn trace_resolution_internal_failure_returns_500() {
+    async fn trace_resolution_internal_failure_is_fail_open() {
         let (state, request_context) = test_state_with_request_context(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -1495,10 +1583,12 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(response.status(), StatusCode::OK);
         let json = read_json(response).await;
-        assert_eq!(json["error"]["type"], "Internal Server Error");
-        assert_eq!(json["error"]["message"], "Failed to resolve trace context");
+        assert_eq!(json["auth"]["mode"], "api_key");
+        assert_eq!(json["project"]["id"], 1);
+        assert_eq!(json["thread"], Value::Null);
+        assert_eq!(json["trace"], Value::Null);
     }
 
     #[tokio::test]
@@ -1805,7 +1895,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     #[tokio::test]
-    async fn doubao_task_routes_succeed_while_neighboring_surface_stays_truthful_501() {
+    async fn doubao_task_routes_succeed_while_neighboring_surface_stays_local_404() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -1875,11 +1965,11 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             )
             .await
             .unwrap();
-        assert_eq!(unsupported_response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(unsupported_response.status(), StatusCode::NOT_FOUND);
         let unsupported_json = read_json(unsupported_response).await;
-        assert_eq!(unsupported_json["error"], "not_implemented");
-        assert_eq!(unsupported_json["route_family"], "/*");
-        assert_eq!(unsupported_json["path"], "/doubao/v3/contents/generations/status");
+        assert_eq!(unsupported_json["error"], "not_found");
+        assert_eq!(unsupported_json["status"], 404);
+        assert_eq!(unsupported_json["message"], "The requested endpoint does not exist");
     }
 
     #[tokio::test]
@@ -2058,6 +2148,160 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     #[tokio::test]
+    async fn anthropic_messages_extracts_claude_code_trace_from_metadata_user_id() {
+        let mut state = test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        );
+        state.trace_config.claude_code_trace_enabled = true;
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/anthropic/v1/messages")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::from(
+                        r#"{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hi"}],"metadata":{"user_id":"user_aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd_account__session_7581b58b-1234-5678-9abc-def012345678"}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        assert_eq!(json["id"], "msg_rust");
+    }
+
+    #[tokio::test]
+    async fn v1_messages_extracts_claude_code_trace_from_v2_metadata_user_id() {
+        let mut state = test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        );
+        state.trace_config.claude_code_trace_enabled = true;
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/messages")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::from(
+                        r#"{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hi"}],"metadata":{"user_id":"{\"device_id\":\"67bad5aabbccdd1122334455667788990011223344556677889900aabbccddee\",\"account_uuid\":\"\",\"session_id\":\"f25958b8-e75c-455d-8b40-f006d87cc2a4\"}"}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        assert_eq!(json["id"], "msg_rust");
+    }
+
+    #[tokio::test]
+    async fn codex_session_header_extracts_trace_when_enabled() {
+        let mut state = test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        );
+        state.trace_config.codex_trace_enabled = true;
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .header("Session_id", "codex-session-123")
+                    .body(Body::from(
+                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        assert_eq!(json["id"], "chatcmpl_rust");
+    }
+
+    #[tokio::test]
+    async fn debug_context_uses_extra_trace_header_before_body_fields() {
+        let mut state = test_state(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        );
+        state.trace_config.extra_trace_body_fields = vec!["trace_id".to_owned()];
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/debug/context")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .header("Sentry-Trace", "trace-1")
+                    .body(Body::from(r#"{"trace_id":"body-trace-1"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        assert_eq!(json["trace"]["traceId"], "trace-1");
+    }
+
+    #[tokio::test]
+    async fn debug_context_extracts_trace_from_body_field_when_configured() {
+        let mut state = test_state(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        );
+        state.trace_config.extra_trace_headers = vec![];
+        state.trace_config.extra_trace_body_fields = vec!["metadata.trace_id".to_owned()];
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/debug/context")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::from(r#"{"metadata":{"trace_id":"trace-1"}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        assert_eq!(json["trace"]["traceId"], "trace-1");
+    }
+
+    #[tokio::test]
     async fn openai_v1_video_routes_use_existing_doubao_compatibility() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
@@ -2228,6 +2472,11 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                 "/v1/responses",
                 r#"{"model":"gpt-4o","input":"hi"}"#,
                 "resp_rust",
+            ),
+            (
+                "/v1/responses/compact",
+                r#"{"model":"gpt-4o","input":"hi"}"#,
+                "resp_compact_rust",
             ),
             (
                 "/v1/embeddings",
@@ -2642,12 +2891,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             (Method::GET, "/jina/v1/unknown", StatusCode::NOT_FOUND, "json"),
             (Method::GET, "/anthropic/v1/unknown", StatusCode::NOT_FOUND, "json"),
             (Method::GET, "/openapi/unknown", StatusCode::NOT_FOUND, "json"),
-            (
-                Method::GET,
-                "/doubao/v3/unknown",
-                StatusCode::NOT_IMPLEMENTED,
-                "not_implemented",
-            ),
+            (Method::GET, "/doubao/v3/unknown", StatusCode::NOT_FOUND, "json"),
         ] {
             let mut request = Request::builder().uri(path).method(method);
             if path.starts_with("/openapi") {
@@ -2666,10 +2910,6 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             let json = read_json(response).await;
             match body_kind {
                 "json" => assert_eq!(json["error"], "not_found", "{path}"),
-                "not_implemented" => {
-                    assert_eq!(json["error"], "not_implemented", "{path}");
-                    assert_eq!(json["path"], path, "{path}");
-                }
                 _ => unreachable!(),
             }
         }

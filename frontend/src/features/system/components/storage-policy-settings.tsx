@@ -2,7 +2,6 @@
 
 import { Loader2, Save, Play } from 'lucide-react';
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import {
   AlertDialog,
@@ -23,9 +22,10 @@ import { Switch } from '@/components/ui/switch';
 
 import { useSystemContext } from '../context/system-context';
 import { useStoragePolicy, useUpdateStoragePolicy, useTriggerGcCleanup, CleanupOption } from '../data/system';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 export function StoragePolicySettings() {
-  const { t } = useTranslation();
   const { isLoading, setIsLoading } = useSystemContext();
 
   const { data: storagePolicy, isLoading: isLoadingStoragePolicy } = useStoragePolicy();
@@ -91,7 +91,7 @@ export function StoragePolicySettings() {
     return (
       <div className='flex h-32 items-center justify-center'>
         <Loader2 className='h-6 w-6 animate-spin' />
-        <span className='text-muted-foreground ml-2'>{t('common.loading')}</span>
+        <span className='text-muted-foreground ml-2'>{m["common.loading"]()}</span>
       </div>
     );
   }
@@ -101,25 +101,25 @@ export function StoragePolicySettings() {
       <Card>
         <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>
           <div className='space-y-1.5'>
-            <CardTitle>{t('system.storage.policy.title')}</CardTitle>
-            <CardDescription>{t('system.storage.policy.description')}</CardDescription>
+            <CardTitle>{m["system.storage.policy.title"]()}</CardTitle>
+            <CardDescription>{m["system.storage.policy.description"]()}</CardDescription>
           </div>
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant='outline' size='sm' disabled={triggerGcCleanup.isPending || isLoading}>
                 {triggerGcCleanup.isPending ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Play className='mr-2 h-4 w-4' />}
-                {t('system.storage.policy.runCleanupNow')}
+                {m["system.storage.policy.runCleanupNow"]()}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>{t('system.storage.policy.runCleanupConfirmTitle')}</AlertDialogTitle>
-                <AlertDialogDescription>{t('system.storage.policy.runCleanupConfirmDescription')}</AlertDialogDescription>
+                <AlertDialogTitle>{m["system.storage.policy.runCleanupConfirmTitle"]()}</AlertDialogTitle>
+                <AlertDialogDescription>{m["system.storage.policy.runCleanupConfirmDescription"]()}</AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>{t('system.storage.policy.runCleanupCancel')}</AlertDialogCancel>
+                <AlertDialogCancel>{m["system.storage.policy.runCleanupCancel"]()}</AlertDialogCancel>
                 <AlertDialogAction onClick={() => triggerGcCleanup.mutate()}>
-                  {t('system.storage.policy.runCleanupConfirm')}
+                  {m["system.storage.policy.runCleanupConfirm"]()}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -128,8 +128,8 @@ export function StoragePolicySettings() {
         <CardContent className='space-y-6'>
           <div className='flex items-center justify-between' id='storage-enabled-switch'>
             <div className='space-y-0.5'>
-              <Label htmlFor='storage-policy-store-chunks'>{t('system.storage.policy.storeChunks.label')}</Label>
-              <div className='text-muted-foreground text-sm'>{t('system.storage.policy.storeChunks.description')}</div>
+              <Label htmlFor='storage-policy-store-chunks'>{m["system.storage.policy.storeChunks.label"]()}</Label>
+              <div className='text-muted-foreground text-sm'>{m["system.storage.policy.storeChunks.description"]()}</div>
             </div>
             <Switch
               id='storage-policy-store-chunks'
@@ -146,8 +146,8 @@ export function StoragePolicySettings() {
 
           <div className='flex items-center justify-between'>
             <div className='space-y-0.5'>
-              <Label htmlFor='storage-policy-store-request-body'>{t('system.storage.policy.storeRequestBody.label')}</Label>
-              <div className='text-muted-foreground text-sm'>{t('system.storage.policy.storeRequestBody.description')}</div>
+              <Label htmlFor='storage-policy-store-request-body'>{m["system.storage.policy.storeRequestBody.label"]()}</Label>
+              <div className='text-muted-foreground text-sm'>{m["system.storage.policy.storeRequestBody.description"]()}</div>
             </div>
             <Switch
               id='storage-policy-store-request-body'
@@ -164,8 +164,8 @@ export function StoragePolicySettings() {
 
           <div className='flex items-center justify-between'>
             <div className='space-y-0.5'>
-              <Label htmlFor='storage-policy-store-response-body'>{t('system.storage.policy.storeResponseBody.label')}</Label>
-              <div className='text-muted-foreground text-sm'>{t('system.storage.policy.storeResponseBody.description')}</div>
+              <Label htmlFor='storage-policy-store-response-body'>{m["system.storage.policy.storeResponseBody.label"]()}</Label>
+              <div className='text-muted-foreground text-sm'>{m["system.storage.policy.storeResponseBody.description"]()}</div>
             </div>
             <Switch
               id='storage-policy-store-response-body'
@@ -182,8 +182,8 @@ export function StoragePolicySettings() {
 
           <div className='space-y-4'>
             <div className='space-y-2'>
-              <div className='text-lg font-medium'>{t('system.storage.policy.cleanupOptions')}</div>
-              <div className='text-muted-foreground text-sm'>{t('system.storage.policy.cleanupDescription')}</div>
+              <div className='text-lg font-medium'>{m["system.storage.policy.cleanupOptions"]()}</div>
+              <div className='text-muted-foreground text-sm'>{m["system.storage.policy.cleanupDescription"]()}</div>
             </div>
             {storagePolicyState.cleanupOptions.map((option, index) => (
               <div
@@ -192,7 +192,7 @@ export function StoragePolicySettings() {
                 id={'storage-cleanup-option-' + option.resourceType}
               >
                 <div className='flex items-center justify-between'>
-                  <div className='font-medium'>{t(`system.storage.policy.resourceTypes.${option.resourceType}`)}</div>
+                  <div className='font-medium'>{dynamicTranslation(`system.storage.policy.resourceTypes.${option.resourceType}`)}</div>
                   <Switch
                     checked={option.enabled}
                     onCheckedChange={(checked) => handleCleanupOptionChange(index, 'enabled', checked)}
@@ -201,7 +201,7 @@ export function StoragePolicySettings() {
                 </div>
                 {option.enabled && (
                   <div className='flex items-center gap-2'>
-                    <Label htmlFor={`cleanup-days-${index}`}>{t('system.storage.policy.cleanupDays')}</Label>
+                    <Label htmlFor={`cleanup-days-${index}`}>{m["system.storage.policy.cleanupDays"]()}</Label>
                     <Input
                       id={`cleanup-days-${index}`}
                       type='number'
@@ -212,7 +212,7 @@ export function StoragePolicySettings() {
                       className='w-24'
                       disabled={isLoading}
                     />
-                    <span>{t('system.storage.policy.days')}</span>
+                    <span>{m["system.storage.policy.days"]()}</span>
                   </div>
                 )}
               </div>
@@ -224,12 +224,12 @@ export function StoragePolicySettings() {
               {isLoading || updateStoragePolicy.isPending ? (
                 <>
                   <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                  {t('system.buttons.saving')}
+                  {m["system.buttons.saving"]()}
                 </>
               ) : (
                 <>
                   <Save className='mr-2 h-4 w-4' />
-                  {t('system.buttons.save')}
+                  {m["system.buttons.save"]()}
                 </>
               )}
             </Button>

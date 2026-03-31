@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -11,6 +10,7 @@ import { buildDateRangeWhereClause, type DateTimeRangeValue } from '@/utils/date
 import { TracesTable } from './components';
 import { TracesProvider } from './context';
 import { useTraces } from './data';
+import * as m from '@/paraglide/messages';
 
 function TracesContent() {
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs, cursorHistory } = usePaginationSearch({
@@ -115,15 +115,13 @@ function TracesContent() {
 }
 
 export default function TracesManagement() {
-  const { t } = useTranslation();
-
   return (
     <TracesProvider>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('traces.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('traces.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["traces.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["traces.description"]()}</p>
           </div>
         </div>
       </Header>

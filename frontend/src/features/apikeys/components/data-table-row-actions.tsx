@@ -3,7 +3,6 @@ import { IconUserOff, IconUserCheck, IconEdit, IconSettings, IconArchive } from 
 import { Row } from '@tanstack/react-table';
 import { BarChart3 } from 'lucide-react';
 import React from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -18,13 +17,13 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { useApiKeysContext } from '../context/apikeys-context';
 import { ApiKey } from '../data/schema';
 import { ApiKeyTokenChartDialog } from './api-key-token-chart-dialog';
+import * as m from '@/paraglide/messages';
 
 interface DataTableRowActionsProps {
   row: Row<ApiKey>;
 }
 
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
-  const { t } = useTranslation();
   const { openDialog } = useApiKeysContext();
   const { apiKeyPermissions } = usePermissions();
   const apiKey = row.original;
@@ -77,19 +76,19 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <DropdownMenuContent align='end' className='w-[160px]'>
           <DropdownMenuItem onClick={handleViewChart}>
             <BarChart3 className='mr-2 h-4 w-4' />
-            {t('apikeys.actions.viewTokenChart')}
+            {m["apikeys.actions.viewTokenChart"]()}
           </DropdownMenuItem>
           {apiKeyPermissions.canWrite && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => handleEdit(apiKey)}>
                 <IconEdit className='mr-2 h-4 w-4' />
-                {t('common.actions.edit')}
+                {m["common.actions.edit"]()}
               </DropdownMenuItem>
               {apiKey.type !== 'service_account' && (
                 <DropdownMenuItem onClick={() => handleProfiles(apiKey)}>
                   <IconSettings className='mr-2 h-4 w-4' />
-                  {t('apikeys.actions.profiles')}
+                  {m["apikeys.actions.profiles"]()}
                 </DropdownMenuItem>
               )}
               {apiKey.status !== 'archived' && (
@@ -100,12 +99,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
                   {apiKey.status === 'enabled' ? (
                     <>
                       <IconUserOff className='mr-2 h-4 w-4' />
-                      {t('common.buttons.disable')}
+                      {m["common.buttons.disable"]()}
                     </>
                   ) : (
                     <>
                       <IconUserCheck className='mr-2 h-4 w-4' />
-                      {t('common.buttons.enable')}
+                      {m["common.buttons.enable"]()}
                     </>
                   )}
                 </DropdownMenuItem>
@@ -113,7 +112,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               {apiKey.status !== 'archived' && (
                 <DropdownMenuItem onClick={() => handleArchive(apiKey)} className='text-orange-600'>
                   <IconArchive className='mr-2 h-4 w-4' />
-                  {t('common.buttons.archive')}
+                  {m["common.buttons.archive"]()}
                 </DropdownMenuItem>
               )}
             </>

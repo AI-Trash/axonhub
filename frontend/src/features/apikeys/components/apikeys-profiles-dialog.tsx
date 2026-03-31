@@ -1,10 +1,11 @@
+import { getLocale } from '@/paraglide/runtime';
+import * as m from '@/paraglide/messages';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { IconPlus, IconTrash, IconSettings, IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { format, type Locale } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 
 import { AutoComplete } from '@/components/auto-complete';
 import { Button } from '@/components/ui/button';
@@ -37,13 +38,13 @@ function quotaPeriodLabel(period: ApiKeyQuotaPeriod | null | undefined, t: (key:
   const unitLabel = (unit: string) => {
     switch (unit) {
       case 'minute':
-        return t('apikeys.profiles.quotaUnitMinute');
+        return m["apikeys.profiles.quotaUnitMinute"]();
       case 'hour':
-        return t('apikeys.profiles.quotaUnitHour');
+        return m["apikeys.profiles.quotaUnitHour"]();
       case 'day':
-        return t('apikeys.profiles.quotaUnitDay');
+        return m["apikeys.profiles.quotaUnitDay"]();
       case 'month':
-        return t('apikeys.profiles.quotaUnitMonth');
+        return m["apikeys.profiles.quotaUnitMonth"]();
       default:
         return unit;
     }
@@ -51,17 +52,17 @@ function quotaPeriodLabel(period: ApiKeyQuotaPeriod | null | undefined, t: (key:
 
   switch (period.type) {
     case 'all_time':
-      return t('apikeys.profiles.quotaPeriodAllTime');
+      return m["apikeys.profiles.quotaPeriodAllTime"]();
     case 'past_duration': {
       const value = period.pastDuration?.value;
       const unit = period.pastDuration?.unit;
       const suffix = value && unit ? ` (${value} ${unitLabel(unit)})` : '';
-      return `${t('apikeys.profiles.quotaPeriodPastDuration')}${suffix}`;
+      return `${m["apikeys.profiles.quotaPeriodPastDuration"]()}${suffix}`;
     }
     case 'calendar_duration': {
       const unit = period.calendarDuration?.unit;
       const suffix = unit ? ` (${unitLabel(unit)})` : '';
-      return `${t('apikeys.profiles.quotaPeriodCalendarDuration')}${suffix}`;
+      return `${m["apikeys.profiles.quotaPeriodCalendarDuration"]()}${suffix}`;
     }
     default:
       return period.type;
@@ -80,12 +81,11 @@ interface ApiKeyProfilesDialogProps {
 }
 
 export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = false, initialData }: ApiKeyProfilesDialogProps) {
-  const { t, i18n } = useTranslation();
   const { selectedApiKey } = useApiKeysContext();
   const { data: availableModels, mutateAsync: fetchModels } = useQueryModels();
   // 用于解决 Dialog 内 Popover 无法滚动的问题
   const [dialogContent, setDialogContent] = useState<HTMLDivElement | null>(null);
-  const locale = i18n.language === 'zh' ? zhCN : enUS;
+  const locale = getLocale() === 'zh' ? zhCN : enUS;
   const apiKeyId = selectedApiKey?.id ?? '';
   const quotaUsagesQuery = useApiKeyQuotaUsages(apiKeyId, {
     enabled: open && !!apiKeyId,
@@ -271,12 +271,11 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
         <DialogHeader className='shrink-0 text-left'>
           <DialogTitle className='flex items-center gap-2'>
             <IconSettings className='h-5 w-5' />
-            {t('apikeys.profiles.title')}
+            {m["apikeys.profiles.title"]()}
           </DialogTitle>
           <DialogDescription>
-            {t('apikeys.profiles.description', {
-              name: selectedApiKey?.name,
-            })}
+            {m["apikeys.profiles.description"]({
+              name: selectedApiKey?.name })}
           </DialogDescription>
         </DialogHeader>
 
@@ -286,10 +285,10 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
             <Form {...form}>
               <form id='apikey-profiles-form' onSubmit={form.handleSubmit(handleSubmit)} className='space-y-6'>
                 <div className='flex items-center justify-between'>
-                  <h3 className='text-lg font-medium'>{t('apikeys.profiles.profilesTitle')}</h3>
+                  <h3 className='text-lg font-medium'>{m["apikeys.profiles.profilesTitle"]()}</h3>
                   <Button type='button' variant='outline' size='sm' onClick={addProfile} className='flex items-center gap-2'>
                     <IconPlus className='h-4 w-4' />
-                    {t('apikeys.profiles.addProfile')}
+                    {m["apikeys.profiles.addProfile"]()}
                   </Button>
                 </div>
               </form>
@@ -321,7 +320,6 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
                               onRemove={() => removeProfileHandler(profileIndex)}
                               canRemove={profileFields.length > 1}
                               availableModels={availableModels?.map((model) => model.id) || []}
-                              t={t}
                               locale={locale}
                               quotaUsageByProfileName={quotaUsageByProfileName}
                               defaultExpanded={isActive}
@@ -345,11 +343,11 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
                 name='activeProfile'
                 render={({ field }) => (
                   <FormItem className='flex items-center space-y-0 gap-x-3'>
-                    <FormLabel className='shrink-0 font-medium'>{t('apikeys.profiles.activeProfile')}</FormLabel>
+                    <FormLabel className='shrink-0 font-medium'>{m["apikeys.profiles.activeProfile"]()}</FormLabel>
                     <FormControl>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <SelectTrigger>
-                          <SelectValue placeholder={t('apikeys.profiles.selectActiveProfile')} />
+                          <SelectValue placeholder={m["apikeys.profiles.selectActiveProfile"]()} />
                         </SelectTrigger>
                         <SelectContent>
                           {profileNames
@@ -375,19 +373,19 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
           {/* {(form.formState.errors.profiles ||
             Object.keys(form.formState.errors).some((key) => key.startsWith('profiles.'))) && (
             <div className='text-destructive w-full text-sm'>
-              {form.formState.errors.profiles?.message || t('apikeys.validation.duplicateProfileName')}
+              {form.formState.errors.profiles?.message || m["apikeys.validation.duplicateProfileName"]()}
             </div>
           )} */}
           <div className='flex w-full gap-2 sm:w-auto'>
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)} disabled={loading}>
-              {t('common.buttons.cancel')}
+              {m["common.buttons.cancel"]()}
             </Button>
             <Button
               type='submit'
               form='apikey-profiles-form'
               disabled={loading || !form.formState.isValid || Object.keys(form.formState.errors).length > 0}
             >
-              {loading ? t('common.buttons.saving') : t('common.buttons.save')}
+              {loading ? m["common.buttons.saving"]() : m["common.buttons.save"]()}
             </Button>
           </div>
         </DialogFooter>
@@ -477,7 +475,7 @@ function ProfileCard({
       if (isDuplicate) {
         form.setError(`profiles.${profileIndex}.name`, {
           type: 'manual',
-          message: t('apikeys.validation.duplicateProfileName'),
+          message: m["apikeys.validation.duplicateProfileName"](),
         });
       } else {
         form.clearErrors(`profiles.${profileIndex}.name`);
@@ -513,7 +511,7 @@ function ProfileCard({
                         field.onChange(newValue);
                       }}
                       onBlur={field.onBlur}
-                      placeholder={t('apikeys.profiles.profileName')}
+                      placeholder={m["apikeys.profiles.profileName"]()}
                       className='w-full font-medium md:w-[12em]'
                     />
                   </FormControl>
@@ -530,7 +528,7 @@ function ProfileCard({
               onClick={() => setIsCollapsed((prev) => !prev)}
               className='hover:bg-accent'
               aria-expanded={!isCollapsed}
-              aria-label={isCollapsed ? t('apikeys.profiles.expand') : t('apikeys.profiles.collapse')}
+              aria-label={isCollapsed ? m["apikeys.profiles.expand"]() : m["apikeys.profiles.collapse"]()}
             >
               {isCollapsed ? <IconChevronDown className='h-4 w-4' /> : <IconChevronUp className='h-4 w-4' />}
             </Button>
@@ -548,15 +546,15 @@ function ProfileCard({
           <div className='space-y-4'>
             <div className='flex items-center justify-between gap-3'>
               <div>
-                <h4 className='text-sm font-medium'>{t('apikeys.profiles.quotaTitle')}</h4>
-                <p className='text-muted-foreground mt-1 text-xs'>{t('apikeys.profiles.quotaDescription')}</p>
+                <h4 className='text-sm font-medium'>{m["apikeys.profiles.quotaTitle"]()}</h4>
+                <p className='text-muted-foreground mt-1 text-xs'>{m["apikeys.profiles.quotaDescription"]()}</p>
               </div>
               <FormField
                 control={form.control}
                 name={`profiles.${profileIndex}.quota`}
                 render={({ field }) => (
                   <FormItem className='flex items-center space-y-0 gap-x-2'>
-                    <FormLabel className='text-sm'>{t('apikeys.profiles.quotaEnabled')}</FormLabel>
+                    <FormLabel className='text-sm'>{m["apikeys.profiles.quotaEnabled"]()}</FormLabel>
                     <FormControl>
                       <Switch
                         checked={field.value != null}
@@ -591,7 +589,7 @@ function ProfileCard({
                     name={`profiles.${profileIndex}.quota.requests`}
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('apikeys.profiles.quotaRequests')}</FormLabel>
+                        <FormLabel>{m["apikeys.profiles.quotaRequests"]()}</FormLabel>
                         <FormControl>
                           <Input
                             type='number'
@@ -601,7 +599,7 @@ function ProfileCard({
                               const v = e.target.value;
                               field.onChange(v === '' ? null : Number(v));
                             }}
-                            placeholder={t('apikeys.profiles.quotaRequestsPlaceholder')}
+                            placeholder={m["apikeys.profiles.quotaRequestsPlaceholder"]()}
                           />
                         </FormControl>
                         <FormMessage />
@@ -613,7 +611,7 @@ function ProfileCard({
                     name={`profiles.${profileIndex}.quota.totalTokens`}
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('apikeys.profiles.quotaTotalTokens')}</FormLabel>
+                        <FormLabel>{m["apikeys.profiles.quotaTotalTokens"]()}</FormLabel>
                         <FormControl>
                           <Input
                             type='number'
@@ -623,7 +621,7 @@ function ProfileCard({
                               const v = e.target.value;
                               field.onChange(v === '' ? null : Number(v));
                             }}
-                            placeholder={t('apikeys.profiles.quotaTotalTokensPlaceholder')}
+                            placeholder={m["apikeys.profiles.quotaTotalTokensPlaceholder"]()}
                           />
                         </FormControl>
                         <FormMessage />
@@ -635,7 +633,7 @@ function ProfileCard({
                     name={`profiles.${profileIndex}.quota.cost`}
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('apikeys.profiles.quotaCost')}</FormLabel>
+                        <FormLabel>{m["apikeys.profiles.quotaCost"]()}</FormLabel>
                         <FormControl>
                           <Input
                             inputMode='decimal'
@@ -644,7 +642,7 @@ function ProfileCard({
                               const v = e.target.value;
                               field.onChange(v === '' ? null : Number(v));
                             }}
-                            placeholder={t('apikeys.profiles.quotaCostPlaceholder')}
+                            placeholder={m["apikeys.profiles.quotaCostPlaceholder"]()}
                           />
                         </FormControl>
                         <FormMessage />
@@ -659,7 +657,7 @@ function ProfileCard({
                     name={`profiles.${profileIndex}.quota.period.type`}
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('apikeys.profiles.quotaPeriodType')}</FormLabel>
+                        <FormLabel>{m["apikeys.profiles.quotaPeriodType"]()}</FormLabel>
                         <FormControl>
                           <Select
                             value={field.value}
@@ -681,9 +679,9 @@ function ProfileCard({
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value='all_time'>{t('apikeys.profiles.quotaPeriodAllTime')}</SelectItem>
-                              <SelectItem value='past_duration'>{t('apikeys.profiles.quotaPeriodPastDuration')}</SelectItem>
-                              <SelectItem value='calendar_duration'>{t('apikeys.profiles.quotaPeriodCalendarDuration')}</SelectItem>
+                              <SelectItem value='all_time'>{m["apikeys.profiles.quotaPeriodAllTime"]()}</SelectItem>
+                              <SelectItem value='past_duration'>{m["apikeys.profiles.quotaPeriodPastDuration"]()}</SelectItem>
+                              <SelectItem value='calendar_duration'>{m["apikeys.profiles.quotaPeriodCalendarDuration"]()}</SelectItem>
                             </SelectContent>
                           </Select>
                         </FormControl>
@@ -699,7 +697,7 @@ function ProfileCard({
                         name={`profiles.${profileIndex}.quota.period.pastDuration.value`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>{t('apikeys.profiles.quotaPastDurationValue')}</FormLabel>
+                            <FormLabel>{m["apikeys.profiles.quotaPastDurationValue"]()}</FormLabel>
                             <FormControl>
                               <Input
                                 type='number'
@@ -717,16 +715,16 @@ function ProfileCard({
                         name={`profiles.${profileIndex}.quota.period.pastDuration.unit`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>{t('apikeys.profiles.quotaPastDurationUnit')}</FormLabel>
+                            <FormLabel>{m["apikeys.profiles.quotaPastDurationUnit"]()}</FormLabel>
                             <FormControl>
                               <Select value={field.value} onValueChange={field.onChange}>
                                 <SelectTrigger>
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value='minute'>{t('apikeys.profiles.quotaUnitMinute')}</SelectItem>
-                                  <SelectItem value='hour'>{t('apikeys.profiles.quotaUnitHour')}</SelectItem>
-                                  <SelectItem value='day'>{t('apikeys.profiles.quotaUnitDay')}</SelectItem>
+                                  <SelectItem value='minute'>{m["apikeys.profiles.quotaUnitMinute"]()}</SelectItem>
+                                  <SelectItem value='hour'>{m["apikeys.profiles.quotaUnitHour"]()}</SelectItem>
+                                  <SelectItem value='day'>{m["apikeys.profiles.quotaUnitDay"]()}</SelectItem>
                                 </SelectContent>
                               </Select>
                             </FormControl>
@@ -743,15 +741,15 @@ function ProfileCard({
                       name={`profiles.${profileIndex}.quota.period.calendarDuration.unit`}
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>{t('apikeys.profiles.quotaCalendarDurationUnit')}</FormLabel>
+                          <FormLabel>{m["apikeys.profiles.quotaCalendarDurationUnit"]()}</FormLabel>
                           <FormControl>
                             <Select value={field.value} onValueChange={field.onChange}>
                               <SelectTrigger>
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value='day'>{t('apikeys.profiles.quotaUnitDay')}</SelectItem>
-                                <SelectItem value='month'>{t('apikeys.profiles.quotaUnitMonth')}</SelectItem>
+                                <SelectItem value='day'>{m["apikeys.profiles.quotaUnitDay"]()}</SelectItem>
+                                <SelectItem value='month'>{m["apikeys.profiles.quotaUnitMonth"]()}</SelectItem>
                               </SelectContent>
                             </Select>
                           </FormControl>
@@ -764,25 +762,25 @@ function ProfileCard({
 
                 {quotaUsage && (
                   <div className='space-y-2 rounded-md border p-3'>
-                    <div className='text-xs font-medium'>{t('apikeys.profiles.quotaUsageTitle')}</div>
+                    <div className='text-xs font-medium'>{m["apikeys.profiles.quotaUsageTitle"]()}</div>
                     <div className='text-muted-foreground text-xs'>
-                      {t('apikeys.profiles.quotaPeriodType')}: {quotaPeriodLabel(quotaUsagePeriod, t)}
+                      {m["apikeys.profiles.quotaPeriodType"]()}: {quotaPeriodLabel(quotaUsagePeriod, t)}
                     </div>
                     <div className='grid gap-3 md:grid-cols-3'>
                       <div>
-                        <div className='text-muted-foreground text-xs'>{t('apikeys.profiles.quotaRequests')}</div>
+                        <div className='text-muted-foreground text-xs'>{m["apikeys.profiles.quotaRequests"]()}</div>
                         <div className='text-sm'>
                           {quotaUsage.usage.requestCount}/{currentQuota?.requests ?? '∞'}
                         </div>
                       </div>
                       <div>
-                        <div className='text-muted-foreground text-xs'>{t('apikeys.profiles.quotaTotalTokens')}</div>
+                        <div className='text-muted-foreground text-xs'>{m["apikeys.profiles.quotaTotalTokens"]()}</div>
                         <div className='text-sm'>
                           {quotaUsage.usage.totalTokens}/{currentQuota?.totalTokens ?? '∞'}
                         </div>
                       </div>
                       <div>
-                        <div className='text-muted-foreground text-xs'>{t('apikeys.profiles.quotaCost')}</div>
+                        <div className='text-muted-foreground text-xs'>{m["apikeys.profiles.quotaCost"]()}</div>
                         <div className='text-sm'>
                           {(quotaUsage.usage.totalCost ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}/
                           {currentQuota?.cost ?? '∞'}
@@ -791,11 +789,11 @@ function ProfileCard({
                     </div>
                     <div className='text-muted-foreground grid gap-2 text-xs md:grid-cols-2'>
                       <div>
-                        {t('common.filters.startTime')}{' '}
+                        {m["common.filters.startTime"]()}{' '}
                         {quotaUsage.window.start ? format(quotaUsage.window.start, 'PPpp', { locale }) : '-'}
                       </div>
                       <div>
-                        {t('common.filters.endTime')} {quotaUsageEnd ? format(quotaUsageEnd, 'PPpp', { locale }) : '-'}
+                        {m["common.filters.endTime"]()} {quotaUsageEnd ? format(quotaUsageEnd, 'PPpp', { locale }) : '-'}
                       </div>
                     </div>
                   </div>
@@ -813,15 +811,15 @@ function ProfileCard({
                 <FormItem className='space-y-4'>
                   <div className='flex items-center justify-between gap-3'>
                     <div>
-                      <h4 className='text-sm font-medium'>{t('apikeys.profiles.loadBalancerStrategy')}</h4>
+                      <h4 className='text-sm font-medium'>{m["apikeys.profiles.loadBalancerStrategy"]()}</h4>
                       <FormDescription className='mt-1 text-xs'>
                         {field.value === 'adaptive'
-                          ? t('system.retry.loadBalancerStrategy.documentation.adaptive')
+                          ? m["system.retry.loadBalancerStrategy.documentation.adaptive"]()
                           : field.value === 'failover'
-                            ? t('system.retry.loadBalancerStrategy.documentation.failover')
+                            ? m["system.retry.loadBalancerStrategy.documentation.failover"]()
                             : field.value === 'circuit-breaker'
-                              ? t('system.retry.loadBalancerStrategy.documentation.circuit-breaker')
-                              : t('apikeys.profiles.loadBalancerStrategyDescription')}
+                              ? m["system.retry.loadBalancerStrategy.documentation.circuit-breaker"]()
+                              : m["apikeys.profiles.loadBalancerStrategyDescription"]()}
                       </FormDescription>
                     </div>
                     <FormControl>
@@ -830,13 +828,13 @@ function ProfileCard({
                         value={field.value || 'system_default'}
                       >
                         <SelectTrigger className='w-[140px]'>
-                          <SelectValue placeholder={t('apikeys.profiles.loadBalancerStrategyPlaceholder')} />
+                          <SelectValue placeholder={m["apikeys.profiles.loadBalancerStrategyPlaceholder"]()} />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value='system_default'>{t('apikeys.profiles.loadBalancerStrategyPlaceholder')}</SelectItem>
-                          <SelectItem value='adaptive'>{t('system.retry.loadBalancerStrategy.options.adaptive')}</SelectItem>
-                          <SelectItem value='failover'>{t('system.retry.loadBalancerStrategy.options.failover')}</SelectItem>
-                          <SelectItem value='circuit-breaker'>{t('system.retry.loadBalancerStrategy.options.circuitBreaker')}</SelectItem>
+                          <SelectItem value='system_default'>{m["apikeys.profiles.loadBalancerStrategyPlaceholder"]()}</SelectItem>
+                          <SelectItem value='adaptive'>{m["system.retry.loadBalancerStrategy.options.adaptive"]()}</SelectItem>
+                          <SelectItem value='failover'>{m["system.retry.loadBalancerStrategy.options.failover"]()}</SelectItem>
+                          <SelectItem value='circuit-breaker'>{m["system.retry.loadBalancerStrategy.options.circuitBreaker"]()}</SelectItem>
                         </SelectContent>
                       </Select>
                     </FormControl>
@@ -849,15 +847,15 @@ function ProfileCard({
 
           <div className='border-t pt-6'>
             <div className='flex items-center justify-between'>
-              <h4 className='text-sm font-medium'>{t('apikeys.profiles.modelMappings')}</h4>
+              <h4 className='text-sm font-medium'>{m["apikeys.profiles.modelMappings"]()}</h4>
               <Button type='button' variant='outline' size='sm' onClick={addMapping} className='mb-3 flex items-center gap-2'>
                 <IconPlus className='h-4 w-4' />
-                {t('apikeys.profiles.addMapping')}
+                {m["apikeys.profiles.addMapping"]()}
               </Button>
             </div>
 
             {mappingFields.length === 0 && (
-              <p className='text-muted-foreground py-4 text-center text-sm'>{t('apikeys.profiles.noMappings')}</p>
+              <p className='text-muted-foreground py-4 text-center text-sm'>{m["apikeys.profiles.noMappings"]()}</p>
             )}
 
             <div className='space-y-3'>
@@ -869,7 +867,6 @@ function ProfileCard({
                   form={form}
                   onRemove={() => removeMapping(mappingIndex)}
                   availableModels={availableModels}
-                  t={t}
                   portalContainer={portalContainer}
                 />
               ))}
@@ -878,8 +875,8 @@ function ProfileCard({
 
           {/* Model IDs Restrictions Section */}
           <div className='border-t pt-6'>
-            <h4 className='mb-3 text-sm font-medium'>{t('apikeys.profiles.allowedModels')}</h4>
-            <p className='text-muted-foreground mb-3 text-xs'>{t('apikeys.profiles.allowedModelsDescription')}</p>
+            <h4 className='mb-3 text-sm font-medium'>{m["apikeys.profiles.allowedModels"]()}</h4>
+            <p className='text-muted-foreground mb-3 text-xs'>{m["apikeys.profiles.allowedModelsDescription"]()}</p>
             <FormField
               control={form.control}
               name={`profiles.${profileIndex}.modelIDs`}
@@ -889,7 +886,7 @@ function ProfileCard({
                     <TagsAutocompleteInput
                       value={field.value || []}
                       onChange={field.onChange}
-                      placeholder={t('apikeys.profiles.allowedModels')}
+                      placeholder={m["apikeys.profiles.allowedModels"]()}
                       suggestions={availableModels}
                       className='h-auto min-h-9 py-1'
                     />
@@ -902,8 +899,8 @@ function ProfileCard({
 
           {/* Channel Restrictions Section */}
           <div className='border-t pt-6'>
-            <h4 className='mb-3 text-sm font-medium'>{t('apikeys.profiles.allowedChannels')}</h4>
-            <p className='text-muted-foreground mb-3 text-xs'>{t('apikeys.profiles.allowedChannelsDescription')}</p>
+            <h4 className='mb-3 text-sm font-medium'>{m["apikeys.profiles.allowedChannels"]()}</h4>
+            <p className='text-muted-foreground mb-3 text-xs'>{m["apikeys.profiles.allowedChannelsDescription"]()}</p>
             <FormField
               control={form.control}
               name={`profiles.${profileIndex}.channelIDs`}
@@ -924,7 +921,7 @@ function ProfileCard({
                           .filter((id) => !isNaN(id));
                         field.onChange(ids);
                       }}
-                      placeholder={t('apikeys.profiles.allowedChannels')}
+                      placeholder={m["apikeys.profiles.allowedChannels"]()}
                       suggestions={channelsData?.edges?.map((edge) => edge.node.name) || []}
                       className='h-auto min-h-9 py-1'
                     />
@@ -937,8 +934,8 @@ function ProfileCard({
 
           {/* Channel Tags Restrictions Section */}
           <div className='border-t pt-6'>
-            <h4 className='mb-3 text-sm font-medium'>{t('apikeys.profiles.allowedChannelTags')}</h4>
-            <p className='text-muted-foreground mb-3 text-xs'>{t('apikeys.profiles.allowedChannelTagsDescription')}</p>
+            <h4 className='mb-3 text-sm font-medium'>{m["apikeys.profiles.allowedChannelTags"]()}</h4>
+            <p className='text-muted-foreground mb-3 text-xs'>{m["apikeys.profiles.allowedChannelTagsDescription"]()}</p>
             <FormField
               control={form.control}
               name={`profiles.${profileIndex}.channelTags`}
@@ -948,7 +945,7 @@ function ProfileCard({
                     <TagsAutocompleteInput
                       value={field.value || []}
                       onChange={field.onChange}
-                      placeholder={t('apikeys.profiles.allowedChannelTags')}
+                      placeholder={m["apikeys.profiles.allowedChannelTags"]()}
                       suggestions={allTags}
                       className='h-auto min-h-9 py-1'
                     />
@@ -1019,12 +1016,12 @@ function MappingRow({ profileIndex, mappingIndex, form, onRemove, availableModel
                 searchValue={fromSearch}
                 onSearchValueChange={setFromSearch}
                 items={modelOptions}
-                placeholder={t('apikeys.profiles.sourceModel')}
-                emptyMessage={t('apikeys.profiles.noModelsFound')}
+                placeholder={m["apikeys.profiles.sourceModel"]()}
+                emptyMessage={m["apikeys.profiles.noModelsFound"]()}
                 portalContainer={portalContainer}
               />
             </FormControl>
-            {/* <div className='text-muted-foreground mt-1 text-xs'>{t('apikeys.profiles.regexSupported')}</div> */}
+            {/* <div className='text-muted-foreground mt-1 text-xs'>{m["apikeys.profiles.regexSupported"]()}</div> */}
             <FormMessage />
           </FormItem>
         )}
@@ -1044,8 +1041,8 @@ function MappingRow({ profileIndex, mappingIndex, form, onRemove, availableModel
                 searchValue={toSearch}
                 onSearchValueChange={setToSearch}
                 items={modelOptions}
-                placeholder={t('apikeys.profiles.targetModel')}
-                emptyMessage={t('apikeys.profiles.noModelsFound')}
+                placeholder={m["apikeys.profiles.targetModel"]()}
+                emptyMessage={m["apikeys.profiles.noModelsFound"]()}
                 portalContainer={portalContainer}
               />
             </FormControl>

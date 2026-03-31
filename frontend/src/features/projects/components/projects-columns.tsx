@@ -2,15 +2,16 @@
 
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
 import { format } from 'date-fns';
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 
 import { Project } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
-export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrite: boolean = false): ColumnDef<Project>[] => {
+export const createColumns = (t: (key: string, params?: Record<string, unknown>) => string, canWrite: boolean = false): ColumnDef<Project>[] => {
   const columns: ColumnDef<Project>[] = [
     {
       id: 'search',
@@ -32,7 +33,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
         <Checkbox
           checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')}
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label={t('common.columns.selectAll')}
+          aria-label={m["common.columns.selectAll"]()}
           className='translate-y-[2px]'
         />
       ),
@@ -40,7 +41,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
         <Checkbox
           checked={row.getIsSelected()}
           onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label={t('common.columns.selectRow')}
+          aria-label={m["common.columns.selectRow"]()}
           className='translate-y-[2px]'
         />
       ),
@@ -53,7 +54,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   columns.push(
     {
       accessorKey: 'name',
-      header: t('common.columns.name'),
+      header: m["common.columns.name"](),
       cell: ({ row }) => {
         const name = row.getValue('name') as string;
         return <div className='font-medium'>{name}</div>;
@@ -61,7 +62,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'description',
-      header: t('common.columns.description'),
+      header: m["common.columns.description"](),
       cell: ({ row }) => {
         const description = row.getValue('description') as string;
         return <div className='text-muted-foreground max-w-[300px] truncate'>{description || '-'}</div>;
@@ -69,15 +70,15 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'status',
-      header: t('common.columns.status'),
+      header: m["common.columns.status"](),
       cell: ({ row }) => {
         const status = row.getValue('status') as string;
-        return <Badge variant={status === 'active' ? 'default' : 'secondary'}>{t(`projects.status.${status}`)}</Badge>;
+        return <Badge variant={status === 'active' ? 'default' : 'secondary'}>{dynamicTranslation(`projects.status.${status}`)}</Badge>;
       },
     },
     {
       accessorKey: 'createdAt',
-      header: t('common.columns.createdAt'),
+      header: m["common.columns.createdAt"](),
       cell: ({ row }) => {
         const date = row.getValue('createdAt') as Date;
         return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
@@ -85,7 +86,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'updatedAt',
-      header: t('common.columns.updatedAt'),
+      header: m["common.columns.updatedAt"](),
       cell: ({ row }) => {
         const date = row.getValue('updatedAt') as Date;
         return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
@@ -93,7 +94,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       id: 'actions',
-      header: t('common.columns.actions'),
+      header: m["common.columns.actions"](),
       cell: ({ row }) => <DataTableRowActions row={row} />,
     }
   );

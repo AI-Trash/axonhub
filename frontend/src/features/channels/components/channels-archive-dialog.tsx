@@ -1,12 +1,12 @@
 'use client';
 
 import { IconArchive, IconInfoCircle } from '@tabler/icons-react';
-import { useTranslation } from 'react-i18next';
 
 import { ConfirmDialog } from '@/components/confirm-dialog';
 
 import { useUpdateChannelStatus } from '../data/channels';
 import { Channel } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   open: boolean;
@@ -15,7 +15,6 @@ interface Props {
 }
 
 export function ChannelsArchiveDialog({ open, onOpenChange, currentRow }: Props) {
-  const { t } = useTranslation();
   const updateChannelStatus = useUpdateChannelStatus();
 
   const handleArchive = async () => {
@@ -31,8 +30,8 @@ export function ChannelsArchiveDialog({ open, onOpenChange, currentRow }: Props)
   };
 
   const getDescription = () => {
-    const baseDescription = t('channels.dialogs.status.archive.description', { name: currentRow.name });
-    const warningText = t('channels.dialogs.status.archive.warning');
+    const baseDescription = m["channels.dialogs.status.archive.description"]({ name: currentRow.name });
+    const warningText = m["channels.dialogs.status.archive.warning"]();
 
     return (
       <div className='space-y-3'>
@@ -58,12 +57,12 @@ export function ChannelsArchiveDialog({ open, onOpenChange, currentRow }: Props)
       title={
         <span className='text-orange-600'>
           <IconArchive className='mr-1 inline-block stroke-orange-600' size={18} />
-          {t('channels.dialogs.status.archive.title')}
+          {m["channels.dialogs.status.archive.title"]()}
         </span>
       }
       desc={getDescription()}
-      confirmText={t('common.buttons.archive')}
-      cancelBtnText={t('common.buttons.cancel')}
+      confirmText={m["common.buttons.archive"]()}
+      cancelBtnText={m["common.buttons.cancel"]()}
     />
   );
 }

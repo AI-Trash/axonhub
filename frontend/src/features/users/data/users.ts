@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
@@ -7,6 +6,7 @@ import { USERS_QUERY, CREATE_USER_MUTATION, UPDATE_USER_MUTATION, UPDATE_USER_ST
 import { useErrorHandler } from '@/hooks/use-error-handler';
 
 import { User, UserConnection, CreateUserInput, UpdateUserInput, userConnectionSchema, userSchema } from './schema';
+import * as m from '@/paraglide/messages';
 
 // Query hooks
 export function useUsers(
@@ -20,7 +20,6 @@ export function useUsers(
     disableAutoFetch?: boolean;
   }
 ) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
 
   const queryVariables = {
@@ -35,7 +34,7 @@ export function useUsers(
         const data = await graphqlRequest<{ users: UserConnection }>(USERS_QUERY, queryVariables);
         return userConnectionSchema.parse(data?.users);
       } catch (error) {
-        handleError(error, t('users.messages.loadUsersError'));
+        handleError(error, m["users.messages.loadUsersError"]());
         throw error;
       }
     },
@@ -44,7 +43,6 @@ export function useUsers(
 }
 
 export function useUser(id: string) {
-  const { t } = useTranslation();
   const { handleError } = useErrorHandler();
 
   return useQuery({
@@ -54,11 +52,11 @@ export function useUser(id: string) {
         const data = await graphqlRequest<{ users: UserConnection }>(USERS_QUERY, { where: { id } });
         const user = data.users.edges[0]?.node;
         if (!user) {
-          throw new Error(t('users.messages.userNotFound'));
+          throw new Error(m["users.messages.userNotFound"]());
         }
         return userSchema.parse(user);
       } catch (error) {
-        handleError(error, t('users.messages.loadUserError'));
+        handleError(error, m["users.messages.loadUserError"]());
         throw error;
       }
     },
@@ -68,7 +66,6 @@ export function useUser(id: string) {
 
 // Mutation hooks
 export function useCreateUser() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -78,16 +75,15 @@ export function useCreateUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success(t('users.messages.createSuccess'));
+      toast.success(m["users.messages.createSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.createError') + `: ${error.message}`);
+      toast.error(m["users.messages.createError"]() + `: ${error.message}`);
     },
   });
 }
 
 export function useUpdateUser() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -97,16 +93,15 @@ export function useUpdateUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success(t('users.messages.updateSuccess'));
+      toast.success(m["users.messages.updateSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.updateError') + `: ${error.message}`);
+      toast.error(m["users.messages.updateError"]() + `: ${error.message}`);
     },
   });
 }
 
 export function useUpdateUserStatus() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -117,17 +112,16 @@ export function useUpdateUserStatus() {
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['user', variables.id] });
-      const statusText = variables.status === 'activated' ? t('users.status.activated') : t('users.status.deactivated');
-      toast.success(t('users.messages.statusUpdateSuccess', { status: statusText }));
+      const statusText = variables.status === 'activated' ? m["users.status.activated"]() : m["users.status.deactivated"]();
+      toast.success(m["users.messages.statusUpdateSuccess"]({ status: statusText }));
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.statusUpdateError') + `: ${error.message}`);
+      toast.error(m["users.messages.statusUpdateError"]() + `: ${error.message}`);
     },
   });
 }
 
 export function useDeleteUser() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -137,10 +131,10 @@ export function useDeleteUser() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success(t('users.messages.deleteSuccess'));
+      toast.success(m["users.messages.deleteSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('users.messages.deleteError') + `: ${error.message}`);
+      toast.error(m["users.messages.deleteError"]() + `: ${error.message}`);
     },
   });
 }

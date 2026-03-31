@@ -13,7 +13,6 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import React, { useState, useMemo, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Button } from '@/components/ui/button';
@@ -24,6 +23,7 @@ import type { DateTimeRangeValue } from '@/utils/date-range';
 import { useApiKeysContext } from '../context/apikeys-context';
 import { ApiKey, ApiKeyConnection } from '../data/schema';
 import { DataTableToolbar } from './data-table-toolbar';
+import * as m from '@/paraglide/messages';
 
 declare module '@tanstack/react-table' {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -75,7 +75,6 @@ export function ApiKeysTable({
   onResetFilters,
   canWrite = true,
 }: DataTableProps) {
-  const { t } = useTranslation();
   const { setResetRowSelection, setSelectedApiKeys, openDialog } = useApiKeysContext();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -220,7 +219,7 @@ export function ApiKeysTable({
             ) : (
               <TableRow className='!bg-[var(--table-background)]'>
                 <TableCell colSpan={columns.length} className='h-24 !bg-[var(--table-background)] text-center'>
-                  {t('common.noData')}
+                  {m["common.noData"]()}
                 </TableCell>
               </TableRow>
             )}
@@ -250,7 +249,7 @@ export function ApiKeysTable({
               <span className='bg-primary text-primary-foreground flex h-6 min-w-6 items-center justify-center rounded px-1.5 text-xs font-medium'>
                 {selectedCount}
               </span>
-              <span className='text-muted-foreground text-sm'>{t('common.selected')}</span>
+              <span className='text-muted-foreground text-sm'>{m["common.selected"]()}</span>
             </div>
             <div className='bg-border mx-2 h-6 w-px' />
             <Button
@@ -258,7 +257,7 @@ export function ApiKeysTable({
               size='icon'
               className='text-destructive h-8 w-8 hover:bg-red-100 hover:text-red-700'
               onClick={() => openDialog('bulkDisable')}
-              title={t('common.buttons.disable')}
+              title={m["common.buttons.disable"]()}
             >
               <IconUserOff className='h-4 w-4' />
             </Button>
@@ -267,7 +266,7 @@ export function ApiKeysTable({
               size='icon'
               className='h-8 w-8 text-green-600 hover:bg-green-100 hover:text-green-700'
               onClick={() => openDialog('bulkEnable')}
-              title={t('common.buttons.enable')}
+              title={m["common.buttons.enable"]()}
             >
               <IconCheck className='h-4 w-4' />
             </Button>
@@ -276,7 +275,7 @@ export function ApiKeysTable({
               size='icon'
               className='h-8 w-8 text-orange-600 hover:bg-orange-100 hover:text-orange-700'
               onClick={() => openDialog('bulkArchive')}
-              title={t('common.buttons.archive')}
+              title={m["common.buttons.archive"]()}
             >
               <IconArchive className='h-4 w-4' />
             </Button>

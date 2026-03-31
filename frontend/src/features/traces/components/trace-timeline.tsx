@@ -2,7 +2,6 @@
 
 import { ChevronDown, ChevronRight, Workflow } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -12,6 +11,8 @@ import { formatDuration } from '../../../utils/format-duration';
 import type { Segment, RequestMetadata, Span } from '../data/schema';
 import { getSpanDisplayLabels, normalizeSpanType } from '../utils/span-display';
 import { getSpanIcon } from './constant';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 type SpanKind = 'request' | 'response';
 
@@ -159,7 +160,6 @@ interface SpanRowProps {
 }
 
 function SpanRow({ node, depth, totalDuration, onSelectSpan, selectedSpanId }: SpanRowProps) {
-  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(true);
   const hasChildren = node.children.length > 0;
   const spanSource = node.source.type === 'span' ? node.source : null;
@@ -177,7 +177,7 @@ function SpanRow({ node, depth, totalDuration, onSelectSpan, selectedSpanId }: S
   }
   const iconColor = node.source.type === 'segment' ? 'text-primary' : 'text-muted-foreground';
   const spanDisplay = spanSource ? getSpanDisplayLabels(spanSource.span, t) : null;
-  const spanKindLabel = spanSource ? t(`traces.common.badges.${spanSource.spanKind}`) : null;
+  const spanKindLabel = spanSource ? dynamicTranslation(`traces.common.badges.${spanSource.spanKind}`) : null;
   const normalizedSpanType = spanSource ? normalizeSpanType(spanSource.span.type) : null;
   const SpanIcon = normalizedSpanType ? getSpanIcon(normalizedSpanType) : getSpanIcon('');
 
@@ -207,7 +207,7 @@ function SpanRow({ node, depth, totalDuration, onSelectSpan, selectedSpanId }: S
             'flex h-4 w-4 items-center justify-center rounded transition-colors',
             hasChildren ? 'hover:bg-accent text-muted-foreground' : 'opacity-0'
           )}
-          aria-label={hasChildren ? (isExpanded ? t('traces.timeline.aria.collapseRow') : t('traces.timeline.aria.expandRow')) : undefined}
+          aria-label={hasChildren ? (isExpanded ? m["traces.timeline.aria.collapseRow"]() : m["traces.timeline.aria.expandRow"]()) : undefined}
         >
           {hasChildren && (isExpanded ? <ChevronDown className='h-3 w-3' /> : <ChevronRight className='h-3 w-3' />)}
         </button>
@@ -317,8 +317,6 @@ function findLatestEnd(segment: Segment): number | null {
 }
 
 export function TraceTimeline({ trace, onSelectSpan, selectedSpanId }: TraceTimelineProps) {
-  const { t } = useTranslation();
-
   const timelineData = useMemo(() => {
     const earliestStart = findEarliestStart(trace);
     const latestEnd = findLatestEnd(trace);
@@ -363,7 +361,7 @@ export function TraceTimeline({ trace, onSelectSpan, selectedSpanId }: TraceTime
 
   if (!timelineData) {
     return (
-      <div className='text-muted-foreground flex h-full items-center justify-center text-sm'>{t('traces.timeline.emptyDescription')}</div>
+      <div className='text-muted-foreground flex h-full items-center justify-center text-sm'>{m["traces.timeline.emptyDescription"]()}</div>
     );
   }
 
@@ -375,12 +373,12 @@ export function TraceTimeline({ trace, onSelectSpan, selectedSpanId }: TraceTime
       <div className='border-border/60 mb-4 border-b pb-4'>
         <div className='flex items-center justify-between'>
           <div className='flex items-center gap-3'>
-            <h2 className='text-lg font-semibold'>{t('traces.timeline.title')}</h2>
+            <h2 className='text-lg font-semibold'>{m["traces.timeline.title"]()}</h2>
             <span className='text-muted-foreground text-sm'>{formatDuration(totalDuration)}</span>
             {totalTokens != null && <span className='text-muted-foreground text-sm'>{formatNumber(totalTokens)} tokens</span>}
             {totalCachedTokens != null && <span className='text-muted-foreground text-sm'>({formatNumber(totalCachedTokens)} cached)</span>}
           </div>
-          <div className='text-muted-foreground text-sm'>{t('traces.timeline.itemsCount', { count: totalItems })}</div>
+          <div className='text-muted-foreground text-sm'>{m["traces.timeline.itemsCount"]({ count: totalItems })}</div>
         </div>
       </div>
       <div className='border-border/40 bg-card/50 flex-1 overflow-auto rounded-lg border'>

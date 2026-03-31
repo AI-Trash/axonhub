@@ -2,7 +2,6 @@
 
 import { Loader2, Save } from 'lucide-react';
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { AutoCompleteSelect } from '@/components/auto-complete-select';
 import { Button } from '@/components/ui/button';
@@ -13,9 +12,10 @@ import { useSystemContext } from '../context/system-context';
 import { currencyCodes } from '../data/currencies';
 import { useGeneralSettings, useUpdateGeneralSettings } from '../data/system';
 import { GMTTimeZoneOptions } from '../data/timezones';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 export function GeneralSettings() {
-  const { t } = useTranslation();
   const { data: settings, isLoading: isLoadingSettings } = useGeneralSettings();
   const updateSettings = useUpdateGeneralSettings();
   const { isLoading, setIsLoading } = useSystemContext();
@@ -27,9 +27,9 @@ export function GeneralSettings() {
     () =>
       currencyCodes.map((code) => ({
         value: code,
-        label: t(`currencies.${code}`),
+        label: dynamicTranslation(`currencies.${code}`),
       })),
-    [t]
+    []
   );
 
   const timezoneItems = React.useMemo(() => GMTTimeZoneOptions, []);
@@ -60,7 +60,7 @@ export function GeneralSettings() {
     return (
       <div className='flex h-32 items-center justify-center'>
         <Loader2 className='h-6 w-6 animate-spin' />
-        <span className='text-muted-foreground ml-2'>{t('common.loading')}</span>
+        <span className='text-muted-foreground ml-2'>{m["common.loading"]()}</span>
       </div>
     );
   }
@@ -69,36 +69,36 @@ export function GeneralSettings() {
     <div className='space-y-6'>
       <Card>
         <CardHeader>
-          <CardTitle>{t('system.general.title')}</CardTitle>
-          <CardDescription>{t('system.general.description')}</CardDescription>
+          <CardTitle>{m["system.general.title"]()}</CardTitle>
+          <CardDescription>{m["system.general.description"]()}</CardDescription>
         </CardHeader>
         <CardContent className='space-y-6'>
           <div className='space-y-2'>
-            <Label htmlFor='currency-code'>{t('system.general.currencyCode.label')}</Label>
+            <Label htmlFor='currency-code'>{m["system.general.currencyCode.label"]()}</Label>
             <div className='max-w-md'>
               <AutoCompleteSelect
                 selectedValue={currencyCode}
                 onSelectedValueChange={setCurrencyCode}
                 items={currencyItems}
-                placeholder={t('system.general.currencyCode.placeholder')}
+                placeholder={m["system.general.currencyCode.placeholder"]()}
                 isLoading={isLoadingSettings}
               />
             </div>
-            <div className='text-muted-foreground text-sm'>{t('system.general.currencyCode.description')}</div>
+            <div className='text-muted-foreground text-sm'>{m["system.general.currencyCode.description"]()}</div>
           </div>
 
           <div className='space-y-2'>
-            <Label htmlFor='timezone'>{t('system.general.timezone.label')}</Label>
+            <Label htmlFor='timezone'>{m["system.general.timezone.label"]()}</Label>
             <div className='max-w-md'>
               <AutoCompleteSelect
                 selectedValue={timezone}
                 onSelectedValueChange={setTimezone}
                 items={timezoneItems}
-                placeholder={t('system.general.timezone.placeholder')}
+                placeholder={m["system.general.timezone.placeholder"]()}
                 isLoading={isLoadingSettings}
               />
             </div>
-            <div className='text-muted-foreground text-sm'>{t('system.general.timezone.description')}</div>
+            <div className='text-muted-foreground text-sm'>{m["system.general.timezone.description"]()}</div>
           </div>
         </CardContent>
       </Card>
@@ -109,12 +109,12 @@ export function GeneralSettings() {
             {isLoading || updateSettings.isPending ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                {t('system.buttons.saving')}
+                {m["system.buttons.saving"]()}
               </>
             ) : (
               <>
                 <Save className='mr-2 h-4 w-4' />
-                {t('system.buttons.save')}
+                {m["system.buttons.save"]()}
               </>
             )}
           </Button>

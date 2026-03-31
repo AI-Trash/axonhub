@@ -3,7 +3,6 @@ import { IconTrash, IconRefresh } from '@tabler/icons-react';
 import { DefaultChatTransport } from 'ai';
 import { MessageSquare, RefreshCcw, Copy } from 'lucide-react';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { Actions, Action } from '@/components/ai-elements/actions';
@@ -23,14 +22,14 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { useQueryChannels } from '@/features/channels/data/channels';
 import { useAuthStore } from '@/stores/authStore';
 import { useSelectedProjectId } from '@/stores/projectStore';
+import * as m from '@/paraglide/messages';
 
 export default function Playground() {
-  const { t } = useTranslation();
   const [selectedChannel, setSelectedChannel] = useState<string>('');
   const [model, setModel] = useState('');
   const [temperature, setTemperature] = useState(0.6);
   const [maxTokens, setMaxTokens] = useState(4096);
-  const [systemPrompt, setSystemPrompt] = useState(t('playground.settings.defaultSystemPrompt'));
+  const [systemPrompt, setSystemPrompt] = useState(m["playground.settings.defaultSystemPrompt"]());
 
   // useRef hooks for direct access to current values
   const modelRef = useRef(model);
@@ -265,52 +264,51 @@ export default function Playground() {
 
         <div className='bg-card shadow-soft border-border m-4 flex max-h-[40vh] w-auto flex-col rounded-2xl border border-r md:max-h-none md:w-[340px] md:max-w-[400px] md:min-w-[280px]'>
           <div className='border-b p-4'>
-            <h1 className='text-xl font-bold tracking-tight'>{t('playground.title')}</h1>
-            <p className='text-muted-foreground mt-1 text-xs leading-relaxed'>{t('playground.description')}</p>
+            <h1 className='text-xl font-bold tracking-tight'>{m["playground.title"]()}</h1>
+            <p className='text-muted-foreground mt-1 text-xs leading-relaxed'>{m["playground.description"]()}</p>
           </div>
 
           <ScrollArea className='min-h-0 flex-1 p-4'>
             <div className='space-y-6'>
               <div className='space-y-3'>
                 <Label htmlFor='channel' className='text-xs font-semibold'>
-                  {t('playground.settings.channel')}
+                  {m["playground.settings.channel"]()}
                 </Label>
                 <AutoCompleteSelect
                   selectedValue={selectedChannel}
                   onSelectedValueChange={(v) => handleChannelChange(v)}
                   items={channelOptions}
                   isLoading={channelsLoading}
-                  emptyMessage={t('playground.errors.noChannelsAvailable')}
-                  placeholder={channelsLoading ? t('loading') : t('playground.settings.selectChannel')}
+                  emptyMessage={m["playground.errors.noChannelsAvailable"]()}
+                  placeholder={channelsLoading ? m["common.loading"]() : m["playground.settings.selectChannel"]()}
                 />
               </div>
 
               <div className='space-y-3'>
                 <Label htmlFor='model' className='text-xs font-semibold'>
-                  {t('playground.settings.model')}
+                  {m["playground.settings.model"]()}
                 </Label>
                 <AutoCompleteSelect
                   selectedValue={model}
                   onSelectedValueChange={(v) => setModel(v)}
                   items={modelOptions}
                   isLoading={channelsLoading}
-                  emptyMessage={t('playground.errors.noChannelsAvailable')}
-                  placeholder={channelsLoading ? t('loading') : t('playground.settings.selectModel')}
+                  emptyMessage={m["playground.errors.noChannelsAvailable"]()}
+                  placeholder={channelsLoading ? m["common.loading"]() : m["playground.settings.selectModel"]()}
                 />
-                {channelsLoading && <p className='text-muted-foreground text-[10px]'>{t('loading')}...</p>}
+                {channelsLoading && <p className='text-muted-foreground text-[10px]'>{m["common.loading"]()}...</p>}
                 {!channelsLoading && modelOptions.length > 0 && (
                   <p className='text-muted-foreground text-[10px]'>
-                    {t('playground.modelsAvailable', {
+                    {m["playground.modelsAvailable"]({
                       count: modelOptions.length,
-                      channels: channelOptions.length,
-                    })}
+                      channels: channelOptions.length })}
                   </p>
                 )}
               </div>
 
               <div className='space-y-3'>
                 <Label htmlFor='temperature' className='text-xs font-semibold'>
-                  {t('playground.settings.temperature')}: {temperature}
+                  {m["playground.settings.temperature"]()}: {temperature}
                 </Label>
                 <div className='px-1'>
                   <Input
@@ -333,7 +331,7 @@ export default function Playground() {
 
               <div className='space-y-3'>
                 <Label htmlFor='maxTokens' className='text-xs font-semibold'>
-                  {t('playground.settings.maxTokens')}
+                  {m["playground.settings.maxTokens"]()}
                 </Label>
                 <Input
                   id='maxTokens'
@@ -348,11 +346,11 @@ export default function Playground() {
 
               <div className='space-y-3'>
                 <Label htmlFor='systemPrompt' className='text-xs font-semibold'>
-                  {t('playground.settings.systemPrompt')}
+                  {m["playground.settings.systemPrompt"]()}
                 </Label>
                 <Textarea
                   id='systemPrompt'
-                  placeholder={t('playground.settings.defaultSystemPrompt')}
+                  placeholder={m["playground.settings.defaultSystemPrompt"]()}
                   value={systemPrompt}
                   onChange={(e) => setSystemPrompt(e.target.value)}
                   rows={4}
@@ -371,17 +369,17 @@ export default function Playground() {
             >
               <IconRefresh className='mr-2 h-3 w-3' />
               {isLoading
-                ? t('playground.chat.generating')
+                ? m["playground.chat.generating"]()
                 : messages.length === 0
-                  ? t('playground.chat.noMessages')
+                  ? m["playground.chat.noMessages"]()
                   : messages.every((msg) => msg.role !== 'assistant')
-                    ? t('playground.chat.noMessages')
-                    : t('playground.chat.retry')}
+                    ? m["playground.chat.noMessages"]()
+                    : m["playground.chat.retry"]()}
             </Button>
 
             <Button onClick={handleClear} variant='outline' className='h-9 w-full text-xs' disabled={isLoading}>
               <IconTrash className='mr-2 h-3 w-3' />
-              {t('playground.chat.clear')}
+              {m["playground.chat.clear"]()}
             </Button>
           </div>
         </div>
@@ -394,8 +392,8 @@ export default function Playground() {
                 {messages.length === 0 ? (
                   <ConversationEmptyState
                     icon={<MessageSquare className='size-12' />}
-                    title={t('playground.chat.startConversation')}
-                    description={t('playground.chat.typeMessageBelow')}
+                    title={m["playground.chat.startConversation"]()}
+                    description={m["playground.chat.typeMessageBelow"]()}
                   />
                 ) : (
                   (() => {
@@ -430,10 +428,10 @@ export default function Playground() {
                             })}
                             {isLastAssistant && textContent ? (
                               <Actions className='mt-2'>
-                                <Action onClick={() => regenerate()} label={t('playground.chat.retry')}>
+                                <Action onClick={() => regenerate()} label={m["playground.chat.retry"]()}>
                                   <RefreshCcw className='size-3' />
                                 </Action>
-                                <Action onClick={() => navigator.clipboard.writeText(textContent)} label={t('copy')}>
+                                <Action onClick={() => navigator.clipboard.writeText(textContent)} label={m["common.copy"]()}>
                                   <Copy className='size-3' />
                                 </Action>
                               </Actions>
@@ -452,7 +450,7 @@ export default function Playground() {
             <PromptInput onSubmit={handleSubmit} className='relative mt-4 w-full'>
               <PromptInputTextarea
                 value={input}
-                placeholder={t('playground.chat.typeMessage')}
+                placeholder={m["playground.chat.typeMessage"]()}
                 onChange={(e) => setInput(e.currentTarget.value)}
                 className='pr-16'
               />

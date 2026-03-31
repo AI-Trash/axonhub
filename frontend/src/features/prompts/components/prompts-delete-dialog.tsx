@@ -1,5 +1,4 @@
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import {
   AlertDialog,
@@ -14,9 +13,9 @@ import {
 
 import { usePrompts } from '../context/prompts-context';
 import { useDeletePrompt } from '../data/prompts';
+import * as m from '@/paraglide/messages';
 
 export function PromptsDeleteDialog() {
-  const { t } = useTranslation();
   const { open, setOpen, currentRow, resetRowSelection } = usePrompts();
   const deletePromptMutation = useDeletePrompt();
 
@@ -32,17 +31,17 @@ export function PromptsDeleteDialog() {
     <AlertDialog open={open === 'delete'} onOpenChange={(isOpen) => !isOpen && setOpen(null)}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('prompts.dialogs.delete.title')}</AlertDialogTitle>
-          <AlertDialogDescription>{t('prompts.dialogs.delete.description', { name: currentRow?.name })}</AlertDialogDescription>
+          <AlertDialogTitle>{m["prompts.dialogs.delete.title"]()}</AlertDialogTitle>
+          <AlertDialogDescription>{m["prompts.dialogs.delete.description"]({ name: currentRow?.name })}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('common.buttons.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel>{m["common.buttons.cancel"]()}</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
             disabled={deletePromptMutation.isPending}
             className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
           >
-            {t('common.buttons.delete')}
+            {m["common.buttons.delete"]()}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

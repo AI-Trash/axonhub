@@ -1,12 +1,12 @@
 'use client';
 
 import { ChevronLeftIcon, ChevronRightIcon, DoubleArrowLeftIcon } from '@radix-ui/react-icons';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { PageInfo } from '@/gql/pagination';
 import { usePaginationSearch } from '@/hooks/use-pagination-search';
+import * as m from '@/paraglide/messages';
 
 interface ServerSidePaginationProps {
   pageInfo?: PageInfo;
@@ -33,7 +33,6 @@ export function ServerSidePagination({
   onPageSizeChange,
   onResetCursor,
 }: ServerSidePaginationProps) {
-  const { t } = useTranslation();
   const { resetCursor } = usePaginationSearch({
     defaultPageSize: 20,
   });
@@ -42,12 +41,12 @@ export function ServerSidePagination({
     <div className='flex items-center justify-between overflow-clip px-2' style={{ overflowClipMargin: 1 }}>
       <div className='text-muted-foreground hidden flex-1 text-sm sm:block'>
         {totalCount !== undefined
-          ? t('pagination.selectedInfoWithTotal', { selectedRows, dataLength, totalCount })
-          : t('pagination.selectedInfo', { selectedRows, dataLength })}
+          ? m["pagination.selectedInfoWithTotal"]({ selectedRows, dataLength, totalCount })
+          : m["pagination.selectedInfo"]({ selectedRows, dataLength })}
       </div>
       <div className='flex items-center sm:space-x-6 lg:space-x-8'>
         <div className='flex items-center space-x-2'>
-          <p className='hidden text-sm font-medium sm:block'>{t('pagination.rowsPerPage')}</p>
+          <p className='hidden text-sm font-medium sm:block'>{m["pagination.rowsPerPage"]()}</p>
           <Select
             value={`${pageSize}`}
             onValueChange={(value) => {
@@ -69,10 +68,10 @@ export function ServerSidePagination({
         <div className='flex items-center justify-center text-sm font-medium'>
           <div className='flex items-center space-x-1'>
             <span className='text-muted-foreground'>
-              {pageInfo?.hasPreviousPage ? t('pagination.hasPrevious') : t('pagination.firstPage')}
+              {pageInfo?.hasPreviousPage ? m["pagination.hasPrevious"]() : m["pagination.firstPage"]()}
             </span>
             <span className='text-muted-foreground'>|</span>
-            <span className='text-muted-foreground'>{pageInfo?.hasNextPage ? t('pagination.hasNext') : t('pagination.lastPage')}</span>
+            <span className='text-muted-foreground'>{pageInfo?.hasNextPage ? m["pagination.hasNext"]() : m["pagination.lastPage"]()}</span>
           </div>
         </div>
         <div className='flex items-center space-x-2'>
@@ -82,15 +81,15 @@ export function ServerSidePagination({
             onClick={onFirstPage || onResetCursor || resetCursor}
             disabled={!pageInfo?.hasPreviousPage}
           >
-            <span className='sr-only'>{t('pagination.firstPage')}</span>
+            <span className='sr-only'>{m["pagination.firstPage"]()}</span>
             <DoubleArrowLeftIcon className='h-4 w-4' />
           </Button>
           <Button variant='outline' className='h-8 w-8 p-0' onClick={onPreviousPage} disabled={!pageInfo?.hasPreviousPage}>
-            <span className='sr-only'>{t('pagination.previousPage')}</span>
+            <span className='sr-only'>{m["pagination.previousPage"]()}</span>
             <ChevronLeftIcon className='h-4 w-4' />
           </Button>
           <Button variant='outline' className='h-8 w-8 p-0' onClick={onNextPage} disabled={!pageInfo?.hasNextPage}>
-            <span className='sr-only'>{t('pagination.nextPage')}</span>
+            <span className='sr-only'>{m["pagination.nextPage"]()}</span>
             <ChevronRightIcon className='h-4 w-4' />
           </Button>
           {/* NOT SUPPORTED */}
@@ -100,7 +99,7 @@ export function ServerSidePagination({
             onClick={onNextPage}
             disabled={!pageInfo?.hasNextPage}
           >
-            <span className='sr-only'>{t('pagination.lastPage')}</span>
+            <span className='sr-only'>{m["pagination.lastPage"]()}</span>
             <DoubleArrowRightIcon className='h-4 w-4' />
           </Button> */}
         </div>

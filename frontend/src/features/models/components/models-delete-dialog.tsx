@@ -1,4 +1,3 @@
-import { useTranslation } from 'react-i18next';
 
 import {
   AlertDialog,
@@ -13,9 +12,9 @@ import {
 
 import { useModels } from '../context/models-context';
 import { useDeleteModel } from '../data/models';
+import * as m from '@/paraglide/messages';
 
 export function ModelsDeleteDialog() {
-  const { t } = useTranslation();
   const { open, setOpen, currentRow, selectedModels } = useModels();
   const deleteModel = useDeleteModel();
 
@@ -40,21 +39,21 @@ export function ModelsDeleteDialog() {
     <AlertDialog open={isOpen} onOpenChange={handleClose}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('models.dialogs.delete.title')}</AlertDialogTitle>
+          <AlertDialogTitle>{m["models.dialogs.delete.title"]()}</AlertDialogTitle>
           <AlertDialogDescription>
             {isBulk
-              ? t('models.dialogs.delete.bulkDescription', { count: modelToDelete.length })
-              : t('models.dialogs.delete.description', { name: currentRow?.name })}
+              ? m["models.dialogs.delete.bulkDescription"]({ count: modelToDelete.length })
+              : m["models.dialogs.delete.description"]({ name: currentRow?.name })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>{t('common.buttons.cancel')}</AlertDialogCancel>
+          <AlertDialogCancel>{m["common.buttons.cancel"]()}</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleDelete}
             disabled={deleteModel.isPending}
             className='bg-destructive text-destructive-foreground hover:bg-destructive/90'
           >
-            {t('common.buttons.delete')}
+            {m["common.buttons.delete"]()}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

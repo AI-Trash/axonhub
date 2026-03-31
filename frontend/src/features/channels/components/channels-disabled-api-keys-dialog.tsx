@@ -1,7 +1,7 @@
+import * as m from '@/paraglide/messages';
 import { IconRefresh, IconRefreshOff, IconKey, IconAlertTriangle, IconTrash } from '@tabler/icons-react';
 import { format } from 'date-fns';
 import { useState, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -25,7 +25,6 @@ interface ChannelsDisabledAPIKeysDialogProps {
 }
 
 export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDisabledAPIKeysDialogProps) {
-  const { t } = useTranslation();
   const { currentRow, setOpen } = useChannels();
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [confirmPopoverKey, setConfirmPopoverKey] = useState<string | null>(null);
@@ -154,20 +153,20 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
         <DialogHeader>
           <DialogTitle className='flex items-center gap-2'>
             <IconKey className='h-5 w-5' />
-            {t('channels.dialogs.disabledAPIKeys.title')}
+            {m["channels.dialogs.disabledAPIKeys.title"]()}
           </DialogTitle>
-          <DialogDescription>{t('channels.dialogs.disabledAPIKeys.description', { name: currentRow.name })}</DialogDescription>
+          <DialogDescription>{m["channels.dialogs.disabledAPIKeys.description"]({ name: currentRow.name })}</DialogDescription>
         </DialogHeader>
 
         <div className='py-4'>
           {isLoading ? (
             <div className='flex items-center justify-center py-8'>
-              <div className='text-muted-foreground text-sm'>{t('common.loading')}</div>
+              <div className='text-muted-foreground text-sm'>{m["common.loading"]()}</div>
             </div>
           ) : disabledKeys.length === 0 ? (
             <div className='flex flex-col items-center justify-center py-8'>
               <IconRefresh className='text-muted-foreground mb-2 h-12 w-12' />
-              <p className='text-muted-foreground text-sm'>{t('channels.dialogs.disabledAPIKeys.noDisabledKeys')}</p>
+              <p className='text-muted-foreground text-sm'>{m["channels.dialogs.disabledAPIKeys.noDisabledKeys"]()}</p>
             </div>
           ) : (
             <>
@@ -177,12 +176,12 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
                   <Checkbox
                     checked={isAllSelected || (isSomeSelected && 'indeterminate')}
                     onCheckedChange={handleSelectAll}
-                    aria-label={t('common.columns.selectAll')}
+                    aria-label={m["common.columns.selectAll"]()}
                   />
                   <span className='text-muted-foreground text-sm'>
                     {selectedKeys.size > 0
-                      ? t('channels.dialogs.disabledAPIKeys.selectedCount', { count: selectedKeys.size })
-                      : t('channels.dialogs.disabledAPIKeys.selectToEnable')}
+                      ? m["channels.dialogs.disabledAPIKeys.selectedCount"]({ count: selectedKeys.size })
+                      : m["channels.dialogs.disabledAPIKeys.selectToEnable"]()}
                   </span>
                 </div>
                 {selectedKeys.size > 0 && (
@@ -192,20 +191,20 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
                       <PopoverTrigger asChild>
                         <Button size='sm' variant='outline' disabled={isPending}>
                           <IconRefresh className='mr-1 h-4 w-4' />
-                          {t('channels.dialogs.disabledAPIKeys.enableSelected', { count: selectedKeys.size })}
+                          {m["channels.dialogs.disabledAPIKeys.enableSelected"]({ count: selectedKeys.size })}
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className='w-80'>
                         <div className='flex flex-col gap-3'>
                           <p className='text-sm'>
-                            {t('channels.dialogs.disabledAPIKeys.confirmEnableSelected', { count: selectedKeys.size })}
+                            {m["channels.dialogs.disabledAPIKeys.confirmEnableSelected"]({ count: selectedKeys.size })}
                           </p>
                           <div className='flex justify-end gap-2'>
                             <Button size='sm' variant='outline' onClick={() => setConfirmEnableSelected(false)}>
-                              {t('common.buttons.cancel')}
+                              {m["common.buttons.cancel"]()}
                             </Button>
                             <Button size='sm' onClick={handleEnableSelected} disabled={isPending}>
-                              {isPending ? t('common.buttons.processing') : t('common.buttons.confirm')}
+                              {isPending ? m["common.buttons.processing"]() : m["common.buttons.confirm"]()}
                             </Button>
                           </div>
                         </div>
@@ -217,20 +216,20 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
                       <PopoverTrigger asChild>
                         <Button size='sm' variant='outline' className='text-destructive' disabled={isPending}>
                           <IconTrash className='mr-1 h-4 w-4' />
-                          {t('channels.dialogs.disabledAPIKeys.deleteSelected', { count: selectedKeys.size })}
+                          {m["channels.dialogs.disabledAPIKeys.deleteSelected"]({ count: selectedKeys.size })}
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className='w-80'>
                         <div className='flex flex-col gap-3'>
                           <p className='text-sm'>
-                            {t('channels.dialogs.disabledAPIKeys.confirmDeleteSelected', { count: selectedKeys.size })}
+                            {m["channels.dialogs.disabledAPIKeys.confirmDeleteSelected"]({ count: selectedKeys.size })}
                           </p>
                           <div className='flex justify-end gap-2'>
                             <Button size='sm' variant='outline' onClick={() => setConfirmDeleteSelected(false)}>
-                              {t('common.buttons.cancel')}
+                              {m["common.buttons.cancel"]()}
                             </Button>
                             <Button size='sm' variant='destructive' onClick={handleDeleteSelected} disabled={isPending}>
-                              {isPending ? t('common.buttons.processing') : t('common.buttons.confirm')}
+                              {isPending ? m["common.buttons.processing"]() : m["common.buttons.confirm"]()}
                             </Button>
                           </div>
                         </div>
@@ -271,7 +270,7 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
                                 </span>
                               </TooltipTrigger>
                               <TooltipContent>
-                                {t('channels.dialogs.disabledAPIKeys.errorCodeTooltip', { code: dk.errorCode })}
+                                {m["channels.dialogs.disabledAPIKeys.errorCodeTooltip"]({ code: dk.errorCode })}
                               </TooltipContent>
                             </Tooltip>
                           </div>
@@ -300,13 +299,13 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
                           </PopoverTrigger>
                           <PopoverContent className='w-64'>
                             <div className='flex flex-col gap-3'>
-                              <p className='text-sm'>{t('channels.dialogs.disabledAPIKeys.confirmEnable')}</p>
+                              <p className='text-sm'>{m["channels.dialogs.disabledAPIKeys.confirmEnable"]()}</p>
                               <div className='flex justify-end gap-2'>
                                 <Button size='sm' variant='outline' onClick={() => setConfirmPopoverKey(null)}>
-                                  {t('common.buttons.cancel')}
+                                  {m["common.buttons.cancel"]()}
                                 </Button>
                                 <Button size='sm' onClick={() => handleEnableKey(dk.key)} disabled={isPending}>
-                                  {isPending ? t('common.buttons.processing') : t('common.buttons.confirm')}
+                                  {isPending ? m["common.buttons.processing"]() : m["common.buttons.confirm"]()}
                                 </Button>
                               </div>
                             </div>
@@ -325,13 +324,13 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
                           </PopoverTrigger>
                           <PopoverContent className='w-64'>
                             <div className='flex flex-col gap-3'>
-                              <p className='text-sm'>{t('channels.dialogs.disabledAPIKeys.confirmDelete')}</p>
+                              <p className='text-sm'>{m["channels.dialogs.disabledAPIKeys.confirmDelete"]()}</p>
                               <div className='flex justify-end gap-2'>
                                 <Button size='sm' variant='outline' onClick={() => setConfirmDeletePopoverKey(null)}>
-                                  {t('common.buttons.cancel')}
+                                  {m["common.buttons.cancel"]()}
                                 </Button>
                                 <Button size='sm' variant='destructive' onClick={() => handleDeleteKey(dk.key)} disabled={isPending}>
-                                  {isPending ? t('common.buttons.processing') : t('common.buttons.confirm')}
+                                  {isPending ? m["common.buttons.processing"]() : m["common.buttons.confirm"]()}
                                 </Button>
                               </div>
                             </div>
@@ -353,18 +352,18 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
                 <PopoverTrigger asChild>
                   <Button variant='outline' disabled={isPending}>
                     <IconRefreshOff className='mr-2 h-4 w-4' />
-                    {t('channels.dialogs.disabledAPIKeys.enableAll')}
+                    {m["channels.dialogs.disabledAPIKeys.enableAll"]()}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className='w-80'>
                   <div className='flex flex-col gap-3'>
-                    <p className='text-sm'>{t('channels.dialogs.disabledAPIKeys.confirmEnableAll', { count: disabledKeys.length })}</p>
+                    <p className='text-sm'>{m["channels.dialogs.disabledAPIKeys.confirmEnableAll"]({ count: disabledKeys.length })}</p>
                     <div className='flex justify-end gap-2'>
                       <Button size='sm' variant='outline' onClick={() => setConfirmEnableAll(false)}>
-                        {t('common.buttons.cancel')}
+                        {m["common.buttons.cancel"]()}
                       </Button>
                       <Button size='sm' onClick={handleEnableAll} disabled={isPending}>
-                        {isPending ? t('common.buttons.processing') : t('common.buttons.confirm')}
+                        {isPending ? m["common.buttons.processing"]() : m["common.buttons.confirm"]()}
                       </Button>
                     </div>
                   </div>
@@ -373,7 +372,7 @@ export function ChannelsDisabledAPIKeysDialog({ open, onOpenChange }: ChannelsDi
             )}
           </div>
           <Button variant='outline' onClick={handleClose}>
-            {t('common.buttons.close')}
+            {m["common.buttons.close"]()}
           </Button>
         </DialogFooter>
       </DialogContent>

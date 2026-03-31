@@ -1,13 +1,13 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
 import { UPDATE_ME_MUTATION } from '@/gql/users';
 import { useAuthStore } from '@/stores/authStore';
+import * as m from '@/paraglide/messages';
+import { getLocale, setLocale } from '@/paraglide/runtime';
 
 export function useLanguage() {
-  const { i18n, t } = useTranslation();
   const auth = useAuthStore((state) => state.auth);
   const queryClient = useQueryClient();
 
@@ -38,13 +38,13 @@ export function useLanguage() {
       queryClient.invalidateQueries({ queryKey: ['me'] });
 
       const languageName = updatedUser.preferLanguage === 'en' ? 'English' : '中文';
-      toast.success(t('language.changeSuccess', { language: languageName }));
+      toast.success(m["language.changeSuccess"]({ language: languageName }));
     },
     onError: (error: any) => {
-      toast.error(t('language.changeError', { error: error.message }));
+      toast.error(m["language.changeError"]({ error: error.message }));
       // Revert i18n language on error
       if (auth.user?.preferLanguage) {
-        i18n.changeLanguage(auth.user.preferLanguage);
+        setLocale(auth.user.preferLanguage, { reload: false });
       }
     },
   });
@@ -52,25 +52,25 @@ export function useLanguage() {
   const changeLanguage = async (language: string) => {
     try {
       // Immediately change the UI language for better UX
-      await i18n.changeLanguage(language);
+      setLocale(language, { reload: false });
 
       // Update user preference in the backend if user is authenticated
       if (auth.user && auth.accessToken) {
         updateLanguageMutation.mutate(language);
       }
     } catch (error) {
-      toast.error(t('language.changeError', { error: String(error) }));
+      toast.error(m["language.changeError"]({ error: String(error) }));
     }
   };
 
   const initializeLanguage = (userLanguage?: string) => {
-    if (userLanguage && userLanguage !== i18n.language) {
-      i18n.changeLanguage(userLanguage);
+    if (userLanguage && userLanguage !== getLocale()) {
+      setLocale(userLanguage, { reload: false });
     }
   };
 
   return {
-    currentLanguage: i18n.language,
+    currentLanguage: getLocale(),
     changeLanguage,
     initializeLanguage,
     isUpdating: updateLanguageMutation.isPending,

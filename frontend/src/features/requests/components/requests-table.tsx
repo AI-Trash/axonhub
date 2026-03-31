@@ -13,7 +13,6 @@ import {
 } from '@tanstack/react-table';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { ServerSidePagination } from '@/components/server-side-pagination';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -25,6 +24,7 @@ import { Request, RequestConnection } from '../data/schema';
 import { DataTableToolbar } from './data-table-toolbar';
 import { RequestBodyDrawer } from './request-body-drawer';
 import { useRequestsColumns } from './requests-columns';
+import * as m from '@/paraglide/messages';
 
 const MotionTableRow = motion.create(TableRow);
 
@@ -88,8 +88,6 @@ export function RequestsTable({
   autoRefresh = false,
   onAutoRefreshChange,
 }: RequestsTableProps) {
-  const { t } = useTranslation();
-
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerInitialRequestId, setDrawerInitialRequestId] = useState<string | null>(null);
   const [drawerInitialIndex, setDrawerInitialIndex] = useState(0);
@@ -263,7 +261,7 @@ export function RequestsTable({
               ) : (
                 <TableRow className='!bg-[var(--table-background)]'>
                   <TableCell colSpan={requestsColumns.length} className='h-24 !bg-[var(--table-background)] text-center'>
-                    {t('common.noData')}
+                    {m["common.noData"]()}
                   </TableCell>
                 </TableRow>
               )}

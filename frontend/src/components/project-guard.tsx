@@ -1,12 +1,12 @@
 import { IconFolderOff, IconFolderPlus } from '@tabler/icons-react';
 import { useRouter } from '@tanstack/react-router';
 import { useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { useMyProjects } from '@/features/projects/data/projects';
 import { useSelectedProjectId } from '@/stores/projectStore';
+import * as m from '@/paraglide/messages';
 
 interface ProjectGuardProps {
   children: React.ReactNode;
@@ -49,8 +49,6 @@ export function ProjectGuard({ children, fallbackPath = '/projects', showNoProje
 }
 
 function NoProjectPage({ hasAnyProjects, onGoToProjects }: { hasAnyProjects: boolean; onGoToProjects: () => void }) {
-  const { t } = useTranslation();
-
   return (
     <div className='flex h-screen items-center justify-center'>
       <div className='max-w-md text-center'>
@@ -60,17 +58,17 @@ function NoProjectPage({ hasAnyProjects, onGoToProjects }: { hasAnyProjects: boo
 
         <Alert className='mb-6'>
           <IconFolderOff className='h-4 w-4' />
-          <AlertTitle>{t('common.projectGuard.noProjectSelected')}</AlertTitle>
+          <AlertTitle>{m["common.projectGuard.noProjectSelected"]()}</AlertTitle>
           <AlertDescription>
-            {hasAnyProjects ? t('common.projectGuard.pleaseSelectProject') : t('common.projectGuard.pleaseJoinOrCreateProject')}
+            {hasAnyProjects ? m["common.projectGuard.pleaseSelectProject"]() : m["common.projectGuard.pleaseJoinOrCreateProject"]()}
           </AlertDescription>
         </Alert>
 
         {/* <Button onClick={onGoToProjects} className="gap-2">
           <IconFolderPlus className="h-4 w-4" />
           {hasAnyProjects 
-            ? t('common.projectGuard.goToProjects')
-            : t('common.projectGuard.createOrJoinProject')
+            ? m["common.projectGuard.goToProjects"]()
+            : m["common.projectGuard.createOrJoinProject"]()
           }
         </Button> */}
       </div>

@@ -2,7 +2,6 @@
 
 import { Loader2, Save } from 'lucide-react';
 import React from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,9 +14,9 @@ import { extractNumberID } from '@/lib/utils';
 
 import { useSystemContext } from '../context/system-context';
 import { useUpdateVideoStorageSettings, useVideoStorageSettings } from '../data/system';
+import * as m from '@/paraglide/messages';
 
 export function VideoStorageSettings() {
-  const { t } = useTranslation();
   const { isLoading, setIsLoading } = useSystemContext();
 
   const { data: settings, isLoading: isLoadingSettings } = useVideoStorageSettings();
@@ -77,7 +76,7 @@ export function VideoStorageSettings() {
     return (
       <div className='flex h-32 items-center justify-center'>
         <Loader2 className='h-6 w-6 animate-spin' />
-        <span className='text-muted-foreground ml-2'>{t('common.loading')}</span>
+        <span className='text-muted-foreground ml-2'>{m["common.loading"]()}</span>
       </div>
     );
   }
@@ -85,14 +84,14 @@ export function VideoStorageSettings() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t('system.videoStorage.title')}</CardTitle>
-        <CardDescription>{t('system.videoStorage.description')}</CardDescription>
+        <CardTitle>{m["system.videoStorage.title"]()}</CardTitle>
+        <CardDescription>{m["system.videoStorage.description"]()}</CardDescription>
       </CardHeader>
       <CardContent className='space-y-6'>
         <div className='flex items-center justify-between'>
           <div className='space-y-0.5'>
-            <Label htmlFor='video-storage-enabled'>{t('system.videoStorage.enabled.label')}</Label>
-            <div className='text-muted-foreground text-sm'>{t('system.videoStorage.enabled.description')}</div>
+            <Label htmlFor='video-storage-enabled'>{m["system.videoStorage.enabled.label"]()}</Label>
+            <div className='text-muted-foreground text-sm'>{m["system.videoStorage.enabled.description"]()}</div>
           </div>
           <Switch
             id='video-storage-enabled'
@@ -103,14 +102,14 @@ export function VideoStorageSettings() {
         </div>
 
         <div className='grid gap-2'>
-          <Label htmlFor='video-storage-data-storage'>{t('system.videoStorage.dataStorage.label')}</Label>
+          <Label htmlFor='video-storage-data-storage'>{m["system.videoStorage.dataStorage.label"]()}</Label>
           <Select
             value={form.dataStorageID > 0 ? String(form.dataStorageID) : ''}
             onValueChange={(value) => setForm((prev) => ({ ...prev, dataStorageID: parseInt(value) || 0 }))}
             disabled={isLoading || !form.enabled}
           >
             <SelectTrigger id='video-storage-data-storage'>
-              <SelectValue placeholder={t('system.videoStorage.dataStorage.placeholder')} />
+              <SelectValue placeholder={m["system.videoStorage.dataStorage.placeholder"]()} />
             </SelectTrigger>
             <SelectContent>
               {externalStorages.map((s) => (
@@ -120,11 +119,11 @@ export function VideoStorageSettings() {
               ))}
             </SelectContent>
           </Select>
-          <p className='text-muted-foreground text-sm'>{t('system.videoStorage.dataStorage.hint')}</p>
+          <p className='text-muted-foreground text-sm'>{m["system.videoStorage.dataStorage.hint"]()}</p>
         </div>
 
         <div className='grid gap-2'>
-          <Label htmlFor='video-storage-interval'>{t('system.videoStorage.scanInterval.label')}</Label>
+          <Label htmlFor='video-storage-interval'>{m["system.videoStorage.scanInterval.label"]()}</Label>
           <Input
             id='video-storage-interval'
             type='number'
@@ -133,11 +132,11 @@ export function VideoStorageSettings() {
             onChange={(e) => setForm((prev) => ({ ...prev, scanIntervalMinutes: parseInt(e.target.value) || 0 }))}
             disabled={isLoading}
           />
-          <p className='text-muted-foreground text-sm'>{t('system.videoStorage.scanInterval.hint')}</p>
+          <p className='text-muted-foreground text-sm'>{m["system.videoStorage.scanInterval.hint"]()}</p>
         </div>
 
         <div className='grid gap-2'>
-          <Label htmlFor='video-storage-limit'>{t('system.videoStorage.scanLimit.label')}</Label>
+          <Label htmlFor='video-storage-limit'>{m["system.videoStorage.scanLimit.label"]()}</Label>
           <Input
             id='video-storage-limit'
             type='number'
@@ -153,12 +152,12 @@ export function VideoStorageSettings() {
             {isLoading || updateSettings.isPending ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                {t('system.buttons.saving')}
+                {m["system.buttons.saving"]()}
               </>
             ) : (
               <>
                 <Save className='mr-2 h-4 w-4' />
-                {t('system.buttons.save')}
+                {m["system.buttons.save"]()}
               </>
             )}
           </Button>

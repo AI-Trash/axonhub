@@ -3,7 +3,6 @@ import { Plus, X, Lightbulb } from 'lucide-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import type { KeyboardEvent } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -21,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useUpdateChannel } from '../data/channels';
 import { Channel, ModelMapping } from '../data/schema';
 import { mergeChannelSettingsForUpdate } from '../utils/merge';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   open: boolean;
@@ -91,7 +91,6 @@ const extractAllPrefixes = (models: string[]): string[] => {
 };
 
 export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: Props) {
-  const { t } = useTranslation();
   const updateChannel = useUpdateChannel();
 
   const [modelMappings, setModelMappings] = useState<ModelMapping[]>(currentRow.settings?.modelMappings || []);
@@ -118,9 +117,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
   const handleAutoExtractAllPrefixes = useCallback(() => {
     if (prefixSuggestions.length === 0) {
       toast.warning(
-        t('channels.dialogs.settings.autoTrimedModelPrefixes.noPrefixesFound', {
-          defaultValue: 'No prefixes found in supported models',
-        })
+        m["channels.dialogs.settings.autoTrimedModelPrefixes.noPrefixesFound"]()
       );
       return;
     }
@@ -131,9 +128,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
 
     if (newPrefixes.length === 0) {
       toast.warning(
-        t('channels.dialogs.settings.autoTrimedModelPrefixes.allPrefixesAlreadyAdded', {
-          defaultValue: 'All prefixes have already been added',
-        })
+        m["channels.dialogs.settings.autoTrimedModelPrefixes.allPrefixesAlreadyAdded"]()
       );
       return;
     }
@@ -151,9 +146,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
     const currentPrefixes = form.getValues('autoTrimedModelPrefixes') || [];
     if (currentPrefixes.length === 0) {
       toast.warning(
-        t('channels.dialogs.settings.autoTrimedModelPrefixes.noPrefixesToClear', {
-          defaultValue: 'No prefixes to clear',
-        })
+        m["channels.dialogs.settings.autoTrimedModelPrefixes.noPrefixesToClear"]()
       );
       return;
     }
@@ -181,20 +174,14 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
   const validateMappingDraft = (draft: ModelMapping, skipIndex?: number): string | null => {
     const normalized = sanitizeMapping(draft);
     if (!normalized.from || !normalized.to) {
-      return t('channels.dialogs.settings.modelMapping.validationRequired', {
-        defaultValue: 'Both alias and target model are required',
-      });
+      return m["channels.dialogs.settings.modelMapping.validationRequired"]();
     }
     if (!currentRow.supportedModels.includes(normalized.to)) {
-      return t('channels.dialogs.settings.modelMapping.targetInvalid', {
-        defaultValue: 'Target model must be in supported models',
-      });
+      return m["channels.dialogs.settings.modelMapping.targetInvalid"]();
     }
     const isDuplicateFrom = modelMappings.some((mapping, idx) => idx !== skipIndex && mapping.from === normalized.from);
     if (isDuplicateFrom) {
-      return t('channels.dialogs.settings.modelMapping.duplicateAlias', {
-        defaultValue: 'Each original model can only be mapped once',
-      });
+      return m["channels.dialogs.settings.modelMapping.duplicateAlias"]();
     }
     return null;
   };
@@ -281,7 +268,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
   const onSubmit = async (values: z.infer<typeof modelMappingFormSchema>) => {
     // 检查是否有未添加的映射
     if (newMapping.from.trim() || newMapping.to.trim()) {
-      toast.warning(t('channels.messages.pendingMappingWarning'));
+      toast.warning(m["channels.messages.pendingMappingWarning"]());
       return;
     }
 
@@ -300,10 +287,10 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
           settings: nextSettings,
         },
       });
-      toast.success(t('channels.messages.updateSuccess'));
+      toast.success(m["channels.messages.updateSuccess"]());
       onOpenChange(false);
     } catch (_error) {
-      toast.error(t('channels.messages.updateError'));
+      toast.error(m["channels.messages.updateError"]());
     }
   };
 
@@ -340,8 +327,8 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-[800px]'>
           <DialogHeader>
-            <DialogTitle>{t('channels.dialogs.settings.modelMapping.title')}</DialogTitle>
-            <DialogDescription>{t('channels.dialogs.settings.modelMapping.description', { name: currentRow.name })}</DialogDescription>
+            <DialogTitle>{m["channels.dialogs.settings.modelMapping.title"]()}</DialogTitle>
+            <DialogDescription>{m["channels.dialogs.settings.modelMapping.description"]({ name: currentRow.name })}</DialogDescription>
           </DialogHeader>
 
           <Form {...form}>
@@ -349,8 +336,8 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
               <div className='space-y-6'>
                 <Card>
                   <CardHeader>
-                    <CardTitle className='text-lg'>{t('channels.dialogs.settings.modelMapping.hideOriginalModels.label')}</CardTitle>
-                    <CardDescription>{t('channels.dialogs.settings.modelMapping.hideOriginalModels.description')}</CardDescription>
+                    <CardTitle className='text-lg'>{m["channels.dialogs.settings.modelMapping.hideOriginalModels.label"]()}</CardTitle>
+                    <CardDescription>{m["channels.dialogs.settings.modelMapping.hideOriginalModels.description"]()}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className='flex items-start gap-3'>
@@ -363,19 +350,19 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                         htmlFor='hideOriginalModels'
                         className='cursor-pointer text-sm leading-none font-medium peer-disabled:cursor-not-allowed peer-disabled:opacity-70'
                       >
-                        {t('channels.dialogs.settings.modelMapping.hideOriginalModels.label')}
+                        {m["channels.dialogs.settings.modelMapping.hideOriginalModels.label"]()}
                       </label>
                     </div>
                   </CardContent>
                 </Card>
                 <Card>
                   <CardHeader>
-                    <CardTitle className='text-lg'>{t('channels.dialogs.settings.extraModelPrefix.title')}</CardTitle>
-                    <CardDescription>{t('channels.dialogs.settings.extraModelPrefix.description')}</CardDescription>
+                    <CardTitle className='text-lg'>{m["channels.dialogs.settings.extraModelPrefix.title"]()}</CardTitle>
+                    <CardDescription>{m["channels.dialogs.settings.extraModelPrefix.description"]()}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <Input
-                      placeholder={t('channels.dialogs.settings.extraModelPrefix.placeholder')}
+                      placeholder={m["channels.dialogs.settings.extraModelPrefix.placeholder"]()}
                       value={form.watch('extraModelPrefix') || ''}
                       onChange={(e) => form.setValue('extraModelPrefix', e.target.value)}
                     />
@@ -387,8 +374,8 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
 
                 <Card>
                   <CardHeader>
-                    <CardTitle className='text-lg'>{t('channels.dialogs.settings.autoTrimedModelPrefixes.title')}</CardTitle>
-                    <CardDescription>{t('channels.dialogs.settings.autoTrimedModelPrefixes.description')}</CardDescription>
+                    <CardTitle className='text-lg'>{m["channels.dialogs.settings.autoTrimedModelPrefixes.title"]()}</CardTitle>
+                    <CardDescription>{m["channels.dialogs.settings.autoTrimedModelPrefixes.description"]()}</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className='space-y-2'>
@@ -402,7 +389,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                               <TagsAutocompleteInput
                                 value={field.value || []}
                                 onChange={field.onChange}
-                                placeholder={t('channels.dialogs.settings.autoTrimedModelPrefixes.placeholder')}
+                                placeholder={m["channels.dialogs.settings.autoTrimedModelPrefixes.placeholder"]()}
                                 suggestions={prefixSuggestions}
                                 className='h-auto min-h-9 py-1'
                               />
@@ -415,14 +402,10 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                       {prefixSuggestions.length > 0 && (
                         <div className='flex items-center gap-2 pt-2'>
                           <Button type='button' variant='outline' size='sm' onClick={handleAutoExtractAllPrefixes} className='text-xs'>
-                            {t('channels.dialogs.settings.autoTrimedModelPrefixes.autoExtractAll', {
-                              defaultValue: 'Auto-extract all prefixes',
-                            })}
+                            {m["channels.dialogs.settings.autoTrimedModelPrefixes.autoExtractAll"]()}
                           </Button>
                           <Button type='button' variant='outline' size='sm' onClick={handleClearAllPrefixes} className='text-xs'>
-                            {t('channels.dialogs.settings.autoTrimedModelPrefixes.clearAll', {
-                              defaultValue: 'Clear all',
-                            })}
+                            {m["channels.dialogs.settings.autoTrimedModelPrefixes.clearAll"]()}
                           </Button>
                           <span className='text-muted-foreground text-xs'>
                             {t('channels.dialogs.settings.autoTrimedModelPrefixes.prefixesDetected', {
@@ -438,8 +421,8 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
 
                 <Card>
                   <CardHeader>
-                    <CardTitle className='text-lg'>{t('channels.dialogs.settings.modelMapping.title')}</CardTitle>
-                    <CardDescription>{t('channels.dialogs.settings.modelMapping.description')}</CardDescription>
+                    <CardTitle className='text-lg'>{m["channels.dialogs.settings.modelMapping.title"]()}</CardTitle>
+                    <CardDescription>{m["channels.dialogs.settings.modelMapping.description"]()}</CardDescription>
                   </CardHeader>
                   <CardContent className='space-y-4'>
                     <div className='flex flex-wrap items-center gap-6 pb-2'>
@@ -453,7 +436,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                           htmlFor='hideMappedModels'
                           className='cursor-pointer text-sm leading-none font-medium peer-disabled:cursor-not-allowed peer-disabled:opacity-70'
                         >
-                          {t('channels.dialogs.settings.modelMapping.hideMappedModels.label')}
+                          {m["channels.dialogs.settings.modelMapping.hideMappedModels.label"]()}
                         </label>
                       </div>
                     </div>
@@ -461,7 +444,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                     <div className='flex gap-2'>
                       <div className='flex flex-1 gap-2'>
                         <Input
-                          placeholder={t('channels.dialogs.settings.modelMapping.originalModel')}
+                          placeholder={m["channels.dialogs.settings.modelMapping.originalModel"]()}
                           value={newMapping.from}
                           onChange={(e) => setNewMapping({ ...newMapping, from: e.target.value })}
                           className='flex-1'
@@ -497,7 +480,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                       <span className='text-muted-foreground flex items-center'>→</span>
                       <Select value={newMapping.to} onValueChange={(value) => setNewMapping({ ...newMapping, to: value })}>
                         <SelectTrigger className='flex-1'>
-                          <SelectValue placeholder={t('channels.dialogs.settings.modelMapping.targetModel')} />
+                          <SelectValue placeholder={m["channels.dialogs.settings.modelMapping.targetModel"]()} />
                         </SelectTrigger>
                         <SelectContent>
                           {currentRow.supportedModels.map((model) => (
@@ -513,9 +496,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                         size='sm'
                         disabled={!newMapping.from.trim() || !newMapping.to.trim()}
                         data-testid='add-model-mapping-button'
-                        aria-label={t('channels.dialogs.settings.modelMapping.addMappingButton', {
-                          defaultValue: 'Add mapping',
-                        })}
+                        aria-label={m["channels.dialogs.settings.modelMapping.addMappingButton"]()}
                       >
                         <Plus size={16} />
                       </Button>
@@ -534,7 +515,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                     <div className='space-y-2'>
                       {modelMappings.length === 0 ? (
                         <p className='text-muted-foreground py-4 text-center text-sm'>
-                          {t('channels.dialogs.settings.modelMapping.noMappings')}
+                          {m["channels.dialogs.settings.modelMapping.noMappings"]()}
                         </p>
                       ) : (
                         modelMappings.map((mapping, index) => {
@@ -557,7 +538,7 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                                         onValueChange={(value) => handleInlineEditFieldChange('to', value)}
                                       >
                                         <SelectTrigger className='min-w-[180px] flex-1'>
-                                          <SelectValue placeholder={t('channels.dialogs.settings.modelMapping.targetModel')} />
+                                          <SelectValue placeholder={m["channels.dialogs.settings.modelMapping.targetModel"]()} />
                                         </SelectTrigger>
                                         <SelectContent>
                                           {currentRow.supportedModels.map((model) => (
@@ -575,10 +556,10 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                                         onClick={saveEditingDraft}
                                         disabled={!editingDraft?.from.trim() || !editingDraft?.to.trim()}
                                       >
-                                        {t('common.buttons.save')}
+                                        {m["common.buttons.save"]()}
                                       </Button>
                                       <Button type='button' variant='ghost' size='sm' onClick={exitInlineEditing}>
-                                        {t('common.buttons.cancel')}
+                                        {m["common.buttons.cancel"]()}
                                       </Button>
                                     </div>
                                   </div>
@@ -597,12 +578,8 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
                                     }}
                                     tabIndex={0}
                                     role='button'
-                                    aria-label={t('channels.dialogs.settings.modelMapping.editHint', {
-                                      defaultValue: 'Double-click to edit',
-                                    })}
-                                    title={t('channels.dialogs.settings.modelMapping.editHint', {
-                                      defaultValue: 'Double-click to edit',
-                                    })}
+                                    aria-label={m["channels.dialogs.settings.modelMapping.editHint"]()}
+                                    title={m["channels.dialogs.settings.modelMapping.editHint"]()}
                                   >
                                     <Badge variant='outline'>{mapping.from}</Badge>
                                     <span className='text-muted-foreground'>→</span>
@@ -630,10 +607,10 @@ export function ChannelsModelMappingDialog({ open, onOpenChange, currentRow }: P
 
               <DialogFooter className='mt-6'>
                 <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
-                  {t('common.buttons.cancel')}
+                  {m["common.buttons.cancel"]()}
                 </Button>
                 <Button type='submit' disabled={updateChannel.isPending}>
-                  {updateChannel.isPending ? t('common.buttons.saving') : t('common.buttons.save')}
+                  {updateChannel.isPending ? m["common.buttons.saving"]() : m["common.buttons.save"]()}
                 </Button>
               </DialogFooter>
             </form>

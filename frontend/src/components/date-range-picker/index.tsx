@@ -1,6 +1,5 @@
 import { Calendar } from 'lucide-react';
 import * as React from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -9,6 +8,7 @@ import { normalizeDateTimeRangeValue, type DateTimeRangeValue } from '@/utils/da
 
 import { DateTimeRangePicker } from './date-time-range-picker';
 import { formatRange } from './utils';
+import * as m from '@/paraglide/messages';
 
 export type { DateTimeRangeValue, TimeValue } from '@/utils/date-range';
 export { DateTimeRangePicker } from './date-time-range-picker';
@@ -23,7 +23,6 @@ interface DateRangePickerProps {
 
 export function DateRangePicker(props: DateRangePickerProps) {
   const { value, onChange, onCancel, onConfirm, className } = props;
-  const { t } = useTranslation();
   const isControlled = Object.prototype.hasOwnProperty.call(props, 'value');
   const [open, setOpen] = React.useState(false);
   const normalizedValue = React.useMemo(() => (value ? normalizeDateTimeRangeValue(value) : undefined), [value]);
@@ -73,7 +72,7 @@ export function DateRangePicker(props: DateRangePickerProps) {
   }, [isControlled, normalizedValue, internalValue, onCancel]);
 
   const currentValue = isControlled ? normalizedValue : internalValue;
-  const label = formatRange(currentValue?.from, currentValue?.to, t('common.filters.dateRange'));
+  const label = formatRange(currentValue?.from, currentValue?.to, m["common.filters.dateRange"]());
 
   return (
     <div className={cn('grid gap-2', className)}>

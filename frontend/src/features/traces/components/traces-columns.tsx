@@ -5,7 +5,6 @@ import { format } from 'date-fns';
 import { zhCN, enUS } from 'date-fns/locale';
 import { FileText } from 'lucide-react';
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import { Badge } from '@/components/ui/badge';
@@ -14,16 +13,17 @@ import { usePaginationSearch } from '@/hooks/use-pagination-search';
 import { extractNumberID } from '@/lib/utils';
 
 import { Trace } from '../data/schema';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
 
 export function useTracesColumns(): ColumnDef<Trace>[] {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language === 'zh' ? zhCN : enUS;
+  const locale = getLocale() === 'zh' ? zhCN : enUS;
   const { navigateWithSearch } = usePaginationSearch({ defaultPageSize: 20 });
 
   const columns: ColumnDef<Trace>[] = [
     {
       accessorKey: 'id',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.id')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.id"]()} />,
       cell: ({ row }) => {
         const handleClick = useCallback(() => {
           navigateWithSearch({
@@ -44,16 +44,16 @@ export function useTracesColumns(): ColumnDef<Trace>[] {
 
     // {
     //   id: 'project',
-    //   header: ({ column }) => <DataTableColumnHeader column={column} title={t('traces.columns.project')} />,
+    //   header: ({ column }) => <DataTableColumnHeader column={column} title={m["traces.columns.project"]()} />,
     //   enableSorting: false,
     //   cell: ({ row }) => {
     //     const project = row.original.project
-    //     return <div className='font-mono text-xs'>{project?.name || t('traces.columns.unknown')}</div>
+    //     return <div className='font-mono text-xs'>{project?.name || m["traces.columns.unknown"]()}</div>
     //   },
     // },
     {
       accessorKey: 'firstUserQuery',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('traces.columns.userQuery')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["traces.columns.userQuery"]()} />,
       enableSorting: false,
       cell: ({ row }) => {
         const query = row.getValue('firstUserQuery') as string | null | undefined;
@@ -66,7 +66,7 @@ export function useTracesColumns(): ColumnDef<Trace>[] {
     },
     {
       accessorKey: 'traceID',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('traces.columns.traceId')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["traces.columns.traceId"]()} />,
       enableSorting: false,
       cell: ({ row }) => {
         const traceID = row.getValue('traceID') as string;
@@ -79,12 +79,12 @@ export function useTracesColumns(): ColumnDef<Trace>[] {
     },
     {
       id: 'thread',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('traces.columns.thread')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["traces.columns.thread"]()} />,
       enableSorting: false,
       cell: ({ row }) => {
         const thread = row.original.thread;
         if (!thread) {
-          return <div className='text-muted-foreground font-mono text-xs'>{t('traces.columns.noThread')}</div>;
+          return <div className='text-muted-foreground font-mono text-xs'>{m["traces.columns.noThread"]()}</div>;
         }
 
         const handleNavigate = () => {
@@ -102,7 +102,7 @@ export function useTracesColumns(): ColumnDef<Trace>[] {
     },
     {
       id: 'requestCount',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('traces.columns.requestCount')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["traces.columns.requestCount"]()} />,
       enableSorting: false,
       cell: ({ row }) => {
         const count = row.original.requests?.totalCount || 0;
@@ -115,7 +115,7 @@ export function useTracesColumns(): ColumnDef<Trace>[] {
     },
     {
       id: 'details',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('traces.columns.details')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["traces.columns.details"]()} />,
       cell: ({ row }) => {
         const handleViewDetails = () => {
           navigateWithSearch({ to: '/project/traces/$traceId', params: { traceId: row.original.id } });
@@ -124,14 +124,14 @@ export function useTracesColumns(): ColumnDef<Trace>[] {
         return (
           <Button variant='outline' size='sm' onClick={handleViewDetails}>
             <FileText className='mr-2 h-4 w-4' />
-            {t('traces.actions.viewDetails')}
+            {m["traces.actions.viewDetails"]()}
           </Button>
         );
       },
     },
     {
       accessorKey: 'createdAt',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.createdAt')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.createdAt"]()} />,
       cell: ({ row }) => {
         const date = new Date(row.getValue('createdAt'));
         return <div className='text-xs'>{format(date, 'yyyy-MM-dd HH:mm:ss', { locale })}</div>;
@@ -139,7 +139,7 @@ export function useTracesColumns(): ColumnDef<Trace>[] {
     },
     // {
     //   accessorKey: 'updatedAt',
-    //   header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.updatedAt')} />,
+    //   header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.updatedAt"]()} />,
     //   cell: ({ row }) => {
     //     const date = new Date(row.getValue('updatedAt'))
     //     return <div className='text-xs'>{format(date, 'yyyy-MM-dd HH:mm:ss', { locale })}</div>
@@ -155,7 +155,7 @@ export function useTracesColumns(): ColumnDef<Trace>[] {
     //       <DropdownMenu>
     //         <DropdownMenuTrigger asChild>
     //           <Button variant='ghost' className='h-8 w-8 p-0'>
-    //             <span className='sr-only'>{t('traces.actions.openMenu')}</span>
+    //             <span className='sr-only'>{m["traces.actions.openMenu"]()}</span>
     //             <MoreHorizontal className='h-4 w-4' />
     //           </Button>
     //         </DropdownMenuTrigger>
@@ -164,7 +164,7 @@ export function useTracesColumns(): ColumnDef<Trace>[] {
     //             navigate({ to: '/project/traces/$traceId', params: { traceId: trace.id } })
     //           }}>
     //             <Eye className='mr-2 h-4 w-4' />
-    //             {t('traces.actions.viewDetails')}
+    //             {m["traces.actions.viewDetails"]()}
     //           </DropdownMenuItem>
     //         </DropdownMenuContent>
     //       </DropdownMenu>

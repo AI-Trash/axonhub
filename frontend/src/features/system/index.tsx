@@ -1,12 +1,12 @@
 'use client';
 
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
 
 import { SystemSettingsTabs } from './components/tabs';
 import SystemProvider from './context/system-context';
+import * as m from '@/paraglide/messages';
 
 type SystemTabKey = 'brand' | 'storage' | 'retry' | 'about';
 
@@ -27,8 +27,6 @@ interface SystemManagementProps {
 }
 
 export default function SystemManagement({ initialTab }: SystemManagementProps) {
-  const { t } = useTranslation();
-
   return (
     <SystemProvider>
       <Header fixed></Header>
@@ -36,8 +34,8 @@ export default function SystemManagement({ initialTab }: SystemManagementProps) 
       <Main>
         <div className='mb-2 flex flex-wrap items-center justify-between space-y-2'>
           <div id='system-title'>
-            <h2 className='text-2xl font-bold tracking-tight'>{t('system.title')}</h2>
-            <p className='text-muted-foreground'>{t('system.description')}</p>
+            <h2 className='text-2xl font-bold tracking-tight'>{m["system.title"]()}</h2>
+            <p className='text-muted-foreground'>{m["system.description"]()}</p>
           </div>
         </div>
         <SystemContent initialTab={initialTab} />

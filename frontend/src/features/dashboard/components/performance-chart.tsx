@@ -1,5 +1,4 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
 import { CartesianGrid, ResponsiveContainer, XAxis, YAxis, Tooltip, AreaChart, Area } from 'recharts';
 
 import { Skeleton } from '@/components/ui/skeleton';
@@ -8,6 +7,8 @@ import { formatDuration } from '@/utils/format-duration';
 import { formatNumber } from '@/utils/format-number';
 
 import { useGeneralSettings } from '../../system/data/system';
+import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
 
 function groupBy<T>(array: T[], key: keyof T): Record<string, T[]> {
   return array.reduce(
@@ -72,8 +73,6 @@ interface PerformanceTooltipProps {
 }
 
 function PerformanceTooltip({ active, payload, label, displayMode }: PerformanceTooltipProps) {
-  const { t } = useTranslation();
-
   if (!active || !payload || payload.length === 0) return null;
 
   const dataPoint = payload[0]?.payload as Record<string, string | number | null> | undefined;
@@ -123,11 +122,11 @@ function PerformanceTooltip({ active, payload, label, displayMode }: Performance
             <div className='text-muted-foreground ml-4'>
               {displayMode === 'throughput' ? (
                 <>
-                  {formatNumber(item.throughput, { digits: 0 })} {t('dashboard.stats.throughput')}
+                  {formatNumber(item.throughput, { digits: 0 })} {m["dashboard.stats.throughput"]()}
                 </>
               ) : (
                 <>
-                  {t('dashboard.stats.ttft')} {formatDuration(item.ttft)}
+                  {m["dashboard.stats.ttft"]()} {formatDuration(item.ttft)}
                 </>
               )}
             </div>
@@ -148,7 +147,6 @@ export function PerformanceChart({
   idField,
   nameField,
 }: PerformanceChartProps) {
-  const { t, i18n } = useTranslation();
   const { data: generalSettings, isLoading: isSettingsLoading } = useGeneralSettings();
   const [activeSeries, setActiveSeries] = useState<string | null>(null);
   const [displayMode, setDisplayMode] = useState<PerformanceDisplayMode>('throughput');
@@ -156,7 +154,7 @@ export function PerformanceChart({
   const isLoadingData = isLoading || isSettingsLoading;
 
   const timezone = generalSettings?.timezone || 'UTC';
-  const locale = i18n.language.startsWith('zh') ? 'zh-CN' : 'en-US';
+  const locale = getLocale().startsWith('zh') ? 'zh-CN' : 'en-US';
 
   const memoizedSafeData = useMemo(() => data ?? [], [data]);
 
@@ -326,10 +324,10 @@ export function PerformanceChart({
         <Tabs value={displayMode} onValueChange={(v) => setDisplayMode(v as PerformanceDisplayMode)}>
           <TabsList className='h-7 p-0.5'>
             <TabsTrigger value='throughput' className='h-6 px-2.5 text-xs'>
-              {t('dashboard.stats.throughput')}
+              {m["dashboard.stats.throughput"]()}
             </TabsTrigger>
             <TabsTrigger value='ttft' className='h-6 px-2.5 text-xs'>
-              {t('dashboard.stats.ttft')}
+              {m["dashboard.stats.ttft"]()}
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -401,7 +399,7 @@ export function PerformanceChart({
                 <span className='font-medium'>{item.name}</span>
               </span>
               <span className='text-muted-foreground text-xs tabular-nums 2xl:text-right'>
-                {formatNumber(item.avgThroughput, { digits: 0 })} {t('dashboard.stats.throughput')} · {t('dashboard.stats.ttft')}{' '}
+                {formatNumber(item.avgThroughput, { digits: 0 })} {m["dashboard.stats.throughput"]()} · {m["dashboard.stats.ttft"]()}{' '}
                 {formatDuration(item.avgTtft)}
               </span>
             </button>

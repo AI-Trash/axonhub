@@ -1,8 +1,8 @@
+import * as m from '@/paraglide/messages';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { AlertCircle, CheckCircle2, FileText, Key, Layers, Link, Loader2, Sparkles, Upload, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -28,7 +28,6 @@ interface ChannelsBulkImportDialogProps {
 }
 
 export function ChannelsBulkImportDialog({ isOpen, onClose }: ChannelsBulkImportDialogProps) {
-  const { t } = useTranslation();
   const [parsedChannels, setParsedChannels] = useState<BulkImportChannelItem[]>([]);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [showPreview, setShowPreview] = useState(false);
@@ -66,7 +65,7 @@ export function ChannelsBulkImportDialog({ isOpen, onClose }: ChannelsBulkImport
       const parts = line.split(',').map((part) => part.trim());
 
       if (parts.length < 5) {
-        errors.push(t('channels.dialogs.bulkImport.invalidFormat', { line: index + 1 }));
+        errors.push(m["channels.dialogs.bulkImport.invalidFormat"]({ line: index + 1 }));
         return;
       }
 
@@ -74,17 +73,17 @@ export function ChannelsBulkImportDialog({ isOpen, onClose }: ChannelsBulkImport
 
       const typeResult = channelTypeSchema.safeParse(type);
       if (!typeResult.success) {
-        errors.push(t('channels.dialogs.bulkImport.unsupportedType', { line: index + 1, type }));
+        errors.push(m["channels.dialogs.bulkImport.unsupportedType"]({ line: index + 1, type }));
         return;
       }
 
       if (!baseURL || baseURL.trim() === '') {
-        errors.push(t('channels.dialogs.bulkImport.baseUrlRequired', { line: index + 1 }));
+        errors.push(m["channels.dialogs.bulkImport.baseUrlRequired"]({ line: index + 1 }));
         return;
       }
 
       if (!apiKey || apiKey.trim() === '') {
-        errors.push(t('channels.dialogs.bulkImport.apiKeyRequired', { line: index + 1 }));
+        errors.push(m["channels.dialogs.bulkImport.apiKeyRequired"]({ line: index + 1 }));
         return;
       }
 
@@ -110,9 +109,9 @@ export function ChannelsBulkImportDialog({ isOpen, onClose }: ChannelsBulkImport
         const isDuplicateWithExisting = existingChannelNames.some((existingName) => existingName.toLowerCase() === lowerCaseName);
 
         if (isDuplicateWithExisting) {
-          errors.push(t('channels.dialogs.bulkImport.duplicateNameWithExisting', { line: index + 1, name: channelName }));
+          errors.push(m["channels.dialogs.bulkImport.duplicateNameWithExisting"]({ line: index + 1, name: channelName }));
         } else {
-          errors.push(t('channels.dialogs.bulkImport.duplicateName', { line: index + 1, name: channelName }));
+          errors.push(m["channels.dialogs.bulkImport.duplicateName"]({ line: index + 1, name: channelName }));
         }
         return;
       }
@@ -122,11 +121,10 @@ export function ChannelsBulkImportDialog({ isOpen, onClose }: ChannelsBulkImport
       if (!result.success) {
         const fieldErrors = result.error.issues.map((err) => `${err.path.join('.')}: ${err.message}`).join(', ');
         errors.push(
-          t('channels.dialogs.bulkImport.validationError', {
+          m["channels.dialogs.bulkImport.validationError"]({
             line: index + 1,
             name: channelName,
-            error: fieldErrors,
-          })
+            error: fieldErrors })
         );
         return;
       }
@@ -184,9 +182,9 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
               <Upload className='h-5 w-5' />
             </div>
             <div>
-              <DialogTitle className='text-lg font-semibold'>{t('channels.dialogs.bulkImport.title')}</DialogTitle>
+              <DialogTitle className='text-lg font-semibold'>{m["channels.dialogs.bulkImport.title"]()}</DialogTitle>
               <DialogDescription className='text-muted-foreground text-sm'>
-                {t('channels.dialogs.bulkImport.description')}
+                {m["channels.dialogs.bulkImport.description"]()}
               </DialogDescription>
             </div>
           </div>
@@ -201,15 +199,15 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                   <div className='bg-primary/10 text-primary dark:bg-primary/20 rounded-lg p-1.5'>
                     <FileText className='h-4 w-4' />
                   </div>
-                  <CardTitle className='text-sm font-medium'>{t('channels.dialogs.bulkImport.formatTitle')}</CardTitle>
+                  <CardTitle className='text-sm font-medium'>{m["channels.dialogs.bulkImport.formatTitle"]()}</CardTitle>
                 </div>
-                <CardDescription className='pt-2 text-sm'>{t('channels.dialogs.bulkImport.formatDescription')}</CardDescription>
+                <CardDescription className='pt-2 text-sm'>{m["channels.dialogs.bulkImport.formatDescription"]()}</CardDescription>
               </CardHeader>
               <CardContent className='space-y-4 pt-0'>
                 <div className='bg-muted/50 rounded-lg border p-3'>
                   <code className='text-muted-foreground block font-mono text-xs leading-relaxed whitespace-pre-wrap'>{exampleText}</code>
                 </div>
-                <p className='text-muted-foreground text-xs'>{t('channels.dialogs.bulkImport.formatNote')}</p>
+                <p className='text-muted-foreground text-xs'>{m["channels.dialogs.bulkImport.formatNote"]()}</p>
               </CardContent>
             </Card>
 
@@ -220,7 +218,7 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                   <div className='bg-primary/10 text-primary dark:bg-primary/20 rounded-lg p-1.5'>
                     <Layers className='h-4 w-4' />
                   </div>
-                  <CardTitle className='text-sm font-medium'>{t('channels.dialogs.bulkImport.inputLabel')}</CardTitle>
+                  <CardTitle className='text-sm font-medium'>{m["channels.dialogs.bulkImport.inputLabel"]()}</CardTitle>
                 </div>
               </CardHeader>
               <CardContent className='space-y-4 pt-0'>
@@ -232,7 +230,7 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                       <FormItem className='space-y-3'>
                         <FormControl>
                           <Textarea
-                            placeholder={t('channels.dialogs.bulkImport.inputPlaceholder')}
+                            placeholder={m["channels.dialogs.bulkImport.inputPlaceholder"]()}
                             className='min-h-[180px] resize-none font-mono text-sm leading-relaxed'
                             {...field}
                           />
@@ -241,12 +239,12 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                           {isLoadingChannelNames ? (
                             <>
                               <Loader2 className='h-3 w-3 animate-spin' />
-                              {t('channels.dialogs.bulkImport.loadingChannelNames')}
+                              {m["channels.dialogs.bulkImport.loadingChannelNames"]()}
                             </>
                           ) : (
                             <>
                               <Sparkles className='text-primary h-3 w-3' />
-                              {t('channels.dialogs.bulkImport.supportedTypes')}
+                              {m["channels.dialogs.bulkImport.supportedTypes"]()}
                             </>
                           )}
                         </FormDescription>
@@ -269,7 +267,7 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                       <div className='bg-primary/10 text-primary dark:bg-primary/20 rounded-lg p-1.5'>
                         <Sparkles className='h-4 w-4' />
                       </div>
-                      <CardTitle className='text-sm font-medium'>{t('channels.dialogs.bulkImport.previewTitle')}</CardTitle>
+                      <CardTitle className='text-sm font-medium'>{m["channels.dialogs.bulkImport.previewTitle"]()}</CardTitle>
                       <div className='flex items-center gap-2'>
                         {parsedChannels.length > 0 && (
                           <Badge
@@ -277,13 +275,13 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                             className='border-0 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                           >
                             <CheckCircle2 className='mr-1 h-3 w-3' />
-                            {t('channels.dialogs.bulkImport.validRecords', { count: parsedChannels.length })}
+                            {m["channels.dialogs.bulkImport.validRecords"]({ count: parsedChannels.length })}
                           </Badge>
                         )}
                         {parseErrors.length > 0 && (
                           <Badge variant='secondary' className='border-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'>
                             <AlertCircle className='mr-1 h-3 w-3' />
-                            {t('channels.dialogs.bulkImport.errors', { count: parseErrors.length })}
+                            {m["channels.dialogs.bulkImport.errors"]({ count: parseErrors.length })}
                           </Badge>
                         )}
                       </div>
@@ -291,12 +289,12 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                     {parseErrors.length > 0 ? (
                       <div className='flex items-center gap-2 text-xs font-medium text-red-600 dark:text-red-400'>
                         <XCircle className='h-4 w-4' />
-                        {t('channels.dialogs.bulkImport.status.blocked')}
+                        {m["channels.dialogs.bulkImport.status.blocked"]()}
                       </div>
                     ) : parsedChannels.length > 0 ? (
                       <div className='flex items-center gap-2 text-xs font-medium text-green-600 dark:text-green-400'>
                         <CheckCircle2 className='h-4 w-4' />
-                        {t('channels.dialogs.bulkImport.status.ready')}
+                        {m["channels.dialogs.bulkImport.status.ready"]()}
                       </div>
                     ) : null}
                   </div>
@@ -307,9 +305,9 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                     <div className='space-y-2'>
                       <div className='flex items-center justify-between'>
                         <span className='text-xs font-medium text-red-600 dark:text-red-400'>
-                          {t('channels.dialogs.bulkImport.errorMessages')}
+                          {m["channels.dialogs.bulkImport.errorMessages"]()}
                         </span>
-                        <span className='text-muted-foreground text-xs'>{t('channels.dialogs.bulkImport.status.blockedHint')}</span>
+                        <span className='text-muted-foreground text-xs'>{m["channels.dialogs.bulkImport.status.blockedHint"]()}</span>
                       </div>
                       <div className='space-y-2'>
                         {parseErrors.map((error, index) => (
@@ -333,7 +331,7 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                     <div className='space-y-3'>
                       <div className='flex items-center gap-2 text-xs font-medium text-green-600 dark:text-green-400'>
                         <CheckCircle2 className='h-4 w-4' />
-                        {t('channels.dialogs.bulkImport.validChannels')}
+                        {m["channels.dialogs.bulkImport.validChannels"]()}
                       </div>
                       <div className='grid gap-3'>
                         {parsedChannels.map((channel, index) => (
@@ -353,7 +351,7 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                                 </div>
                                 <div className='min-w-0 flex-1'>
                                   <div className='text-muted-foreground text-xs'>
-                                    {t('channels.dialogs.bulkImport.fieldLabels.baseUrl')}
+                                    {m["channels.dialogs.bulkImport.fieldLabels.baseUrl"]()}
                                   </div>
                                   <div className='truncate font-mono text-xs text-blue-600 dark:text-blue-400'>{channel.baseURL}</div>
                                 </div>
@@ -363,7 +361,7 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                                   <Key className='h-3.5 w-3.5' />
                                 </div>
                                 <div className='min-w-0 flex-1'>
-                                  <div className='text-muted-foreground text-xs'>{t('channels.dialogs.bulkImport.fieldLabels.apiKey')}</div>
+                                  <div className='text-muted-foreground text-xs'>{m["channels.dialogs.bulkImport.fieldLabels.apiKey"]()}</div>
                                   <div className='font-mono text-xs text-purple-600 dark:text-purple-400'>
                                     {channel.apiKey.substring(0, 16)}...
                                   </div>
@@ -375,7 +373,7 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
                                 </div>
                                 <div className='min-w-0 flex-1'>
                                   <div className='text-muted-foreground text-xs'>
-                                    {t('channels.dialogs.bulkImport.fieldLabels.supportedModels')}
+                                    {m["channels.dialogs.bulkImport.fieldLabels.supportedModels"]()}
                                   </div>
                                   <div className='mt-1 flex flex-wrap gap-1'>
                                     {channel.supportedModels.map((model, idx) => (
@@ -400,12 +398,12 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
 
         <DialogFooter className='bg-muted/30 flex-shrink-0 gap-3 border-t pt-4'>
           <Button variant='outline' onClick={handleClose} className='min-w-[100px]'>
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           {!hasPreviewedCurrent ? (
             <Button onClick={handlePreview} disabled={!textValue?.trim() || isLoadingChannelNames} className='min-w-[100px]'>
               {isLoadingChannelNames && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-              {t('channels.dialogs.bulkImport.previewButton')}
+              {m["channels.dialogs.bulkImport.previewButton"]()}
             </Button>
           ) : (
             <Button
@@ -414,7 +412,7 @@ deepseek_anthropic,DeepSeek Anthropic,https://api.deepseek.com/anthropic,sk-xxx,
               className='min-w-[100px]'
             >
               {bulkImportMutation.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-              {t('channels.dialogs.bulkImport.importButton', { count: parsedChannels.length })}
+              {m["channels.dialogs.bulkImport.importButton"]({ count: parsedChannels.length })}
             </Button>
           )}
         </DialogFooter>

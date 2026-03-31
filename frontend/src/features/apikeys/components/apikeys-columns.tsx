@@ -1,7 +1,6 @@
 import { ColumnDef, Table, Row } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import { Copy, Eye } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { DataTableColumnHeader } from '@/components/data-table-column-header';
@@ -13,9 +12,9 @@ import { cn, extractNumberID } from '@/lib/utils';
 import { useApiKeysContext } from '../context/apikeys-context';
 import { ApiKey } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
+import * as m from '@/paraglide/messages';
 
 function ApiKeyCell({ apiKey, fullApiKey }: { apiKey: string; fullApiKey: ApiKey }) {
-  const { t } = useTranslation();
   const { openDialog } = useApiKeysContext();
 
   // 显示前8个字符和后4个字符，中间用省略号
@@ -23,7 +22,7 @@ function ApiKeyCell({ apiKey, fullApiKey }: { apiKey: string; fullApiKey: ApiKey
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(apiKey);
-    toast.success(t('apikeys.messages.copied'));
+    toast.success(m["apikeys.messages.copied"]());
   };
 
   const handleViewKey = () => {
@@ -33,17 +32,17 @@ function ApiKeyCell({ apiKey, fullApiKey }: { apiKey: string; fullApiKey: ApiKey
   return (
     <div className='flex max-w-48 items-center space-x-2'>
       <code className='bg-muted truncate rounded px-2 py-1 font-mono text-sm'>{maskedKey}</code>
-      <Button variant='ghost' size='sm' onClick={handleViewKey} className='h-6 w-6 flex-shrink-0 p-0' title={t('apikeys.actions.view')}>
+      <Button variant='ghost' size='sm' onClick={handleViewKey} className='h-6 w-6 flex-shrink-0 p-0' title={m["apikeys.actions.view"]()}>
         <Eye className='h-3 w-3' />
       </Button>
-      <Button variant='ghost' size='sm' onClick={copyToClipboard} className='h-6 w-6 flex-shrink-0 p-0' title={t('apikeys.actions.copy')}>
+      <Button variant='ghost' size='sm' onClick={copyToClipboard} className='h-6 w-6 flex-shrink-0 p-0' title={m["apikeys.actions.copy"]()}>
         <Copy className='h-3 w-3' />
       </Button>
     </div>
   );
 }
 
-export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrite: boolean = true): ColumnDef<ApiKey>[] => [
+export const createColumns = (t: (key: string, params?: Record<string, unknown>) => string, canWrite: boolean = true): ColumnDef<ApiKey>[] => [
   ...(canWrite
     ? [
         {
@@ -52,7 +51,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
             <Checkbox
               checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')}
               onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-              aria-label={t('common.columns.selectAll')}
+              aria-label={m["common.columns.selectAll"]()}
               className='translate-y-[2px]'
             />
           ),
@@ -60,7 +59,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
             <Checkbox
               checked={row.getIsSelected()}
               onCheckedChange={(value) => row.toggleSelected(!!value)}
-              aria-label={t('common.columns.selectRow')}
+              aria-label={m["common.columns.selectRow"]()}
               className='translate-y-[2px]'
             />
           ),
@@ -71,13 +70,13 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     : []),
   {
     accessorKey: 'id',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.id')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.id"]()} />,
     cell: ({ row }) => <div className='font-mono text-xs'>#{extractNumberID(row.getValue('id'))}</div>,
     enableSorting: false,
   },
   {
     accessorKey: 'name',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.name')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.name"]()} />,
     cell: ({ row }) => <LongText className='max-w-36 font-medium'>{row.getValue('name')}</LongText>,
     meta: {
       className: 'md:table-cell',
@@ -89,7 +88,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     accessorKey: 'key',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('apikeys.columns.key')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["apikeys.columns.key"]()} />,
     cell: ({ row }) => <ApiKeyCell apiKey={row.getValue('key')} fullApiKey={row.original} />,
     enableSorting: false,
     meta: {
@@ -98,7 +97,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     accessorKey: 'creator',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('apikeys.columns.creator')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["apikeys.columns.creator"]()} />,
     cell: ({ row }) => {
       const creator = row.original.user;
       const displayName = creator ? `${creator.firstName} ${creator.lastName}` : '-';
@@ -113,13 +112,13 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     accessorKey: 'type',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('apikeys.columns.type')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["apikeys.columns.type"]()} />,
     cell: ({ row }) => {
       const type = row.getValue('type') as string;
       const typeText =
         {
-          user: t('apikeys.type.user'),
-          service_account: t('apikeys.type.service_account'),
+          user: m["apikeys.type.user"](),
+          service_account: m["apikeys.type.service_account"](),
         }[type] || type;
 
       const typeColor =
@@ -137,15 +136,15 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     accessorKey: 'status',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.status')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.status"]()} />,
     cell: ({ row }) => {
       const status = row.getValue('status') as string;
       const statusText =
         {
-          enabled: t('apikeys.status.enabled'),
-          disabled: t('apikeys.status.disabled'),
-          archived: t('apikeys.status.archived'),
-        }[status] || t('apikeys.status.disabled');
+          enabled: m["apikeys.status.enabled"](),
+          disabled: m["apikeys.status.disabled"](),
+          archived: m["apikeys.status.archived"](),
+        }[status] || m["apikeys.status.disabled"]();
 
       const statusColor =
         {
@@ -163,7 +162,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     accessorKey: 'createdAt',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.createdAt')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.createdAt"]()} />,
     cell: ({ row }) => {
       const date = row.getValue('createdAt') as Date;
       return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
@@ -171,7 +170,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     accessorKey: 'updatedAt',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.updatedAt')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.updatedAt"]()} />,
     cell: ({ row }) => {
       const date = row.getValue('updatedAt') as Date;
       return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
@@ -179,7 +178,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     id: 'actions',
-    header: t('common.columns.actions'),
+    header: m["common.columns.actions"](),
     cell: DataTableRowActions,
   },
 ];

@@ -2,7 +2,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { useEffect, useCallback, useState, useRef, useMemo } from 'react';
 import { useForm, useFieldArray, useWatch } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 
 import { AutoComplete } from '@/components/auto-complete';
@@ -20,6 +19,7 @@ import { useSelectedProjectId } from '@/stores/projectStore';
 import { usePrompts } from '../context/prompts-context';
 import { useCreatePrompt, useUpdatePrompt } from '../data/prompts';
 import { CreatePromptInput, UpdatePromptInput } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 const conditionSchema = z.object({
   type: z.enum(['model_id', 'model_pattern', 'api_key']),
@@ -59,7 +59,6 @@ interface ModelAutoCompleteWrapperProps {
 }
 
 function ModelAutoCompleteWrapper({ field, modelOptions, portalContainer }: ModelAutoCompleteWrapperProps) {
-  const { t } = useTranslation();
   const [searchValue, setSearchValue] = useState('');
 
   useEffect(() => {
@@ -74,8 +73,8 @@ function ModelAutoCompleteWrapper({ field, modelOptions, portalContainer }: Mode
       searchValue={searchValue}
       onSearchValueChange={setSearchValue}
       items={modelOptions}
-      placeholder={t('prompts.fields.conditionValuePlaceholder')}
-      emptyMessage={t('prompts.fields.noModels')}
+      placeholder={m["prompts.fields.conditionValuePlaceholder"]()}
+      emptyMessage={m["prompts.fields.noModels"]()}
       portalContainer={portalContainer}
     />
   );
@@ -110,12 +109,12 @@ function ConditionGroup({ groupIndex, form, onRemoveGroup, t, modelOptions, apiK
     <div className='bg-muted/30 rounded-lg border p-3'>
       <div className='mb-2 flex items-center justify-between'>
         <span className='text-muted-foreground text-xs font-medium'>
-          {t('prompts.conditions.group')} {groupIndex + 1}
+          {m["prompts.conditions.group"]()} {groupIndex + 1}
         </span>
         <div className='flex gap-1'>
           <Button type='button' variant='ghost' size='sm' onClick={handleAddCondition} className='h-7 px-2 text-xs'>
             <IconPlus className='mr-1 h-3 w-3' />
-            {t('prompts.conditions.add')}
+            {m["prompts.conditions.add"]()}
           </Button>
           <Button
             type='button'
@@ -138,7 +137,7 @@ function ConditionGroup({ groupIndex, form, onRemoveGroup, t, modelOptions, apiK
                 </div>
                 <div className='relative flex justify-center'>
                   <span className='bg-muted/50 text-muted-foreground px-2 text-[10px] font-semibold tracking-wider uppercase'>
-                    {t('prompts.conditions.or')}
+                    {m["prompts.conditions.or"]()}
                   </span>
                 </div>
               </div>
@@ -162,9 +161,9 @@ function ConditionGroup({ groupIndex, form, onRemoveGroup, t, modelOptions, apiK
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value='model_id'>{t('prompts.conditionTypes.model_id')}</SelectItem>
-                        <SelectItem value='model_pattern'>{t('prompts.conditionTypes.model_pattern')}</SelectItem>
-                        <SelectItem value='api_key'>{t('prompts.conditionTypes.api_key')}</SelectItem>
+                        <SelectItem value='model_id'>{m["prompts.conditionTypes.model_id"]()}</SelectItem>
+                        <SelectItem value='model_pattern'>{m["prompts.conditionTypes.model_pattern"]()}</SelectItem>
+                        <SelectItem value='api_key'>{m["prompts.conditionTypes.api_key"]()}</SelectItem>
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -181,7 +180,7 @@ function ConditionGroup({ groupIndex, form, onRemoveGroup, t, modelOptions, apiK
                       ) : conditions?.[conditionIndex]?.type === 'api_key' ? (
                         <Select onValueChange={field.onChange} value={field.value}>
                           <SelectTrigger className='h-10 w-full text-xs'>
-                            <SelectValue placeholder={t('prompts.fields.apiKeyPlaceholder')} />
+                            <SelectValue placeholder={m["prompts.fields.apiKeyPlaceholder"]()} />
                           </SelectTrigger>
                           <SelectContent>
                             {apiKeyOptions.map((option) => (
@@ -192,7 +191,7 @@ function ConditionGroup({ groupIndex, form, onRemoveGroup, t, modelOptions, apiK
                           </SelectContent>
                         </Select>
                       ) : (
-                        <Input {...field} placeholder={t('prompts.fields.conditionValuePlaceholder')} className='h-10 text-xs' />
+                        <Input {...field} placeholder={m["prompts.fields.conditionValuePlaceholder"]()} className='h-10 text-xs' />
                       )}
                     </FormControl>
                   </FormItem>
@@ -216,7 +215,6 @@ function ConditionGroup({ groupIndex, form, onRemoveGroup, t, modelOptions, apiK
 }
 
 export function PromptsActionDialog() {
-  const { t } = useTranslation();
   const { open, setOpen, currentRow } = usePrompts();
   const createPrompt = useCreatePrompt();
   const updatePrompt = useUpdatePrompt();
@@ -384,8 +382,8 @@ export function PromptsActionDialog() {
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent className='flex h-[85vh] max-h-[85vh] flex-col overflow-hidden sm:max-w-6xl' ref={dialogContentRef}>
         <DialogHeader className='flex-shrink-0'>
-          <DialogTitle>{isEdit ? t('prompts.dialogs.edit.title') : t('prompts.dialogs.create.title')}</DialogTitle>
-          <DialogDescription>{isEdit ? t('prompts.dialogs.edit.description') : t('prompts.dialogs.create.description')}</DialogDescription>
+          <DialogTitle>{isEdit ? m["prompts.dialogs.edit.title"]() : m["prompts.dialogs.create.title"]()}</DialogTitle>
+          <DialogDescription>{isEdit ? m["prompts.dialogs.edit.description"]() : m["prompts.dialogs.create.description"]()}</DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
@@ -397,7 +395,7 @@ export function PromptsActionDialog() {
                   name='name'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('prompts.fields.name')}</FormLabel>
+                      <FormLabel>{m["prompts.fields.name"]()}</FormLabel>
                       <FormControl>
                         <Input {...field} />
                       </FormControl>
@@ -411,7 +409,7 @@ export function PromptsActionDialog() {
                   name='description'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('prompts.fields.description')}</FormLabel>
+                      <FormLabel>{m["prompts.fields.description"]()}</FormLabel>
                       <FormControl>
                         <Input {...field} />
                       </FormControl>
@@ -425,11 +423,11 @@ export function PromptsActionDialog() {
                   name='order'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('prompts.fields.order')}</FormLabel>
+                      <FormLabel>{m["prompts.fields.order"]()}</FormLabel>
                       <FormControl>
                         <Input {...field} type='number' />
                       </FormControl>
-                      <FormDescription>{t('prompts.fields.orderHelp')}</FormDescription>
+                      <FormDescription>{m["prompts.fields.orderHelp"]()}</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -440,11 +438,11 @@ export function PromptsActionDialog() {
                   name='role'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('prompts.fields.role')}</FormLabel>
+                      <FormLabel>{m["prompts.fields.role"]()}</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder={t('prompts.fields.rolePlaceholder')} />
+                            <SelectValue placeholder={m["prompts.fields.rolePlaceholder"]()} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -463,20 +461,20 @@ export function PromptsActionDialog() {
                   name='actionType'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('prompts.fields.actionType')}</FormLabel>
+                      <FormLabel>{m["prompts.fields.actionType"]()}</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder={t('prompts.fields.actionTypePlaceholder')} />
+                            <SelectValue placeholder={m["prompts.fields.actionTypePlaceholder"]()} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value='prepend'>{t('prompts.actionTypes.prepend')}</SelectItem>
-                          <SelectItem value='append'>{t('prompts.actionTypes.append')}</SelectItem>
+                          <SelectItem value='prepend'>{m["prompts.actionTypes.prepend"]()}</SelectItem>
+                          <SelectItem value='append'>{m["prompts.actionTypes.append"]()}</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormDescription>
-                        {field.value === 'prepend' ? t('prompts.fields.actionTypeHelpPrepend') : t('prompts.fields.actionTypeHelpAppend')}
+                        {field.value === 'prepend' ? m["prompts.fields.actionTypeHelpPrepend"]() : m["prompts.fields.actionTypeHelpAppend"]()}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -490,9 +488,9 @@ export function PromptsActionDialog() {
                   name='content'
                   render={({ field }) => (
                     <FormItem className='flex min-h-0 flex-1 flex-col'>
-                      <FormLabel>{t('prompts.fields.content')}</FormLabel>
+                      <FormLabel>{m["prompts.fields.content"]()}</FormLabel>
                       <FormControl className='flex-1'>
-                        <Textarea {...field} placeholder={t('prompts.fields.contentPlaceholder')} className='h-full min-h-0 resize-none' />
+                        <Textarea {...field} placeholder={m["prompts.fields.contentPlaceholder"]()} className='h-full min-h-0 resize-none' />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -503,19 +501,19 @@ export function PromptsActionDialog() {
                   <div className='flex-shrink-0 p-4 pb-2'>
                     <div className='flex items-center justify-between'>
                       <div className='space-y-1'>
-                        <h3 className='text-sm leading-none font-medium'>{t('prompts.conditions.title')}</h3>
-                        <p className='text-muted-foreground text-xs'>{t('prompts.conditions.description')}</p>
+                        <h3 className='text-sm leading-none font-medium'>{m["prompts.conditions.title"]()}</h3>
+                        <p className='text-muted-foreground text-xs'>{m["prompts.conditions.description"]()}</p>
                       </div>
                       <Button type='button' variant='outline' size='sm' onClick={handleAddGroup} className='h-8'>
                         <IconPlus className='mr-1 h-3.5 w-3.5' />
-                        {t('prompts.conditions.addGroup')}
+                        {m["prompts.conditions.addGroup"]()}
                       </Button>
                     </div>
                   </div>
                   <div className='flex-1 overflow-y-auto px-4 pb-4'>
                     {groupFields.length === 0 ? (
                       <div className='text-muted-foreground bg-muted/20 rounded-lg border border-dashed p-8 text-center text-sm'>
-                        {t('prompts.conditions.empty')}
+                        {m["prompts.conditions.empty"]()}
                       </div>
                     ) : (
                       <div className='space-y-3'>
@@ -528,7 +526,7 @@ export function PromptsActionDialog() {
                                 </div>
                                 <div className='relative flex justify-center'>
                                   <span className='bg-background text-primary px-3 text-xs font-bold tracking-widest uppercase'>
-                                    {t('prompts.conditions.and')}
+                                    {m["prompts.conditions.and"]()}
                                   </span>
                                 </div>
                               </div>
@@ -537,7 +535,6 @@ export function PromptsActionDialog() {
                               groupIndex={groupIndex}
                               form={form}
                               onRemoveGroup={() => removeGroup(groupIndex)}
-                              t={t}
                               modelOptions={modelOptions}
                               apiKeyOptions={apiKeyOptions}
                               dialogContentRef={dialogContentRef}
@@ -553,10 +550,10 @@ export function PromptsActionDialog() {
 
             <DialogFooter className='flex-shrink-0 border-t pt-4'>
               <Button type='button' variant='outline' onClick={handleClose}>
-                {t('common.buttons.cancel')}
+                {m["common.buttons.cancel"]()}
               </Button>
               <Button type='submit' disabled={createPrompt.isPending || updatePrompt.isPending}>
-                {isEdit ? t('common.buttons.save') : t('common.buttons.create')}
+                {isEdit ? m["common.buttons.save"]() : m["common.buttons.create"]()}
               </Button>
             </DialogFooter>
           </form>

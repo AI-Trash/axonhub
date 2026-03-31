@@ -1,7 +1,6 @@
 import { toc } from '@lobehub/icons';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { AutoComplete } from '@/components/auto-complete';
@@ -17,6 +16,7 @@ import { useBulkCreateModels } from '../data/models';
 import { useDevelopersData } from '../data/providers';
 import { type Provider, type ProviderModel } from '../data/providers.schema';
 import { CreateModelInput, ModelCard, ModelType, modelTypeSchema } from '../data/schema';
+import * as m from '@/paraglide/messages';
 
 interface ModelRow {
   id: string;
@@ -49,7 +49,6 @@ function isDeveloper(provider: string) {
 }
 
 export function ModelsBatchCreateDialog() {
-  const { t } = useTranslation();
   const { open, setOpen } = useModels();
   const bulkCreateModels = useBulkCreateModels();
   const { data: developersData } = useDevelopersData();
@@ -110,7 +109,7 @@ export function ModelsBatchCreateDialog() {
 
   const handleAddRow = useCallback(() => {
     if (rows.length >= MAX_ROWS) {
-      toast.error(t('models.dialogs.batchCreate.maxRowsReached', { max: MAX_ROWS }));
+      toast.error(m["models.dialogs.batchCreate.maxRowsReached"]({ max: MAX_ROWS }));
       return;
     }
     setRows((prev) => [
@@ -328,24 +327,24 @@ export function ModelsBatchCreateDialog() {
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent ref={setDialogContent} className='flex flex-col overflow-hidden sm:max-w-4xl' style={{ height: '600px' }}>
         <DialogHeader className='flex-shrink-0 text-left'>
-          <DialogTitle>{t('models.dialogs.batchCreate.title')}</DialogTitle>
-          <DialogDescription>{t('models.dialogs.batchCreate.description')}</DialogDescription>
+          <DialogTitle>{m["models.dialogs.batchCreate.title"]()}</DialogTitle>
+          <DialogDescription>{m["models.dialogs.batchCreate.description"]()}</DialogDescription>
         </DialogHeader>
 
         <div className='min-h-0 flex-1 overflow-x-auto overflow-y-auto pr-2 md:overflow-x-hidden'>
           <div className='min-w-[600px] space-y-2'>
             <div className='flex items-start gap-2 px-2 pb-2'>
               <div className='min-w-32 flex-[2]'>
-                <Label className='text-sm font-medium'>{t('models.fields.developer')}</Label>
+                <Label className='text-sm font-medium'>{m["models.fields.developer"]()}</Label>
               </div>
               <div className='min-w-40 flex-[3]'>
-                <Label className='text-sm font-medium'>{t('models.fields.modelId')}</Label>
+                <Label className='text-sm font-medium'>{m["models.fields.modelId"]()}</Label>
               </div>
               <div className='min-w-24 flex-[2]'>
-                <Label className='text-sm font-medium'>{t('models.fields.name')}</Label>
+                <Label className='text-sm font-medium'>{m["models.fields.name"]()}</Label>
               </div>
               <div className='min-w-32 flex-[3]'>
-                <Label className='text-sm font-medium'>{t('models.fields.icon')}</Label>
+                <Label className='text-sm font-medium'>{m["models.fields.icon"]()}</Label>
               </div>
               <div className='w-8 flex-shrink-0'></div>
             </div>
@@ -363,12 +362,12 @@ export function ModelsBatchCreateDialog() {
                       searchValue={row.developer}
                       onSearchValueChange={(value) => handleDeveloperChange(row.id, value)}
                       items={developerOptions}
-                      placeholder={t('models.fields.developer')}
-                      emptyMessage={t('models.fields.noModels')}
+                      placeholder={m["models.fields.developer"]()}
+                      emptyMessage={m["models.fields.noModels"]()}
                       portalContainer={dialogContent}
                     />
                     {validationErrors[row.id]?.developer && (
-                      <p className='text-xs text-red-600'>{t('models.dialogs.batchCreate.required')}</p>
+                      <p className='text-xs text-red-600'>{m["models.dialogs.batchCreate.required"]()}</p>
                     )}
                   </div>
                   <div className='min-w-40 flex-[3] space-y-1'>
@@ -383,12 +382,12 @@ export function ModelsBatchCreateDialog() {
                       searchValue={row.modelId}
                       onSearchValueChange={(value) => handleModelIdChange(row.id, value)}
                       items={row.developer ? getModelIdOptions(row.developer) : []}
-                      placeholder={t('models.fields.modelId')}
-                      emptyMessage={t('models.fields.noModels')}
+                      placeholder={m["models.fields.modelId"]()}
+                      emptyMessage={m["models.fields.noModels"]()}
                       portalContainer={dialogContent}
                     />
                     {validationErrors[row.id]?.modelId && (
-                      <p className='text-xs text-red-600'>{t('models.dialogs.batchCreate.required')}</p>
+                      <p className='text-xs text-red-600'>{m["models.dialogs.batchCreate.required"]()}</p>
                     )}
                   </div>
                   <div className='min-w-24 flex-[2] space-y-1'>
@@ -398,9 +397,9 @@ export function ModelsBatchCreateDialog() {
                         handleNameChange(row.id, e.target.value);
                         clearValidationError(row.id, 'name');
                       }}
-                      placeholder={t('models.fields.name')}
+                      placeholder={m["models.fields.name"]()}
                     />
-                    {validationErrors[row.id]?.name && <p className='text-xs text-red-600'>{t('models.dialogs.batchCreate.required')}</p>}
+                    {validationErrors[row.id]?.name && <p className='text-xs text-red-600'>{m["models.dialogs.batchCreate.required"]()}</p>}
                   </div>
                   <div className='min-w-32 flex-[3] space-y-1'>
                     <AutoCompleteSelect
@@ -410,11 +409,11 @@ export function ModelsBatchCreateDialog() {
                         clearValidationError(row.id, 'icon');
                       }}
                       items={iconOptions}
-                      placeholder={t('models.fields.icon')}
-                      emptyMessage={t('models.fields.noIcons')}
+                      placeholder={m["models.fields.icon"]()}
+                      emptyMessage={m["models.fields.noIcons"]()}
                       portalContainer={dialogContent}
                     />
-                    {validationErrors[row.id]?.icon && <p className='text-xs text-red-600'>{t('models.dialogs.batchCreate.required')}</p>}
+                    {validationErrors[row.id]?.icon && <p className='text-xs text-red-600'>{m["models.dialogs.batchCreate.required"]()}</p>}
                   </div>
                   <Button
                     type='button'
@@ -435,14 +434,14 @@ export function ModelsBatchCreateDialog() {
         <div className='flex flex-shrink-0 flex-col gap-3 border-t pt-4'>
           <Button type='button' variant='outline' onClick={handleAddRow} disabled={rows.length >= MAX_ROWS}>
             <IconPlus className='mr-2 h-4 w-4' />
-            {t('models.dialogs.batchCreate.addRow')} ({rows.length}/{MAX_ROWS})
+            {m["models.dialogs.batchCreate.addRow"]()} ({rows.length}/{MAX_ROWS})
           </Button>
           <div className='flex justify-end gap-2'>
             <Button type='button' variant='outline' onClick={handleClose}>
-              {t('common.buttons.cancel')}
+              {m["common.buttons.cancel"]()}
             </Button>
             <Button type='button' onClick={handleSubmit} disabled={bulkCreateModels.isPending}>
-              {t('common.buttons.create')}
+              {m["common.buttons.create"]()}
             </Button>
           </div>
         </div>

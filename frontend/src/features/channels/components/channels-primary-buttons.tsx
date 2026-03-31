@@ -1,14 +1,13 @@
 import { IconPlus, IconUpload, IconArrowsSort, IconSettings, IconScale } from '@tabler/icons-react';
 import { useNavigate } from '@tanstack/react-router';
-import { useTranslation } from 'react-i18next';
 
 import { PermissionGuard } from '@/components/permission-guard';
 import { Button } from '@/components/ui/button';
 
 import { useChannels } from '../context/channels-context';
+import * as m from '@/paraglide/messages';
 
 export function ChannelsPrimaryButtons() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
   const { setOpen } = useChannels();
 
@@ -17,7 +16,7 @@ export function ChannelsPrimaryButtons() {
       <PermissionGuard requiredScope='read_system'>
         {/* Load Balancing Strategy - navigate to system retry configuration */}
         <Button variant='outline' className='shrink-0 space-x-1' onClick={() => navigate({ to: '/system', search: { tab: 'retry' } })}>
-          <span>{t('channels.loadBalancingStrategy')}</span> <IconScale size={18} />
+          <span>{m["channels.loadBalancingStrategy"]()}</span> <IconScale size={18} />
         </Button>
       </PermissionGuard>
 
@@ -25,22 +24,22 @@ export function ChannelsPrimaryButtons() {
         <>
           {/* Settings - requires write_channels permission */}
           <Button variant='outline' className='shrink-0 space-x-1' onClick={() => setOpen('channelSettings')}>
-            <span>{t('channels.actions.settings')}</span> <IconSettings size={18} />
+            <span>{m["channels.actions.settings"]()}</span> <IconSettings size={18} />
           </Button>
 
           {/* Bulk Import - requires write_channels permission */}
           <Button variant='outline' className='shrink-0 space-x-1' onClick={() => setOpen('bulkImport')}>
-            <span>{t('channels.importChannels', '批量导入')}</span> <IconUpload size={18} />
+            <span>{m["channels.importChannels"]()}</span> <IconUpload size={18} />
           </Button>
 
           {/* Bulk Ordering - requires write_channels permission */}
           <Button variant='outline' className='shrink-0 space-x-1' onClick={() => setOpen('bulkOrdering')}>
-            <span>{t('channels.orderChannels')}</span> <IconArrowsSort size={18} />
+            <span>{m["channels.orderChannels"]()}</span> <IconArrowsSort size={18} />
           </Button>
 
           {/* Add Channel - requires write_channels permission */}
           <Button className='shrink-0 space-x-1' onClick={() => setOpen('add')} data-testid='add-channel-button'>
-            <span>{t('channels.addChannel')}</span> <IconPlus size={18} />
+            <span>{m["channels.addChannel"]()}</span> <IconPlus size={18} />
           </Button>
         </>
       </PermissionGuard>

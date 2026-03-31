@@ -3,7 +3,6 @@ import { IconCheck, IconX, IconLink, IconChevronDown, IconChevronRight } from '@
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import { useCallback, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +17,8 @@ import { Model } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
 import { ModelsStatusDialog } from './models-status-dialog';
 import { useDeveloperLabel } from './models-table';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 // Status Switch Cell Component to handle status toggle with confirmation dialog
 function StatusSwitchCell({ row }: { row: Row<Model> }) {
@@ -77,7 +78,7 @@ function AssociationRulesCell({ row }: { row: Row<Model> }) {
   );
 }
 
-export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrite: boolean = true): ColumnDef<Model>[] => {
+export const createColumns = (t: (key: string, params?: Record<string, unknown>) => string, canWrite: boolean = true): ColumnDef<Model>[] => {
   return [
     {
       id: 'expand',
@@ -101,7 +102,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
               <Checkbox
                 checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')}
                 onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-                aria-label={t('common.columns.selectAll')}
+                aria-label={m["common.columns.selectAll"]()}
                 className='translate-y-[2px]'
               />
             ),
@@ -109,7 +110,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
               <Checkbox
                 checked={row.getIsSelected()}
                 onCheckedChange={(value) => row.toggleSelected(!!value)}
-                aria-label={t('common.columns.selectRow')}
+                aria-label={m["common.columns.selectRow"]()}
                 className='translate-y-[2px]'
               />
             ),
@@ -120,7 +121,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
       : []),
     {
       accessorKey: 'icon',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('models.columns.icon')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["models.columns.icon"]()} />,
       cell: ({ row }) => {
         const model = row.original;
         const iconName = model.icon;
@@ -144,7 +145,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'name',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.name')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.name"]()} />,
       cell: ({ row }) => {
         const model = row.original;
         return (
@@ -161,7 +162,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'modelID',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('models.columns.modelId')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["models.columns.modelId"]()} />,
       cell: ({ row }) => {
         return <span className='text-sm font-medium'>{row.getValue('modelID')}</span>;
       },
@@ -172,22 +173,22 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'developer',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('models.columns.developer')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["models.columns.developer"]()} />,
       cell: DeveloperCell,
       enableSorting: false,
     },
     {
       accessorKey: 'type',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('models.columns.type')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["models.columns.type"]()} />,
       cell: ({ row }) => {
         const type = row.getValue('type') as string;
-        return <Badge variant='secondary'>{t(`models.types.${type}`)}</Badge>;
+        return <Badge variant='secondary'>{dynamicTranslation(`models.types.${type}`)}</Badge>;
       },
       enableSorting: false,
     },
     // {
     //   id: 'capabilities',
-    //   header: ({ column }) => <DataTableColumnHeader column={column} title={t('models.columns.capabilities')} />,
+    //   header: ({ column }) => <DataTableColumnHeader column={column} title={m["models.columns.capabilities"]()} />,
     //   cell: ({ row }) => {
     //     const model = row.original
     //     const modalities = model.modelCard?.modalities
@@ -199,7 +200,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     //     return (
     //       <div className='flex flex-col gap-1 text-xs'>
     //         <div className='flex items-center gap-1'>
-    //           <span className='text-muted-foreground'>{t('models.columns.input')}:</span>
+    //           <span className='text-muted-foreground'>{m["models.columns.input"]()}:</span>
     //           <div className='flex flex-wrap gap-1'>
     //             {modalities.input?.map((input) => (
     //               <Badge key={input} variant='outline' className='text-xs'>
@@ -209,7 +210,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     //           </div>
     //         </div>
     //         <div className='flex items-center gap-1'>
-    //           <span className='text-muted-foreground'>{t('models.columns.output')}:</span>
+    //           <span className='text-muted-foreground'>{m["models.columns.output"]()}:</span>
     //           <div className='flex flex-wrap gap-1'>
     //             {modalities.output?.map((output) => (
     //               <Badge key={output} variant='outline' className='text-xs'>
@@ -225,7 +226,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     // },
     {
       id: 'toolCall',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('models.columns.toolCall')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["models.columns.toolCall"]()} />,
       cell: ({ row }) => {
         const model = row.original;
         const toolCall = model.modelCard?.toolCall;
@@ -240,7 +241,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     // {
     //   id: 'context',
-    //   header: ({ column }) => <DataTableColumnHeader column={column} title={t('models.columns.context')} />,
+    //   header: ({ column }) => <DataTableColumnHeader column={column} title={m["models.columns.context"]()} />,
     //   cell: ({ row }) => {
     //     const model = row.original
     //     const limit = model.modelCard?.limit
@@ -254,11 +255,11 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     //         <TooltipTrigger asChild>
     //           <div className='cursor-help text-xs'>
     //             <div>
-    //               <span className='text-muted-foreground'>{t('models.columns.contextWindow')}: </span>
+    //               <span className='text-muted-foreground'>{m["models.columns.contextWindow"]()}: </span>
     //               <span className='font-medium'>{limit.context?.toLocaleString()}</span>
     //             </div>
     //             <div>
-    //               <span className='text-muted-foreground'>{t('models.columns.maxOutput')}: </span>
+    //               <span className='text-muted-foreground'>{m["models.columns.maxOutput"]()}: </span>
     //               <span className='font-medium'>{limit.output?.toLocaleString()}</span>
     //             </div>
     //           </div>
@@ -266,10 +267,10 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     //         <TooltipContent>
     //           <div className='space-y-1'>
     //             <p>
-    //               {t('models.columns.contextWindowFull')}: {limit.context?.toLocaleString()}
+    //               {m["models.columns.contextWindowFull"]()}: {limit.context?.toLocaleString()}
     //             </p>
     //             <p>
-    //               {t('models.columns.maxOutputFull')}: {limit.output?.toLocaleString()}
+    //               {m["models.columns.maxOutputFull"]()}: {limit.output?.toLocaleString()}
     //             </p>
     //           </div>
     //         </TooltipContent>
@@ -280,20 +281,20 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     // },
     {
       accessorKey: 'status',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.status')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.status"]()} />,
       cell: StatusSwitchCell,
       enableSorting: false,
       enableHiding: false,
     },
     {
       id: 'associationRules',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('models.columns.associationRules')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["models.columns.associationRules"]()} />,
       cell: AssociationRulesCell,
       enableSorting: false,
     },
     {
       id: 'associatedChannels',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('models.columns.associatedChannels')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["models.columns.associatedChannels"]()} />,
       cell: ({ row }) => {
         const model = row.original;
         const channelCount = model.associatedChannelCount || 0;
@@ -309,7 +310,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
 
     {
       accessorKey: 'createdAt',
-      header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.createdAt')} />,
+      header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.createdAt"]()} />,
       cell: ({ row }) => {
         const raw = row.getValue('createdAt') as unknown;
         const date = raw instanceof Date ? raw : new Date(raw as string);
@@ -332,7 +333,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       id: 'actions',
-      header: t('common.columns.actions'),
+      header: m["common.columns.actions"](),
       cell: DataTableRowActions,
       meta: {
         className: 'w-[88px] min-w-[88px] pr-3 pl-0',

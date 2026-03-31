@@ -4,7 +4,6 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { IconPlayerPlay } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -21,6 +20,7 @@ import { useUpdateChannel, useTestChannel } from '../data/channels';
 import { Channel } from '../data/schema';
 import { ErrorDisplay } from '../utils/error-formatter';
 import { mergeChannelSettingsForUpdate } from '../utils/merge';
+import * as m from '@/paraglide/messages';
 
 interface Props {
   open: boolean;
@@ -60,7 +60,6 @@ const proxyConfigSchema = z
 type ProxyConfig = z.infer<typeof proxyConfigSchema>;
 
 export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
-  const { t } = useTranslation();
   const updateChannel = useUpdateChannel();
   const testChannel = useTestChannel();
   const [isTesting, setIsTesting] = useState(false);
@@ -112,14 +111,14 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
           settings: nextSettings,
         },
       });
-      toast.success(t('channels.messages.updateSuccess'));
+      toast.success(m["channels.messages.updateSuccess"]());
       // Auto-save to proxy presets
       if (values.type === ProxyType.URL && values.url) {
         saveProxyPreset.mutate({ url: values.url, username: values.username || undefined, password: values.password || undefined });
       }
       onOpenChange(false);
     } catch (_error) {
-      toast.error(t('channels.messages.updateError'));
+      toast.error(m["channels.messages.updateError"]());
     }
   };
 
@@ -154,9 +153,9 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
       });
 
       if (result.success) {
-        toast.success(t('channels.dialogs.proxy.testSuccess'));
+        toast.success(m["channels.dialogs.proxy.testSuccess"]());
       } else {
-        toast.error(result.error || t('channels.dialogs.proxy.testFailed'));
+        toast.error(result.error || m["channels.dialogs.proxy.testFailed"]());
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -183,15 +182,15 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
     >
       <DialogContent className='sm:max-w-2xl'>
         <DialogHeader className='text-left'>
-          <DialogTitle>{t('channels.dialogs.proxy.title')}</DialogTitle>
-          <DialogDescription>{t('channels.dialogs.proxy.description', { name: currentRow.name })}</DialogDescription>
+          <DialogTitle>{m["channels.dialogs.proxy.title"]()}</DialogTitle>
+          <DialogDescription>{m["channels.dialogs.proxy.description"]({ name: currentRow.name })}</DialogDescription>
         </DialogHeader>
 
         <div className='space-y-6'>
           <Card>
             <CardHeader>
-              <CardTitle className='text-lg'>{t('channels.dialogs.proxy.config.title')}</CardTitle>
-              <CardDescription>{t('channels.dialogs.proxy.config.description')}</CardDescription>
+              <CardTitle className='text-lg'>{m["channels.dialogs.proxy.config.title"]()}</CardTitle>
+              <CardDescription>{m["channels.dialogs.proxy.config.description"]()}</CardDescription>
             </CardHeader>
             <CardContent>
               <Form {...form}>
@@ -201,17 +200,17 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
                     name='type'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('channels.dialogs.proxy.fields.type.label')}</FormLabel>
+                        <FormLabel>{m["channels.dialogs.proxy.fields.type.label"]()}</FormLabel>
                         <Select onValueChange={field.onChange} value={field.value}>
                           <FormControl>
                             <SelectTrigger>
-                              <SelectValue placeholder={t('channels.dialogs.proxy.fields.type.placeholder')} />
+                              <SelectValue placeholder={m["channels.dialogs.proxy.fields.type.placeholder"]()} />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            <SelectItem value={ProxyType.DISABLED}>{t('channels.dialogs.proxy.types.disabled')}</SelectItem>
-                            <SelectItem value={ProxyType.ENVIRONMENT}>{t('channels.dialogs.proxy.types.environment')}</SelectItem>
-                            <SelectItem value={ProxyType.URL}>{t('channels.dialogs.proxy.types.url')}</SelectItem>
+                            <SelectItem value={ProxyType.DISABLED}>{m["channels.dialogs.proxy.types.disabled"]()}</SelectItem>
+                            <SelectItem value={ProxyType.ENVIRONMENT}>{m["channels.dialogs.proxy.types.environment"]()}</SelectItem>
+                            <SelectItem value={ProxyType.URL}>{m["channels.dialogs.proxy.types.url"]()}</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -221,11 +220,11 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
 
                   {selectedProxyType === ProxyType.URL && proxyPresets.length > 0 && (
                     <FormItem>
-                      <FormLabel>{t('channels.dialogs.proxy.presets.label')}</FormLabel>
+                      <FormLabel>{m["channels.dialogs.proxy.presets.label"]()}</FormLabel>
                       <Select onValueChange={handlePresetSelect}>
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder={t('channels.dialogs.proxy.presets.placeholder')} />
+                            <SelectValue placeholder={m["channels.dialogs.proxy.presets.placeholder"]()} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -246,9 +245,9 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
                         name='url'
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>{t('channels.dialogs.proxy.fields.url.label')}</FormLabel>
+                            <FormLabel>{m["channels.dialogs.proxy.fields.url.label"]()}</FormLabel>
                             <FormControl>
-                              <Input placeholder={t('channels.dialogs.proxy.fields.url.placeholder')} {...field} />
+                              <Input placeholder={m["channels.dialogs.proxy.fields.url.placeholder"]()} {...field} />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -260,9 +259,9 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
                         name='username'
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>{t('channels.dialogs.proxy.fields.username.label')}</FormLabel>
+                            <FormLabel>{m["channels.dialogs.proxy.fields.username.label"]()}</FormLabel>
                             <FormControl>
-                              <Input placeholder={t('channels.dialogs.proxy.fields.username.placeholder')} {...field} />
+                              <Input placeholder={m["channels.dialogs.proxy.fields.username.placeholder"]()} {...field} />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -274,9 +273,9 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
                         name='password'
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>{t('channels.dialogs.proxy.fields.password.label')}</FormLabel>
+                            <FormLabel>{m["channels.dialogs.proxy.fields.password.label"]()}</FormLabel>
                             <FormControl>
-                              <Input type='password' placeholder={t('channels.dialogs.proxy.fields.password.placeholder')} {...field} />
+                              <Input type='password' placeholder={m["channels.dialogs.proxy.fields.password.placeholder"]()} {...field} />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -286,11 +285,11 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
                   )}
 
                   {selectedProxyType === ProxyType.ENVIRONMENT && (
-                    <div className='text-muted-foreground rounded-md border p-3 text-sm'>{t('channels.dialogs.proxy.environmentHint')}</div>
+                    <div className='text-muted-foreground rounded-md border p-3 text-sm'>{m["channels.dialogs.proxy.environmentHint"]()}</div>
                   )}
 
                   {selectedProxyType === ProxyType.DISABLED && (
-                    <div className='text-muted-foreground rounded-md border p-3 text-sm'>{t('channels.dialogs.proxy.disabledHint')}</div>
+                    <div className='text-muted-foreground rounded-md border p-3 text-sm'>{m["channels.dialogs.proxy.disabledHint"]()}</div>
                   )}
                 </form>
               </Form>
@@ -302,13 +301,13 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
             <Card className={testResult.success ? 'border-green-200' : 'border-red-200'}>
               <CardHeader>
                 <CardTitle className={`text-lg ${testResult.success ? 'text-green-800' : 'text-red-800'}`}>
-                  {testResult.success ? t('channels.dialogs.proxy.testSuccess') : t('channels.dialogs.proxy.testFailed')}
+                  {testResult.success ? m["channels.dialogs.proxy.testSuccess"]() : m["channels.dialogs.proxy.testFailed"]()}
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {testResult.latency && (
                   <p className='text-sm'>
-                    <span className='font-medium'>{t('channels.dialogs.proxy.latency')}:</span> {testResult.latency.toFixed(2)}s
+                    <span className='font-medium'>{m["channels.dialogs.proxy.latency"]()}:</span> {testResult.latency.toFixed(2)}s
                   </p>
                 )}
                 {testResult.message && (
@@ -324,14 +323,14 @@ export function ChannelsProxyDialog({ open, onOpenChange, currentRow }: Props) {
         <DialogFooter className='flex justify-between'>
           <Button type='button' variant='outline' onClick={handleTest} disabled={isTesting || testChannel.isPending}>
             <IconPlayerPlay className='mr-2 h-4 w-4' />
-            {isTesting ? t('channels.dialogs.proxy.testing') : t('channels.dialogs.proxy.test')}
+            {isTesting ? m["channels.dialogs.proxy.testing"]() : m["channels.dialogs.proxy.test"]()}
           </Button>
           <div className='flex gap-2'>
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
-              {t('common.buttons.cancel')}
+              {m["common.buttons.cancel"]()}
             </Button>
             <Button type='button' onClick={form.handleSubmit(onSubmit)} disabled={updateChannel.isPending}>
-              {updateChannel.isPending ? t('common.buttons.saving') : t('common.buttons.save')}
+              {updateChannel.isPending ? m["common.buttons.saving"]() : m["common.buttons.save"]()}
             </Button>
           </div>
         </DialogFooter>

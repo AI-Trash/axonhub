@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Header } from '@/components/layout/header';
 import { Main } from '@/components/layout/main';
@@ -11,6 +10,7 @@ import { buildDateRangeWhereClause, type DateTimeRangeValue } from '@/utils/date
 import { RequestsTable } from './components';
 import { RequestsProvider } from './context';
 import { useRequests } from './data';
+import * as m from '@/paraglide/messages';
 
 function RequestsContent() {
   const { pageSize, setCursors, setPageSize, resetCursor, paginationArgs, cursorHistory } = usePaginationSearch({
@@ -168,15 +168,13 @@ function RequestsContent() {
 }
 
 export default function RequestsManagement() {
-  const { t } = useTranslation();
-
   return (
     <RequestsProvider>
       <Header fixed>
         <div className='flex flex-1 items-center justify-between'>
           <div>
-            <h2 className='text-xl font-bold tracking-tight'>{t('requests.title')}</h2>
-            <p className='text-muted-foreground text-sm'>{t('requests.description')}</p>
+            <h2 className='text-xl font-bold tracking-tight'>{m["requests.title"]()}</h2>
+            <p className='text-muted-foreground text-sm'>{m["requests.description"]()}</p>
           </div>
         </div>
       </Header>

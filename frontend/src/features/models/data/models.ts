@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { graphqlRequest } from '@/gql/graphql';
 
 import { Model, ModelConnection, CreateModelInput, UpdateModelInput, modelConnectionSchema, modelSchema } from './schema';
+import * as m from '@/paraglide/messages';
 
 const MODELS_QUERY = `
   query GetModels(
@@ -409,7 +409,6 @@ export function useQueryAllModels(args: QueryAllModelsArgs) {
 }
 
 export function useCreateModel() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -419,16 +418,15 @@ export function useCreateModel() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['models'] });
-      toast.success(t('models.messages.createSuccess'));
+      toast.success(m["models.messages.createSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('models.messages.createError', { error: error.message }));
+      toast.error(m["models.messages.createError"]({ error: error.message }));
     },
   });
 }
 
 export function useBulkCreateModels() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -438,16 +436,15 @@ export function useBulkCreateModels() {
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['models'] });
-      toast.success(t('models.messages.bulkCreateSuccess', { count: variables.length }));
+      toast.success(m["models.messages.bulkCreateSuccess"]({ count: variables.length }));
     },
     onError: (error: Error) => {
-      toast.error(t('models.messages.bulkCreateError', { error: error.message }));
+      toast.error(m["models.messages.bulkCreateError"]({ error: error.message }));
     },
   });
 }
 
 export function useUpdateModel() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -457,16 +454,15 @@ export function useUpdateModel() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['models'] });
-      toast.success(t('models.messages.updateSuccess'));
+      toast.success(m["models.messages.updateSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('models.messages.updateError', { error: error.message }));
+      toast.error(m["models.messages.updateError"]({ error: error.message }));
     },
   });
 }
 
 export function useDeleteModel() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -475,16 +471,15 @@ export function useDeleteModel() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['models'] });
-      toast.success(t('models.messages.deleteSuccess'));
+      toast.success(m["models.messages.deleteSuccess"]());
     },
     onError: (error: Error) => {
-      toast.error(t('models.messages.deleteError', { error: error.message }));
+      toast.error(m["models.messages.deleteError"]({ error: error.message }));
     },
   });
 }
 
 export function useBulkDisableModels() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -494,16 +489,15 @@ export function useBulkDisableModels() {
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['models'] });
-      toast.success(t('models.messages.bulkDisableSuccess', { count: variables.length }));
+      toast.success(m["models.messages.bulkDisableSuccess"]({ count: variables.length }));
     },
     onError: (error: Error) => {
-      toast.error(t('models.messages.bulkDisableError', { error: error.message }));
+      toast.error(m["models.messages.bulkDisableError"]({ error: error.message }));
     },
   });
 }
 
 export function useBulkEnableModels() {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -513,10 +507,10 @@ export function useBulkEnableModels() {
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['models'] });
-      toast.success(t('models.messages.bulkEnableSuccess', { count: variables.length }));
+      toast.success(m["models.messages.bulkEnableSuccess"]({ count: variables.length }));
     },
     onError: (error: Error) => {
-      toast.error(t('models.messages.bulkEnableError', { error: error.message }));
+      toast.error(m["models.messages.bulkEnableError"]({ error: error.message }));
     },
   });
 }

@@ -1,14 +1,13 @@
 import { Database } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatNumber } from '@/utils/format-number';
 
 import { useDashboardStats } from '../data/dashboard';
+import * as m from '@/paraglide/messages';
 
 export function TotalRequestsCard() {
-  const { t } = useTranslation();
   const { data: stats, isLoading, error } = useDashboardStats();
 
   const calculateGrowth = (current: number, previous: number): { percentage: number; isPositive: boolean } => {
@@ -48,11 +47,11 @@ export function TotalRequestsCard() {
             <div className='bg-primary/10 text-primary dark:bg-primary/20 rounded-lg p-1.5'>
               <Database className='h-4 w-4' />
             </div>
-            <CardTitle className='text-sm font-medium'>{t('dashboard.stats.allTimeRequests')}</CardTitle>
+            <CardTitle className='text-sm font-medium'>{m["dashboard.stats.allTimeRequests"]()}</CardTitle>
           </div>
         </CardHeader>
         <CardContent>
-          <div className='text-sm text-red-500'>{t('common.loadError')}</div>
+          <div className='text-sm text-red-500'>{m["common.loadError"]()}</div>
         </CardContent>
       </Card>
     );
@@ -65,7 +64,7 @@ export function TotalRequestsCard() {
           <div className='bg-primary/10 text-primary dark:bg-primary/20 rounded-lg p-1.5'>
             <Database className='h-4 w-4' />
           </div>
-          <CardTitle className='text-sm font-medium'>{t('dashboard.stats.allTimeRequests')}</CardTitle>
+          <CardTitle className='text-sm font-medium'>{m["dashboard.stats.allTimeRequests"]()}</CardTitle>
         </div>
       </CardHeader>
       <CardContent>
@@ -78,7 +77,7 @@ export function TotalRequestsCard() {
               {growth.isPositive ? '+' : ''}
               {growth.percentage.toFixed(0)}%
             </span>
-            <span className='text-muted-foreground'>{t('dashboard.stats.vsLastWeek')}</span>
+            <span className='text-muted-foreground'>{m["dashboard.stats.vsLastWeek"]()}</span>
           </div>
         </div>
       </CardContent>

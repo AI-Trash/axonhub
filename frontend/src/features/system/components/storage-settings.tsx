@@ -2,7 +2,6 @@
 
 import { Loader2, Save } from 'lucide-react';
 import React, { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,9 +13,9 @@ import { useSystemContext } from '../context/system-context';
 import { useDefaultDataStorageID, useUpdateDefaultDataStorage } from '../data/system';
 import { StoragePolicySettings } from './storage-policy-settings';
 import { VideoStorageSettings } from './video-storage-settings';
+import * as m from '@/paraglide/messages';
 
 export function StorageSettings() {
-  const { t } = useTranslation();
   const { data: defaultDataStorageID, isLoading: isLoadingDefaultDataStorage } = useDefaultDataStorageID();
   const { data: dataStorages } = useDataStorages({
     first: 100,
@@ -53,7 +52,7 @@ export function StorageSettings() {
     return (
       <div className='flex h-32 items-center justify-center'>
         <Loader2 className='h-6 w-6 animate-spin' />
-        <span className='text-muted-foreground ml-2'>{t('common.loading')}</span>
+        <span className='text-muted-foreground ml-2'>{m["common.loading"]()}</span>
       </div>
     );
   }
@@ -63,15 +62,15 @@ export function StorageSettings() {
       {/* Data Storage Selection */}
       <Card>
         <CardHeader>
-          <CardTitle>{t('system.storage.dataStorage.title')}</CardTitle>
-          <CardDescription>{t('system.storage.dataStorage.description')}</CardDescription>
+          <CardTitle>{m["system.storage.dataStorage.title"]()}</CardTitle>
+          <CardDescription>{m["system.storage.dataStorage.description"]()}</CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
           <div className='grid gap-2'>
-            <Label htmlFor='default-data-storage'>{t('system.storage.dataStorage.label')}</Label>
+            <Label htmlFor='default-data-storage'>{m["system.storage.dataStorage.label"]()}</Label>
             <Select value={selectedDataStorageID} onValueChange={setSelectedDataStorageID} disabled={isLoading}>
               <SelectTrigger id='default-data-storage'>
-                <SelectValue placeholder={t('system.storage.dataStorage.placeholder')} />
+                <SelectValue placeholder={m["system.storage.dataStorage.placeholder"]()} />
               </SelectTrigger>
               <SelectContent>
                 {dataStorages?.edges?.map((edge) => (
@@ -89,12 +88,12 @@ export function StorageSettings() {
                 {isLoading || updateDefaultDataStorage.isPending ? (
                   <>
                     <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                    {t('system.buttons.saving')}
+                    {m["system.buttons.saving"]()}
                   </>
                 ) : (
                   <>
                     <Save className='mr-2 h-4 w-4' />
-                    {t('system.buttons.save')}
+                    {m["system.buttons.save"]()}
                   </>
                 )}
               </Button>

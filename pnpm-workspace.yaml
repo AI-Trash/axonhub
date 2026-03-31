@@ -60,8 +60,6 @@ catalog:
   embla-carousel-react: ^8.6.0
   framer-motion: ^12.38.0
   husky: ^9.1.7
-  i18next: ^26.0.2
-  i18next-browser-languagedetector: ^8.2.1
   js-cookie: ^3.0.5
   knip: ^6.1.0
   lint-staged: ^16.4.0
@@ -75,7 +73,6 @@ catalog:
   react-day-picker: 9.14.0
   react-dom: ^19.2.4
   react-hook-form: ^7.72.0
-  react-i18next: ^17.0.1
   react-markdown: ^10.1.0
   react-top-loading-bar: ^3.0.2
   recharts: ^3.8.1

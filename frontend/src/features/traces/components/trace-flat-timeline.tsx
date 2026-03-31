@@ -3,7 +3,6 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown, ChevronRight, Workflow, ChevronsDownUp, ExternalLink, Filter } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,6 +15,8 @@ import { formatDuration } from '../../../utils/format-duration';
 import type { Segment, RequestMetadata, Span } from '../data/schema';
 import { getSpanDisplayLabels, normalizeSpanType } from '../utils/span-display';
 import { getSpanIcon } from './constant';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 type SpanKind = 'request' | 'response';
 
@@ -201,7 +202,6 @@ function SegmentRow({
   isExpanded,
   onToggleExpand,
 }: SegmentRowProps) {
-  const { t } = useTranslation();
   const hasSpans = spans.length > 0;
 
   const handleViewRequest = (e: React.MouseEvent) => {
@@ -241,7 +241,7 @@ function SegmentRow({
               'flex h-4 w-4 items-center justify-center rounded transition-colors',
               hasSpans ? 'hover:bg-accent text-muted-foreground' : 'opacity-0'
             )}
-            aria-label={hasSpans ? (isExpanded ? t('traces.timeline.aria.collapseRow') : t('traces.timeline.aria.expandRow')) : undefined}
+            aria-label={hasSpans ? (isExpanded ? m["traces.timeline.aria.collapseRow"]() : m["traces.timeline.aria.expandRow"]()) : undefined}
           >
             {hasSpans && (isExpanded ? <ChevronDown className='h-3 w-3' /> : <ChevronRight className='h-3 w-3' />)}
           </button>
@@ -256,9 +256,8 @@ function SegmentRow({
                 {segment.name}
               </Badge>
               <span className='text-muted-foreground text-[11px]'>
-                {t('traces.timeline.summary.duration', {
-                  value: formatDuration(segment.duration),
-                })}
+                {m["traces.timeline.summary.duration"]({
+                  value: formatDuration(segment.duration) })}
               </span>
               {/* {segment.metadata?.totalTokens != null && (
                 <span className='text-muted-foreground text-[11px]'>
@@ -324,7 +323,6 @@ interface SpanRowProps {
 }
 
 function SpanRow({ span, totalDuration, segmentSequentialOffset, onSelectSpan, selectedSpanId }: SpanRowProps) {
-  const { t } = useTranslation();
   const spanSource = span.source.type === 'span' ? span.source : null;
   const isActive = spanSource ? selectedSpanId === spanSource.span.id : false;
 
@@ -354,7 +352,7 @@ function SpanRow({ span, totalDuration, segmentSequentialOffset, onSelectSpan, s
   }
 
   const spanDisplay = getSpanDisplayLabels(spanSource.span, t);
-  const spanKindLabel = t(`traces.common.badges.${spanSource.spanKind}`);
+  const spanKindLabel = dynamicTranslation(`traces.common.badges.${spanSource.spanKind}`);
   const normalizedSpanType = normalizeSpanType(spanSource.span.type);
   const SpanIcon = getSpanIcon(normalizedSpanType);
   const toolType = spanSource.span.value?.toolUse?.type;
@@ -455,7 +453,6 @@ function findLatestEnd(segment: Segment): number | null {
 }
 
 export function TraceFlatTimeline({ trace, onSelectSpan, selectedSpanId }: TraceTimelineProps) {
-  const { t } = useTranslation();
   const [expandedSegments, setExpandedSegments] = useState<Set<string>>(new Set());
   const [allExpanded, setAllExpanded] = useState(true);
   const [selectedSpanTypes, setSelectedSpanTypes] = useState<Set<string>>(new Set());
@@ -647,7 +644,7 @@ export function TraceFlatTimeline({ trace, onSelectSpan, selectedSpanId }: Trace
 
   if (!timelineData) {
     return (
-      <div className='text-muted-foreground flex h-full items-center justify-center text-sm'>{t('traces.timeline.emptyDescription')}</div>
+      <div className='text-muted-foreground flex h-full items-center justify-center text-sm'>{m["traces.timeline.emptyDescription"]()}</div>
     );
   }
 
@@ -659,24 +656,22 @@ export function TraceFlatTimeline({ trace, onSelectSpan, selectedSpanId }: Trace
       <div className='border-border/60 mb-4 border-b pb-4'>
         <div className='flex items-center justify-between'>
           <div className='flex items-center gap-3'>
-            <h2 className='text-lg font-semibold'>{t('traces.timeline.title')}</h2>
+            <h2 className='text-lg font-semibold'>{m["traces.timeline.title"]()}</h2>
             {/* <span className='text-muted-foreground text-sm'>{formatDuration(totalDuration)}</span> */}
             <span className='text-muted-foreground text-sm'>
-              {t('traces.timeline.summary.duration', {
-                value: formatDuration(totalDuration),
-              })}
+              {m["traces.timeline.summary.duration"]({
+                value: formatDuration(totalDuration) })}
             </span>
             {totalTokens != null && (
               <span className='text-muted-foreground text-sm'>
-                {t('traces.timeline.summary.tokenCount', {
-                  value: formatNumber(totalTokens),
-                })}
+                {m["traces.timeline.summary.tokenCount"]({
+                  value: formatNumber(totalTokens) })}
               </span>
             )}
             {totalCachedTokens != null && <span className='text-muted-foreground text-sm'>({formatNumber(totalCachedTokens)} cached)</span>}
           </div>
           <div className='flex items-center gap-3'>
-            <div className='text-muted-foreground text-sm'>{t('traces.timeline.itemsCount', { count: totalItems })}</div>
+            <div className='text-muted-foreground text-sm'>{m["traces.timeline.itemsCount"]({ count: totalItems })}</div>
 
             {/* Span Type Filter */}
             <Popover>
@@ -688,20 +683,20 @@ export function TraceFlatTimeline({ trace, onSelectSpan, selectedSpanId }: Trace
                   className={cn('h-7 gap-1.5 px-2 text-xs', activeFilterCount > 0 && 'text-primary')}
                 >
                   <Filter className='h-3.5 w-3.5' />
-                  {activeFilterCount > 0 ? <span>{activeFilterCount}</span> : <span>{t('traces.timeline.filter.spanType')}</span>}
+                  {activeFilterCount > 0 ? <span>{activeFilterCount}</span> : <span>{m["traces.timeline.filter.spanType"]()}</span>}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className='w-64 p-0' align='end'>
                 <div className='border-border/60 flex items-center justify-between border-b px-3 py-2'>
-                  <span className='text-sm font-medium'>{t('traces.timeline.filter.spanType')}</span>
+                  <span className='text-sm font-medium'>{m["traces.timeline.filter.spanType"]()}</span>
                   <div className='flex gap-2'>
                     {activeFilterCount > 0 && (
                       <Button variant='ghost' size='sm' className='h-7 px-2 text-xs' onClick={handleClearSpanTypeFilter}>
-                        {t('traces.timeline.filter.clear')}
+                        {m["traces.timeline.filter.clear"]()}
                       </Button>
                     )}
                     <Button variant='ghost' size='sm' className='h-7 px-2 text-xs' onClick={handleSelectAllSpanTypes}>
-                      {t('traces.timeline.filter.selectAll')}
+                      {m["traces.timeline.filter.selectAll"]()}
                     </Button>
                   </div>
                 </div>
@@ -724,7 +719,7 @@ export function TraceFlatTimeline({ trace, onSelectSpan, selectedSpanId }: Trace
                       })}
                     </div>
                   ) : (
-                    <div className='text-muted-foreground px-2 py-4 text-center text-sm'>{t('traces.timeline.filter.noSpanTypes')}</div>
+                    <div className='text-muted-foreground px-2 py-4 text-center text-sm'>{m["traces.timeline.filter.noSpanTypes"]()}</div>
                   )}
                 </div>
               </PopoverContent>
@@ -736,7 +731,7 @@ export function TraceFlatTimeline({ trace, onSelectSpan, selectedSpanId }: Trace
               size='sm'
               onClick={handleToggleAll}
               className='bg-primary/10 hover:bg-primary/20 h-8 w-8 rounded-lg p-0'
-              title={allExpanded ? t('traces.timeline.collapseAll') : t('traces.timeline.expandAll')}
+              title={allExpanded ? m["traces.timeline.collapseAll"]() : m["traces.timeline.expandAll"]()}
             >
               <ChevronsDownUp className={cn('text-primary h-4 w-4 transition-transform', !allExpanded && 'rotate-180')} />
             </Button>

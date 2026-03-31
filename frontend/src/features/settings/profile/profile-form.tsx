@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { User, Upload } from 'lucide-react';
 import { useRef } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { z } from 'zod';
 
@@ -16,6 +15,7 @@ import { useMe } from '@/features/auth/data/auth';
 import { graphqlRequest } from '@/gql/graphql';
 import { UPDATE_ME_MUTATION } from '@/gql/users';
 import { useAuthStore } from '@/stores/authStore';
+import * as m from '@/paraglide/messages';
 
 type ProfileFormValues = {
   firstName: string;
@@ -26,7 +26,6 @@ type ProfileFormValues = {
 };
 
 export default function ProfileForm() {
-  const { t } = useTranslation();
   const auth = useAuthStore((state) => state.auth);
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -35,22 +34,22 @@ export default function ProfileForm() {
     firstName: z
       .string()
       .min(1, {
-        message: t('profile.form.validation.firstNameRequired'),
+        message: m["profile.form.validation.firstNameRequired"](),
       })
       .max(50, {
-        message: t('profile.form.validation.firstNameTooLong'),
+        message: m["profile.form.validation.firstNameTooLong"](),
       }),
     lastName: z
       .string()
       .min(1, {
-        message: t('profile.form.validation.lastNameRequired'),
+        message: m["profile.form.validation.lastNameRequired"](),
       })
       .max(50, {
-        message: t('profile.form.validation.lastNameTooLong'),
+        message: m["profile.form.validation.lastNameTooLong"](),
       }),
-    email: z.email(t('profile.form.validation.emailInvalid')),
+    email: z.email(m["profile.form.validation.emailInvalid"]()),
     preferLanguage: z.string().min(1, {
-      message: t('profile.form.validation.languageRequired'),
+      message: m["profile.form.validation.languageRequired"](),
     }),
     avatar: z.string().optional(),
   });
@@ -96,10 +95,10 @@ export default function ProfileForm() {
       // Invalidate and refetch user data
       queryClient.invalidateQueries({ queryKey: ['me'] });
 
-      toast.success(t('profile.form.messages.updateSuccess'));
+      toast.success(m["profile.form.messages.updateSuccess"]());
     },
     onError: (error: any) => {
-      toast.error(t('profile.form.messages.updateError', { error: error.message }));
+      toast.error(m["profile.form.messages.updateError"]({ error: error.message }));
     },
   });
 
@@ -122,7 +121,7 @@ export default function ProfileForm() {
   };
 
   if (isLoading) {
-    return <div>{t('loading')}</div>;
+    return <div>{m["common.loading"]()}</div>;
   }
 
   return (
@@ -134,7 +133,7 @@ export default function ProfileForm() {
           name='avatar'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('profile.form.fields.avatar.label')}</FormLabel>
+              <FormLabel>{m["profile.form.fields.avatar.label"]()}</FormLabel>
               <FormControl>
                 <div className='flex items-center space-x-4'>
                   <Avatar className='h-20 w-20'>
@@ -146,13 +145,13 @@ export default function ProfileForm() {
                   <div className='flex flex-col space-y-2'>
                     <Button type='button' variant='outline' size='sm' onClick={() => fileInputRef.current?.click()}>
                       <Upload className='mr-2 h-4 w-4' />
-                      {t('profile.form.fields.avatar.upload')}
+                      {m["profile.form.fields.avatar.upload"]()}
                     </Button>
                     <input ref={fileInputRef} type='file' accept='image/*' onChange={handleAvatarUpload} className='hidden' />
                   </div>
                 </div>
               </FormControl>
-              <FormDescription>{t('profile.form.fields.avatar.description')}</FormDescription>
+              <FormDescription>{m["profile.form.fields.avatar.description"]()}</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -164,11 +163,11 @@ export default function ProfileForm() {
             name='firstName'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('profile.form.fields.firstName.label')}</FormLabel>
+                <FormLabel>{m["profile.form.fields.firstName.label"]()}</FormLabel>
                 <FormControl>
-                  <Input placeholder={t('profile.form.fields.firstName.placeholder')} {...field} />
+                  <Input placeholder={m["profile.form.fields.firstName.placeholder"]()} {...field} />
                 </FormControl>
-                <FormDescription>{t('profile.form.fields.firstName.description')}</FormDescription>
+                <FormDescription>{m["profile.form.fields.firstName.description"]()}</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -179,11 +178,11 @@ export default function ProfileForm() {
             name='lastName'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('profile.form.fields.lastName.label')}</FormLabel>
+                <FormLabel>{m["profile.form.fields.lastName.label"]()}</FormLabel>
                 <FormControl>
-                  <Input placeholder={t('profile.form.fields.lastName.placeholder')} {...field} />
+                  <Input placeholder={m["profile.form.fields.lastName.placeholder"]()} {...field} />
                 </FormControl>
-                <FormDescription>{t('profile.form.fields.lastName.description')}</FormDescription>
+                <FormDescription>{m["profile.form.fields.lastName.description"]()}</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -195,11 +194,11 @@ export default function ProfileForm() {
           name='email'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('profile.form.fields.email.label')}</FormLabel>
+              <FormLabel>{m["profile.form.fields.email.label"]()}</FormLabel>
               <FormControl>
-                <Input type='email' placeholder={t('profile.form.fields.email.placeholder')} {...field} disabled />
+                <Input type='email' placeholder={m["profile.form.fields.email.placeholder"]()} {...field} disabled />
               </FormControl>
-              <FormDescription>{t('profile.form.fields.email.disabled_description')}</FormDescription>
+              <FormDescription>{m["profile.form.fields.email.disabled_description"]()}</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -210,21 +209,21 @@ export default function ProfileForm() {
           name='preferLanguage'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>{t('profile.form.fields.preferLanguage.label')}</FormLabel>
+              <FormLabel>{m["profile.form.fields.preferLanguage.label"]()}</FormLabel>
               <Select onValueChange={field.onChange} value={field.value}>
                 <FormControl>
                   <SelectTrigger>
-                    <SelectValue placeholder={t('profile.form.fields.preferLanguage.placeholder')} />
+                    <SelectValue placeholder={m["profile.form.fields.preferLanguage.placeholder"]()} />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
-                  <SelectItem value='en'>{t('profile.form.fields.preferLanguage.options.en')}</SelectItem>
-                  <SelectItem value='zh'>{t('profile.form.fields.preferLanguage.options.zh')}</SelectItem>
+                  <SelectItem value='en'>{m["profile.form.fields.preferLanguage.options.en"]()}</SelectItem>
+                  <SelectItem value='zh'>{m["profile.form.fields.preferLanguage.options.zh"]()}</SelectItem>
                   {/* <SelectItem value='ja'>日本語</SelectItem> */}
                   {/* <SelectItem value='ko'>한국어</SelectItem> */}
                 </SelectContent>
               </Select>
-              <FormDescription>{t('profile.form.fields.preferLanguage.description')}</FormDescription>
+              <FormDescription>{m["profile.form.fields.preferLanguage.description"]()}</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -232,7 +231,7 @@ export default function ProfileForm() {
 
         <div className='flex justify-end'>
           <Button type='submit' disabled={updateProfileMutation.isPending}>
-            {updateProfileMutation.isPending ? t('common.buttons.updating') : t('common.buttons.update')}
+            {updateProfileMutation.isPending ? m["common.buttons.updating"]() : m["common.buttons.update"]()}
           </Button>
         </div>
       </form>

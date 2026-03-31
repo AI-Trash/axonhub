@@ -4,15 +4,16 @@ use super::{
         scope_strings, serialize_scope_slugs, ScopeLevel, ScopeSlug, ROLE_LEVEL_PROJECT,
         ROLE_LEVEL_SYSTEM, SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS,
         SCOPE_READ_USERS, SCOPE_READ_SETTINGS, SCOPE_WRITE_API_KEYS, SCOPE_WRITE_SETTINGS,
-        SCOPE_WRITE_USERS,
+        SCOPE_WRITE_REQUESTS, SCOPE_WRITE_USERS,
     },
     graphql_sqlite_support::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
-    identity_service::SqliteIdentityService,
+    identity_service::{SeaOrmIdentityService, SqliteIdentityService},
     openai_v1::{
         NewChannelRecord, NewModelRecord, NewRequestExecutionRecord, NewRequestRecord,
         NewUsageLogRecord, SqliteOpenAiV1Service,
     },
-    request_context_service::SqliteRequestContextService,
+    request_context_service::{SeaOrmRequestContextService, SqliteRequestContextService},
+    seaorm::SeaOrmConnectionFactory,
     shared::{
         SqliteFoundation, DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE,
         PRIMARY_DATA_STORAGE_NAME, graphql_gid,
@@ -23,13 +24,18 @@ use axonhub_http::{
     router as http_router, AdminCapability, AdminError, AdminGraphqlCapability, AdminPort,
     AuthUserContext, HttpState, IdentityCapability, IdentityPort, InitializeSystemRequest,
     OpenAiV1Capability, OpenAiV1ExecutionRequest, OpenAiV1Route, OpenApiGraphqlCapability,
-    OpenAiV1Port, ProjectContext, ProviderEdgeAdminCapability, RequestContextCapability, SignInRequest,
-    SystemBootstrapCapability, SystemBootstrapPort, TraceConfig,
+    OpenAiV1Port, ProjectContext, ProviderEdgeAdminCapability, RequestContextCapability,
+    RequestContextPort, SignInRequest, SystemBootstrapCapability, SystemBootstrapPort,
+    TraceConfig,
 };
 use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::ServiceResponse;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
+use pg_embed::pg_enums::PgAuthMethod;
+use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
+use pg_embed::postgres::{PgEmbed, PgSettings};
+use postgres::{Client as PostgresClient, NoTls};
 use rusqlite::{params, Connection};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -71,6 +77,30 @@ where
 {
     let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
     serde_json::from_slice(&body).unwrap()
+}
+
+async fn assert_graphql_status<B>(response: ServiceResponse<B>, expected_status: StatusCode) -> Value
+where
+    B: MessageBody + 'static,
+    B::Error: std::fmt::Debug,
+{
+    assert_eq!(response.status(), expected_status);
+    read_json_response(response).await
+}
+
+fn assert_graphql_success_field<'a>(json: &'a Value, field: &str) -> &'a Value {
+    assert!(
+        json.get("errors").is_none_or(Value::is_null),
+        "expected GraphQL success for `{field}`, got errors: {}",
+        json.get("errors").cloned().unwrap_or(Value::Null)
+    );
+    &json["data"][field]
+}
+
+fn assert_graphql_error_field<'a>(json: &'a Value, field: &str, expected_message: &str) -> &'a Value {
+    assert_eq!(json["data"][field], Value::Null);
+    assert_eq!(json["errors"][0]["message"], expected_message);
+    &json["errors"][0]
 }
 
 fn router(state: HttpState) -> TestApp {
@@ -143,6 +173,52 @@ struct TestHttpRequest {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("axonhub-{name}-{unique}.db"))
+    }
+
+    fn temp_postgres_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("axonhub-{name}-{unique}"))
+    }
+
+    fn available_tcp_port() -> u16 {
+        TcpListener::bind("127.0.0.1:0")
+            .expect("bind ephemeral port")
+            .local_addr()
+            .expect("read local addr")
+            .port()
+    }
+
+    async fn start_embedded_postgres(name: &str) -> (PgEmbed, String, PathBuf) {
+        let data_dir = temp_postgres_dir(name);
+        let port = available_tcp_port();
+        let settings = PgSettings {
+            database_dir: data_dir.clone(),
+            port,
+            user: "postgres".to_owned(),
+            password: "postgres".to_owned(),
+            auth_method: PgAuthMethod::Plain,
+            persistent: false,
+            timeout: Some(std::time::Duration::from_secs(60)),
+            migration_dir: None,
+        };
+
+        let mut pg = PgEmbed::new(
+            settings,
+            PgFetchSettings {
+                version: PG_V15,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("create embedded postgres");
+        pg.setup().await.expect("setup embedded postgres");
+        pg.start_db().await.expect("start embedded postgres");
+
+        let dsn = pg.full_db_uri("postgres");
+        (pg, dsn, data_dir)
     }
 
     fn test_admin_user() -> AuthUserContext {
@@ -226,6 +302,26 @@ struct TestHttpRequest {
             .unwrap();
     }
 
+    fn insert_api_key(
+        connection: &Connection,
+        user_id: i64,
+        project_id: i64,
+        key: &str,
+        name: &str,
+        key_type: &str,
+        scopes: &[ScopeSlug],
+    ) -> i64 {
+        let scopes_json = serialize_scope_slugs(scopes).unwrap();
+        connection
+            .execute(
+                "INSERT INTO api_keys (user_id, project_id, key, name, type, status, scopes, profiles, deleted_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'enabled', ?6, '{}', 0)",
+                params![user_id, project_id, key, name, key_type, scopes_json],
+            )
+            .unwrap();
+        connection.last_insert_rowid()
+    }
+
     fn signin_token(foundation: Arc<SqliteFoundation>, email: &str, password: &str) -> String {
         let identity = SqliteIdentityService::new(foundation, false);
         identity.admin_signin(&SignInRequest {
@@ -282,6 +378,386 @@ struct TestHttpRequest {
                 codex_trace_enabled: false,
             },
         })
+    }
+
+    fn bootstrap_postgres_auth_fixture(connection: &mut PostgresClient) {
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES ($1, $2, 0)
+                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                &[&crate::foundation::shared::SYSTEM_KEY_SECRET_KEY, &"task4-secret"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO users (
+                    id, created_at, updated_at, deleted_at, email, status, prefer_language,
+                    password, first_name, last_name, avatar, is_owner, scopes
+                ) VALUES (
+                    1, NOW(), NOW(), 0, $1, 'activated', 'en', $2, 'System', 'Owner', '', TRUE, '[]'
+                )
+                ON CONFLICT (id) DO NOTHING",
+                &[
+                    &"owner@example.com",
+                    &hash_password("password123").unwrap(),
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO projects (id, created_at, updated_at, deleted_at, name, description, status)
+                 VALUES (1, NOW(), NOW(), 0, 'Default', '', 'active')
+                 ON CONFLICT (id) DO NOTHING",
+                &[],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO user_projects (id, created_at, updated_at, user_id, project_id, is_owner, scopes)
+                 VALUES (1, NOW(), NOW(), 1, 1, TRUE, '[]')
+                 ON CONFLICT (id) DO NOTHING",
+                &[],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO api_keys (
+                    id, created_at, updated_at, deleted_at, user_id, project_id, key, name, type, status, scopes, profiles
+                ) VALUES
+                    (1, NOW(), NOW(), 0, 1, 1, $1, 'Task4 User Key', 'user', 'enabled', $3, '{}'),
+                    (2, NOW(), NOW(), 0, 1, 1, $2, 'Task4 Service Key', 'service_account', 'enabled', $3, '{}')
+                ON CONFLICT (id) DO NOTHING",
+                &[
+                    &DEFAULT_USER_API_KEY_VALUE,
+                    &DEFAULT_SERVICE_API_KEY_VALUE,
+                    &serialize_scope_slugs(&[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS]).unwrap(),
+                ],
+            )
+            .unwrap();
+    }
+
+    fn sqlite_task4_identity_and_request_context_services(
+        foundation: Arc<SqliteFoundation>,
+    ) -> (SqliteIdentityService, SqliteRequestContextService) {
+        (
+            SqliteIdentityService::new(foundation.clone(), false),
+            SqliteRequestContextService::new(foundation, false),
+        )
+    }
+
+    fn seaorm_task4_identity_and_request_context_services(
+        dsn: &str,
+    ) -> (SeaOrmIdentityService, SeaOrmRequestContextService) {
+        let factory = SeaOrmConnectionFactory::postgres(dsn.to_owned());
+        (
+            SeaOrmIdentityService::new(factory.clone(), false),
+            SeaOrmRequestContextService::new(factory, false),
+        )
+    }
+
+    #[test]
+    fn sqlite_identity_and_request_context_match_task4_auth_contract() {
+        let db_path = temp_sqlite_path("task4-sqlite-auth-context");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap.initialize(&InitializeSystemRequest {
+            owner_email: "owner@example.com".to_owned(),
+            owner_password: "password123".to_owned(),
+            owner_first_name: "System".to_owned(),
+            owner_last_name: "Owner".to_owned(),
+            brand_name: "AxonHub".to_owned(),
+        }).unwrap();
+
+        let (identity, request_context) =
+            sqlite_task4_identity_and_request_context_services(foundation.clone());
+
+        let signin = identity
+            .admin_signin(&SignInRequest {
+                email: "owner@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap();
+        let admin = identity.authenticate_admin_jwt(&signin.token).unwrap();
+        assert_eq!(admin.email, "owner@example.com");
+        assert!(matches!(
+            identity.authenticate_admin_jwt("invalid-token"),
+            Err(axonhub_http::AdminAuthError::InvalidToken)
+        ));
+
+        let user_key = identity
+            .authenticate_api_key(Some(DEFAULT_USER_API_KEY_VALUE), false)
+            .unwrap();
+        assert_eq!(user_key.project.id, 1);
+        assert_eq!(user_key.key_type, axonhub_http::ApiKeyType::User);
+        assert!(matches!(
+            identity.authenticate_api_key(Some("invalid-key"), false),
+            Err(axonhub_http::ApiKeyAuthError::Invalid)
+        ));
+
+        let service_key = identity
+            .authenticate_api_key(Some(DEFAULT_SERVICE_API_KEY_VALUE), false)
+            .unwrap();
+        assert_eq!(service_key.key_type, axonhub_http::ApiKeyType::ServiceAccount);
+
+        let gemini_query = identity
+            .authenticate_gemini_key(Some(DEFAULT_USER_API_KEY_VALUE), None)
+            .unwrap();
+        let gemini_header = identity
+            .authenticate_gemini_key(None, Some(DEFAULT_USER_API_KEY_VALUE))
+            .unwrap();
+        assert_eq!(gemini_query.id, gemini_header.id);
+
+        let project = request_context.resolve_project(1).unwrap().unwrap();
+        assert_eq!(project.name, "Default Project");
+
+        let thread = request_context.resolve_thread(1, " thread-task4 ").unwrap().unwrap();
+        assert_eq!(thread.thread_id, "thread-task4");
+        let thread_reuse = request_context.resolve_thread(1, "thread-task4").unwrap().unwrap();
+        assert_eq!(thread.id, thread_reuse.id);
+        assert!(matches!(
+            request_context.resolve_thread(2, "thread-task4"),
+            Err(axonhub_http::ContextResolveError::Internal)
+        ));
+
+        let trace = request_context
+            .resolve_trace(1, " trace-task4 ", Some(thread.id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(trace.trace_id, "trace-task4");
+        assert_eq!(trace.thread_id, Some(thread.id));
+        let trace_reuse = request_context
+            .resolve_trace(1, "trace-task4", Some(thread.id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(trace.id, trace_reuse.id);
+        let trace_without_thread = request_context
+            .resolve_trace(1, "trace-task4", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(trace.id, trace_without_thread.id);
+        assert!(matches!(
+            request_context.resolve_trace(1, "trace-task4", Some(thread.id + 1)),
+            Err(axonhub_http::ContextResolveError::Internal)
+        ));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn postgres_identity_and_request_context_match_task4_auth_contract() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (mut embedded_pg, dsn, data_dir) =
+            runtime.block_on(start_embedded_postgres("task4-postgres-auth-context"));
+
+        let factory = SeaOrmConnectionFactory::postgres(dsn.clone());
+        runtime.block_on(factory.connect_migrated()).unwrap();
+
+        let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
+        bootstrap_postgres_auth_fixture(&mut connection);
+
+        let (identity, request_context) = seaorm_task4_identity_and_request_context_services(&dsn);
+
+        let signin = identity
+            .admin_signin(&SignInRequest {
+                email: "owner@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap();
+        let admin = identity.authenticate_admin_jwt(&signin.token).unwrap();
+        assert_eq!(admin.email, "owner@example.com");
+        assert!(matches!(
+            identity.authenticate_admin_jwt("invalid-token"),
+            Err(axonhub_http::AdminAuthError::InvalidToken)
+        ));
+
+        let user_key = identity
+            .authenticate_api_key(Some(DEFAULT_USER_API_KEY_VALUE), false)
+            .unwrap();
+        assert_eq!(user_key.project.id, 1);
+        assert_eq!(user_key.key_type, axonhub_http::ApiKeyType::User);
+        assert!(matches!(
+            identity.authenticate_api_key(Some("invalid-key"), false),
+            Err(axonhub_http::ApiKeyAuthError::Invalid)
+        ));
+
+        let service_key = identity
+            .authenticate_api_key(Some(DEFAULT_SERVICE_API_KEY_VALUE), false)
+            .unwrap();
+        assert_eq!(service_key.key_type, axonhub_http::ApiKeyType::ServiceAccount);
+
+        let gemini_query = identity
+            .authenticate_gemini_key(Some(DEFAULT_USER_API_KEY_VALUE), None)
+            .unwrap();
+        let gemini_header = identity
+            .authenticate_gemini_key(None, Some(DEFAULT_USER_API_KEY_VALUE))
+            .unwrap();
+        assert_eq!(gemini_query.id, gemini_header.id);
+
+        let project = request_context.resolve_project(1).unwrap().unwrap();
+        assert_eq!(project.name, "Default");
+
+        let thread = request_context.resolve_thread(1, " thread-task4-pg ").unwrap().unwrap();
+        assert_eq!(thread.thread_id, "thread-task4-pg");
+        let thread_reuse = request_context
+            .resolve_thread(1, "thread-task4-pg")
+            .unwrap()
+            .unwrap();
+        assert_eq!(thread.id, thread_reuse.id);
+        assert!(matches!(
+            request_context.resolve_thread(2, "thread-task4-pg"),
+            Err(axonhub_http::ContextResolveError::Internal)
+        ));
+
+        let trace = request_context
+            .resolve_trace(1, " trace-task4-pg ", Some(thread.id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(trace.trace_id, "trace-task4-pg");
+        assert_eq!(trace.thread_id, Some(thread.id));
+        let trace_reuse = request_context
+            .resolve_trace(1, "trace-task4-pg", Some(thread.id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(trace.id, trace_reuse.id);
+        let trace_without_thread = request_context
+            .resolve_trace(1, "trace-task4-pg", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(trace.id, trace_without_thread.id);
+        assert!(matches!(
+            request_context.resolve_trace(1, "trace-task4-pg", Some(thread.id + 1)),
+            Err(axonhub_http::ContextResolveError::Internal)
+        ));
+
+        runtime.block_on(embedded_pg.stop_db()).unwrap();
+        std::fs::remove_dir_all(data_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn request_context_linkage_conflict_is_fail_open_for_http_debug_context() {
+        let db_path = temp_sqlite_path("task4-request-context-fail-open");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let existing_thread = foundation
+            .request_context_service(false)
+            .resolve_thread(1, "thread-task4-existing")
+            .unwrap()
+            .unwrap();
+        let _existing_trace = foundation
+            .request_context_service(false)
+            .resolve_trace(1, "trace-task4-existing", Some(existing_thread.id))
+            .unwrap()
+            .unwrap();
+        let conflicting_thread = foundation
+            .request_context_service(false)
+            .resolve_thread(1, "thread-task4-conflict")
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            foundation
+                .request_context_service(false)
+                .resolve_trace(1, "trace-task4-existing", Some(conflicting_thread.id)),
+            Err(axonhub_http::ContextResolveError::Internal)
+        ));
+
+        let app = router(HttpState {
+            service_name: "AxonHub".to_owned(),
+            version: "v0.9.20".to_owned(),
+            config_source: None,
+            system_bootstrap: SystemBootstrapCapability::Available {
+                system: Arc::new(bootstrap),
+            },
+            identity: IdentityCapability::Available {
+                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+            },
+            request_context: RequestContextCapability::Available {
+                request_context: Arc::new(SqliteRequestContextService::new(
+                    foundation.clone(),
+                    false,
+                )),
+            },
+            openai_v1: OpenAiV1Capability::Available {
+                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+            },
+            admin: AdminCapability::Available {
+                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            },
+            admin_graphql: AdminGraphqlCapability::Unsupported {
+                message: "test-only unsupported admin graphql".to_owned(),
+            },
+            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+                message: "test-only unsupported openapi graphql".to_owned(),
+            },
+            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+                message: "test-only unsupported provider-edge admin".to_owned(),
+            },
+            allow_no_auth: false,
+            trace_config: TraceConfig {
+                thread_header: Some("AH-Thread-Id".to_owned()),
+                trace_header: Some("AH-Trace-Id".to_owned()),
+                request_header: Some("X-Request-Id".to_owned()),
+                extra_trace_headers: Vec::new(),
+                extra_trace_body_fields: Vec::new(),
+                claude_code_trace_enabled: false,
+                codex_trace_enabled: false,
+            },
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/debug/context")
+                    .method(Method::GET)
+                    .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .header("AH-Thread-Id", "thread-task4-conflict")
+                    .header("AH-Trace-Id", "trace-task4-existing")
+                    .header("X-Request-Id", "req-task4-conflict")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json_response(response).await;
+        assert_eq!(json["auth"]["mode"], "api_key");
+        assert_eq!(json["project"]["id"], 1);
+        assert_eq!(json["requestId"], "req-task4-conflict");
+        assert_eq!(json["thread"]["threadId"], "thread-task4-conflict");
+        assert_eq!(json["trace"], Value::Null);
+
+        let connection = foundation.open_connection(false).unwrap();
+        let trace_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM traces WHERE trace_id = ?1",
+                ["trace-task4-existing"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(trace_count, 1);
+        let persisted_trace_thread: Option<i64> = connection
+            .query_row(
+                "SELECT thread_id FROM traces WHERE trace_id = ?1 LIMIT 1",
+                ["trace-task4-existing"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted_trace_thread, Some(existing_thread.id));
+
+        std::fs::remove_file(db_path).ok();
     }
 
     #[test]
@@ -343,12 +819,17 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let api_key_id = foundation
-            .identities()
-            .find_api_key_by_value(DEFAULT_USER_API_KEY_VALUE)
-            .unwrap()
-            .id;
         let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let connection = foundation.open_connection(true).unwrap();
+        let api_key_id = insert_api_key(
+            &connection,
+            1,
+            project_id,
+            DEFAULT_USER_API_KEY_VALUE,
+            "Foundation Request Usage Key",
+            "user",
+            &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+        );
         let default_project = foundation
             .identities()
             .find_default_project_for_user(1)
@@ -1430,11 +1911,11 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        let denied_backup_json = read_json_response(denied_backup_update).await;
-        assert_eq!(denied_backup_json["data"]["updateAutoBackupSettings"], Value::Null);
-        assert_eq!(
-            denied_backup_json["errors"][0]["message"],
-            "permission denied: owner access required"
+        let denied_backup_json = assert_graphql_status(denied_backup_update, StatusCode::OK).await;
+        assert_graphql_error_field(
+            &denied_backup_json,
+            "updateAutoBackupSettings",
+            "permission denied: owner access required",
         );
 
         let default_settings = SqliteOperationalService::new(foundation.clone())
@@ -1461,11 +1942,11 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        let invalid_backup_json = read_json_response(invalid_backup_update).await;
-        assert_eq!(invalid_backup_json["data"]["updateAutoBackupSettings"], Value::Null);
-        assert_eq!(
-            invalid_backup_json["errors"][0]["message"],
-            "dataStorageID is required when auto backup is enabled"
+        let invalid_backup_json = assert_graphql_status(invalid_backup_update, StatusCode::OK).await;
+        assert_graphql_error_field(
+            &invalid_backup_json,
+            "updateAutoBackupSettings",
+            "dataStorageID is required when auto backup is enabled",
         );
 
         let denied_trigger_backup = app
@@ -1481,11 +1962,11 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        let denied_trigger_backup_json = read_json_response(denied_trigger_backup).await;
-        assert_eq!(denied_trigger_backup_json["data"]["triggerAutoBackup"], Value::Null);
-        assert_eq!(
-            denied_trigger_backup_json["errors"][0]["message"],
-            "permission denied: owner access required"
+        let denied_trigger_backup_json = assert_graphql_status(denied_trigger_backup, StatusCode::OK).await;
+        assert_graphql_error_field(
+            &denied_trigger_backup_json,
+            "triggerAutoBackup",
+            "permission denied: owner access required",
         );
 
         let denied_gc = app
@@ -1501,11 +1982,11 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        let denied_gc_json = read_json_response(denied_gc).await;
-        assert_eq!(denied_gc_json["data"]["triggerGcCleanup"], Value::Null);
-        assert_eq!(
-            denied_gc_json["errors"][0]["message"],
-            "permission denied: requires write:settings scope"
+        let denied_gc_json = assert_graphql_status(denied_gc, StatusCode::OK).await;
+        assert_graphql_error_field(
+            &denied_gc_json,
+            "triggerGcCleanup",
+            "permission denied: requires write:settings scope",
         );
 
         let denied_update_me = app
@@ -1525,9 +2006,8 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        let denied_update_me_json = read_json_response(denied_update_me).await;
-        assert_eq!(denied_update_me_json["data"]["updateMe"], Value::Null);
-        assert_eq!(denied_update_me_json["errors"][0]["message"], "no fields to update");
+        let denied_update_me_json = assert_graphql_status(denied_update_me, StatusCode::OK).await;
+        assert_graphql_error_field(&denied_update_me_json, "updateMe", "no fields to update");
 
         std::fs::remove_file(db_path).ok();
     }
@@ -1992,6 +2472,19 @@ struct TestHttpRequest {
             })
             .unwrap();
 
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task7 Runtime User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+        }
+
         foundation
             .channel_models()
             .upsert_channel(&NewChannelRecord {
@@ -2310,6 +2803,19 @@ struct TestHttpRequest {
             })
             .unwrap();
 
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task9 Failure User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+        }
+
         let failing_channel_id = foundation
             .channel_models()
             .upsert_channel(&NewChannelRecord {
@@ -2524,6 +3030,15 @@ struct TestHttpRequest {
         .to_string();
         {
             let connection = foundation.open_connection(true).unwrap();
+            let api_key_id = insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task9 Quota User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
             connection
                 .execute(
                     "UPDATE api_keys SET profiles = ?2 WHERE key = ?1",
@@ -2531,11 +3046,6 @@ struct TestHttpRequest {
                 )
                 .unwrap();
 
-            let api_key_id = foundation
-                .identities()
-                .find_api_key_by_value(DEFAULT_USER_API_KEY_VALUE)
-                .unwrap()
-                .id;
             let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
             connection
                 .execute(
@@ -2664,6 +3174,19 @@ struct TestHttpRequest {
             })
             .unwrap();
 
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task13 Invalid Image User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+        }
+
         foundation
             .channel_models()
             .upsert_channel(&NewChannelRecord {
@@ -2790,6 +3313,19 @@ struct TestHttpRequest {
                 brand_name: "AxonHub".to_owned(),
             })
             .unwrap();
+
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task8 Failover User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+        }
 
         foundation
             .channel_models()
@@ -2959,6 +3495,19 @@ struct TestHttpRequest {
                 brand_name: "AxonHub".to_owned(),
             })
             .unwrap();
+
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task12 Retry User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+        }
 
         let retry_channel_id = foundation
             .channel_models()
@@ -3142,6 +3691,19 @@ struct TestHttpRequest {
                 brand_name: "AxonHub".to_owned(),
             })
             .unwrap();
+
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task8 Trace Affinity User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+        }
 
         let preferred_channel_id = foundation
             .channel_models()
@@ -3405,6 +3967,19 @@ struct TestHttpRequest {
             })
             .unwrap();
 
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task8 Selection Repair User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+        }
+
         let _failover_primary_id = foundation
             .channel_models()
             .upsert_channel(&NewChannelRecord {
@@ -3601,6 +4176,11 @@ struct TestHttpRequest {
         let db_path = temp_sqlite_path("task12-gemini-doubao");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
         let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let content_dir = std::env::temp_dir().join(format!(
+            "axonhub-task12-video-content-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&content_dir).unwrap();
 
         bootstrap
             .initialize(&InitializeSystemRequest {
@@ -3611,6 +4191,46 @@ struct TestHttpRequest {
                 brand_name: "AxonHub".to_owned(),
             })
             .unwrap();
+
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task12 Gemini Doubao User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+            connection
+                .execute(
+                    "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at)
+                     VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+                    params![
+                        200,
+                        "Task12 Video Storage",
+                        "task12 video storage",
+                        serde_json::json!({"directory": content_dir.to_string_lossy()}).to_string(),
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                    params![
+                        "system_video_storage_settings",
+                        serde_json::json!({
+                            "enabled": true,
+                            "data_storage_id": 200,
+                            "scan_interval_minutes": 1,
+                            "scan_limit": 50
+                        })
+                        .to_string(),
+                    ],
+                )
+                .unwrap();
+        }
 
         foundation
             .channel_models()
@@ -3799,7 +4419,10 @@ struct TestHttpRequest {
         assert_eq!(doubao_get.status(), StatusCode::OK);
         let doubao_get_json = read_json_response(doubao_get).await;
         assert_eq!(doubao_get_json["id"], "video_mock_task");
-        assert_eq!(doubao_get_json["content"]["video_url"], "https://example.com/generated.mp4");
+        assert_eq!(
+            doubao_get_json["content"]["video_url"],
+            format!("{}/generated.mp4", mock_openai_server_url())
+        );
 
         let doubao_delete = app
             .clone()
@@ -3875,6 +4498,50 @@ struct TestHttpRequest {
         assert_eq!(doubao_channels.len(), 3);
         assert!(doubao_channels.iter().all(|channel_id| *channel_id == doubao_channels[0]));
 
+        let doubao_video_request: (i64, i64, i64, Option<String>, Option<i64>, Option<String>) = connection
+            .query_row(
+                "SELECT id, project_id, content_saved, content_storage_key, content_storage_id, content_saved_at
+                 FROM requests WHERE format = 'doubao/video_get' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(doubao_video_request.2, 1);
+        let content_key = doubao_video_request.3.clone().unwrap_or_else(|| {
+            let rows: Vec<(String, i64, Option<String>, Option<i64>, Option<String>)> = connection
+                .prepare(
+                    "SELECT format, content_saved, content_storage_key, content_storage_id, content_saved_at
+                     FROM requests WHERE format LIKE 'doubao/%' ORDER BY id ASC",
+                )
+                .unwrap()
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            panic!("missing Doubao content key; rows={rows:?}");
+        });
+        assert_eq!(doubao_video_request.4, Some(200));
+        assert!(content_key.ends_with("/video/generated.mp4"));
+        assert!(doubao_video_request.5.as_ref().is_some_and(|value| !value.is_empty()));
+        let saved_video_path = content_dir.join(content_key.trim_start_matches('/'));
+        assert_eq!(fs::read(&saved_video_path).unwrap(), b"mock-video-bytes");
+
+        let download = SqliteAdminService::new(foundation.clone())
+            .download_request_content(doubao_video_request.1, doubao_video_request.0, test_admin_user())
+            .unwrap();
+        assert_eq!(download.filename, "generated.mp4");
+        assert_eq!(download.bytes, b"mock-video-bytes");
+
+        fs::remove_dir_all(content_dir).ok();
         std::fs::remove_file(db_path).ok();
     }
 
@@ -3912,40 +4579,52 @@ struct TestHttpRequest {
                         let request_count = request_counts.entry(request_key).or_insert(0);
                         *request_count += 1;
                         let request_count = *request_count;
+                        if method == "GET" && path == "/v1/generated.mp4" {
+                            let response = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                b"mock-video-bytes".len(),
+                                String::from_utf8_lossy(b"mock-video-bytes")
+                            );
+                            let _ = stream.write_all(response.as_bytes());
+                            continue;
+                        }
                         let body = if path.contains("/primary-fail/") && path.ends_with("/chat/completions") {
-                            r#"{"error":{"message":"primary unavailable"}}"#
+                            r#"{"error":{"message":"primary unavailable"}}"#.to_owned()
                         } else if path.contains("/retry-twice-ok/") && path.ends_with("/chat/completions") {
                             if request_count <= 2 {
-                                r#"{"error":{"message":"retry me later"}}"#
+                                r#"{"error":{"message":"retry me later"}}"#.to_owned()
                             } else {
-                                r#"{"id":"chatcmpl_retry_same_channel","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"retried"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#
+                                r#"{"id":"chatcmpl_retry_same_channel","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"retried"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#.to_owned()
                             }
                         } else if path.contains("/compressed/") && path.ends_with("/chat/completions") {
                             if request_lower.contains("accept-encoding: identity") {
-                                r#"{"id":"chatcmpl_compressed","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"compressed"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#
+                                r#"{"id":"chatcmpl_compressed","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"compressed"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#.to_owned()
                             } else {
-                                r#"{"error":{"message":"identity encoding required"}}"#
+                                r#"{"error":{"message":"identity encoding required"}}"#.to_owned()
                             }
                         } else if method == "GET" && path.ends_with("/videos/video_mock_task") {
-                            r#"{"id":"video_mock_task","model":"seedance-1.0","status":"succeeded","content":{"video_url":"https://example.com/generated.mp4"},"created_at":1,"completed_at":2}"#
+                            format!(
+                                "{{\"id\":\"video_mock_task\",\"model\":\"seedance-1.0\",\"status\":\"succeeded\",\"content\":{{\"video_url\":\"{}/generated.mp4\"}},\"created_at\":1,\"completed_at\":2}}",
+                                mock_openai_server_url()
+                            )
                         } else if method == "DELETE" && path.ends_with("/videos/video_mock_task") {
-                            r#"{"id":"video_mock_task"}"#
+                            "{\"id\":\"video_mock_task\"}".to_owned()
                         } else if method == "POST" && path.ends_with("/videos") {
-                            r#"{"id":"video_mock_task"}"#
+                            "{\"id\":\"video_mock_task\"}".to_owned()
                         } else if path.contains("/backup/") && path.ends_with("/chat/completions") {
-                            r#"{"id":"chatcmpl_backup","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"backup"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#
+                            "{\"id\":\"chatcmpl_backup\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"backup\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}".to_owned()
                         } else if path.contains("/affinity-a/") && path.ends_with("/chat/completions") {
-                            r#"{"id":"chatcmpl_affinity_a","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"affinity-a"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#
+                            "{\"id\":\"chatcmpl_affinity_a\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"affinity-a\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}".to_owned()
                         } else if path.contains("/affinity-b/") && path.ends_with("/chat/completions") {
-                            r#"{"id":"chatcmpl_affinity_b","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"affinity-b"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#
+                            "{\"id\":\"chatcmpl_affinity_b\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"affinity-b\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}".to_owned()
                         } else if path.ends_with("/chat/completions") {
-                            r#"{"id":"chatcmpl_mock","object":"chat.completion","created":1,"model":"gpt-4o","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":2},"completion_tokens_details":{"reasoning_tokens":1}}}"#
+                            "{\"id\":\"chatcmpl_mock\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":1}}}".to_owned()
                         } else if path.ends_with("/responses") {
-                            r#"{"id":"resp_mock","object":"response","created_at":1,"model":"gpt-4o","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi","annotations":[]}],"status":"completed"}],"usage":{"input_tokens":12,"input_tokens_details":{"cached_tokens":3,"write_cached_tokens":4,"write_cached_5min_tokens":4},"output_tokens":4,"output_tokens_details":{"reasoning_tokens":1,"accepted_prediction_tokens":2,"rejected_prediction_tokens":3},"total_tokens":16}}"#
+                            "{\"id\":\"resp_mock\",\"object\":\"response\",\"created_at\":1,\"model\":\"gpt-4o\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\",\"annotations\":[]}],\"status\":\"completed\"}],\"usage\":{\"input_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":3,\"write_cached_tokens\":4,\"write_cached_5min_tokens\":4},\"output_tokens\":4,\"output_tokens_details\":{\"reasoning_tokens\":1,\"accepted_prediction_tokens\":2,\"rejected_prediction_tokens\":3},\"total_tokens\":16}}".to_owned()
                         } else if path.ends_with("/images/generations") {
-                            r#"{"created":1,"data":[{"b64_json":"aGVsbG8=","revised_prompt":"draw a cat"}],"usage":{"prompt_tokens":20,"completion_tokens":30,"total_tokens":50,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":2}}}"#
+                            "{\"created\":1,\"data\":[{\"b64_json\":\"aGVsbG8=\",\"revised_prompt\":\"draw a cat\"}],\"usage\":{\"prompt_tokens\":20,\"completion_tokens\":30,\"total_tokens\":50,\"prompt_tokens_details\":{\"cached_tokens\":4},\"completion_tokens_details\":{\"reasoning_tokens\":2}}}".to_owned()
                         } else {
-                            r#"{"object":"list","data":[{"object":"embedding","embedding":[0.1,0.2],"index":0}],"model":"gpt-4o","usage":{"prompt_tokens":8,"total_tokens":8}}"#
+                            "{\"object\":\"list\",\"data\":[{\"object\":\"embedding\",\"embedding\":[0.1,0.2],\"index\":0}],\"model\":\"gpt-4o\",\"usage\":{\"prompt_tokens\":8,\"total_tokens\":8}}".to_owned()
                         };
                         let status_line = if path.contains("/primary-fail/") && path.ends_with("/chat/completions") {
                             "HTTP/1.1 503 Service Unavailable"
@@ -4240,6 +4919,24 @@ struct TestHttpRequest {
             .unwrap();
 
         let connection = foundation.open_connection(true).unwrap();
+        insert_api_key(
+            &connection,
+            1,
+            1,
+            DEFAULT_SERVICE_API_KEY_VALUE,
+            "Task15 Service Key",
+            "service_account",
+            &[SCOPE_WRITE_API_KEYS],
+        );
+        insert_api_key(
+            &connection,
+            1,
+            1,
+            DEFAULT_USER_API_KEY_VALUE,
+            "Task15 User Key",
+            "user",
+            &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+        );
         connection
             .execute(
                 "UPDATE api_keys SET scopes = ?2 WHERE key = ?1",
@@ -4265,10 +4962,11 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        let allowed_json = read_json_response(allowed).await;
-        assert_eq!(allowed_json["data"]["createLLMAPIKey"]["name"], "SDK Key");
+        let allowed_json = assert_graphql_status(allowed, StatusCode::OK).await;
+        let allowed_key = assert_graphql_success_field(&allowed_json, "createLLMAPIKey");
+        assert_eq!(allowed_key["name"], "SDK Key");
         assert_eq!(
-            allowed_json["data"]["createLLMAPIKey"]["scopes"][0],
+            allowed_key["scopes"][0],
             SCOPE_READ_CHANNELS.as_str()
         );
 
@@ -4295,9 +4993,8 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        let denied_json = read_json_response(denied).await;
-        assert_eq!(denied_json["data"]["createLLMAPIKey"], Value::Null);
-        assert_eq!(denied_json["errors"][0]["message"], "permission denied");
+        let denied_json = assert_graphql_status(denied, StatusCode::OK).await;
+        assert_graphql_error_field(&denied_json, "createLLMAPIKey", "permission denied");
 
         let invalid_user_key = app
             .oneshot(

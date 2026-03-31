@@ -1,7 +1,6 @@
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import { useCallback, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 
 import { DataTableColumnHeader } from '@/components/data-table-column-header';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +11,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { PromptProtectionRule } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
 import { RulesStatusDialog } from './rules-status-dialog';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 function StatusSwitchCell({ row }: { row: Row<PromptProtectionRule> }) {
   const rule = row.original;
@@ -30,7 +31,7 @@ function StatusSwitchCell({ row }: { row: Row<PromptProtectionRule> }) {
   );
 }
 
-export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrite: boolean = true): ColumnDef<PromptProtectionRule>[] => [
+export const createColumns = (t: (key: string, params?: Record<string, unknown>) => string, canWrite: boolean = true): ColumnDef<PromptProtectionRule>[] => [
   ...(canWrite
     ? [
         {
@@ -39,7 +40,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
             <Checkbox
               checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')}
               onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-              aria-label={t('common.columns.selectAll')}
+              aria-label={m["common.columns.selectAll"]()}
               className='translate-y-[2px]'
             />
           ),
@@ -47,7 +48,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
             <Checkbox
               checked={row.getIsSelected()}
               onCheckedChange={(value) => row.toggleSelected(!!value)}
-              aria-label={t('common.columns.selectRow')}
+              aria-label={m["common.columns.selectRow"]()}
               className='translate-y-[2px]'
             />
           ),
@@ -58,7 +59,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     : []),
   {
     accessorKey: 'name',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.name')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.name"]()} />,
     cell: ({ row }) => <div className='truncate font-medium'>{row.original.name}</div>,
     meta: {
       className: 'min-w-40',
@@ -68,7 +69,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     accessorKey: 'description',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.description')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.description"]()} />,
     cell: ({ row }) => {
       const description = row.original.description;
       return (
@@ -87,7 +88,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     accessorKey: 'pattern',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('promptProtectionRules.columns.pattern')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["promptProtectionRules.columns.pattern"]()} />,
     cell: ({ row }) => (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -103,17 +104,17 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     id: 'action',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('promptProtectionRules.columns.action')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["promptProtectionRules.columns.action"]()} />,
     cell: ({ row }) => (
       <Badge variant={row.original.settings.action === 'reject' ? 'destructive' : 'secondary'}>
-        {t(`promptProtectionRules.actions.${row.original.settings.action}`)}
+        {dynamicTranslation(`promptProtectionRules.actions.${row.original.settings.action}`)}
       </Badge>
     ),
     enableSorting: false,
   },
   {
     id: 'scopes',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('promptProtectionRules.columns.scopes')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["promptProtectionRules.columns.scopes"]()} />,
     cell: ({ row }) => {
       const scopes = row.original.settings.scopes || [];
       return <Badge variant='outline'>{scopes.length}</Badge>;
@@ -122,14 +123,14 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     accessorKey: 'status',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.status')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.status"]()} />,
     cell: StatusSwitchCell,
     enableSorting: false,
     enableHiding: false,
   },
   {
     accessorKey: 'createdAt',
-    header: ({ column }) => <DataTableColumnHeader column={column} title={t('common.columns.createdAt')} />,
+    header: ({ column }) => <DataTableColumnHeader column={column} title={m["common.columns.createdAt"]()} />,
     cell: ({ row }) => {
       const date = row.original.createdAt;
       return (
@@ -145,7 +146,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   },
   {
     id: 'actions',
-    header: t('common.columns.actions'),
+    header: m["common.columns.actions"](),
     cell: DataTableRowActions,
     meta: {
       className: 'w-[56px] min-w-[56px] pr-3 pl-0 sticky right-0 bg-inherit',

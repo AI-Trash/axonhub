@@ -8,7 +8,7 @@ use crate::ports::{
 use crate::state::{
     IdentityCapability, RequestAuthContext, RequestContextCapability, RequestContextState,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -363,14 +363,7 @@ pub(crate) fn enrich_request_context(
                     Ok(thread) => {
                         context.thread = thread;
                     }
-                    Err(ContextResolveError::Internal) => {
-                        return Err(ErrorResponseSpec::new(
-                            500,
-                            "Internal Server Error",
-                            "Failed to resolve thread context",
-                        )
-                        .into())
-                    }
+                    Err(ContextResolveError::Internal) => {}
                 }
             }
 
@@ -380,14 +373,7 @@ pub(crate) fn enrich_request_context(
                     Ok(trace) => {
                         context.trace = trace;
                     }
-                    Err(ContextResolveError::Internal) => {
-                        return Err(ErrorResponseSpec::new(
-                            500,
-                            "Internal Server Error",
-                            "Failed to resolve trace context",
-                        )
-                        .into())
-                    }
+                    Err(ContextResolveError::Internal) => {}
                 }
             }
         }
@@ -436,6 +422,135 @@ pub(crate) fn extract_trace_id(headers: &TransportHeaders, config: &TraceConfig)
                 .iter()
                 .find_map(|header| request_header_value(headers, header).map(ToOwned::to_owned))
         })
+}
+
+#[allow(dead_code)]
+pub(crate) fn trace_body_inspection_required(
+    config: &TraceConfig,
+    request_method: &str,
+    request_path: &str,
+) -> bool {
+    !config.extra_trace_body_fields.is_empty()
+        || (config.claude_code_trace_enabled
+            && is_claude_code_trace_request(request_method, request_path))
+}
+
+#[allow(dead_code)]
+pub(crate) fn extract_request_trace_id(
+    headers: &TransportHeaders,
+    config: &TraceConfig,
+    request_method: &str,
+    request_path: &str,
+    request_body: Option<&[u8]>,
+) -> Option<String> {
+    extract_trace_id(headers, config).or_else(|| {
+        let parsed_body = parse_request_json_body(request_body);
+
+        if config.claude_code_trace_enabled
+            && is_claude_code_trace_request(request_method, request_path)
+        {
+            if let Some(trace_id) = parsed_body
+                .as_ref()
+                .and_then(|body| json_path_value(body, "metadata.user_id"))
+                .and_then(|user_id| parse_claude_code_trace_id(user_id.as_str()))
+            {
+                return Some(trace_id);
+            }
+        }
+
+        if config.codex_trace_enabled {
+            if let Some(trace_id) = request_header_value(headers, "Session_id") {
+                return Some(trace_id.to_owned());
+            }
+        }
+
+        let body = parsed_body.as_ref()?;
+        config
+            .extra_trace_body_fields
+            .iter()
+            .find_map(|field| json_path_value(body, field))
+    })
+}
+
+fn parse_request_json_body(request_body: Option<&[u8]>) -> Option<Value> {
+    let body = request_body?;
+    if body.is_empty() {
+        return None;
+    }
+
+    serde_json::from_slice(body).ok()
+}
+
+fn is_claude_code_trace_request(request_method: &str, request_path: &str) -> bool {
+    request_method.eq_ignore_ascii_case("POST")
+        && (request_path.ends_with("/anthropic/v1/messages")
+            || request_path.ends_with("/v1/messages"))
+}
+
+fn json_path_value(value: &Value, path: &str) -> Option<String> {
+    let mut current = value;
+    for segment in path.split('.').filter(|segment| !segment.is_empty()) {
+        current = current.get(segment)?;
+    }
+
+    match current {
+        Value::String(value) if !value.is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn parse_claude_code_trace_id(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if raw.starts_with('{') {
+        let parsed: ClaudeCodeUserId = serde_json::from_str(raw).ok()?;
+        let session_id = parsed.session_id.trim();
+        return (!session_id.is_empty()).then(|| session_id.to_owned());
+    }
+
+    let (device_id, session_id) = raw.split_once("_account__session_")?;
+    let device_id = device_id.strip_prefix("user_")?;
+    if !is_hex_device_id(device_id) || !is_lower_hex_uuid(session_id) {
+        return None;
+    }
+
+    Some(session_id.to_owned())
+}
+
+fn is_hex_device_id(value: &str) -> bool {
+    value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+fn is_lower_hex_uuid(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+
+    for (index, character) in value.chars().enumerate() {
+        let is_hyphen = matches!(index, 8 | 13 | 18 | 23);
+        if is_hyphen {
+            if character != '-' {
+                return false;
+            }
+            continue;
+        }
+
+        if !matches!(character, '0'..='9' | 'a'..='f') {
+            return false;
+        }
+    }
+
+    true
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeCodeUserId {
+    session_id: String,
 }
 
 pub(crate) fn parse_project_guid(raw: &str) -> Option<i64> {

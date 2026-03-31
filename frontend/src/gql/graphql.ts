@@ -1,7 +1,7 @@
 import { toast } from 'sonner';
 
-import i18n from '@/lib/i18n';
 import { getTokenFromStorage, removeTokenFromStorage } from '@/stores/authStore';
+import * as m from '@/paraglide/messages';
 
 export class GraphQLRequestError extends Error {
   status?: number;
@@ -79,7 +79,7 @@ export async function graphqlRequest<T>(
   if (response.status === 401 || response.status === 403) {
     // Clear token and redirect to login
     removeTokenFromStorage();
-    toast.error(i18n.t('common.errors.sessionExpiredSignIn'));
+    toast.error(m["common.errors.sessionExpiredSignIn"]());
     window.location.href = '/sign-in';
     throw new GraphQLRequestError('Unauthorized', { status: response.status, isAuthError: true });
   }
@@ -119,7 +119,7 @@ export async function graphqlRequest<T>(
     if (authError) {
       // Clear token and redirect to login
       removeTokenFromStorage();
-      toast.error(i18n.t('common.errors.sessionExpiredSignIn'));
+      toast.error(m["common.errors.sessionExpiredSignIn"]());
       window.location.href = '/sign-in';
       throw new GraphQLRequestError('Unauthorized', { status: 401, isAuthError: true });
     }

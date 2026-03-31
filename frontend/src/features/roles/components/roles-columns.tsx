@@ -2,15 +2,15 @@
 
 import { ColumnDef, Row, Table } from '@tanstack/react-table';
 import { format } from 'date-fns';
-import { useTranslation } from 'react-i18next';
 
 import { Checkbox } from '@/components/ui/checkbox';
 
 import { Role } from '../data/schema';
 import { DataTableRowActions } from './data-table-row-actions';
 import { ScopesCell } from './scopes-cell';
+import * as m from '@/paraglide/messages';
 
-export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrite: boolean = false): ColumnDef<Role>[] => {
+export const createColumns = (t: (key: string, params?: Record<string, unknown>) => string, canWrite: boolean = false): ColumnDef<Role>[] => {
   const columns: ColumnDef<Role>[] = [
     {
       id: 'search',
@@ -32,7 +32,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
         <Checkbox
           checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')}
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label={t('common.columns.selectAll')}
+          aria-label={m["common.columns.selectAll"]()}
           className='translate-y-[2px]'
         />
       ),
@@ -40,7 +40,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
         <Checkbox
           checked={row.getIsSelected()}
           onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label={t('common.columns.selectRow')}
+          aria-label={m["common.columns.selectRow"]()}
           className='translate-y-[2px]'
         />
       ),
@@ -53,7 +53,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
   columns.push(
     {
       accessorKey: 'name',
-      header: t('common.columns.name'),
+      header: m["common.columns.name"](),
       cell: ({ row }) => {
         const name = row.getValue('name') as string;
         return <div className='font-medium'>{name}</div>;
@@ -61,7 +61,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'scopes',
-      header: t('roles.columns.scopes'),
+      header: m["roles.columns.scopes"](),
       cell: ({ row }) => {
         const scopes = row.getValue('scopes') as string[];
         return <ScopesCell scopes={scopes} />;
@@ -69,7 +69,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'createdAt',
-      header: t('common.columns.createdAt'),
+      header: m["common.columns.createdAt"](),
       cell: ({ row }) => {
         const date = row.getValue('createdAt') as Date;
         return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
@@ -77,7 +77,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       accessorKey: 'updatedAt',
-      header: t('common.columns.updatedAt'),
+      header: m["common.columns.updatedAt"](),
       cell: ({ row }) => {
         const date = row.getValue('updatedAt') as Date;
         return <div className='text-muted-foreground'>{format(date, 'yyyy-MM-dd HH:mm')}</div>;
@@ -85,7 +85,7 @@ export const createColumns = (t: ReturnType<typeof useTranslation>['t'], canWrit
     },
     {
       id: 'actions',
-      header: t('common.columns.actions'),
+      header: m["common.columns.actions"](),
       cell: ({ row }) => <DataTableRowActions row={row} />,
     }
   );

@@ -1,6 +1,7 @@
-import { useTranslation } from 'react-i18next';
 
 import { Badge } from '@/components/ui/badge';
+import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 interface ChannelModel {
   requestModel: string;
@@ -22,8 +23,6 @@ interface ChannelModelsListProps {
 }
 
 export function ChannelModelsList({ channels, emptyMessage }: ChannelModelsListProps) {
-  const { t } = useTranslation();
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'enabled':
@@ -50,7 +49,7 @@ export function ChannelModelsList({ channels, emptyMessage }: ChannelModelsListP
 
   if (channels.length === 0) {
     return (
-      <p className='text-muted-foreground py-8 text-center text-sm'>{emptyMessage || t('models.dialogs.association.noConnections')}</p>
+      <p className='text-muted-foreground py-8 text-center text-sm'>{emptyMessage || m["models.dialogs.association.noConnections"]()}</p>
     );
   }
 
@@ -65,7 +64,7 @@ export function ChannelModelsList({ channels, emptyMessage }: ChannelModelsListP
                 {t(`channels.types.${conn.channel.type}`, conn.channel.type)}
               </Badge>
               <Badge variant='outline' className={`h-5 px-1.5 text-[10px] font-normal ${getStatusColor(conn.channel.status)}`}>
-                {t(`channels.status.${conn.channel.status}`)}
+                {dynamicTranslation(`channels.status.${conn.channel.status}`)}
               </Badge>
             </div>
           </div>
