@@ -293,21 +293,27 @@ fn preview_parse_get_and_validation_keep_current_contract() {
     invalid.metrics.exporter.exporter_type = "bogus".to_owned();
     invalid.server.cors.enabled = true;
     invalid.server.cors.allowed_origins.clear();
+    invalid.server.cors.allowed_methods = vec!["INVALID_METHOD".to_owned()];
+    invalid.server.cors.allowed_headers = vec!["Invalid@Header".to_owned()];
+    invalid.server.cors.exposed_headers = vec!["X-Valid".to_owned(), "Invalid Header".to_owned()];
 
     assert_eq!(
-        invalid.validation_errors(),
-        vec![
-            "server.port must be between 1 and 65535".to_owned(),
-            "db.dsn cannot be empty".to_owned(),
-            "unsupported db.dialect 'oracle': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb".to_owned(),
-            "log.name cannot be empty".to_owned(),
-            "log.encoding must be one of: json, console".to_owned(),
-            "log.output must be one of: stdio, file".to_owned(),
-            "cache.mode must be one of: memory, redis, two-level".to_owned(),
-            "metrics.exporter.type must be one of: stdout, otlpgrpc, otlphttp when metrics are enabled".to_owned(),
-            "server.cors.allowed_origins cannot be empty when CORS is enabled".to_owned(),
-        ]
-    );
+         invalid.validation_errors(),
+         vec![
+             "server.port must be between 1 and 65535".to_owned(),
+             "db.dsn cannot be empty".to_owned(),
+             "unsupported db.dialect 'oracle': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb".to_owned(),
+             "log.name cannot be empty".to_owned(),
+             "log.encoding must be one of: json, console".to_owned(),
+             "log.output must be one of: stdio, file".to_owned(),
+             "cache.mode must be one of: memory, redis, two-level".to_owned(),
+             "metrics.exporter.type must be one of: stdout, otlpgrpc, otlphttp when metrics are enabled".to_owned(),
+             "server.cors.allowed_origins cannot be empty when CORS is enabled".to_owned(),
+             "server.cors.allowed_methods contains invalid method 'INVALID_METHOD'".to_owned(),
+             "server.cors.allowed_headers contains invalid header name 'Invalid@Header'".to_owned(),
+            "server.cors.exposed_headers contains invalid header name 'Invalid Header'".to_owned(),
+         ]
+     );
 }
 
 #[test]
@@ -552,6 +558,54 @@ fn ensure_loadable_rejects_invalid_supported_value_shapes() {
     assert_eq!(
         config.ensure_loadable().unwrap_err().to_string(),
         "invalid metrics exporter type 'bogus'"
+    );
+}
+
+#[test]
+fn ensure_loadable_rejects_invalid_cors_methods_and_headers() {
+    let mut config = Config::default();
+    config.server.cors.enabled = true;
+    config.server.cors.allowed_origins = vec!["https://allowed.example".to_owned()];
+    config.server.cors.allowed_methods = vec!["INV@LID".to_owned()];
+    assert_eq!(
+        config.ensure_loadable().unwrap_err().to_string(),
+        "server.cors.allowed_methods contains invalid method 'INV@LID'"
+    );
+
+    let mut config = Config::default();
+    config.server.cors.enabled = true;
+    config.server.cors.allowed_origins = vec!["https://allowed.example".to_owned()];
+    config.server.cors.allowed_headers = vec!["Invalid@Header".to_owned()];
+    assert_eq!(
+        config.ensure_loadable().unwrap_err().to_string(),
+        "server.cors.allowed_headers contains invalid header name 'Invalid@Header'"
+    );
+
+    let mut config = Config::default();
+    config.server.cors.enabled = true;
+    config.server.cors.allowed_origins = vec!["https://allowed.example".to_owned()];
+    config.server.cors.exposed_headers = vec!["Invalid Header".to_owned()];
+    assert_eq!(
+        config.ensure_loadable().unwrap_err().to_string(),
+        "server.cors.exposed_headers contains invalid header name 'Invalid Header'"
+    );
+
+    let mut config = Config::default();
+    config.server.cors.enabled = true;
+    config.server.cors.allowed_origins = vec!["https://allowed.example".to_owned()];
+    config.server.cors.allowed_methods = vec!["".to_owned()];
+    assert_eq!(
+        config.ensure_loadable().unwrap_err().to_string(),
+        "server.cors.allowed_methods contains empty method"
+    );
+
+    let mut config = Config::default();
+    config.server.cors.enabled = true;
+    config.server.cors.allowed_origins = vec!["https://allowed.example".to_owned()];
+    config.server.cors.allowed_headers = vec!["".to_owned()];
+    assert_eq!(
+        config.ensure_loadable().unwrap_err().to_string(),
+        "server.cors.allowed_headers contains empty header name"
     );
 }
 

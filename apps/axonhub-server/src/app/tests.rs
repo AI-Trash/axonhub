@@ -22,8 +22,9 @@ use crate::foundation::{
     system::SqliteBootstrapService,
 };
 use axonhub_http::{
-    router as http_router, HttpState, InitializeSystemRequest, ProviderEdgeAdminCapability,
+    HttpCorsSettings, HttpState, InitializeSystemRequest, ProviderEdgeAdminCapability,
     SystemBootstrapCapability, SystemBootstrapPort, SystemInitializeError, TraceConfig,
+    router as http_router,
 };
 use axonhub_http::{
     AdminAuthError, ApiKeyAuthError, AuthApiKeyContext, AuthUserContext, ContextResolveError,
@@ -47,6 +48,10 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+fn disabled_test_cors() -> HttpCorsSettings {
+    HttpCorsSettings::default()
+}
 
 #[derive(Clone)]
 struct TestApp {
@@ -1121,6 +1126,7 @@ async fn postgres_router_signin_and_debug_context_routes_work_for_auth_and_conte
             message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
         },
         allow_no_auth: false,
+        cors: disabled_test_cors(),
         trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -1333,31 +1339,27 @@ fn postgres_admin_request_content_route_downloads_seeded_content() {
     std::fs::create_dir_all(full_path.parent().unwrap()).unwrap();
     std::fs::write(&full_path, b"postgres-video-content").unwrap();
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-        identity: build_identity_capability("postgres", &dsn, false),
-        request_context: build_request_context_capability("postgres", &dsn, false),
-        openai_v1: build_openai_v1_capability("postgres", &dsn),
-        admin: build_admin_capability("postgresql", &dsn),
-        admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-        openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
+    identity: build_identity_capability("postgres", &dsn, false),
+    request_context: build_request_context_capability("postgres", &dsn, false),
+    openai_v1: build_openai_v1_capability("postgres", &dsn),
+    admin: build_admin_capability("postgresql", &dsn),
+    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
+    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let response = runtime
         .block_on(
@@ -1475,31 +1477,27 @@ async fn postgres_admin_graphql_route_executes_current_subset() {
     .join()
     .expect("postgres model seed thread");
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-        identity: build_identity_capability("postgres", &dsn, false),
-        request_context: build_request_context_capability("postgres", &dsn, false),
-        openai_v1: build_openai_v1_capability("postgres", &dsn),
-        admin: build_admin_capability("postgres", &dsn),
-        admin_graphql: build_admin_graphql_capability("postgresql", &dsn),
-        openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
+    identity: build_identity_capability("postgres", &dsn, false),
+    request_context: build_request_context_capability("postgres", &dsn, false),
+    openai_v1: build_openai_v1_capability("postgres", &dsn),
+    admin: build_admin_capability("postgres", &dsn),
+    admin_graphql: build_admin_graphql_capability("postgresql", &dsn),
+    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let response = router(state)
         .oneshot(
@@ -1691,31 +1689,27 @@ async fn postgres_openai_v1_subset_routes_execute_and_support_image_generations_
     .join()
     .expect("postgres /v1 seed thread");
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-        identity: build_identity_capability("postgres", &dsn, false),
-        request_context: build_request_context_capability("postgres", &dsn, false),
-        openai_v1: build_openai_v1_capability("postgresql", &dsn),
-        admin: build_admin_capability("postgres", &dsn),
-        admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-        openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
+    identity: build_identity_capability("postgres", &dsn, false),
+    request_context: build_request_context_capability("postgres", &dsn, false),
+    openai_v1: build_openai_v1_capability("postgresql", &dsn),
+    admin: build_admin_capability("postgres", &dsn),
+    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
+    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -2001,31 +1995,27 @@ async fn postgres_openai_v1_retries_same_channel_before_failover_and_records_att
     .join()
     .expect("postgres /v1 same-channel retry seed thread");
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-        identity: build_identity_capability("postgres", &dsn, false),
-        request_context: build_request_context_capability("postgres", &dsn, false),
-        openai_v1: build_openai_v1_capability("postgres", &dsn),
-        admin: build_admin_capability("postgres", &dsn),
-        admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-        openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
+    identity: build_identity_capability("postgres", &dsn, false),
+    request_context: build_request_context_capability("postgres", &dsn, false),
+    openai_v1: build_openai_v1_capability("postgres", &dsn),
+    admin: build_admin_capability("postgres", &dsn),
+    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
+    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let response = router(state)
         .oneshot(
@@ -2194,31 +2184,27 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
     .join()
     .expect("postgres /v1 videos seed thread");
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-        identity: build_identity_capability("postgres", &dsn, false),
-        request_context: build_request_context_capability("postgres", &dsn, false),
-        openai_v1: build_openai_v1_capability("postgres", &dsn),
-        admin: build_admin_capability("postgres", &dsn),
-        admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-        openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
+    identity: build_identity_capability("postgres", &dsn, false),
+    request_context: build_request_context_capability("postgres", &dsn, false),
+    openai_v1: build_openai_v1_capability("postgres", &dsn),
+    admin: build_admin_capability("postgres", &dsn),
+    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
+    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -2355,46 +2341,42 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
 #[tokio::test]
 async fn main_router_serves_fresh_status_and_initialize_for_sqlite_scope() {
     let db_path = temp_sqlite_path("main-router-live-scope");
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: build_identity_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        request_context: build_request_context_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
-        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
-        openapi_graphql: build_openapi_graphql_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: build_identity_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    request_context: build_request_context_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+    admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+    openapi_graphql: build_openapi_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -2576,39 +2558,35 @@ fn startup_messages_are_truthful_for_metrics_and_identity() {
 async fn postgres_bootstrap_capability_serves_fresh_status_and_initialize() {
     let (mut embedded_pg, dsn, data_dir) =
         start_embedded_postgres("postgres-bootstrap-router").await;
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-        identity: build_identity_capability(
-            "postgres",
-            &dsn,
-            false,
-        ),
-        request_context: build_request_context_capability(
-            "postgres",
-            &dsn,
-            false,
-        ),
-        openai_v1: build_openai_v1_capability("postgres", &dsn),
-        admin: build_admin_capability("postgres", &dsn),
-        admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-        openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Use the legacy Go backend for these routes.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
+    identity: build_identity_capability(
+        "postgres",
+        &dsn,
+        false,
+    ),
+    request_context: build_request_context_capability(
+        "postgres",
+        &dsn,
+        false,
+    ),
+    openai_v1: build_openai_v1_capability("postgres", &dsn),
+    admin: build_admin_capability("postgres", &dsn),
+    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
+    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Use the legacy Go backend for these routes.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -2740,45 +2718,41 @@ fn unsupported_dialect_messages_keep_mysql_out_of_public_rust_target_hint() {
 #[tokio::test]
 async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
     let db_path = temp_sqlite_path("unsupported-dialect-provider-edge");
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "postgres",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: IdentityCapability::Available {
-            identity: Arc::new(FakeIdentityService::new()),
-        },
-        request_context: RequestContextCapability::Available {
-            request_context: Arc::new(FakeIdentityService::new()),
-        },
-        openai_v1: build_openai_v1_capability("postgres", &db_path.display().to_string()),
-        admin: build_admin_capability("postgres", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability(
-            "postgres",
-            &db_path.display().to_string(),
-        ),
-        openapi_graphql: build_openapi_graphql_capability(
-            "postgres",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "postgres",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: IdentityCapability::Available {
+        identity: Arc::new(FakeIdentityService::new()),
+    },
+    request_context: RequestContextCapability::Available {
+        request_context: Arc::new(FakeIdentityService::new()),
+    },
+    openai_v1: build_openai_v1_capability("postgres", &db_path.display().to_string()),
+    admin: build_admin_capability("postgres", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability(
+        "postgres",
+        &db_path.display().to_string(),
+    ),
+    openapi_graphql: build_openapi_graphql_capability(
+        "postgres",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -2907,40 +2881,36 @@ fn provider_edge_admin_capability_is_available_on_postgres_with_secure_runtime_c
 async fn postgres_provider_edge_routes_remain_truthful_when_secure_runtime_config_is_absent() {
     let _env = ProviderEdgeEnvFixture::new();
     let db_path = temp_sqlite_path("postgres-provider-edge-missing-config");
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "postgres",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: IdentityCapability::Available {
-            identity: Arc::new(FakeIdentityService::new()),
-        },
-        request_context: RequestContextCapability::Available {
-            request_context: Arc::new(FakeIdentityService::new()),
-        },
-        openai_v1: build_openai_v1_capability("postgres", &db_path.display().to_string()),
-        admin: build_admin_capability("postgres", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability("postgres", &db_path.display().to_string()),
-        openapi_graphql: build_openapi_graphql_capability(
-            "postgres",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: build_provider_edge_admin_capability("postgres", ":memory:"),
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "postgres",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: IdentityCapability::Available {
+        identity: Arc::new(FakeIdentityService::new()),
+    },
+    request_context: RequestContextCapability::Available {
+        request_context: Arc::new(FakeIdentityService::new()),
+    },
+    openai_v1: build_openai_v1_capability("postgres", &db_path.display().to_string()),
+    admin: build_admin_capability("postgres", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability("postgres", &db_path.display().to_string()),
+    openapi_graphql: build_openapi_graphql_capability(
+        "postgres",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: build_provider_edge_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let response = router(state)
         .oneshot(
@@ -2974,40 +2944,36 @@ async fn postgres_provider_edge_routes_start_when_secure_runtime_config_is_prese
     let env = ProviderEdgeEnvFixture::new();
     env.set_all();
     let db_path = temp_sqlite_path("postgres-provider-edge-secure-config");
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "postgres",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: IdentityCapability::Available {
-            identity: Arc::new(FakeIdentityService::new()),
-        },
-        request_context: RequestContextCapability::Available {
-            request_context: Arc::new(FakeIdentityService::new()),
-        },
-        openai_v1: build_openai_v1_capability("postgres", &db_path.display().to_string()),
-        admin: build_admin_capability("postgres", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability("postgres", &db_path.display().to_string()),
-        openapi_graphql: build_openapi_graphql_capability(
-            "postgres",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: build_provider_edge_admin_capability("postgres", ":memory:"),
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "postgres",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: IdentityCapability::Available {
+        identity: Arc::new(FakeIdentityService::new()),
+    },
+    request_context: RequestContextCapability::Available {
+        request_context: Arc::new(FakeIdentityService::new()),
+    },
+    openai_v1: build_openai_v1_capability("postgres", &db_path.display().to_string()),
+    admin: build_admin_capability("postgres", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability("postgres", &db_path.display().to_string()),
+    openapi_graphql: build_openapi_graphql_capability(
+        "postgres",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: build_provider_edge_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let response = router(state)
         .oneshot(
@@ -3039,39 +3005,35 @@ async fn postgres_provider_edge_routes_start_when_secure_runtime_config_is_prese
 async fn unsupported_non_seaorm_dialect_keeps_graphql_routes_truthful() {
     let db_path = temp_sqlite_path("unsupported-dialect-graphql");
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "oracle",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: IdentityCapability::Available {
-            identity: Arc::new(FakeIdentityService::new()),
-        },
-        request_context: RequestContextCapability::Available {
-            request_context: Arc::new(FakeIdentityService::new()),
-        },
-        openai_v1: build_openai_v1_capability("oracle", &db_path.display().to_string()),
-        admin: build_admin_capability("oracle", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability("oracle", &db_path.display().to_string()),
-        openapi_graphql: build_openapi_graphql_capability("oracle", &db_path.display().to_string()),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "oracle",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: IdentityCapability::Available {
+        identity: Arc::new(FakeIdentityService::new()),
+    },
+    request_context: RequestContextCapability::Available {
+        request_context: Arc::new(FakeIdentityService::new()),
+    },
+    openai_v1: build_openai_v1_capability("oracle", &db_path.display().to_string()),
+    admin: build_admin_capability("oracle", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability("oracle", &db_path.display().to_string()),
+    openapi_graphql: build_openapi_graphql_capability("oracle", &db_path.display().to_string()),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -3142,49 +3104,45 @@ async fn sqlite_backed_openapi_graphql_route_executes_pilot_mutation() {
         })
         .unwrap();
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: build_identity_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        request_context: build_request_context_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
-        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-        ),
-        openapi_graphql: build_openapi_graphql_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: build_identity_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    request_context: build_request_context_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+    admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    openapi_graphql: build_openapi_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -3246,31 +3204,27 @@ async fn postgres_openapi_graphql_route_executes_pilot_mutation() {
         })
         .unwrap();
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-        identity: build_identity_capability("postgres", &dsn, false),
-        request_context: build_request_context_capability("postgres", &dsn, false),
-        openai_v1: build_openai_v1_capability("postgres", &dsn),
-        admin: build_admin_capability("postgres", &dsn),
-        admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-        openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
+    identity: build_identity_capability("postgres", &dsn, false),
+    request_context: build_request_context_capability("postgres", &dsn, false),
+    openai_v1: build_openai_v1_capability("postgres", &dsn),
+    admin: build_admin_capability("postgres", &dsn),
+    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
+    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -3347,49 +3301,45 @@ async fn sqlite_backed_openapi_graphql_route_rejects_missing_or_invalid_service_
         })
         .unwrap();
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: build_identity_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        request_context: build_request_context_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
-        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-        ),
-        openapi_graphql: build_openapi_graphql_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: build_identity_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    request_context: build_request_context_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+    admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    openapi_graphql: build_openapi_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -3497,42 +3447,38 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
         )
         .unwrap();
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
-        request_context: build_request_context_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
-        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
-        openapi_graphql: build_openapi_graphql_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
+    request_context: build_request_context_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+    admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+    openapi_graphql: build_openapi_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -3718,42 +3664,38 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         .unwrap();
     drop(connection);
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
-        request_context: build_request_context_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
-        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
-        openapi_graphql: build_openapi_graphql_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
+    request_context: build_request_context_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+    admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+    openapi_graphql: build_openapi_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
     let settings_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
@@ -4241,42 +4183,38 @@ async fn sqlite_admin_request_content_route_enforces_project_scope_and_wrong_pro
 
     let (request_id, content_dir) = seed_sqlite_request_content(&foundation, 1);
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
-        request_context: build_request_context_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
-        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
-        openapi_graphql: build_openapi_graphql_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
+    request_context: build_request_context_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+    admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+    openapi_graphql: build_openapi_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 
@@ -4396,42 +4334,38 @@ async fn sqlite_openapi_graphql_route_enforces_api_key_scope_and_service_account
         })
         .unwrap();
 
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            "v0.9.20",
-        ),
-        identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
-        request_context: build_request_context_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-            false,
-        ),
-        openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
-        admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
-        admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
-        openapi_graphql: build_openapi_graphql_capability(
-            "sqlite3",
-            &db_path.display().to_string(),
-        ),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-        },
-        allow_no_auth: false,
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
+    request_context: build_request_context_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+    admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+    openapi_graphql: build_openapi_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
 
     let app = router(state);
 

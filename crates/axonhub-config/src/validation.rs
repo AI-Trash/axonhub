@@ -2,6 +2,8 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::contract::validate_db_dialect;
 use crate::types::Config;
+use http::header::HeaderName;
+use http::method::Method;
 
 impl Config {
     pub(crate) fn ensure_cli_loadable(&self) -> Result<()> {
@@ -67,6 +69,18 @@ impl Config {
             );
         }
 
+        validate_cors_methods(&self.server.cors.allowed_methods, &mut errors);
+        validate_cors_headers(
+            &self.server.cors.allowed_headers,
+            "allowed_headers",
+            &mut errors,
+        );
+        validate_cors_headers(
+            &self.server.cors.exposed_headers,
+            "exposed_headers",
+            &mut errors,
+        );
+
         errors
     }
 
@@ -101,6 +115,10 @@ impl Config {
                 value => return Err(anyhow!("invalid metrics exporter type '{value}'")),
             }
         }
+
+        ensure_cors_methods(&self.server.cors.allowed_methods)?;
+        ensure_cors_headers(&self.server.cors.allowed_headers, "allowed_headers")?;
+        ensure_cors_headers(&self.server.cors.exposed_headers, "exposed_headers")?;
 
         Ok(())
     }
@@ -155,4 +173,70 @@ fn ensure_log_level(level: &str) -> Result<()> {
         "debug" | "info" | "warn" | "warning" | "error" | "panic" | "fatal" => Ok(()),
         value => Err(anyhow!("invalid log level '{value}'")),
     }
+}
+
+fn validate_cors_methods(methods: &[String], errors: &mut Vec<String>) {
+    for method in methods {
+        if method.trim().is_empty() {
+            errors.push("server.cors.allowed_methods contains empty method".to_owned());
+            continue;
+        }
+        if Method::from_bytes(method.as_bytes()).is_err() {
+            errors.push(format!(
+                "server.cors.allowed_methods contains invalid method '{method}'"
+            ));
+        }
+    }
+}
+
+fn validate_cors_headers(headers: &[String], field_name: &str, errors: &mut Vec<String>) {
+    for header in headers {
+        if header.trim().is_empty() {
+            errors.push(format!(
+                "server.cors.{} contains empty header name",
+                field_name
+            ));
+            continue;
+        }
+        if HeaderName::from_bytes(header.as_bytes()).is_err() {
+            errors.push(format!(
+                "server.cors.{} contains invalid header name '{header}'",
+                field_name
+            ));
+        }
+    }
+}
+
+fn ensure_cors_methods(methods: &[String]) -> Result<()> {
+    for method in methods {
+        if method.trim().is_empty() {
+            return Err(anyhow!("server.cors.allowed_methods contains empty method"));
+        }
+        if Method::from_bytes(method.as_bytes()).is_err() {
+            return Err(anyhow!(
+                "server.cors.allowed_methods contains invalid method '{}'",
+                method
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_cors_headers(headers: &[String], field_name: &str) -> Result<()> {
+    for header in headers {
+        if header.trim().is_empty() {
+            return Err(anyhow!(
+                "server.cors.{} contains empty header name",
+                field_name
+            ));
+        }
+        if HeaderName::from_bytes(header.as_bytes()).is_err() {
+            return Err(anyhow!(
+                "server.cors.{} contains invalid header name '{}'",
+                field_name,
+                header
+            ));
+        }
+    }
+    Ok(())
 }

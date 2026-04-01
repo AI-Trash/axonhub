@@ -21,12 +21,12 @@ use super::{
     system::{ensure_identity_tables, hash_password, SqliteBootstrapService},
 };
 use axonhub_http::{
-    router as http_router, AdminCapability, AdminError, AdminGraphqlCapability, AdminPort,
-    AuthUserContext, HttpState, IdentityCapability, IdentityPort, InitializeSystemRequest,
-    OpenAiV1Capability, OpenAiV1ExecutionRequest, OpenAiV1Route, OpenApiGraphqlCapability,
-    OpenAiV1Port, ProjectContext, ProviderEdgeAdminCapability, RequestContextCapability,
-    RequestContextPort, SignInRequest, SystemBootstrapCapability, SystemBootstrapPort,
-    TraceConfig,
+    AdminCapability, AdminError, AdminGraphqlCapability, AdminPort, AuthUserContext,
+    HttpCorsSettings, HttpState, IdentityCapability, IdentityPort, InitializeSystemRequest,
+    OpenAiV1Capability, OpenAiV1ExecutionRequest, OpenAiV1Port, OpenAiV1Route,
+    OpenApiGraphqlCapability, ProjectContext, ProviderEdgeAdminCapability,
+    RequestContextCapability, RequestContextPort, SignInRequest, SystemBootstrapCapability,
+    SystemBootstrapPort, TraceConfig, router as http_router,
 };
 use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::ServiceResponse;
@@ -47,6 +47,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+fn disabled_test_cors() -> HttpCorsSettings {
+    HttpCorsSettings::default()
+}
 
 #[derive(Clone)]
 struct TestApp {
@@ -368,6 +372,7 @@ struct TestHttpRequest {
                 message: "test-only unsupported provider-edge admin".to_owned(),
             },
             allow_no_auth: false,
+            cors: disabled_test_cors(),
             trace_config: TraceConfig {
                 thread_header: Some("AH-Thread-Id".to_owned()),
                 trace_header: Some("AH-Trace-Id".to_owned()),
@@ -672,48 +677,44 @@ struct TestHttpRequest {
             Err(axonhub_http::ContextResolveError::Internal)
         ));
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         let response = app
             .oneshot(
@@ -2552,48 +2553,44 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         let models_response = app
             .clone()
@@ -2909,48 +2906,44 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         let response = app
             .oneshot(
@@ -3132,48 +3125,44 @@ struct TestHttpRequest {
                 .unwrap();
         }
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         let response = app
             .oneshot(
@@ -3280,48 +3269,44 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         let response = app
             .oneshot(
@@ -3438,48 +3423,44 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         let response = app
             .oneshot(
@@ -3620,48 +3601,44 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         let response = app
             .oneshot(
@@ -3816,48 +3793,44 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         for expected_id in ["chatcmpl_affinity_a", "chatcmpl_affinity_a"] {
             let response = app
@@ -4127,48 +4100,44 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         let failover_response = app
             .clone()
@@ -4358,48 +4327,44 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let app = router(HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(bootstrap),
-            },
-            identity: IdentityCapability::Available {
-                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(SqliteRequestContextService::new(
-                    foundation.clone(),
-                    false,
-                )),
-            },
-            openai_v1: OpenAiV1Capability::Available {
-                openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "test-only unsupported admin graphql".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "test-only unsupported openapi graphql".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: Vec::new(),
-                extra_trace_body_fields: Vec::new(),
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        });
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
 
         let gemini_models = app
             .clone()

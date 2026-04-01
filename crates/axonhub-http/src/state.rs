@@ -88,6 +88,18 @@ pub enum HttpMetricsCapability {
     },
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct HttpCorsSettings {
+    pub enabled: bool,
+    pub debug: bool,
+    pub allowed_origins: Vec<String>,
+    pub allowed_methods: Vec<String>,
+    pub allowed_headers: Vec<String>,
+    pub exposed_headers: Vec<String>,
+    pub allow_credentials: bool,
+    pub max_age_seconds: Option<usize>,
+}
+
 #[derive(Clone)]
 pub struct HttpState {
     pub service_name: String,
@@ -102,6 +114,7 @@ pub struct HttpState {
     pub openapi_graphql: OpenApiGraphqlCapability,
     pub provider_edge_admin: ProviderEdgeAdminCapability,
     pub allow_no_auth: bool,
+    pub cors: HttpCorsSettings,
     pub trace_config: TraceConfig,
 }
 

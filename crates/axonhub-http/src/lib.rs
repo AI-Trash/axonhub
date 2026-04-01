@@ -37,9 +37,10 @@ pub use handlers::openai_v1::{openai_chat_completions as parity_openai_chat_comp
 pub use handlers::provider_edge::start_codex_oauth as parity_start_codex_oauth;
 pub use handlers::provider_edge::{start_antigravity_oauth as parity_start_antigravity_oauth, start_claudecode_oauth as parity_start_claudecode_oauth, start_copilot_oauth as parity_start_copilot_oauth};
 pub use state::{
-    AdminCapability, AdminGraphqlCapability, HttpMetricsCapability, HttpMetricsRecorder,
-    HttpState, IdentityCapability, OpenAiV1Capability, OpenApiGraphqlCapability,
-    ProviderEdgeAdminCapability, RequestContextCapability, SystemBootstrapCapability,
+    AdminCapability, AdminGraphqlCapability, HttpCorsSettings, HttpMetricsCapability,
+    HttpMetricsRecorder, HttpState, IdentityCapability, OpenAiV1Capability,
+    OpenApiGraphqlCapability, ProviderEdgeAdminCapability, RequestContextCapability,
+    SystemBootstrapCapability,
 };
 
 #[cfg(test)]

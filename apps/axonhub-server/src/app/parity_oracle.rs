@@ -9,7 +9,9 @@ use actix_web::dev::ServiceResponse;
 use actix_web::http::Method;
 use actix_web::test as actix_test;
 use actix_web::{App, web};
-use axonhub_http::{router as http_router, HttpState, InitializeSystemRequest, TraceConfig};
+use axonhub_http::{
+    HttpCorsSettings, HttpState, InitializeSystemRequest, TraceConfig, router as http_router,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -159,6 +161,7 @@ fn sqlite_state(db_path: &Path) -> HttpState {
         openapi_graphql: build_openapi_graphql_capability("sqlite3", &dsn),
         provider_edge_admin: build_provider_edge_admin_capability("sqlite3", &dsn),
         allow_no_auth: false,
+        cors: HttpCorsSettings::default(),
         trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),

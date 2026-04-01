@@ -2,11 +2,61 @@ use crate::handlers;
 use crate::middleware::{
     admin_auth, api_key_auth, gemini_auth, http_metrics, request_context, service_api_key_auth,
 };
-use crate::state::{HttpMetricsCapability, HttpState};
+use crate::state::{HttpCorsSettings, HttpMetricsCapability, HttpState};
+use actix_cors::Cors;
 use actix_web::dev::{ServiceFactory, ServiceRequest, ServiceResponse};
+use actix_web::http::header::HeaderName;
 use actix_web::http::Method;
+use actix_web::middleware::Condition;
 use actix_web::web::{self, ServiceConfig};
 use actix_web::{App, HttpRequest};
+use std::str::FromStr;
+
+fn cors_middleware(settings: &HttpCorsSettings) -> Cors {
+    let mut cors = Cors::default();
+
+    if settings.allowed_origins.iter().any(|origin| origin == "*") {
+        cors = cors.allow_any_origin();
+    } else {
+        for origin in &settings.allowed_origins {
+            cors = cors.allowed_origin(origin);
+        }
+    }
+
+    let methods: Vec<Method> = settings
+        .allowed_methods
+        .iter()
+        .filter_map(|method| Method::from_bytes(method.as_bytes()).ok())
+        .collect();
+    if !methods.is_empty() {
+        cors = cors.allowed_methods(methods);
+    }
+
+    for header in &settings.allowed_headers {
+        if let Ok(header) = HeaderName::from_str(header) {
+            cors = cors.allowed_header(header);
+        }
+    }
+
+    let exposed_headers: Vec<HeaderName> = settings
+        .exposed_headers
+        .iter()
+        .filter_map(|header| HeaderName::from_str(header).ok())
+        .collect();
+    if !exposed_headers.is_empty() {
+        cors = cors.expose_headers(exposed_headers);
+    }
+
+    if settings.allow_credentials {
+        cors = cors.supports_credentials();
+    }
+
+    if let Some(max_age) = settings.max_age_seconds {
+        cors = cors.max_age(max_age);
+    }
+
+    cors
+}
 
 async fn explicit_v1_not_implemented_boundary(req: HttpRequest) -> actix_web::HttpResponse {
     crate::errors::not_implemented_response(
@@ -314,6 +364,8 @@ pub fn router_with_metrics_and_base_path(
 > {
     let normalized = base_path.trim();
     let prefixed = format!("/{}", normalized.trim_matches('/'));
+    let cors_enabled = state.cors.enabled;
+    let cors = cors_middleware(&state.cors);
     let static_files_config = web::Data::new(handlers::static_files::StaticFilesConfig {
         base_path: if normalized.is_empty() {
             "/".to_owned()
@@ -323,6 +375,7 @@ pub fn router_with_metrics_and_base_path(
     });
 
     App::new()
+        .wrap(Condition::new(cors_enabled, cors))
         .app_data(web::Data::new(state))
         .app_data(static_files_config)
         .wrap(http_metrics(http_metrics_capability))

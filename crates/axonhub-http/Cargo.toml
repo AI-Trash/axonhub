@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+actix-cors.workspace = true
 actix-web.workspace = true
 bytes.workspace = true
 http.workspace = true

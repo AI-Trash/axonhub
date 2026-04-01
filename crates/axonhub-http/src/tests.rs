@@ -1,6 +1,7 @@
 use super::*;
 use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::ServiceResponse;
+use actix_web::http::header;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
 use serde_json::json;
@@ -9,6 +10,23 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+
+fn disabled_test_cors() -> HttpCorsSettings {
+    HttpCorsSettings::default()
+}
+
+fn enabled_test_cors() -> HttpCorsSettings {
+    HttpCorsSettings {
+        enabled: true,
+        debug: false,
+        allowed_origins: vec!["https://allowed.example".to_owned()],
+        allowed_methods: vec!["GET".to_owned(), "POST".to_owned(), "OPTIONS".to_owned()],
+        allowed_headers: vec!["X-API-Key".to_owned(), "Content-Type".to_owned()],
+        exposed_headers: vec!["X-Request-Id".to_owned()],
+        allow_credentials: true,
+        max_age_seconds: Some(1800),
+    }
+}
 
 #[derive(Clone)]
 struct TestApp {
@@ -583,6 +601,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                 message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
             },
             allow_no_auth,
+            cors: disabled_test_cors(),
             trace_config: TraceConfig {
                 thread_header: Some("AH-Thread-Id".to_owned()),
                 trace_header: Some("AH-Trace-Id".to_owned()),
@@ -627,6 +646,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                 message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
             },
             allow_no_auth,
+            cors: disabled_test_cors(),
             trace_config: TraceConfig {
                 thread_header: Some("AH-Thread-Id".to_owned()),
                 trace_header: Some("AH-Trace-Id".to_owned()),
@@ -730,6 +750,212 @@ where
         assert_eq!(json["legacy_go_backend_present"], false);
         assert_eq!(json["config_source"], Value::Null);
     }
+
+     #[tokio::test]
+     async fn enabled_cors_adds_expected_response_headers_for_allowed_origin() {
+         let mut state = test_state_with_openai(
+             SystemBootstrapCapability::Available {
+                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+             },
+             false,
+         );
+         state.cors = enabled_test_cors();
+         let app = router(state);
+
+         let response = app
+             .oneshot(
+                 Request::builder()
+                     .uri("/health")
+                     .method(Method::GET)
+                     .header(header::ORIGIN.as_str(), "https://allowed.example")
+                     .body(Body::empty())
+                     .unwrap(),
+             )
+             .await
+             .unwrap();
+
+         assert_eq!(response.status(), StatusCode::OK);
+         assert_eq!(
+             response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+             "https://allowed.example"
+         );
+         assert_eq!(
+             response.headers().get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).unwrap(),
+             "true"
+         );
+         let expose_headers = response.headers()
+             .get(header::ACCESS_CONTROL_EXPOSE_HEADERS)
+             .unwrap()
+             .to_str()
+             .unwrap();
+         let exposed: Vec<String> = expose_headers
+             .split(',')
+             .map(|s| s.trim().to_ascii_lowercase())
+             .collect();
+         assert_eq!(exposed, vec!["x-request-id".to_owned()]);
+     }
+
+     #[tokio::test]
+     async fn enabled_cors_preflight_succeeds_on_configured_route() {
+         let mut state = test_state_with_openai(
+             SystemBootstrapCapability::Available {
+                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+             },
+             false,
+         );
+         state.cors = enabled_test_cors();
+         let app = router(state);
+
+         let response = app
+             .oneshot(
+                 Request::builder()
+                     .uri("/v1/models")
+                     .method(Method::OPTIONS)
+                     .header(header::ORIGIN.as_str(), "https://allowed.example")
+                     .header(header::ACCESS_CONTROL_REQUEST_METHOD.as_str(), "GET")
+                     .header(
+                         header::ACCESS_CONTROL_REQUEST_HEADERS.as_str(),
+                         "X-API-Key, Content-Type",
+                     )
+                     .body(Body::empty())
+                     .unwrap(),
+             )
+             .await
+             .unwrap();
+
+         assert_eq!(response.status(), StatusCode::OK);
+         assert_eq!(
+             response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+             "https://allowed.example"
+         );
+
+         let allow_methods = response.headers()
+             .get(header::ACCESS_CONTROL_ALLOW_METHODS)
+             .unwrap()
+             .to_str()
+             .unwrap();
+         let methods: Vec<&str> = allow_methods.split(',').map(|s| s.trim()).collect();
+         assert!(methods.contains(&"GET"));
+         assert!(methods.contains(&"POST"));
+         assert!(methods.contains(&"OPTIONS"));
+
+         let allow_headers = response.headers()
+             .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+             .unwrap()
+             .to_str()
+             .unwrap();
+         let headers: Vec<String> = allow_headers
+             .split(',')
+             .map(|s| s.trim().to_ascii_lowercase())
+             .collect();
+         assert!(headers.contains(&"content-type".to_owned()));
+         assert!(headers.contains(&"x-api-key".to_owned()));
+
+         assert_eq!(
+             response.headers().get(header::ACCESS_CONTROL_MAX_AGE).unwrap(),
+             "1800"
+         );
+     }
+
+    #[tokio::test]
+    async fn disabled_cors_remains_inert_for_origin_requests() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .method(Method::GET)
+                    .header(header::ORIGIN.as_str(), "https://allowed.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+    }
+
+     #[tokio::test]
+     async fn enabled_cors_rejects_disallowed_origin_preflight() {
+         let mut state = test_state_with_openai(
+             SystemBootstrapCapability::Available {
+                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+             },
+             false,
+         );
+         state.cors = enabled_test_cors();
+         let app = router(state);
+
+         let response = app
+             .oneshot(
+                 Request::builder()
+                     .uri("/v1/models")
+                     .method(Method::OPTIONS)
+                     .header(header::ORIGIN.as_str(), "https://blocked.example")
+                     .header(header::ACCESS_CONTROL_REQUEST_METHOD.as_str(), "GET")
+                     .body(Body::empty())
+                     .unwrap(),
+             )
+             .await
+             .unwrap();
+
+         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+         assert!(response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+     }
+
+     #[tokio::test]
+     async fn enabled_cors_preflight_works_under_non_root_base_path() {
+          let mut state = test_state_with_openai(
+              SystemBootstrapCapability::Available {
+                  system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+             },
+             false,
+          );
+          state.cors = enabled_test_cors();
+          let app = actix_test::init_service(router_with_metrics_and_base_path(
+              state,
+              HttpMetricsCapability::Disabled,
+              "/console",
+          ))
+          .await;
+
+         let request = actix_test::TestRequest::default()
+             .uri("/console/v1/models")
+             .method(Method::OPTIONS)
+             .insert_header((header::ORIGIN.as_str(), "https://allowed.example"))
+             .insert_header((header::ACCESS_CONTROL_REQUEST_METHOD.as_str(), "POST"))
+             .insert_header((
+                 header::ACCESS_CONTROL_REQUEST_HEADERS.as_str(),
+                 "X-API-Key, Content-Type",
+             ))
+             .to_request();
+
+         let response = actix_test::call_service(&app, request).await;
+
+         assert_eq!(response.status(), StatusCode::OK);
+         assert_eq!(
+             response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+             "https://allowed.example"
+         );
+         let allow_methods = response.headers()
+             .get(header::ACCESS_CONTROL_ALLOW_METHODS)
+             .unwrap()
+             .to_str()
+             .unwrap();
+         let methods: Vec<String> = allow_methods
+             .split(',')
+             .map(|s| s.trim().to_owned())
+             .collect();
+         assert!(methods.contains(&"POST".to_owned()));
+         assert!(methods.contains(&"OPTIONS".to_owned()));
+     }
 
     #[tokio::test]
     async fn request_metrics_middleware_records_method_route_and_status() {
@@ -915,45 +1141,41 @@ where
 
     #[tokio::test]
     async fn signin_returns_internal_error_when_identity_unsupported() {
-        let state = HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            identity: IdentityCapability::Unsupported {
-                message: "Identity service is not available in this deployment".to_owned(),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(FakeAuthPort::new()),
-            },
-            openai_v1: OpenAiV1Capability::Unsupported {
-                message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(FakeAdminPort),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: vec!["Sentry-Trace".to_owned()],
-                extra_trace_body_fields: vec![],
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        };
+        let state = HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+        },
+        identity: IdentityCapability::Unsupported {
+            message: "Identity service is not available in this deployment".to_owned(),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(FakeAuthPort::new()),
+        },
+        openai_v1: OpenAiV1Capability::Unsupported {
+            message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(FakeAdminPort),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: vec!["Sentry-Trace".to_owned()],
+            extra_trace_body_fields: vec![],
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  };
         let app = router(state);
 
         let response = app
@@ -1377,45 +1599,41 @@ where
 
     #[tokio::test]
     async fn openapi_service_api_key_returns_500_when_identity_unsupported() {
-        let state = HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            identity: IdentityCapability::Unsupported {
-                message: "Identity service is not available in this deployment".to_owned(),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(FakeAuthPort::new()),
-            },
-            openai_v1: OpenAiV1Capability::Unsupported {
-                message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(FakeAdminPort),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: vec!["Sentry-Trace".to_owned()],
-                extra_trace_body_fields: vec![],
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        };
+        let state = HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+        },
+        identity: IdentityCapability::Unsupported {
+            message: "Identity service is not available in this deployment".to_owned(),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(FakeAuthPort::new()),
+        },
+        openai_v1: OpenAiV1Capability::Unsupported {
+            message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(FakeAdminPort),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: vec!["Sentry-Trace".to_owned()],
+            extra_trace_body_fields: vec![],
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  };
         let app = router(state);
 
         let response = app
@@ -1632,45 +1850,41 @@ where
 
     #[tokio::test]
     async fn generic_api_key_returns_500_when_identity_unsupported() {
-        let state = HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            identity: IdentityCapability::Unsupported {
-                message: "Identity service is not available in this deployment".to_owned(),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(FakeAuthPort::new()),
-            },
-            openai_v1: OpenAiV1Capability::Unsupported {
-                message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(FakeAdminPort),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: vec!["Sentry-Trace".to_owned()],
-                extra_trace_body_fields: vec![],
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        };
+        let state = HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+        },
+        identity: IdentityCapability::Unsupported {
+            message: "Identity service is not available in this deployment".to_owned(),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(FakeAuthPort::new()),
+        },
+        openai_v1: OpenAiV1Capability::Unsupported {
+            message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(FakeAdminPort),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: vec!["Sentry-Trace".to_owned()],
+            extra_trace_body_fields: vec![],
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  };
         let app = router(state);
 
         let response = app
@@ -1838,45 +2052,41 @@ where
 
     #[tokio::test]
     async fn gemini_auth_returns_500_when_identity_unsupported() {
-        let state = HttpState {
-            service_name: "AxonHub".to_owned(),
-            version: "v0.9.20".to_owned(),
-            config_source: None,
-            system_bootstrap: SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            identity: IdentityCapability::Unsupported {
-                message: "Identity service is not available in this deployment".to_owned(),
-            },
-            request_context: RequestContextCapability::Available {
-                request_context: Arc::new(FakeAuthPort::new()),
-            },
-            openai_v1: OpenAiV1Capability::Unsupported {
-                message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            admin: AdminCapability::Available {
-                admin: Arc::new(FakeAdminPort),
-            },
-            admin_graphql: AdminGraphqlCapability::Unsupported {
-                message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            openapi_graphql: OpenApiGraphqlCapability::Unsupported {
-                message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
-            },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
-            },
-            allow_no_auth: false,
-            trace_config: TraceConfig {
-                thread_header: Some("AH-Thread-Id".to_owned()),
-                trace_header: Some("AH-Trace-Id".to_owned()),
-                request_header: Some("X-Request-Id".to_owned()),
-                extra_trace_headers: vec!["Sentry-Trace".to_owned()],
-                extra_trace_body_fields: vec![],
-                claude_code_trace_enabled: false,
-                codex_trace_enabled: false,
-            },
-        };
+        let state = HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+        },
+        identity: IdentityCapability::Unsupported {
+            message: "Identity service is not available in this deployment".to_owned(),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(FakeAuthPort::new()),
+        },
+        openai_v1: OpenAiV1Capability::Unsupported {
+            message: "OpenAI `/v1` inference is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(FakeAdminPort),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "DB-backed admin GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: vec!["Sentry-Trace".to_owned()],
+            extra_trace_body_fields: vec![],
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  };
         let app = router(state);
 
         let response = app

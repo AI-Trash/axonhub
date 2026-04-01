@@ -1,13 +1,33 @@
 use anyhow::{Context, Result};
 use actix_web::{HttpServer, dev::ServerHandle};
 use axonhub_config::load;
-use axonhub_http::{router_with_metrics_and_base_path, HttpMetricsCapability, HttpState, TraceConfig};
+use axonhub_http::{
+    HttpCorsSettings, HttpMetricsCapability, HttpState, TraceConfig,
+    router_with_metrics_and_base_path,
+};
 use std::net::SocketAddr;
 use std::process;
 
 use super::build_info::version;
 use super::capabilities::build_server_capabilities;
 use super::metrics::MetricsRuntime;
+
+fn runtime_cors_settings(config: &axonhub_config::CorsConfig) -> HttpCorsSettings {
+    let max_age_seconds = humantime::parse_duration(&config.max_age)
+        .ok()
+        .and_then(|duration| duration.as_secs().try_into().ok());
+
+    HttpCorsSettings {
+        enabled: config.enabled,
+        debug: config.debug,
+        allowed_origins: config.allowed_origins.clone(),
+        allowed_methods: config.allowed_methods.clone(),
+        allowed_headers: config.allowed_headers.clone(),
+        exposed_headers: config.exposed_headers.clone(),
+        allow_credentials: config.allow_credentials,
+        max_age_seconds,
+    }
+}
 
 pub(crate) async fn start_server() -> Result<()> {
     let loaded = load().unwrap_or_else(|error| {
@@ -44,6 +64,7 @@ pub(crate) async fn start_server() -> Result<()> {
         openapi_graphql: capabilities.openapi_graphql,
         provider_edge_admin: capabilities.provider_edge_admin,
         allow_no_auth: loaded.config.server.api.auth.allow_no_auth,
+        cors: runtime_cors_settings(&loaded.config.server.cors),
         trace_config: TraceConfig {
             thread_header: Some(loaded.config.server.trace.thread_header.clone()),
             trace_header: Some(loaded.config.server.trace.trace_header.clone()),
