@@ -6,9 +6,7 @@ use super::capabilities::{
     build_system_bootstrap_capability,
 };
 use super::cli::{
-    config_get_usage_text, parse_config_command, parse_top_level_command, AxonhubCliContract,
-    AxonhubConfigCliContract, ConfigCommand, TopLevelCommand, CONFIG_GET_USAGE_HEADER,
-    CONFIG_USAGE_TEXT, HELP_TEXT,
+    axonhub_cli_command, axonhub_config_cli_command, parse_axonhub_cli, AxonhubCliContract,
 };
 use super::server::startup_messages;
 use crate::foundation::{
@@ -35,7 +33,7 @@ use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::ServiceResponse;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
-use clap::CommandFactory;
+use clap::{error::ErrorKind, CommandFactory};
 use pg_embed::pg_enums::PgAuthMethod;
 use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
 use pg_embed::postgres::{PgEmbed, PgSettings};
@@ -2419,111 +2417,99 @@ async fn main_router_serves_fresh_status_and_initialize_for_sqlite_scope() {
 }
 
 #[test]
-fn top_level_cli_parser_preserves_current_operator_facing_verbs() {
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned()]),
-        TopLevelCommand::StartServer
-    );
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned(), "config".to_owned()]),
-        TopLevelCommand::Config
-    );
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned(), "version".to_owned()]),
-        TopLevelCommand::Version
-    );
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned(), "--version".to_owned()]),
-        TopLevelCommand::Version
-    );
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned(), "-v".to_owned()]),
-        TopLevelCommand::Version
-    );
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned(), "help".to_owned()]),
-        TopLevelCommand::Help
-    );
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned(), "--help".to_owned()]),
-        TopLevelCommand::Help
-    );
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned(), "-h".to_owned()]),
-        TopLevelCommand::Help
-    );
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned(), "build-info".to_owned()]),
-        TopLevelCommand::BuildInfo
-    );
-    assert_eq!(
-        parse_top_level_command(&["axonhub".to_owned(), "serve".to_owned()]),
-        TopLevelCommand::StartServer
-    );
-}
+fn clap_help_and_parsing_preserve_current_operator_facing_cli_contract() {
+    let top_level_help = render_help(axonhub_cli_command());
+    assert!(top_level_help.contains("AxonHub AI Gateway"));
+    assert!(top_level_help.contains("config"));
+    assert!(top_level_help.contains("version"));
+    assert!(top_level_help.contains("help"));
+    assert!(top_level_help.contains("build-info"));
 
-#[test]
-fn config_cli_parser_preserves_current_subcommands() {
-    assert_eq!(
-        parse_config_command(&[
-            "axonhub".to_owned(),
-            "config".to_owned(),
-            "preview".to_owned(),
-        ]),
-        Some(ConfigCommand::Preview)
-    );
-    assert_eq!(
-        parse_config_command(&[
-            "axonhub".to_owned(),
-            "config".to_owned(),
-            "validate".to_owned(),
-        ]),
-        Some(ConfigCommand::Validate)
-    );
-    assert_eq!(
-        parse_config_command(&["axonhub".to_owned(), "config".to_owned(), "get".to_owned(),]),
-        Some(ConfigCommand::Get)
-    );
-    assert_eq!(
-        parse_config_command(&["axonhub".to_owned(), "config".to_owned()]),
-        None
-    );
-    assert_eq!(
-        parse_config_command(&["axonhub".to_owned(), "config".to_owned(), "set".to_owned(),]),
-        None
-    );
-}
+    let config_help = render_help(axonhub_config_cli_command());
+    assert!(config_help.contains("preview"));
+    assert!(config_help.contains("validate"));
+    assert!(config_help.contains("get"));
 
-#[test]
-fn help_and_config_usage_texts_list_current_cli_contract() {
-    let config_get_usage = config_get_usage_text();
+    let config_get_help = help_text_for_args(["axonhub", "config", "get", "--help"]);
+    assert!(config_get_help.contains("server.port"));
+    assert!(config_get_help.contains("Server port number"));
+    assert!(config_get_help.contains("server.name"));
+    assert!(config_get_help.contains("server.base_path"));
+    assert!(config_get_help.contains("server.debug"));
+    assert!(config_get_help.contains("db.dialect"));
+    assert!(config_get_help.contains("db.dsn"));
+    assert!(!config_get_help.contains("server.api.auth.allow_no_auth"));
+    assert!(!config_get_help.contains("metrics.exporter.type"));
+    assert!(!config_get_help.contains("cache.memory.expiration"));
 
-    assert!(HELP_TEXT.contains("axonhub config preview"));
-    assert!(HELP_TEXT.contains("axonhub config validate"));
-    assert!(HELP_TEXT.contains("axonhub config get <key>"));
-    assert!(HELP_TEXT.contains("axonhub version"));
-    assert!(HELP_TEXT.contains("axonhub help"));
+    let config_help_via_subcommand = help_text_for_args(["axonhub", "config", "help"]);
+    assert!(config_help_via_subcommand.contains("preview"));
+    assert!(config_help_via_subcommand.contains("validate"));
+    assert!(config_help_via_subcommand.contains("get"));
 
-    assert_eq!(
-        CONFIG_USAGE_TEXT,
-        "Usage: axonhub config <preview|validate|get>\n"
-    );
-    assert!(config_get_usage.starts_with(CONFIG_GET_USAGE_HEADER));
-    assert!(config_get_usage.contains("server.port    Server port number"));
-    assert!(config_get_usage.contains("server.name    Server name"));
-    assert!(config_get_usage.contains("server.base_path    Server base path"));
-    assert!(config_get_usage.contains("server.debug    Server debug mode"));
-    assert!(!config_get_usage.contains("server.api.auth.allow_no_auth    Allow unauthenticated API access"));
-    assert!(config_get_usage.contains("db.dialect    Database dialect"));
-    assert!(config_get_usage.contains("db.dsn    Database DSN"));
-    assert!(!config_get_usage.contains("metrics.exporter.type    Metrics exporter type (stdout, otlpgrpc, otlphttp)"));
-    assert!(!config_get_usage.contains("cache.memory.expiration"));
+    assert!(parse_for_test(["axonhub", "config", "preview"]).is_ok());
+    assert!(parse_for_test(["axonhub", "config", "preview", "--format", "json"]).is_ok());
+    assert!(parse_for_test(["axonhub", "config", "preview", "--format", "yml"]).is_ok());
+    assert!(parse_for_test(["axonhub", "config", "preview", "--format", "yaml"]).is_ok());
+    assert!(parse_for_test(["axonhub", "config", "validate"]).is_ok());
+    assert!(parse_for_test(["axonhub", "config", "get", "server.port"]).is_ok());
+    assert!(parse_for_test(["axonhub", "build-info"]).is_ok());
+    assert!(matches!(
+        parse_for_test(["axonhub", "config"]),
+        Err(error) if error.kind() == ErrorKind::DisplayHelp
+    ));
+    assert!(matches!(
+        parse_for_test(["axonhub", "--help"]),
+        Err(error) if error.kind() == ErrorKind::DisplayHelp
+    ));
+    assert!(matches!(
+        parse_for_test(["axonhub", "-h"]),
+        Err(error) if error.kind() == ErrorKind::DisplayHelp
+    ));
+    assert!(matches!(
+        parse_for_test(["axonhub", "help"]),
+        Err(error) if error.kind() == ErrorKind::DisplayHelp
+    ));
+    assert!(matches!(
+        parse_for_test(["axonhub", "--version"]),
+        Err(error) if error.kind() == ErrorKind::DisplayVersion
+    ));
+    assert!(matches!(
+        parse_for_test(["axonhub", "-v"]),
+        Err(error) if error.kind() == ErrorKind::DisplayVersion
+    ));
+    assert!(parse_for_test(["axonhub", "serve"]).is_ok());
 }
 
 #[test]
 fn clap_contract_debug_asserts_cleanly() {
     AxonhubCliContract::command().debug_assert();
-    AxonhubConfigCliContract::command().debug_assert();
+    axonhub_config_cli_command().debug_assert();
+}
+
+fn render_help(mut command: clap::Command) -> String {
+    let mut rendered = Vec::new();
+    command.write_long_help(&mut rendered).expect("write help");
+    String::from_utf8(rendered).expect("utf8 help")
+}
+
+fn help_text_for_args<I, T>(args: I) -> String
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let error = parse_for_test(args).expect_err("expected clap help display");
+    assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+    error.to_string()
+}
+
+fn parse_for_test<I, T>(args: I) -> Result<AxonhubCliContract, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<String>,
+{
+    let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    parse_axonhub_cli(&args)
 }
 
 #[test]
