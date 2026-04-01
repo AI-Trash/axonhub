@@ -58,6 +58,21 @@ pub async fn openai_responses(
     .await
 }
 
+pub async fn openai_responses_compact(
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    body: Bytes,
+) -> HttpResponse {
+    execute_openai_request(
+        state.get_ref().clone(),
+        request.clone(),
+        body,
+        request.uri().clone(),
+        crate::models::OpenAiV1Route::ResponsesCompact,
+    )
+    .await
+}
+
 pub async fn openai_embeddings(
     state: web::Data<HttpState>,
     request: HttpRequest,

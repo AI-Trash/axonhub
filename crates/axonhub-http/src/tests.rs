@@ -445,6 +445,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                         "id": match route {
                             OpenAiV1Route::ChatCompletions => "chatcmpl_rust",
                             OpenAiV1Route::Responses => "resp_rust",
+                            OpenAiV1Route::ResponsesCompact => "resp_compact_rust",
                             OpenAiV1Route::Embeddings => "embed_rust",
                             OpenAiV1Route::ImagesGenerations => "imggen_rust",
                             #[allow(unreachable_patterns)]

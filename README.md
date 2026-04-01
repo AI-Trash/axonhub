@@ -35,7 +35,7 @@ The Rust backend provides the following verified functionality for SQLite and Po
 - **Admin read routes**: `GET /admin/requests/:request_id/content`
 - **Admin GraphQL**: `POST /admin/graphql` with playground and the current supported settings-management subset
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` with playground
-- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`
+- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/responses/compact`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`
 - **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as listed in routes
 - **Database support**: SQLite and PostgreSQL

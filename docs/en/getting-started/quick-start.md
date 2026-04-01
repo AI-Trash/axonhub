@@ -63,7 +63,7 @@ What to expect from the Rust backend right now:
 
 - `/health` works
 - `GET /admin/system/status` and `POST /admin/system/initialize` work for the supported SQLite- and PostgreSQL-backed Rust paths
-- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` work on the current practical SQLite- and PostgreSQL-backed Rust paths
+- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/responses/compact`, and `/v1/embeddings` work on the current practical SQLite- and PostgreSQL-backed Rust paths
 - TiDB and Neon DB remain legacy-reference dialect material in the Go tree
 - config search paths and `AXONHUB_*` env keys are supported
 - accepted explicit unsupported route families return structured `501 Not Implemented` JSON

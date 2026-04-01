@@ -689,6 +689,36 @@ fn mock_openai_v1_runtime_server_url() -> &'static str {
                             }
                         })
                         .to_string()
+                    } else if path.ends_with("/responses/compact") {
+                        serde_json::json!({
+                            "id": "resp_compact_mock",
+                            "object": "response",
+                            "created_at": 1,
+                            "model": request_model,
+                            "status": "completed",
+                            "output": [{
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "hi", "annotations": []}],
+                                "status": "completed"
+                            }],
+                            "usage": {
+                                "input_tokens": 12,
+                                "input_tokens_details": {
+                                    "cached_tokens": 3,
+                                    "write_cached_tokens": 4,
+                                    "write_cached_5min_tokens": 4
+                                },
+                                "output_tokens": 4,
+                                "output_tokens_details": {
+                                    "reasoning_tokens": 1,
+                                    "accepted_prediction_tokens": 2,
+                                    "rejected_prediction_tokens": 3
+                                },
+                                "total_tokens": 16
+                            }
+                        })
+                        .to_string()
                     } else if path.ends_with("/responses") {
                         serde_json::json!({
                             "id": "resp_mock",
@@ -1722,6 +1752,12 @@ async fn postgres_openai_v1_subset_routes_execute_and_support_image_generations_
             serde_json::Value::String("resp_mock".to_owned()),
         ),
         (
+            "/v1/responses/compact",
+            r#"{"model":"gpt-4o","input":"hi"}"#,
+            vec!["id"],
+            serde_json::Value::String("resp_compact_mock".to_owned()),
+        ),
+        (
             "/v1/embeddings",
             r#"{"model":"gpt-4o","input":"hi"}"#,
             vec!["model"],
@@ -1853,6 +1889,7 @@ async fn postgres_openai_v1_subset_routes_execute_and_support_image_generations_
             "completed",
             "completed",
             "completed",
+            "completed",
             "completed"
         ]
     );
@@ -1861,6 +1898,7 @@ async fn postgres_openai_v1_subset_routes_execute_and_support_image_generations_
         vec![
             "openai/chat_completions",
             "openai/responses",
+            "openai/responses_compact",
             "openai/embeddings",
             "anthropic/message",
             "jina/rerank",
@@ -1875,11 +1913,12 @@ async fn postgres_openai_v1_subset_routes_execute_and_support_image_generations_
             "completed",
             "completed",
             "completed",
+            "completed",
             "completed"
         ]
     );
-    assert_eq!(usage_formats.len(), 6);
-    assert_eq!(usage_formats[5], "openai/images_generations");
+    assert_eq!(usage_formats.len(), 7);
+    assert_eq!(usage_formats[6], "openai/images_generations");
     assert_eq!(trace_thread_count, 1);
 
     embedded_pg.stop_db().await.unwrap();

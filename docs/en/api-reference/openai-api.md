@@ -58,6 +58,7 @@ AxonHub provides partial support for the OpenAI Responses API. This API offers a
 
 **Endpoints:**
 - `POST /v1/responses` - Generate a response
+- `POST /v1/responses/compact` - Generate a compact response
 
 **Limitations:**
 - ❌ `previous_response_id` is **not supported** - conversation history must be managed client-side

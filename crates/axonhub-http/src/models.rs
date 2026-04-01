@@ -133,6 +133,7 @@ pub struct AuthSnapshot {
 pub enum OpenAiV1Route {
     ChatCompletions,
     Responses,
+    ResponsesCompact,
     Embeddings,
     ImagesGenerations,
 }
@@ -142,6 +143,7 @@ impl OpenAiV1Route {
         match self {
             Self::ChatCompletions => "openai/chat_completions",
             Self::Responses => "openai/responses",
+            Self::ResponsesCompact => "openai/responses_compact",
             Self::Embeddings => "openai/embeddings",
             Self::ImagesGenerations => "openai/images_generations",
         }

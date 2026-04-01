@@ -2621,6 +2621,10 @@ struct TestHttpRequest {
                 r#"{"model":"gpt-4o","input":"hi"}"#,
             ),
             (
+                "/v1/responses/compact",
+                r#"{"model":"gpt-4o","input":"hi"}"#,
+            ),
+            (
                 "/v1/embeddings",
                 r#"{"model":"gpt-4o","input":"hi"}"#,
             ),
@@ -2672,7 +2676,37 @@ struct TestHttpRequest {
                 .map(Result::unwrap)
                 .collect()
         };
-        assert_eq!(request_statuses, vec!["completed", "completed", "completed", "completed"]);
+        assert_eq!(
+            request_statuses,
+            vec![
+                "completed",
+                "completed",
+                "completed",
+                "completed",
+                "completed",
+            ]
+        );
+
+        let request_formats: Vec<String> = {
+            let mut statement = connection
+                .prepare("SELECT format FROM requests ORDER BY id ASC")
+                .unwrap();
+            statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(
+            request_formats,
+            vec![
+                "openai/chat_completions",
+                "openai/responses",
+                "openai/responses_compact",
+                "openai/embeddings",
+                "openai/images_generations",
+            ]
+        );
 
         let request_trace_channels: Vec<(i64, i64)> = {
             let mut statement = connection
@@ -2684,7 +2718,7 @@ struct TestHttpRequest {
                 .map(Result::unwrap)
                 .collect()
         };
-        assert_eq!(request_trace_channels.len(), 4);
+        assert_eq!(request_trace_channels.len(), 5);
         assert!(request_trace_channels.iter().all(|(trace_id, _)| *trace_id > 0));
         let first_trace_id = request_trace_channels[0].0;
         assert!(request_trace_channels
@@ -2718,12 +2752,21 @@ struct TestHttpRequest {
                 .map(Result::unwrap)
                 .collect()
         };
-        assert_eq!(execution_statuses, vec!["completed", "completed", "completed", "completed"]);
+        assert_eq!(
+            execution_statuses,
+            vec![
+                "completed",
+                "completed",
+                "completed",
+                "completed",
+                "completed",
+            ]
+        );
 
         let usage_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(usage_count, 4);
+        assert_eq!(usage_count, 5);
 
         let usage_rows: Vec<(String, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, String, String)> = {
             let mut statement = connection
@@ -2759,7 +2802,7 @@ struct TestHttpRequest {
                 .map(Result::unwrap)
                 .collect()
         };
-        assert_eq!(usage_rows.len(), 4);
+        assert_eq!(usage_rows.len(), 5);
         let responses_usage = &usage_rows[1];
         assert_eq!(responses_usage.1, 12);
         assert_eq!(responses_usage.2, 4);
@@ -2778,7 +2821,23 @@ struct TestHttpRequest {
             .12
             .contains("\"promptWriteCacheVariantCode\":\"five_min\""));
 
-        let image_usage = &usage_rows[3];
+        let compact_usage = &usage_rows[2];
+        assert_eq!(compact_usage.0, "openai/responses_compact");
+        assert_eq!(compact_usage.1, 12);
+        assert_eq!(compact_usage.2, 4);
+        assert_eq!(compact_usage.3, 16);
+        assert_eq!(compact_usage.4, 3);
+        assert_eq!(compact_usage.5, 4);
+        assert_eq!(compact_usage.6, 4);
+        assert_eq!(compact_usage.7, 1);
+        assert_eq!(compact_usage.8, 2);
+        assert_eq!(compact_usage.9, 3);
+        assert!((compact_usage.10 - 0.000015).abs() < 1e-12);
+        assert_eq!(compact_usage.11, "price-ref-task9");
+        assert!(compact_usage.12.contains("\"itemCode\":\"prompt_tokens\""));
+        assert!(compact_usage.12.contains("\"itemCode\":\"prompt_write_cached_tokens\""));
+
+        let image_usage = &usage_rows[4];
         assert_eq!(image_usage.0, "openai/images_generations");
         assert_eq!(image_usage.1, 20);
         assert_eq!(image_usage.2, 30);
@@ -4619,6 +4678,8 @@ struct TestHttpRequest {
                             "{\"id\":\"chatcmpl_affinity_b\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"affinity-b\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}".to_owned()
                         } else if path.ends_with("/chat/completions") {
                             "{\"id\":\"chatcmpl_mock\",\"object\":\"chat.completion\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":2},\"completion_tokens_details\":{\"reasoning_tokens\":1}}}".to_owned()
+                        } else if path.ends_with("/responses/compact") {
+                            "{\"id\":\"resp_compact_mock\",\"object\":\"response\",\"created_at\":1,\"model\":\"gpt-4o\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\",\"annotations\":[]}],\"status\":\"completed\"}],\"usage\":{\"input_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":3,\"write_cached_tokens\":4,\"write_cached_5min_tokens\":4},\"output_tokens\":4,\"output_tokens_details\":{\"reasoning_tokens\":1,\"accepted_prediction_tokens\":2,\"rejected_prediction_tokens\":3},\"total_tokens\":16}}".to_owned()
                         } else if path.ends_with("/responses") {
                             "{\"id\":\"resp_mock\",\"object\":\"response\",\"created_at\":1,\"model\":\"gpt-4o\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\",\"annotations\":[]}],\"status\":\"completed\"}],\"usage\":{\"input_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":3,\"write_cached_tokens\":4,\"write_cached_5min_tokens\":4},\"output_tokens\":4,\"output_tokens_details\":{\"reasoning_tokens\":1,\"accepted_prediction_tokens\":2,\"rejected_prediction_tokens\":3},\"total_tokens\":16}}".to_owned()
                         } else if path.ends_with("/images/generations") {

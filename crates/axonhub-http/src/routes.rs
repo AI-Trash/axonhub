@@ -88,6 +88,10 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
             web::resource("/responses").route(web::post().to(handlers::openai_v1::openai_responses)),
         )
         .service(
+            web::resource("/responses/compact")
+                .route(web::post().to(handlers::openai_v1::openai_responses_compact)),
+        )
+        .service(
             web::resource("/embeddings").route(web::post().to(handlers::openai_v1::openai_embeddings)),
         )
         .service(

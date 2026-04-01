@@ -58,6 +58,7 @@ AxonHub 提供对 OpenAI Responses API 的部分支持。该 API 为单轮交互
 
 **端点：**
 - `POST /v1/responses` - 生成响应
+- `POST /v1/responses/compact` - 生成 compact 响应
 
 **限制：**
 - ❌ **不支持** `previous_response_id` - 对话历史需要在客户端管理

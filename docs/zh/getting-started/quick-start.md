@@ -63,7 +63,7 @@ docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
 
 - `/health` 可用
 - 对受支持的 SQLite 与 PostgreSQL 迁移路径，`GET /admin/system/status` 与 `POST /admin/system/initialize` 可用
-- `/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings` 在已迁移的实用 SQLite 与 PostgreSQL 路径上可用
+- `/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/responses/compact`、`/v1/embeddings` 在已迁移的实用 SQLite 与 PostgreSQL 路径上可用
 - TiDB 与 Neon DB 仍然只能使用 Go 后端
 - 支持配置文件搜索路径与 `AXONHUB_*` 环境变量
 - 未迁移路由族返回结构化 `501 Not Implemented` JSON

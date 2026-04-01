@@ -17,7 +17,7 @@ The Rust backend implements the following verified SQLite- and PostgreSQL-backed
 - **Admin read routes**: `GET /admin/requests/:request_id/content`
 - **Admin GraphQL**: `POST /admin/graphql` with playground, the current supported settings-management subset, and OAuth flows (Codex, Claude Code, Antigravity, Copilot)
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` with playground
-- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/messages`, `/rerank`
+- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/responses/compact`, `/embeddings`, `/messages`, `/rerank`
 - **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as configured
 - **Database support**: SQLite and PostgreSQL fully verified for the Rust target-state contract
@@ -108,7 +108,7 @@ Current Rust behavior is intentionally limited:
 
 - `/health` returns a truthful health payload
 - `/admin/system/status` and `/admin/system/initialize` work on the supported SQLite- and PostgreSQL-backed Rust paths
-- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, and `/v1/embeddings` run through the current Rust backend with auth/context, routing, and SQLite- and PostgreSQL-backed persistence side effects
+- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/responses/compact`, and `/v1/embeddings` run through the current Rust backend with auth/context, routing, and SQLite- and PostgreSQL-backed persistence side effects
 - SQLite and PostgreSQL are the Rust target-state databases in this repository; TiDB and Neon DB remain legacy-reference dialect material in the Go tree
 - `POST /v1/images/edits`, `/v1/realtime`, Gemini `countTokens`, and AiSDK-marked `/v1/*` requests remain explicit structured `501 Not Implemented` JSON boundaries
 - config file paths and `AXONHUB_*` env keys mirror the preserved operator-facing contract from `conf/conf.go`
