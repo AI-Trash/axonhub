@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { useInitializeSystem } from '@/features/auth/data/initialization';
 import { cn } from '@/lib/utils';
 import * as m from '@/paraglide/messages';
+import { getLocale } from '@/paraglide/runtime';
 
 type InitializationFormProps = HTMLAttributes<HTMLFormElement>;
 
@@ -36,7 +37,7 @@ const createFormSchema = () =>
 export function InitializationForm({ className, ...props }: InitializationFormProps) {
   const initializeSystemMutation = useInitializeSystem();
 
-  const formSchema = createFormSchema(t);
+  const formSchema = createFormSchema();
   type FormData = z.infer<typeof formSchema>;
 
   const form = useForm<FormData>({
@@ -57,6 +58,7 @@ export function InitializationForm({ className, ...props }: InitializationFormPr
       ownerFirstName: data.ownerFirstName,
       ownerLastName: data.ownerLastName,
       brandName: data.brandName,
+      preferLanguage: getLocale(),
     };
     initializeSystemMutation.mutate(input);
   }

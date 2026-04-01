@@ -7,21 +7,30 @@ import { AutoCompleteSelect } from '@/components/auto-complete-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 
 import { useSystemContext } from '../context/system-context';
 import { currencyCodes } from '../data/currencies';
-import { useGeneralSettings, useUpdateGeneralSettings } from '../data/system';
+import {
+  useGeneralSettings,
+  useUpdateGeneralSettings,
+  useUpdateUserAgentPassThroughSettings,
+  useUserAgentPassThroughSettings,
+} from '../data/system';
 import { GMTTimeZoneOptions } from '../data/timezones';
 import * as m from '@/paraglide/messages';
 import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 export function GeneralSettings() {
   const { data: settings, isLoading: isLoadingSettings } = useGeneralSettings();
+  const { data: userAgentPassThroughSettings, isLoading: isLoadingUserAgentPassThroughSettings } = useUserAgentPassThroughSettings();
   const updateSettings = useUpdateGeneralSettings();
+  const updateUserAgentPassThroughSettings = useUpdateUserAgentPassThroughSettings();
   const { isLoading, setIsLoading } = useSystemContext();
 
   const [currencyCode, setCurrencyCode] = useState('USD');
   const [timezone, setTimezone] = useState('UTC');
+  const [passThroughUserAgent, setPassThroughUserAgent] = useState(false);
 
   const currencyItems = React.useMemo(
     () =>
@@ -42,6 +51,12 @@ export function GeneralSettings() {
     }
   }, [settings]);
 
+  React.useEffect(() => {
+    if (userAgentPassThroughSettings) {
+      setPassThroughUserAgent(userAgentPassThroughSettings.enabled);
+    }
+  }, [userAgentPassThroughSettings]);
+
   const handleSave = async () => {
     setIsLoading(true);
     try {
@@ -49,14 +64,24 @@ export function GeneralSettings() {
         currencyCode: currencyCode.trim(),
         timezone: timezone.trim(),
       });
+
+      if (userAgentPassThroughSettings && userAgentPassThroughSettings.enabled !== passThroughUserAgent) {
+        await updateUserAgentPassThroughSettings.mutateAsync({
+          enabled: passThroughUserAgent,
+        });
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  const hasChanges = settings ? settings.currencyCode !== currencyCode || settings.timezone !== timezone : false;
+  const hasChanges = settings
+    ? settings.currencyCode !== currencyCode ||
+      settings.timezone !== timezone ||
+      !!userAgentPassThroughSettings && userAgentPassThroughSettings.enabled !== passThroughUserAgent
+    : false;
 
-  if (isLoadingSettings) {
+  if (isLoadingSettings || isLoadingUserAgentPassThroughSettings) {
     return (
       <div className='flex h-32 items-center justify-center'>
         <Loader2 className='h-6 w-6 animate-spin' />
@@ -100,13 +125,32 @@ export function GeneralSettings() {
             </div>
             <div className='text-muted-foreground text-sm'>{m["system.general.timezone.description"]()}</div>
           </div>
+
+          <div className='flex items-center justify-between rounded-xl border p-4'>
+            <div className='space-y-1 pr-4'>
+              <Label htmlFor='user-agent-pass-through'>Pass through User-Agent</Label>
+              <div className='text-muted-foreground text-sm'>
+                Forward the original client User-Agent header to upstream providers when supported.
+              </div>
+            </div>
+            <Switch
+              id='user-agent-pass-through'
+              checked={passThroughUserAgent}
+              onCheckedChange={setPassThroughUserAgent}
+              disabled={isLoading || updateSettings.isPending || updateUserAgentPassThroughSettings.isPending}
+            />
+          </div>
         </CardContent>
       </Card>
 
       {hasChanges && (
         <div className='flex justify-end'>
-          <Button onClick={handleSave} disabled={isLoading || updateSettings.isPending} className='min-w-[100px]'>
-            {isLoading || updateSettings.isPending ? (
+          <Button
+            onClick={handleSave}
+            disabled={isLoading || updateSettings.isPending || updateUserAgentPassThroughSettings.isPending}
+            className='min-w-[100px]'
+          >
+            {isLoading || updateSettings.isPending || updateUserAgentPassThroughSettings.isPending ? (
               <>
                 <Loader2 className='mr-2 h-4 w-4 animate-spin' />
                 {m["system.buttons.saving"]()}

@@ -82,6 +82,7 @@ const CREATE_CHANNEL_MUTATION = `
       defaultTestModel
         settings {
           extraModelPrefix
+          passThroughUserAgent
           modelMappings {
             from
             to
@@ -128,6 +129,7 @@ const BULK_CREATE_CHANNELS_MUTATION = `
       defaultTestModel
         settings {
           extraModelPrefix
+          passThroughUserAgent
           modelMappings {
             from
             to
@@ -174,6 +176,7 @@ const UPDATE_CHANNEL_MUTATION = `
       defaultTestModel
         settings {
           extraModelPrefix
+          passThroughUserAgent
           modelMappings {
             from
             to
@@ -227,6 +230,12 @@ const BULK_ENABLE_CHANNELS_MUTATION = `
   }
 `;
 
+const BULK_RECOVER_CHANNELS_MUTATION = `
+  mutation BulkRecoverChannels($ids: [ID!]!) {
+    bulkRecoverChannels(ids: $ids)
+  }
+`;
+
 const DELETE_CHANNEL_MUTATION = `
   mutation DeleteChannel($id: ID!) {
     deleteChannel(id: $id)
@@ -273,6 +282,7 @@ const BULK_IMPORT_CHANNELS_MUTATION = `
         defaultTestModel
         settings {
           extraModelPrefix
+          passThroughUserAgent
           modelMappings {
             from
             to
@@ -438,6 +448,7 @@ const BULK_UPDATE_CHANNEL_ORDERING_MUTATION = `
         orderingWeight
         settings {
           extraModelPrefix
+          passThroughUserAgent
           modelMappings {
             from
             to
@@ -582,6 +593,7 @@ const QUERY_CHANNELS_QUERY = `
               forceArrayInputs
               replaceDeveloperRoleWithSystem
             }
+            passThroughUserAgent
           }
           orderingWeight
           errorMessage
@@ -844,13 +856,18 @@ export function useUpdateChannelStatus() {
             ? m["channels.status.archived"]()
             : m["channels.status.disabled"]();
 
-      const messageKey = variables.status === 'archived' ? 'channels.messages.archiveSuccess' : 'channels.messages.statusUpdateSuccess';
-
-      toast.success(variables.status === 'archived' ? t(messageKey) : t(messageKey, { status: statusText }));
+      toast.success(
+        variables.status === 'archived'
+          ? m["channels.messages.archiveSuccess"]()
+          : m["channels.messages.statusUpdateSuccess"]({ status: statusText })
+      );
     },
     onError: (error, variables) => {
-      const errorKey = variables.status === 'archived' ? 'channels.messages.archiveError' : 'channels.messages.statusUpdateError';
-      toast.error(t(errorKey, { error: error.message }));
+      toast.error(
+        variables.status === 'archived'
+          ? m["channels.messages.archiveError"]({ error: error.message })
+          : m["channels.messages.statusUpdateError"]({ error: error.message })
+      );
     },
   });
 }
@@ -906,6 +923,24 @@ export function useBulkEnableChannels() {
   });
 }
 
+export function useBulkRecoverChannels() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const data = await graphqlRequest<{ bulkRecoverChannels: boolean }>(BULK_RECOVER_CHANNELS_MUTATION, { ids });
+      return data.bulkRecoverChannels;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['channels'] });
+      queryClient.invalidateQueries({ queryKey: ['errorChannelsCount'] });
+      toast.success(m["channels.messages.errorResolvedSuccess"]());
+    },
+    onError: (error) => {
+      toast.error(m["channels.messages.errorResolvedError"]({ error: error.message }));
+    },
+  });
+}
+
 export function useDeleteChannel() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -940,7 +975,7 @@ export function useBulkDeleteChannels() {
   });
 }
 
-export function useTestChannel() {
+export function useTestChannel(options?: { silent?: boolean }) {
   return useMutation({
     mutationFn: async ({
       channelID,
@@ -962,6 +997,10 @@ export function useTestChannel() {
       return data.testChannel;
     },
     onSuccess: (data) => {
+      if (options?.silent) {
+        return;
+      }
+
       if (data.success) {
         toast.success(m["channels.messages.testSuccess"]({ latency: data.latency.toFixed(2) }));
       } else {
@@ -971,6 +1010,10 @@ export function useTestChannel() {
       }
     },
     onError: (error) => {
+      if (options?.silent) {
+        return;
+      }
+
       // Handle GraphQL/network errors
       toast.error(m["channels.messages.testError"]({ error: error.message }));
     },

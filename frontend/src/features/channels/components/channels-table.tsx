@@ -1,4 +1,4 @@
-import { IconArchive, IconBan, IconCheck, IconTrash, IconTemplate, IconX } from '@tabler/icons-react';
+import { IconArchive, IconBan, IconCheck, IconFlask, IconTrash, IconTemplate, IconX } from '@tabler/icons-react';
 import {
   ColumnDef,
   ColumnFiltersState,
@@ -27,6 +27,7 @@ import { Channel, ChannelConnection } from '../data/schema';
 import { ChannelExpandedRow } from './channel-expanded-row';
 import { DataTableToolbar } from './data-table-toolbar';
 import * as m from '@/paraglide/messages';
+import { dynamicTranslation } from '@/lib/paraglide-helpers';
 
 const MotionTableRow = motion.create(TableRow);
 const MotionExpandedRow = motion.create(TableRow);
@@ -240,11 +241,17 @@ export function ChannelsTable({
       if (!apiFormat) return '-';
 
       const key = `channels.dialogs.fields.apiFormat.formats.${apiFormat}`;
-      const label = t(key);
+      const label = dynamicTranslation(key);
       return label === key ? apiFormat : label;
     },
     []
   );
+
+  const bulkTestTitle = useMemo(() => {
+    const key = 'channels.dialogs.bulkTest.title';
+    const label = dynamicTranslation(key);
+    return label === key ? 'Bulk Test' : label;
+  }, []);
 
   const selectedCount = useMemo(() => filteredSelectedRows.length, [filteredSelectedRows]);
   const isFiltered = useMemo(() => columnFilters.length > 0, [columnFilters.length]);
@@ -408,6 +415,15 @@ export function ChannelsTable({
               title={m["channels.templates.bulk.applyButton"]()}
             >
               <IconTemplate className='h-4 w-4' />
+            </Button>
+            <Button
+              variant='ghost'
+              size='icon'
+              className='h-8 w-8 text-sky-600 hover:bg-sky-100 hover:text-sky-700'
+              onClick={() => setOpen('bulkTest')}
+              title={bulkTestTitle}
+            >
+              <IconFlask className='h-4 w-4' />
             </Button>
             <Button
               variant='ghost'

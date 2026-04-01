@@ -1142,7 +1142,7 @@ export function useUserAgentPassThroughSettings() {
         const data = await graphqlRequest<{ userAgentPassThroughSettings: UserAgentPassThroughSettings }>(USER_AGENT_PASS_THROUGH_SETTINGS_QUERY);
         return data.userAgentPassThroughSettings;
       } catch (error) {
-        handleError(error, i18n.t('common.errors.internalServerError'));
+        handleError(error, m["common.errors.internalServerError"]());
         throw error;
       }
     },
@@ -1159,10 +1159,10 @@ export function useUpdateUserAgentPassThroughSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['userAgentPassThroughSettings'] });
-      toast.success(i18n.t('common.success.systemUpdated'));
+      toast.success(m["common.success.systemUpdated"]());
     },
     onError: () => {
-      toast.error(i18n.t('common.errors.systemUpdateFailed'));
+      toast.error(m["common.errors.systemUpdateFailed"]());
     },
   });
 }
