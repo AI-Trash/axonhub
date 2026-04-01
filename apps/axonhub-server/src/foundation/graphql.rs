@@ -14,9 +14,9 @@ use serde_json::{self, Value};
 use super::{
     admin::{
         default_auto_backup_settings, default_storage_policy, default_system_channel_settings,
-        BackupFrequencySetting, ProbeFrequencySetting, StoredAutoBackupSettings,
-        StoredChannelProbeData, StoredProviderQuotaStatus, StoredStoragePolicy,
-        StoredSystemChannelSettings,
+        parse_graphql_resource_id, BackupFrequencySetting, ProbeFrequencySetting,
+        StoredAutoBackupSettings, StoredChannelProbeData, StoredProviderQuotaStatus,
+        StoredStoragePolicy, StoredSystemChannelSettings,
     },
     authz::{
         scope_strings, serialize_scope_slugs, user_has_system_scope, LLM_API_KEY_SCOPES,
@@ -26,7 +26,8 @@ use super::{
     ports::{AdminGraphqlRepository, OpenApiGraphqlRepository},
     repositories::graphql::{
         AdminGraphqlSubsetRepository, GraphqlAutoBackupSettingsRecord,
-        GraphqlStoragePolicyRecord, GraphqlSystemChannelSettingsRecord,
+        GraphqlDefaultDataStorageRecord, GraphqlStoragePolicyRecord,
+        GraphqlSystemChannelSettingsRecord,
         OpenApiGraphqlMutationRepository,
         SeaOrmAdminGraphqlSubsetRepository, SeaOrmOpenApiGraphqlMutationRepository,
     },
@@ -154,6 +155,15 @@ pub(crate) struct AdminGraphqlUpdateChannelProbeSettingInput {
 #[graphql(name = "UpdateSystemChannelSettingsInput")]
 pub(crate) struct AdminGraphqlUpdateSystemChannelSettingsInput {
     pub(crate) probe: Option<AdminGraphqlUpdateChannelProbeSettingInput>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "UpdateDefaultDataStorageInput")]
+pub(crate) struct AdminGraphqlUpdateDefaultDataStorageInput {
+    #[serde(rename = "dataStorageID")]
+    #[graphql(name = "dataStorageID")]
+    pub(crate) data_storage_id: String,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
@@ -365,6 +375,14 @@ async fn execute_admin_graphql_seaorm_request(
         return query_auto_backup_settings_seaorm(&repository);
     }
 
+    if query.contains("defaultDataStorageID") {
+        if !user_has_system_scope(&user, SCOPE_READ_SETTINGS) {
+            return graphql_permission_denied("defaultDataStorageID");
+        }
+
+        return query_default_data_storage_id_seaorm(&repository);
+    }
+
     if query.contains("systemChannelSettings") {
         if !user_has_system_scope(&user, SCOPE_READ_SETTINGS) {
             return graphql_permission_denied("systemChannelSettings");
@@ -387,6 +405,14 @@ async fn execute_admin_graphql_seaorm_request(
         }
 
         return update_auto_backup_settings_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateDefaultDataStorage") {
+        if !user_has_system_scope(&user, SCOPE_WRITE_SETTINGS) {
+            return graphql_permission_denied("updateDefaultDataStorage");
+        }
+
+        return update_default_data_storage_seaorm(&repository, payload.variables);
     }
 
     if query.contains("updateSystemChannelSettings") {
@@ -505,6 +531,20 @@ fn query_auto_backup_settings_seaorm(
     })
 }
 
+fn query_default_data_storage_id_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let current = load_default_data_storage_id_seaorm(repository)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "defaultDataStorageID": current.map(|id| graphql_gid("DataStorage", id)),
+            }
+        }),
+    })
+}
+
 fn query_system_channel_settings_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
 ) -> Result<GraphqlExecutionResult, String> {
@@ -607,6 +647,63 @@ fn update_auto_backup_settings_seaorm(
     })
 }
 
+fn update_default_data_storage_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdateDefaultDataStorageInput>(
+        variables,
+        "input",
+        "default data storage input is required",
+    )?;
+    let data_storage_id = match parse_graphql_resource_id(input.data_storage_id.as_str(), "DataStorage") {
+        Ok(id) => id,
+        Err(_) => {
+            return Ok(GraphqlExecutionResult {
+                status: 200,
+                body: json!({
+                    "data": {"updateDefaultDataStorage": Value::Null},
+                    "errors": [{"message": "invalid dataStorageID"}],
+                }),
+            })
+        }
+    };
+    let current = repository.query_data_storage_status(data_storage_id)?;
+    let Some(current) = current else {
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {"updateDefaultDataStorage": Value::Null},
+                "errors": [{"message": "data storage not found"}],
+            }),
+        });
+    };
+    if current.id <= 0 {
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {"updateDefaultDataStorage": Value::Null},
+                "errors": [{"message": "data storage not found"}],
+            }),
+        });
+    }
+    if !current.status.eq_ignore_ascii_case("active") {
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {"updateDefaultDataStorage": Value::Null},
+                "errors": [{"message": "data storage is not active"}],
+            }),
+        });
+    }
+
+    repository.upsert_default_data_storage(data_storage_id.to_string().as_str())?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateDefaultDataStorage": true}}),
+    })
+}
+
 fn update_system_channel_settings_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
     variables: Value,
@@ -654,6 +751,30 @@ fn load_system_channel_settings_seaorm(
     )
 }
 
+fn load_default_data_storage_id_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<Option<i64>, String> {
+    let Some(record) = repository.query_default_data_storage()? else {
+        return Ok(None);
+    };
+
+    let Ok(id) = record.value.trim().parse::<i64>() else {
+        return Ok(None);
+    };
+    if id <= 0 {
+        return Ok(None);
+    }
+
+    let Some(storage) = repository.query_data_storage_status(id)? else {
+        return Ok(None);
+    };
+    if !storage.status.eq_ignore_ascii_case("active") {
+        return Ok(None);
+    }
+
+    Ok(Some(id))
+}
+
 fn deserialize_setting_or_default<T, Record, F>(
     record: Option<Record>,
     default_factory: F,
@@ -681,6 +802,12 @@ impl IntoGraphqlSettingValue for GraphqlStoragePolicyRecord {
 }
 
 impl IntoGraphqlSettingValue for GraphqlAutoBackupSettingsRecord {
+    fn setting_value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl IntoGraphqlSettingValue for GraphqlDefaultDataStorageRecord {
     fn setting_value(&self) -> &str {
         self.value.as_str()
     }

@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::env::env_override_names;
 use crate::{
-    config_search_paths, supported_config_aliases, supported_config_keys, Config, LoadedConfig,
-    PreviewFormat,
+    config_search_paths, load_for_cli, supported_config_aliases, supported_config_keys, Config,
+    LoadedConfig, PreviewFormat,
 };
 
 fn test_lock() -> &'static Mutex<()> {
@@ -553,4 +553,86 @@ fn ensure_loadable_rejects_invalid_supported_value_shapes() {
         config.ensure_loadable().unwrap_err().to_string(),
         "invalid metrics exporter type 'bogus'"
     );
+}
+
+#[test]
+fn cli_load_allows_values_that_go_defers_to_config_validate() {
+    let _lock = test_guard();
+    let fixture = TestFixture::new("cli-load-semantic-validation");
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+log:
+  encoding: "xml"
+  output: "stderr"
+cache:
+  mode: "disk"
+metrics:
+  enabled: true
+  exporter:
+    type: "bogus"
+"#,
+    );
+
+    assert_eq!(
+        LoadedConfig::load().unwrap_err().to_string(),
+        "invalid log encoding 'xml'"
+    );
+
+    let loaded = load_for_cli().unwrap();
+    assert_eq!(loaded.config.log.encoding, "xml");
+    assert_eq!(loaded.config.log.output, "stderr");
+    assert_eq!(loaded.config.cache.mode, "disk");
+    assert_eq!(loaded.config.metrics.exporter.exporter_type, "bogus");
+    assert_eq!(
+        loaded.config.validation_errors(),
+        vec![
+            "log.encoding must be one of: json, console".to_owned(),
+            "log.output must be one of: stdio, file".to_owned(),
+            "cache.mode must be one of: memory, redis, two-level".to_owned(),
+            "metrics.exporter.type must be one of: stdout, otlpgrpc, otlphttp when metrics are enabled"
+                .to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn cli_load_keeps_go_style_parse_failures_and_rust_target_boundaries() {
+    let _lock = test_guard();
+    let fixture = TestFixture::new("cli-load-parse-failures");
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+server:
+  read_timeout: "not-a-duration"
+"#,
+    );
+
+    let duration_error = load_for_cli().unwrap_err().to_string();
+    assert!(duration_error.contains("invalid duration for server.read_timeout: not-a-duration"));
+
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+log:
+  level: "verbose"
+"#,
+    );
+
+    assert_eq!(
+        load_for_cli().unwrap_err().to_string(),
+        "invalid log level 'verbose'"
+    );
+
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+db:
+  dialect: "mysql"
+  dsn: "mysql://root:root@127.0.0.1:3306/axonhub"
+"#,
+    );
+
+    let dialect_error = load_for_cli().unwrap_err().to_string();
+    assert!(dialect_error.contains("unsupported db.dialect 'mysql'"));
 }

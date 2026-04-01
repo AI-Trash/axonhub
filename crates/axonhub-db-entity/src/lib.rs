@@ -398,6 +398,13 @@ pub mod data_storages {
         pub status: String,
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[sea_orm(entity = "Entity")]
+    pub struct GraphqlStatus {
+        pub id: i64,
+        pub status: String,
+    }
+
     impl ActiveModelBehavior for ActiveModel {}
 }
 
@@ -1147,7 +1154,6 @@ pub mod usage_logs {
         pub total_cost: Option<f64>,
         pub cost_items: String,
         pub cost_price_reference_id: Option<String>,
-        pub deleted_at: i64,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

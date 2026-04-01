@@ -1,4 +1,4 @@
-use axonhub_db_entity::{api_keys, models, systems};
+use axonhub_db_entity::{api_keys, data_storages, models, systems};
 use axonhub_http::AuthApiKeyContext;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 
@@ -34,8 +34,22 @@ pub(crate) struct GraphqlSystemChannelSettingsRecord {
     pub(crate) value: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlDefaultDataStorageRecord {
+    pub(crate) value: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlDataStorageStatusRecord {
+    pub(crate) id: i64,
+    pub(crate) status: String,
+}
+
 pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
     fn query_model_statuses(&self) -> Result<Vec<GraphqlModelStatusRecord>, String>;
+    fn query_default_data_storage(&self) -> Result<Option<GraphqlDefaultDataStorageRecord>, String>;
+    fn upsert_default_data_storage(&self, value: &str) -> Result<(), String>;
+    fn query_data_storage_status(&self, id: i64) -> Result<Option<GraphqlDataStorageStatusRecord>, String>;
     fn query_storage_policy(&self) -> Result<Option<GraphqlStoragePolicyRecord>, String>;
     fn upsert_storage_policy(&self, value: &str) -> Result<(), String>;
     fn query_auto_backup_settings(&self) -> Result<Option<GraphqlAutoBackupSettingsRecord>, String>;
@@ -87,6 +101,41 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
             query_model_statuses_seaorm(&connection).await
+        })
+    }
+
+    fn query_default_data_storage(&self) -> Result<Option<GraphqlDefaultDataStorageRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_system_json_setting_seaorm(
+                &connection,
+                crate::foundation::shared::SYSTEM_KEY_DEFAULT_DATA_STORAGE,
+            )
+            .await
+            .map(|value| value.map(|value| GraphqlDefaultDataStorageRecord { value }))
+        })
+    }
+
+    fn upsert_default_data_storage(&self, value: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let value = value.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            upsert_system_json_setting_seaorm(
+                &connection,
+                crate::foundation::shared::SYSTEM_KEY_DEFAULT_DATA_STORAGE,
+                &value,
+            )
+            .await
+        })
+    }
+
+    fn query_data_storage_status(&self, id: i64) -> Result<Option<GraphqlDataStorageStatusRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_data_storage_status_seaorm(&connection, id).await
         })
     }
 
@@ -230,6 +279,25 @@ async fn query_model_statuses_seaorm(
                     status: row.status,
                 })
                 .collect()
+        })
+        .map_err(|error| error.to_string())
+}
+
+async fn query_data_storage_status_seaorm(
+    db: &impl sea_orm::ConnectionTrait,
+    id: i64,
+) -> Result<Option<GraphqlDataStorageStatusRecord>, String> {
+    data_storages::Entity::find()
+        .filter(data_storages::Column::Id.eq(id))
+        .filter(data_storages::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<data_storages::GraphqlStatus>()
+        .one(db)
+        .await
+        .map(|row| {
+            row.map(|row| GraphqlDataStorageStatusRecord {
+                id: row.id,
+                status: row.status,
+            })
         })
         .map_err(|error| error.to_string())
 }

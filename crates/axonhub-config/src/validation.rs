@@ -4,6 +4,14 @@ use crate::contract::validate_db_dialect;
 use crate::types::Config;
 
 impl Config {
+    pub(crate) fn ensure_cli_loadable(&self) -> Result<()> {
+        validate_db_dialect(&self.db.dialect)?;
+        ensure_log_level(&self.log.level)?;
+        self.ensure_duration_fields_parse()?;
+
+        Ok(())
+    }
+
     pub fn validation_errors(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
@@ -63,18 +71,7 @@ impl Config {
     }
 
     pub(crate) fn ensure_loadable(&self) -> Result<()> {
-        validate_db_dialect(&self.db.dialect)?;
-        ensure_log_level(&self.log.level)?;
-
-        for (field, value) in self.duration_fields() {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            humantime::parse_duration(trimmed)
-                .with_context(|| format!("invalid duration for {field}: {trimmed}"))?;
-        }
+        self.ensure_cli_loadable()?;
 
         match self.log.encoding.trim().to_ascii_lowercase().as_str() {
             "json" | "console" => {}
@@ -103,6 +100,20 @@ impl Config {
                 "stdout" | "otlpgrpc" | "otlphttp" => {}
                 value => return Err(anyhow!("invalid metrics exporter type '{value}'")),
             }
+        }
+
+        Ok(())
+    }
+
+    fn ensure_duration_fields_parse(&self) -> Result<()> {
+        for (field, value) in self.duration_fields() {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            humantime::parse_duration(trimmed)
+                .with_context(|| format!("invalid duration for {field}: {trimmed}"))?;
         }
 
         Ok(())

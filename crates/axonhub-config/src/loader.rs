@@ -15,6 +15,10 @@ pub fn load() -> Result<LoadedConfig> {
     LoadedConfig::load()
 }
 
+pub fn load_for_cli() -> Result<LoadedConfig> {
+    LoadedConfig::load_for_cli()
+}
+
 #[derive(Debug, Clone)]
 pub struct LoadedConfig {
     pub config: Config,
@@ -23,6 +27,14 @@ pub struct LoadedConfig {
 
 impl LoadedConfig {
     pub fn load() -> Result<Self> {
+        Self::load_with_validation(LoadValidation::Strict)
+    }
+
+    pub fn load_for_cli() -> Result<Self> {
+        Self::load_with_validation(LoadValidation::Cli)
+    }
+
+    fn load_with_validation(validation: LoadValidation) -> Result<Self> {
         let mut merged = serde_yaml::to_value(Config::default())?;
         let source = find_config_path();
 
@@ -45,7 +57,10 @@ impl LoadedConfig {
         normalize_legacy_aliases(&mut merged);
 
         let config: Config = serde_yaml::from_value(merged)?;
-        config.ensure_loadable()?;
+        match validation {
+            LoadValidation::Strict => config.ensure_loadable()?,
+            LoadValidation::Cli => config.ensure_cli_loadable()?,
+        }
 
         Ok(Self { config, source })
     }
@@ -61,6 +76,12 @@ impl LoadedConfig {
     pub fn config_path(&self) -> Option<&Path> {
         self.source.as_deref()
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LoadValidation {
+    Strict,
+    Cli,
 }
 
 fn find_config_path() -> Option<PathBuf> {

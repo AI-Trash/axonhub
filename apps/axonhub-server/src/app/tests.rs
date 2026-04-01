@@ -15,7 +15,7 @@ use crate::foundation::{
     provider_edge::PROVIDER_EDGE_REQUIRED_ENV_VARS,
     shared::{
         SqliteFoundation, DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE,
-        PRIMARY_DATA_STORAGE_NAME,
+        PRIMARY_DATA_STORAGE_NAME, graphql_gid,
         SYSTEM_KEY_BRAND_NAME, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_VERSION,
     },
     sqlite_support::hash_password,
@@ -2529,8 +2529,8 @@ fn help_and_config_usage_texts_list_current_cli_contract() {
     assert!(config_get_usage.starts_with(CONFIG_GET_USAGE_HEADER));
     assert!(config_get_usage.contains("server.port    Server port number"));
     assert!(config_get_usage.contains("server.name    Server name"));
-    assert!(!config_get_usage.contains("server.base_path    Server base path"));
-    assert!(!config_get_usage.contains("server.debug    Server debug mode"));
+    assert!(config_get_usage.contains("server.base_path    Server base path"));
+    assert!(config_get_usage.contains("server.debug    Server debug mode"));
     assert!(!config_get_usage.contains("server.api.auth.allow_no_auth    Allow unauthenticated API access"));
     assert!(config_get_usage.contains("db.dialect    Database dialect"));
     assert!(config_get_usage.contains("db.dsn    Database DSN"));
@@ -3787,6 +3787,125 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
     };
 
+        let denied_default_storage_update = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST.as_str())
+                    .header("Authorization", format!("Bearer {no_scope_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"query":"mutation UpdateDefaultDataStorage($input: UpdateDefaultDataStorageInput!) {{ updateDefaultDataStorage(input: $input) }}","variables":{{"input":{{"dataStorageID":"{}"}}}}}}"#,
+                        graphql_gid("DataStorage", storage_id)
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    let denied_default_storage_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(denied_default_storage_update).await)
+            .unwrap();
+    assert_eq!(
+        denied_default_storage_json["data"]["updateDefaultDataStorage"],
+        serde_json::Value::Null
+    );
+    assert_eq!(denied_default_storage_json["errors"][0]["message"], "permission denied");
+
+    let invalid_default_storage_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation UpdateDefaultDataStorage($input: UpdateDefaultDataStorageInput!) { updateDefaultDataStorage(input: $input) }","variables":{"input":{"dataStorageID":"gid://axonhub/user/1"}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let invalid_default_storage_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(invalid_default_storage_update).await)
+            .unwrap();
+    assert_eq!(
+        invalid_default_storage_json["data"]["updateDefaultDataStorage"],
+        serde_json::Value::Null
+    );
+    assert_eq!(invalid_default_storage_json["errors"][0]["message"], "invalid dataStorageID");
+
+    let missing_default_storage_update = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation UpdateDefaultDataStorage($input: UpdateDefaultDataStorageInput!) { updateDefaultDataStorage(input: $input) }","variables":{"input":{"dataStorageID":"gid://axonhub/DataStorage/999999"}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let missing_default_storage_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(missing_default_storage_update).await)
+            .unwrap();
+    assert_eq!(
+        missing_default_storage_json["data"]["updateDefaultDataStorage"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        missing_default_storage_json["errors"][0]["message"],
+        "data storage not found"
+    );
+
+        let update_default_storage = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST.as_str())
+                    .header("Authorization", format!("Bearer {settings_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"query":"mutation UpdateDefaultDataStorage($input: UpdateDefaultDataStorageInput!) {{ updateDefaultDataStorage(input: $input) }}","variables":{{"input":{{"dataStorageID":"{}"}}}}}}"#,
+                        graphql_gid("DataStorage", storage_id)
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    assert_eq!(update_default_storage.status(), StatusCode::OK);
+    let update_default_storage_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(update_default_storage).await).unwrap();
+    assert_eq!(update_default_storage_json["data"]["updateDefaultDataStorage"], true);
+
+    let default_storage_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"{ defaultDataStorageID }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let default_storage_query_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(default_storage_query).await).unwrap();
+    assert_eq!(
+        default_storage_query_json["data"]["defaultDataStorageID"],
+        graphql_gid("DataStorage", storage_id)
+    );
+
     let update_storage_policy = app
         .clone()
         .oneshot(
@@ -3990,6 +4109,14 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         )
         .unwrap();
     assert!(auto_backup_value.contains(&format!("\"data_storage_id\":{storage_id}")));
+    let default_data_storage_value: String = systems_connection
+        .query_row(
+            "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+            [SYSTEM_KEY_DEFAULT_DATA_STORAGE],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(default_data_storage_value, storage_id.to_string());
     let channel_settings_value: String = systems_connection
         .query_row(
             "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
@@ -3998,6 +4125,68 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         )
         .unwrap();
     assert!(channel_settings_value.contains("OneHour"));
+    systems_connection
+        .execute(
+            "UPDATE systems SET value = '0' WHERE key = ?1",
+            [SYSTEM_KEY_DEFAULT_DATA_STORAGE],
+        )
+        .unwrap();
+    drop(systems_connection);
+
+    let invalid_default_storage_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"{ defaultDataStorageID }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let invalid_default_storage_query_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(invalid_default_storage_query).await)
+            .unwrap();
+    assert_eq!(
+        invalid_default_storage_query_json["data"]["defaultDataStorageID"],
+        serde_json::Value::Null
+    );
+
+    let systems_connection = foundation.open_connection(true).unwrap();
+    systems_connection
+        .execute(
+            "UPDATE systems SET value = 'not-a-number' WHERE key = ?1",
+            [SYSTEM_KEY_DEFAULT_DATA_STORAGE],
+        )
+        .unwrap();
+    drop(systems_connection);
+
+    let malformed_default_storage_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"{ defaultDataStorageID }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let malformed_default_storage_query_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(malformed_default_storage_query).await)
+            .unwrap();
+    assert_eq!(
+        malformed_default_storage_query_json["data"]["defaultDataStorageID"],
+        serde_json::Value::Null
+    );
 
     std::fs::remove_dir_all(backup_root).ok();
     std::fs::remove_file(db_path).ok();

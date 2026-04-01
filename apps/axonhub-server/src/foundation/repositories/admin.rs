@@ -1,8 +1,8 @@
 use axonhub_http::AdminError;
+use axonhub_db_entity::{data_storages, requests};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
 
 use crate::foundation::seaorm::SeaOrmConnectionFactory;
-
-use super::common::query_one;
 
 #[derive(Debug, Clone)]
 pub(crate) struct StoredRequestContentRecord {
@@ -65,62 +65,44 @@ impl AdminStorageRepository for SeaOrmAdminStorageRepository {
 
 async fn query_request_content_record_seaorm(
     db: &impl sea_orm::ConnectionTrait,
-    backend: sea_orm::DatabaseBackend,
+    _backend: sea_orm::DatabaseBackend,
     request_id: i64,
 ) -> Result<Option<StoredRequestContentRecord>, AdminError> {
-    query_one_admin(
-        db,
-        backend,
-        "SELECT id, project_id, content_saved, content_storage_id, content_storage_key FROM requests WHERE id = ? LIMIT 1",
-        "SELECT id, project_id, content_saved, content_storage_id, content_storage_key FROM requests WHERE id = $1 LIMIT 1",
-        "SELECT id, project_id, content_saved, content_storage_id, content_storage_key FROM requests WHERE id = ? LIMIT 1",
-        vec![request_id.into()],
-    )
-    .await
-    .map(|row| {
-        row.map(|row| StoredRequestContentRecord {
-            id: row.try_get_by_index(0).unwrap_or_default(),
-            project_id: row.try_get_by_index(1).unwrap_or_default(),
-            content_saved: row.try_get_by_index(2).unwrap_or(false),
-            content_storage_id: row.try_get_by_index(3).ok(),
-            content_storage_key: row.try_get_by_index(4).ok(),
+    requests::Entity::find_by_id(request_id)
+        .into_partial_model::<requests::ContentStorageLookup>()
+        .one(db)
+        .await
+        .map_err(|error| AdminError::Internal {
+            message: format!("SeaORM admin query failed: {error}"),
         })
-    })
+        .map(|row| {
+            row.map(|row| StoredRequestContentRecord {
+                id: row.id,
+                project_id: row.project_id,
+                content_saved: row.content_saved,
+                content_storage_id: row.content_storage_id,
+                content_storage_key: row.content_storage_key,
+            })
+        })
 }
 
 async fn query_data_storage_seaorm(
     db: &impl sea_orm::ConnectionTrait,
-    backend: sea_orm::DatabaseBackend,
+    _backend: sea_orm::DatabaseBackend,
     storage_id: i64,
 ) -> Result<Option<DataStorageRecord>, AdminError> {
-    query_one_admin(
-        db,
-        backend,
-        "SELECT id, name, description, type, status, settings FROM data_storages WHERE id = ? AND deleted_at = 0 LIMIT 1",
-        "SELECT id, name, description, type, status, settings FROM data_storages WHERE id = $1 AND deleted_at = 0 LIMIT 1",
-        "SELECT id, name, description, type, status, settings FROM data_storages WHERE id = ? AND deleted_at = 0 LIMIT 1",
-        vec![storage_id.into()],
-    )
-    .await
-    .map(|row| {
-        row.map(|row| DataStorageRecord {
-            storage_type: row.try_get_by_index(3).unwrap_or_default(),
-            settings_json: row.try_get_by_index(5).unwrap_or_default(),
-        })
-    })
-}
-
-async fn query_one_admin(
-    db: &impl sea_orm::ConnectionTrait,
-    backend: sea_orm::DatabaseBackend,
-    sqlite_sql: &str,
-    postgres_sql: &str,
-    mysql_sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<Option<sea_orm::QueryResult>, AdminError> {
-    query_one(db, backend, sqlite_sql, postgres_sql, mysql_sql, values)
+    data_storages::Entity::find_by_id(storage_id)
+        .filter(data_storages::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<data_storages::StorageConfig>()
+        .one(db)
         .await
         .map_err(|error| AdminError::Internal {
             message: format!("SeaORM admin query failed: {error}"),
+        })
+        .map(|row| {
+            row.map(|row| DataStorageRecord {
+                storage_type: row.storage_type,
+                settings_json: row.settings,
+            })
         })
 }

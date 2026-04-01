@@ -1,10 +1,12 @@
+use axonhub_db_entity::traces;
 use axonhub_http::TraceContext;
 #[cfg(test)]
 use axonhub_http::{ContextResolveError, ProjectContext, RequestContextPort, ThreadContext};
-#[cfg(test)]
 use rusqlite::{
-    params, Connection as SqlConnection, Error as SqlError, OptionalExtension, Result as SqlResult,
+    params, params_from_iter, Connection as SqlConnection, Error as SqlError, OptionalExtension,
+    Result as SqlResult,
 };
+use sea_orm::{ColumnTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 
 use super::sqlite_support::{ensure_trace_tables, SqliteConnectionFactory};
 #[cfg(test)]
@@ -57,21 +59,87 @@ impl TraceContextStore {
     pub fn list_traces_by_project(&self, project_id: i64) -> SqlResult<Vec<TraceContext>> {
         let connection = self.connection_factory.open(true)?;
         ensure_trace_tables(&connection)?;
-        let mut statement = connection.prepare(
-            "SELECT id, trace_id, project_id, thread_id
-             FROM traces
-             WHERE project_id = ?1
-             ORDER BY id DESC",
+        let statement_definition = list_traces_by_project_query_statement(project_id);
+        let mut statement = connection.prepare(statement_definition.sql.as_str())?;
+        let rows = statement.query_map(
+            params_from_iter(rusqlite_values(&statement_definition)?),
+            |row| {
+                Ok(TraceContext {
+                    id: row.get(0)?,
+                    trace_id: row.get(1)?,
+                    project_id: row.get(2)?,
+                    thread_id: row.get(3)?,
+                })
+            },
         )?;
-        let rows = statement.query_map([project_id], |row| {
-            Ok(TraceContext {
-                id: row.get(0)?,
-                trace_id: row.get(1)?,
-                project_id: row.get(2)?,
-                thread_id: row.get(3)?,
-            })
-        })?;
         rows.collect()
+    }
+}
+
+fn list_traces_by_project_query_statement(project_id: i64) -> sea_orm::Statement {
+    traces::Entity::find()
+        .filter(traces::Column::ProjectId.eq(project_id))
+        .select_only()
+        .column(traces::Column::Id)
+        .column(traces::Column::TraceId)
+        .column(traces::Column::ProjectId)
+        .column(traces::Column::ThreadId)
+        .order_by_desc(traces::Column::Id)
+        .build(&DatabaseBackend::Sqlite)
+}
+
+fn rusqlite_values(statement: &sea_orm::Statement) -> SqlResult<Vec<rusqlite::types::Value>> {
+    statement
+        .values
+        .as_ref()
+        .map(|values| {
+            values
+                .0
+                .iter()
+                .map(sea_value_to_rusqlite)
+                .collect::<SqlResult<Vec<_>>>()
+        })
+        .transpose()
+        .map(|values| values.unwrap_or_default())
+}
+
+fn sea_value_to_rusqlite(value: &sea_orm::Value) -> SqlResult<rusqlite::types::Value> {
+    use sea_orm::Value;
+
+    match value {
+        Value::Bool(Some(inner)) => Ok((*inner as i64).into()),
+        Value::TinyInt(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::SmallInt(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::Int(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::BigInt(Some(inner)) => Ok((*inner).into()),
+        Value::TinyUnsigned(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::SmallUnsigned(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::Unsigned(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::BigUnsigned(Some(inner)) => i64::try_from(*inner)
+            .map(Into::into)
+            .map_err(|error| SqlError::ToSqlConversionFailure(Box::new(error))),
+        Value::Float(Some(inner)) => Ok(f64::from(*inner).into()),
+        Value::Double(Some(inner)) => Ok((*inner).into()),
+        Value::String(Some(inner)) => Ok((**inner).clone().into()),
+        Value::Char(Some(inner)) => Ok(inner.to_string().into()),
+        Value::Bytes(Some(inner)) => Ok((**inner).clone().into()),
+        Value::Bool(None)
+        | Value::TinyInt(None)
+        | Value::SmallInt(None)
+        | Value::Int(None)
+        | Value::BigInt(None)
+        | Value::TinyUnsigned(None)
+        | Value::SmallUnsigned(None)
+        | Value::Unsigned(None)
+        | Value::BigUnsigned(None)
+        | Value::Float(None)
+        | Value::Double(None)
+        | Value::String(None)
+        | Value::Char(None)
+        | Value::Bytes(None) => Ok(rusqlite::types::Value::Null),
+        _ => Err(SqlError::ToSqlConversionFailure(Box::new(
+            std::io::Error::other(format!("unsupported SeaORM sqlite value: {value:?}")),
+        ))),
     }
 }
 

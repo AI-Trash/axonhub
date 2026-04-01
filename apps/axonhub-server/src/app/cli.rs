@@ -2,7 +2,7 @@ use std::process;
 
 use anyhow::Result;
 use serde_json::Value;
-use axonhub_config::{load, PreviewFormat};
+use axonhub_config::{load_for_cli, PreviewFormat};
 use clap::{ArgAction, Args, Command, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use super::build_info::{show_build_info, show_version};
@@ -30,6 +30,8 @@ pub(crate) const CONFIG_GET_USAGE_HEADER: &str = "Usage: axonhub config get <key
 const GO_CONFIG_GET_USAGE_LINES: &[(&str, &str)] = &[
     ("server.port", "Server port number"),
     ("server.name", "Server name"),
+    ("server.base_path", "Server base path"),
+    ("server.debug", "Server debug mode"),
     ("db.dialect", "Database dialect"),
     ("db.dsn", "Database DSN"),
 ];
@@ -178,7 +180,7 @@ fn config_preview(args: &[String]) -> Result<()> {
         index += 1;
     }
 
-    let loaded = load().unwrap_or_else(|error| {
+    let loaded = load_for_cli().unwrap_or_else(|error| {
         println!("Failed to load config: {error}");
         process::exit(1);
     });
@@ -192,7 +194,7 @@ fn config_preview(args: &[String]) -> Result<()> {
 }
 
 fn config_validate() -> Result<()> {
-    let loaded = load().unwrap_or_else(|error| {
+    let loaded = load_for_cli().unwrap_or_else(|error| {
         println!("Failed to load config: {error}");
         process::exit(1);
     });
@@ -218,7 +220,7 @@ fn config_get(args: &[String]) -> Result<()> {
     }
 
     let key = &args[3];
-    let loaded = load().unwrap_or_else(|error| {
+    let loaded = load_for_cli().unwrap_or_else(|error| {
         eprintln!("Failed to load config: {error}");
         process::exit(1);
     });
@@ -267,6 +269,8 @@ fn cli_config_get_value(config: &axonhub_config::Config, key: &str) -> Option<Va
     match key {
         "server.port" => Some(Value::from(config.server.port)),
         "server.name" => Some(Value::from(config.server.name.clone())),
+        "server.base_path" => Some(Value::from(config.server.base_path.clone())),
+        "server.debug" => Some(Value::from(config.server.debug)),
         "db.dialect" => Some(Value::from(config.db.dialect.clone())),
         "db.dsn" => Some(Value::from(config.db.dsn.clone())),
         _ => None,

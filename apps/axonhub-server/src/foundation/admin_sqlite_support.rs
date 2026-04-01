@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
+use axonhub_db_entity::{data_storages, provider_quota_statuses};
 use axonhub_http::{AdminContentDownload, AdminError, AdminPort, AuthUserContext};
 use rusqlite::{
-    params, types::Type as SqlType, Connection, Error as SqlError, OptionalExtension,
-    Result as SqlResult,
+    params, params_from_iter, types::Type as SqlType, Connection, Error as SqlError,
+    OptionalExtension, Result as SqlResult,
 };
+use sea_orm::{ColumnTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 
@@ -49,15 +51,16 @@ impl OperationalStore {
     pub fn refresh_file_storage_cache(&self) -> SqlResult<HashMap<i64, CachedFileStorage>> {
         let connection = self.connection_factory.open(true)?;
         ensure_operational_tables(&connection)?;
-        let mut statement = connection.prepare(
-            "SELECT id, settings FROM data_storages
-             WHERE deleted_at = 0 AND status = 'active' AND type = 'fs'",
+        let statement_definition = file_storage_cache_query_statement();
+        let mut statement = connection.prepare(statement_definition.sql.as_str())?;
+        let rows = statement.query_map(
+            params_from_iter(rusqlite_values(&statement_definition)?),
+            |row| {
+                let storage_id: i64 = row.get(0)?;
+                let settings_json: String = row.get(1)?;
+                Ok((storage_id, settings_json))
+            },
         )?;
-        let rows = statement.query_map([], |row| {
-            let storage_id: i64 = row.get(0)?;
-            let settings_json: String = row.get(1)?;
-            Ok((storage_id, settings_json))
-        })?;
 
         let mut cache = HashMap::new();
         for row in rows {
@@ -155,24 +158,139 @@ impl OperationalStore {
     pub fn list_provider_quota_statuses(&self) -> SqlResult<Vec<StoredProviderQuotaStatus>> {
         let connection = self.connection_factory.open(true)?;
         ensure_operational_tables(&connection)?;
-        let mut statement = connection.prepare(
-            "SELECT id, channel_id, provider_type, status, quota_data, next_reset_at, ready, next_check_at
-             FROM provider_quota_statuses
-             ORDER BY channel_id ASC",
+        let statement_definition = provider_quota_statuses_query_statement();
+        let mut statement = connection.prepare(statement_definition.sql.as_str())?;
+        let rows = statement.query_map(
+            params_from_iter(rusqlite_values(&statement_definition)?),
+            |row| {
+                Ok(StoredProviderQuotaStatus {
+                    id: row.get(0)?,
+                    channel_id: row.get(1)?,
+                    provider_type: row.get(2)?,
+                    status: row.get(3)?,
+                    quota_data_json: row.get(4)?,
+                    next_reset_at: parse_optional_i64_column(row, 5)?,
+                    ready: row.get::<_, i64>(6)? != 0,
+                    next_check_at: parse_required_i64_column(row, 7)?,
+                })
+            },
         )?;
-        let rows = statement.query_map([], |row| {
-            Ok(StoredProviderQuotaStatus {
-                id: row.get(0)?,
-                channel_id: row.get(1)?,
-                provider_type: row.get(2)?,
-                status: row.get(3)?,
-                quota_data_json: row.get(4)?,
-                next_reset_at: row.get(5)?,
-                ready: row.get::<_, i64>(6)? != 0,
-                next_check_at: row.get(7)?,
-            })
-        })?;
         rows.collect()
+    }
+}
+
+fn file_storage_cache_query_statement() -> sea_orm::Statement {
+    data_storages::Entity::find()
+        .filter(data_storages::Column::DeletedAt.eq(0_i64))
+        .filter(data_storages::Column::Status.eq("active"))
+        .filter(data_storages::Column::TypeField.eq("fs"))
+        .select_only()
+        .column(data_storages::Column::Id)
+        .column(data_storages::Column::Settings)
+        .build(&DatabaseBackend::Sqlite)
+}
+
+fn provider_quota_statuses_query_statement() -> sea_orm::Statement {
+    provider_quota_statuses::Entity::find()
+        .select_only()
+        .column(provider_quota_statuses::Column::Id)
+        .column(provider_quota_statuses::Column::ChannelId)
+        .column(provider_quota_statuses::Column::ProviderType)
+        .column(provider_quota_statuses::Column::Status)
+        .column(provider_quota_statuses::Column::QuotaData)
+        .column(provider_quota_statuses::Column::NextResetAt)
+        .column(provider_quota_statuses::Column::Ready)
+        .column(provider_quota_statuses::Column::NextCheckAt)
+        .order_by_asc(provider_quota_statuses::Column::ChannelId)
+        .build(&DatabaseBackend::Sqlite)
+}
+
+fn parse_optional_i64_column(
+    row: &rusqlite::Row<'_>,
+    column_index: usize,
+) -> SqlResult<Option<i64>> {
+    match row.get_ref(column_index)? {
+        rusqlite::types::ValueRef::Null => Ok(None),
+        rusqlite::types::ValueRef::Integer(value) => Ok(Some(value)),
+        rusqlite::types::ValueRef::Text(value) => std::str::from_utf8(value)
+            .map_err(|error| {
+                SqlError::FromSqlConversionFailure(column_index, SqlType::Text, Box::new(error))
+            })?
+            .parse::<i64>()
+            .map(Some)
+            .map_err(|error| {
+                SqlError::FromSqlConversionFailure(column_index, SqlType::Text, Box::new(error))
+            }),
+        _ => Err(SqlError::InvalidColumnType(
+            column_index,
+            format!("column {column_index}"),
+            SqlType::Integer,
+        )),
+    }
+}
+
+fn parse_required_i64_column(row: &rusqlite::Row<'_>, column_index: usize) -> SqlResult<i64> {
+    parse_optional_i64_column(row, column_index)?.ok_or_else(|| {
+        SqlError::InvalidColumnType(
+            column_index,
+            format!("column {column_index}"),
+            SqlType::Null,
+        )
+    })
+}
+
+fn rusqlite_values(statement: &sea_orm::Statement) -> SqlResult<Vec<rusqlite::types::Value>> {
+    statement
+        .values
+        .as_ref()
+        .map(|values| {
+            values
+                .0
+                .iter()
+                .map(sea_value_to_rusqlite)
+                .collect::<SqlResult<Vec<_>>>()
+        })
+        .transpose()
+        .map(|values| values.unwrap_or_default())
+}
+
+fn sea_value_to_rusqlite(value: &sea_orm::Value) -> SqlResult<rusqlite::types::Value> {
+    use sea_orm::Value;
+
+    match value {
+        Value::Bool(Some(inner)) => Ok((*inner as i64).into()),
+        Value::TinyInt(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::SmallInt(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::Int(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::BigInt(Some(inner)) => Ok((*inner).into()),
+        Value::TinyUnsigned(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::SmallUnsigned(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::Unsigned(Some(inner)) => Ok(i64::from(*inner).into()),
+        Value::BigUnsigned(Some(inner)) => i64::try_from(*inner)
+            .map(Into::into)
+            .map_err(|error| SqlError::ToSqlConversionFailure(Box::new(error))),
+        Value::Float(Some(inner)) => Ok(f64::from(*inner).into()),
+        Value::Double(Some(inner)) => Ok((*inner).into()),
+        Value::String(Some(inner)) => Ok((**inner).clone().into()),
+        Value::Char(Some(inner)) => Ok(inner.to_string().into()),
+        Value::Bytes(Some(inner)) => Ok((**inner).clone().into()),
+        Value::Bool(None)
+        | Value::TinyInt(None)
+        | Value::SmallInt(None)
+        | Value::Int(None)
+        | Value::BigInt(None)
+        | Value::TinyUnsigned(None)
+        | Value::SmallUnsigned(None)
+        | Value::Unsigned(None)
+        | Value::BigUnsigned(None)
+        | Value::Float(None)
+        | Value::Double(None)
+        | Value::String(None)
+        | Value::Char(None)
+        | Value::Bytes(None) => Ok(rusqlite::types::Value::Null),
+        _ => Err(SqlError::ToSqlConversionFailure(Box::new(
+            std::io::Error::other(format!("unsupported SeaORM sqlite value: {value:?}")),
+        ))),
     }
 }
 

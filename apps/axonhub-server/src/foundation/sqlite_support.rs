@@ -1,6 +1,7 @@
 use axonhub_http::{
     InitializeSystemRequest, SystemBootstrapPort, SystemInitializeError, SystemQueryError,
 };
+use axonhub_db_entity::{api_keys, data_storages, projects, roles, systems, user_projects, users};
 use bcrypt::{hash, verify, DEFAULT_COST};
 use getrandom::getrandom;
 use hex::encode as hex_encode;
@@ -8,7 +9,10 @@ use rusqlite::{
     params, Connection as SqlConnection, Error as SqlError, OpenFlags, OptionalExtension,
     Result as SqlResult, Transaction,
 };
-use sea_orm::{ConnectionTrait, DatabaseBackend, ExecResult, TransactionTrait};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
+    QueryOrder, Set, TransactionTrait,
+};
 use std::sync::Arc;
 
 use super::{
@@ -33,7 +37,6 @@ use super::{
         USERS_TABLE_SQL, USER_PROJECTS_TABLE_SQL, USER_ROLES_TABLE_SQL,
     },
 };
-use super::repositories::common::{execute as execute_sql, query_one as query_one_sql};
 
 pub(crate) type SeaOrmDbFactory = SeaOrmConnectionFactory;
 
@@ -368,108 +371,20 @@ pub(crate) async fn seaorm_initialize(
     tx.commit().await
 }
 
-async fn execute_seaorm<C>(
-    db: &C,
-    backend: DatabaseBackend,
-    sqlite_sql: &str,
-    postgres_sql: &str,
-    mysql_sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<(), sea_orm::DbErr>
-where
-    C: ConnectionTrait,
-{
-    execute_sql(db, backend, sqlite_sql, postgres_sql, mysql_sql, values)
-    .await
-    .map(|_| ())
-}
-
-async fn query_optional_i64_seaorm<C>(
-    db: &C,
-    backend: DatabaseBackend,
-    sqlite_sql: &str,
-    postgres_sql: &str,
-    mysql_sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<Option<i64>, sea_orm::DbErr>
-where
-    C: ConnectionTrait,
-{
-    let row = query_one_sql(db, backend, sqlite_sql, postgres_sql, mysql_sql, values).await?;
-    row.map(|row| row.try_get_by_index(0)).transpose()
-}
-
-async fn query_optional_string_seaorm<C>(
-    db: &C,
-    backend: DatabaseBackend,
-    sqlite_sql: &str,
-    postgres_sql: &str,
-    mysql_sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<Option<String>, sea_orm::DbErr>
-where
-    C: ConnectionTrait,
-{
-    let row = query_one_sql(db, backend, sqlite_sql, postgres_sql, mysql_sql, values).await?;
-    row.map(|row| row.try_get_by_index(0)).transpose()
-}
-
-fn inserted_id_from_result(result: &ExecResult, backend: DatabaseBackend) -> Result<i64, sea_orm::DbErr> {
-    let id = result.last_insert_id();
-    if id == 0 {
-        Err(sea_orm::DbErr::Custom(format!(
-            "missing inserted id for bootstrap {backend:?} operation"
-        )))
-    } else {
-        Ok(id as i64)
-    }
-}
-
-async fn insert_returning_i64_seaorm<C>(
-    db: &C,
-    backend: DatabaseBackend,
-    sqlite_sql: &str,
-    postgres_sql: &str,
-    mysql_sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<i64, sea_orm::DbErr>
-where
-    C: ConnectionTrait,
-{
-    match backend {
-        DatabaseBackend::Sqlite => {
-            let result = execute_sql(db, backend, sqlite_sql, "", "", values).await?;
-            inserted_id_from_result(&result, backend)
-        }
-        DatabaseBackend::Postgres => {
-            let row = query_one_sql(db, backend, "", postgres_sql, "", values)
-                .await?
-                .ok_or_else(|| sea_orm::DbErr::RecordNotFound(postgres_sql.to_owned()))?;
-            row.try_get_by_index(0)
-        }
-        DatabaseBackend::MySql => {
-            let result = execute_sql(db, backend, "", "", mysql_sql, values).await?;
-            inserted_id_from_result(&result, backend)
-        }
-    }
-}
-
 pub(crate) async fn query_is_initialized_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
 ) -> Result<bool, sea_orm::DbErr>
 where
     C: ConnectionTrait,
 {
-    let value = query_optional_string_seaorm(
-        db,
-        backend,
-        "SELECT value FROM systems WHERE key = ? AND deleted_at = 0 LIMIT 1",
-        "SELECT value FROM systems WHERE key = $1 AND deleted_at = 0 LIMIT 1",
-        "SELECT value FROM systems WHERE `key` = ? AND deleted_at = 0 LIMIT 1",
-        vec![SYSTEM_KEY_INITIALIZED.into()],
-    )
-    .await?;
+    let value = systems::Entity::find()
+        .filter(systems::Column::Key.eq(SYSTEM_KEY_INITIALIZED))
+        .filter(systems::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<systems::KeyValue>()
+        .one(db)
+        .await?
+        .map(|row| row.value);
 
     Ok(value
         .map(|current| current.eq_ignore_ascii_case("true"))
@@ -478,57 +393,77 @@ where
 
 pub(crate) async fn upsert_system_value_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
     key: &str,
     value: &str,
 ) -> Result<(), sea_orm::DbErr>
 where
     C: ConnectionTrait,
 {
-    execute_seaorm(
-        db,
-        backend,
-        "INSERT INTO systems (key, value, deleted_at) VALUES (?, ?, 0) ON CONFLICT(key) DO UPDATE SET value = excluded.value, deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-        "INSERT INTO systems (key, value, deleted_at) VALUES ($1, $2, 0) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-        "INSERT INTO systems (`key`, value, deleted_at) VALUES (?, ?, 0) ON DUPLICATE KEY UPDATE value = VALUES(value), deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-        vec![key.into(), value.into()],
-    )
+    let existing = systems::Entity::find()
+        .filter(systems::Column::Key.eq(key))
+        .one(db)
+        .await?;
+
+    if let Some(existing) = existing {
+        let mut active_model: systems::ActiveModel = existing.into();
+        active_model.value = Set(value.to_owned());
+        active_model.deleted_at = Set(0_i64);
+        active_model.update(db).await?;
+        return Ok(());
+    }
+
+    systems::Entity::insert(systems::ActiveModel {
+        key: Set(key.to_owned()),
+        value: Set(value.to_owned()),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
     .await
+    .map(|_| ())
 }
 
 pub(crate) async fn ensure_primary_data_storage_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
 ) -> Result<i64, sea_orm::DbErr>
 where
     C: ConnectionTrait,
 {
-    if let Some(id) = query_optional_i64_seaorm(
-        db,
-        backend,
-        "SELECT id FROM data_storages WHERE \"primary\" = 1 AND deleted_at = 0 LIMIT 1",
-        "SELECT id FROM data_storages WHERE \"primary\" = TRUE AND deleted_at = 0 LIMIT 1",
-        "SELECT id FROM data_storages WHERE `primary` = TRUE AND deleted_at = 0 LIMIT 1",
-        vec![],
-    )
-    .await?
+    if let Some(storage) = data_storages::Entity::find()
+        .filter(data_storages::Column::PrimaryFlag.eq(true))
+        .filter(data_storages::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await?
     {
-        return Ok(id);
+        return Ok(storage.id);
     }
 
-    insert_returning_i64_seaorm(
-        db,
-        backend,
-        "INSERT INTO data_storages (name, description, \"primary\", type, settings, status) VALUES (?, ?, 1, 'database', ?, 'active')",
-        "INSERT INTO data_storages (name, description, \"primary\", type, settings, status) VALUES ($1, $2, TRUE, 'database', $3, 'active') RETURNING id",
-        "INSERT INTO data_storages (name, description, `primary`, type, settings, status) VALUES (?, ?, TRUE, 'database', ?, 'active')",
-        vec![
-            PRIMARY_DATA_STORAGE_NAME.into(),
-            PRIMARY_DATA_STORAGE_DESCRIPTION.into(),
-            PRIMARY_DATA_STORAGE_SETTINGS_JSON.into(),
-        ],
-    )
-    .await
+    data_storages::Entity::insert(data_storages::ActiveModel {
+        name: Set(PRIMARY_DATA_STORAGE_NAME.to_owned()),
+        description: Set(PRIMARY_DATA_STORAGE_DESCRIPTION.to_owned()),
+        primary_flag: Set(true),
+        type_field: Set("database".to_owned()),
+        settings: Set(PRIMARY_DATA_STORAGE_SETTINGS_JSON.to_owned()),
+        status: Set("active".to_owned()),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
+    .await?;
+
+    data_storages::Entity::find()
+        .filter(data_storages::Column::PrimaryFlag.eq(true))
+        .filter(data_storages::Column::Name.eq(PRIMARY_DATA_STORAGE_NAME))
+        .filter(data_storages::Column::DeletedAt.eq(0_i64))
+        .order_by_desc(data_storages::Column::Id)
+        .one(db)
+        .await?
+        .map(|storage| storage.id)
+        .ok_or_else(|| {
+            sea_orm::DbErr::Custom("missing inserted primary data storage".to_owned())
+        })
 }
 
 pub(crate) fn generate_secret_key_seaorm() -> Result<String, sea_orm::DbErr> {
@@ -539,92 +474,118 @@ pub(crate) fn generate_secret_key_seaorm() -> Result<String, sea_orm::DbErr> {
 
 pub(crate) async fn ensure_owner_user_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
     request: &InitializeSystemRequest,
 ) -> Result<i64, sea_orm::DbErr>
 where
     C: ConnectionTrait,
 {
-    if let Some(id) = query_optional_i64_seaorm(
-        db,
-        backend,
-        "SELECT id FROM users WHERE is_owner = 1 AND deleted_at = 0 LIMIT 1",
-        "SELECT id FROM users WHERE is_owner = TRUE AND deleted_at = 0 LIMIT 1",
-        "SELECT id FROM users WHERE is_owner = TRUE AND deleted_at = 0 LIMIT 1",
-        vec![],
-    )
-    .await?
+    if let Some(user) = users::Entity::find()
+        .filter(users::Column::IsOwner.eq(true))
+        .filter(users::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await?
     {
-        return Ok(id);
+        return Ok(user.id);
     }
 
     let password_hash =
         hash_password(request.owner_password.trim()).map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
-    insert_returning_i64_seaorm(
-        db,
-        backend,
-        "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes, deleted_at) VALUES (?, 'activated', 'en', ?, ?, ?, '', 1, '[]', 0)",
-        "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes, deleted_at) VALUES ($1, 'activated', 'en', $2, $3, $4, '', TRUE, '[]', 0) RETURNING id",
-        "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes, deleted_at) VALUES (?, 'activated', 'en', ?, ?, ?, '', TRUE, '[]', 0)",
-        vec![
-            request.owner_email.trim().into(),
-            password_hash.into(),
-            request.owner_first_name.trim().into(),
-            request.owner_last_name.trim().into(),
-        ],
-    )
-    .await
+    users::Entity::insert(users::ActiveModel {
+        email: Set(request.owner_email.trim().to_owned()),
+        status: Set("activated".to_owned()),
+        prefer_language: Set("en".to_owned()),
+        password: Set(password_hash),
+        first_name: Set(request.owner_first_name.trim().to_owned()),
+        last_name: Set(request.owner_last_name.trim().to_owned()),
+        avatar: Set(Some(String::new())),
+        is_owner: Set(true),
+        scopes: Set("[]".to_owned()),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
+    .await?;
+
+    users::Entity::find()
+        .filter(users::Column::Email.eq(request.owner_email.trim()))
+        .filter(users::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await?
+        .map(|user| user.id)
+        .ok_or_else(|| sea_orm::DbErr::Custom("missing inserted owner user".to_owned()))
 }
 
 pub(crate) async fn ensure_default_project_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
 ) -> Result<i64, sea_orm::DbErr>
 where
     C: ConnectionTrait,
 {
-    if let Some(id) = query_optional_i64_seaorm(
-        db,
-        backend,
-        "SELECT id FROM projects WHERE deleted_at = 0 ORDER BY id ASC LIMIT 1",
-        "SELECT id FROM projects WHERE deleted_at = 0 ORDER BY id ASC LIMIT 1",
-        "SELECT id FROM projects WHERE deleted_at = 0 ORDER BY id ASC LIMIT 1",
-        vec![],
-    )
-    .await?
+    if let Some(project) = projects::Entity::find()
+        .filter(projects::Column::DeletedAt.eq(0_i64))
+        .order_by_asc(projects::Column::Id)
+        .one(db)
+        .await?
     {
-        return Ok(id);
+        return Ok(project.id);
     }
 
-    insert_returning_i64_seaorm(
-        db,
-        backend,
-        "INSERT INTO projects (name, description, status, deleted_at) VALUES (?, ?, 'active', 0)",
-        "INSERT INTO projects (name, description, status, deleted_at) VALUES ($1, $2, 'active', 0) RETURNING id",
-        "INSERT INTO projects (name, description, status, deleted_at) VALUES (?, ?, 'active', 0)",
-        vec![DEFAULT_PROJECT_NAME.into(), DEFAULT_PROJECT_DESCRIPTION.into()],
-    )
-    .await
+    projects::Entity::insert(projects::ActiveModel {
+        name: Set(DEFAULT_PROJECT_NAME.to_owned()),
+        description: Set(DEFAULT_PROJECT_DESCRIPTION.to_owned()),
+        status: Set("active".to_owned()),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
+    .await?;
+
+    projects::Entity::find()
+        .filter(projects::Column::Name.eq(DEFAULT_PROJECT_NAME))
+        .filter(projects::Column::Description.eq(DEFAULT_PROJECT_DESCRIPTION))
+        .filter(projects::Column::Status.eq("active"))
+        .filter(projects::Column::DeletedAt.eq(0_i64))
+        .order_by_desc(projects::Column::Id)
+        .one(db)
+        .await?
+        .map(|project| project.id)
+        .ok_or_else(|| sea_orm::DbErr::Custom("missing inserted default project".to_owned()))
 }
 
 pub(crate) async fn ensure_owner_project_membership_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
     user_id: i64,
     project_id: i64,
 ) -> Result<(), sea_orm::DbErr>
 where
     C: ConnectionTrait,
 {
-    execute_seaorm(
-        db,
-        backend,
-        "INSERT INTO user_projects (user_id, project_id, is_owner, scopes) VALUES (?, ?, 1, '[]') ON CONFLICT(user_id, project_id) DO UPDATE SET is_owner = 1, updated_at = CURRENT_TIMESTAMP",
-        "INSERT INTO user_projects (user_id, project_id, is_owner, scopes) VALUES ($1, $2, TRUE, '[]') ON CONFLICT(user_id, project_id) DO UPDATE SET is_owner = TRUE, updated_at = CURRENT_TIMESTAMP",
-        "INSERT INTO user_projects (user_id, project_id, is_owner, scopes) VALUES (?, ?, TRUE, '[]') ON DUPLICATE KEY UPDATE is_owner = VALUES(is_owner), updated_at = CURRENT_TIMESTAMP",
-        vec![user_id.into(), project_id.into()],
-    )
+    let existing = user_projects::Entity::find()
+        .filter(user_projects::Column::UserId.eq(user_id))
+        .filter(user_projects::Column::ProjectId.eq(project_id))
+        .one(db)
+        .await?;
+
+    if let Some(existing) = existing {
+        let mut active_model: user_projects::ActiveModel = existing.into();
+        active_model.is_owner = Set(true);
+        active_model.update(db).await?;
+        return Ok(());
+    }
+
+    user_projects::Entity::insert(user_projects::ActiveModel {
+        user_id: Set(user_id),
+        project_id: Set(project_id),
+        is_owner: Set(true),
+        scopes: Set("[]".to_owned()),
+        ..Default::default()
+    })
+    .exec(db)
     .await
+    .map(|_| ())
 }
 
 pub(crate) async fn ensure_default_project_roles_seaorm<C>(
@@ -643,7 +604,7 @@ where
 
 async fn ensure_role_with_scopes_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
     name: &str,
     level: ScopeLevel,
     project_id: i64,
@@ -654,15 +615,32 @@ where
 {
     let scopes_json = serialize_scope_slugs(scopes)
         .map_err(|error| sea_orm::DbErr::Custom(format!("failed to serialize scopes: {error}")))?;
-    execute_seaorm(
-        db,
-        backend,
-        "INSERT INTO roles (name, level, project_id, scopes, deleted_at) VALUES (?, ?, ?, ?, 0) ON CONFLICT(project_id, name) DO UPDATE SET level = excluded.level, scopes = excluded.scopes, deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-        "INSERT INTO roles (name, level, project_id, scopes, deleted_at) VALUES ($1, $2, $3, $4, 0) ON CONFLICT(project_id, name) DO UPDATE SET level = EXCLUDED.level, scopes = EXCLUDED.scopes, deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-        "INSERT INTO roles (name, level, project_id, scopes, deleted_at) VALUES (?, ?, ?, ?, 0) ON DUPLICATE KEY UPDATE level = VALUES(level), scopes = VALUES(scopes), deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-        vec![name.into(), level.as_str().into(), project_id.into(), scopes_json.into()],
-    )
+    let existing = roles::Entity::find()
+        .filter(roles::Column::ProjectId.eq(project_id))
+        .filter(roles::Column::Name.eq(name))
+        .one(db)
+        .await?;
+
+    if let Some(existing) = existing {
+        let mut active_model: roles::ActiveModel = existing.into();
+        active_model.level = Set(level.as_str().to_owned());
+        active_model.scopes = Set(scopes_json);
+        active_model.deleted_at = Set(0_i64);
+        active_model.update(db).await?;
+        return Ok(());
+    }
+
+    roles::Entity::insert(roles::ActiveModel {
+        name: Set(name.to_owned()),
+        level: Set(level.as_str().to_owned()),
+        project_id: Set(project_id),
+        scopes: Set(scopes_json),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
     .await
+    .map(|_| ())
 }
 
 pub(crate) async fn ensure_default_api_keys_seaorm<C>(
@@ -682,7 +660,7 @@ where
 
 async fn ensure_api_key_with_scopes_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
     user_id: i64,
     project_id: i64,
     key: &str,
@@ -695,22 +673,37 @@ where
 {
     let scopes_json = serialize_scope_slugs(scopes)
         .map_err(|error| sea_orm::DbErr::Custom(format!("failed to serialize scopes: {error}")))?;
-    execute_seaorm(
-        db,
-        backend,
-        "INSERT INTO api_keys (user_id, project_id, key, name, type, status, scopes, profiles, deleted_at) VALUES (?, ?, ?, ?, ?, 'enabled', ?, '{}', 0) ON CONFLICT(key) DO UPDATE SET name = excluded.name, type = excluded.type, scopes = excluded.scopes, status = 'enabled', deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-        "INSERT INTO api_keys (user_id, project_id, key, name, type, status, scopes, profiles, deleted_at) VALUES ($1, $2, $3, $4, $5, 'enabled', $6, '{}', 0) ON CONFLICT(key) DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type, scopes = EXCLUDED.scopes, status = 'enabled', deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-        "INSERT INTO api_keys (user_id, project_id, `key`, name, type, status, scopes, profiles, deleted_at) VALUES (?, ?, ?, ?, ?, 'enabled', ?, '{}', 0) ON DUPLICATE KEY UPDATE name = VALUES(name), type = VALUES(type), scopes = VALUES(scopes), status = 'enabled', deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-        vec![
-            user_id.into(),
-            project_id.into(),
-            key.into(),
-            name.into(),
-            key_type.into(),
-            scopes_json.into(),
-        ],
-    )
+    let existing = api_keys::Entity::find()
+        .filter(api_keys::Column::Key.eq(key))
+        .one(db)
+        .await?;
+
+    if let Some(existing) = existing {
+        let mut active_model: api_keys::ActiveModel = existing.into();
+        active_model.name = Set(name.to_owned());
+        active_model.type_field = Set(key_type.to_owned());
+        active_model.status = Set("enabled".to_owned());
+        active_model.scopes = Set(scopes_json);
+        active_model.deleted_at = Set(0_i64);
+        active_model.update(db).await?;
+        return Ok(());
+    }
+
+    api_keys::Entity::insert(api_keys::ActiveModel {
+        user_id: Set(user_id),
+        project_id: Set(project_id),
+        key: Set(key.to_owned()),
+        name: Set(name.to_owned()),
+        type_field: Set(key_type.to_owned()),
+        status: Set("enabled".to_owned()),
+        scopes: Set(scopes_json),
+        profiles: Set("{}".to_owned()),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
     .await
+    .map(|_| ())
 }
 
 #[derive(Debug)]

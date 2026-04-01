@@ -1,7 +1,7 @@
 use axonhub_http::{ApiKeyAuthError, AuthUserContext, ProjectContext};
 use axonhub_db_entity::{api_keys, projects, roles, systems, user_projects, users};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use sea_orm::{ColumnTrait, EntityTrait, ModelTrait, QueryFilter};
+use sea_orm::{ColumnTrait, EntityTrait, ModelTrait, QueryFilter, QueryOrder};
 
 use crate::foundation::{
     authz::{is_project_role_assignment, is_system_role_assignment},
@@ -9,8 +9,6 @@ use crate::foundation::{
     seaorm::SeaOrmConnectionFactory,
     shared::SYSTEM_KEY_SECRET_KEY,
 };
-
-use super::common::query_all;
 
 pub(crate) trait IdentityAuthRepository: Send + Sync {
     fn query_user_by_email(&self, email: &str) -> Result<StoredUser, QueryUserError>;
@@ -210,22 +208,23 @@ async fn query_api_key_seaorm(
 
 async fn query_user_roles_seaorm(
     db: &impl sea_orm::ConnectionTrait,
-    backend: sea_orm::DatabaseBackend,
+    _backend: sea_orm::DatabaseBackend,
     user_id: i64,
 ) -> Result<Vec<StoredRole>, ()> {
-    query_all(
-        db,
-        backend,
-        "SELECT r.name, r.level, r.project_id, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ? AND r.deleted_at = 0 ORDER BY r.id ASC",
-        "SELECT r.name, r.level, r.project_id, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1 AND r.deleted_at = 0 ORDER BY r.id ASC",
-        "SELECT r.name, r.level, r.project_id, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ? AND r.deleted_at = 0 ORDER BY r.id ASC",
-        vec![user_id.into()],
-    )
-    .await
-    .map_err(|_| ())?
-    .into_iter()
-    .map(stored_role_from_seaorm_row)
-    .collect()
+    let Some(user) = users::Entity::find_by_id(user_id).one(db).await.map_err(|_| ())? else {
+        return Ok(Vec::new());
+    };
+
+    user.find_related(roles::Entity)
+        .filter(roles::Column::DeletedAt.eq(0_i64))
+        .order_by_asc(roles::Column::Id)
+        .into_partial_model::<roles::Assignment>()
+        .all(db)
+        .await
+        .map_err(|_| ())?
+        .into_iter()
+        .map(stored_role_from_assignment)
+        .collect()
 }
 
 async fn build_user_context_seaorm(
@@ -257,25 +256,20 @@ async fn build_user_context_seaorm(
         }
     }
 
-    let memberships = query_all(
-        db,
-        backend,
-        "SELECT project_id, is_owner, scopes FROM user_projects WHERE user_id = ? ORDER BY project_id ASC",
-        "SELECT project_id, is_owner, scopes FROM user_projects WHERE user_id = $1 ORDER BY project_id ASC",
-        "SELECT project_id, is_owner, scopes FROM user_projects WHERE user_id = ? ORDER BY project_id ASC",
-        vec![user.id.into()],
-    )
-    .await
-    .map_err(|_| ())?
-    .into_iter()
-    .map(|row| {
-        Ok((
-            row.try_get_by_index(0).map_err(|_| ())?,
-            row.try_get_by_index::<bool>(1).map_err(|_| ())?,
-            parse_json_string_vec(row.try_get_by_index(2).map_err(|_| ())?),
-        ))
-    })
-    .collect::<Result<Vec<_>, ()>>()?;
+    let Some(user_model) = users::Entity::find_by_id(user.id).one(db).await.map_err(|_| ())? else {
+        return Err(());
+    };
+
+    let memberships = user_model
+        .find_related(user_projects::Entity)
+        .order_by_asc(user_projects::Column::ProjectId)
+        .into_partial_model::<user_projects::MembershipLink>()
+        .all(db)
+        .await
+        .map_err(|_| ())?
+        .into_iter()
+        .map(|link| (link.project_id, link.is_owner, parse_json_string_vec(link.scopes)))
+        .collect::<Vec<_>>();
 
     let mut projects = Vec::with_capacity(memberships.len());
     for (project_id, is_owner, scopes) in memberships {
@@ -352,12 +346,12 @@ fn stored_api_key_from_auth_lookup(api_key: api_keys::AuthLookup) -> StoredApiKe
     }
 }
 
-fn stored_role_from_seaorm_row(row: sea_orm::QueryResult) -> Result<StoredRole, ()> {
+fn stored_role_from_assignment(role: roles::Assignment) -> Result<StoredRole, ()> {
     Ok(StoredRole {
-        name: row.try_get_by_index(0).map_err(|_| ())?,
-        level: row.try_get_by_index(1).map_err(|_| ())?,
-        project_id: row.try_get_by_index(2).map_err(|_| ())?,
-        scopes: parse_json_string_vec(row.try_get_by_index(3).map_err(|_| ())?),
+        name: role.name,
+        level: role.level,
+        project_id: role.project_id,
+        scopes: parse_json_string_vec(role.scopes),
     })
 }
 
