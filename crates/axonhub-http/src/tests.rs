@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::format_go_duration;
 use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::ServiceResponse;
 use actix_web::http::header;
@@ -6,6 +7,7 @@ use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
 use serde_json::json;
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -721,7 +723,7 @@ where
 }
 
     #[tokio::test]
-    async fn health_route_reports_progressive_cutover_contract() {
+    async fn health_route_matches_legacy_go_contract() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -742,13 +744,64 @@ where
 
         assert_eq!(response.status(), StatusCode::OK);
         let json = read_json(response).await;
-        assert_eq!(json["status"], "ok");
-        assert_eq!(json["service"], "AxonHub");
-        assert_eq!(json["backend"], "rust");
-        assert_eq!(json["migration_status"], "progressive cutover");
-        assert_eq!(json["api_parity"], "supported_scope");
-        assert_eq!(json["legacy_go_backend_present"], false);
-        assert_eq!(json["config_source"], Value::Null);
+        let keys = json
+            .as_object()
+            .expect("health object")
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(json["status"], "healthy");
+        assert_eq!(json["version"], "v0.9.20");
+        assert_eq!(
+            keys,
+            BTreeSet::from([
+                "build".to_owned(),
+                "status".to_owned(),
+                "timestamp".to_owned(),
+                "uptime".to_owned(),
+                "version".to_owned(),
+            ])
+        );
+        assert!(json.get("service").is_none());
+        assert!(json.get("backend").is_none());
+        assert!(json.get("migration_status").is_none());
+        assert!(json.get("api_parity").is_none());
+        assert!(json.get("legacy_go_backend_present").is_none());
+        assert!(json.get("config_source").is_none());
+
+        let timestamp = json["timestamp"].as_str().expect("timestamp string");
+        assert!(humantime::parse_rfc3339(timestamp).is_ok());
+
+        let uptime = json["uptime"].as_str().expect("uptime string");
+        assert_go_duration_shape(uptime);
+
+        let build = json["build"].as_object().expect("build object");
+        assert_eq!(build.get("version"), Some(&Value::String("v0.9.20".to_owned())));
+        assert!(build.contains_key("go_version"));
+        assert!(build.contains_key("platform"));
+        assert!(build.contains_key("uptime"));
+        assert_go_duration_shape(build["uptime"].as_str().expect("build uptime string"));
+        assert_eq!(build.get("uptime"), Some(&Value::String(uptime.to_owned())));
+        assert!(!build.contains_key("commit"));
+        assert!(!build.contains_key("build_time"));
+    }
+
+    #[test]
+    fn format_go_duration_matches_expected_shapes() {
+        assert_eq!(format_go_duration(Duration::ZERO), "0s");
+        assert_eq!(format_go_duration(Duration::from_nanos(999)), "999ns");
+        assert_eq!(format_go_duration(Duration::from_nanos(1_500)), "1.5µs");
+        assert_eq!(format_go_duration(Duration::from_nanos(1_500_000)), "1.5ms");
+        assert_eq!(format_go_duration(Duration::from_millis(120)), "120ms");
+        assert_eq!(format_go_duration(Duration::from_millis(1_234)), "1.234s");
+        assert_eq!(
+            format_go_duration(Duration::from_secs(62) + Duration::from_millis(500)),
+            "1m2.5s"
+        );
+        assert_eq!(
+            format_go_duration(Duration::from_secs(3_661) + Duration::from_millis(250)),
+            "1h1m1.25s"
+        );
     }
 
      #[tokio::test]
@@ -1019,8 +1072,22 @@ where
 
         assert_eq!(response.status(), StatusCode::OK);
         let json = read_json(response).await;
-        assert_eq!(json["status"], "ok");
+        assert_eq!(json["status"], "healthy");
     }
+
+fn assert_go_duration_shape(value: &str) {
+    assert!(!value.is_empty(), "duration should not be empty");
+    assert!(!value.contains(' '), "Go duration strings do not contain spaces: {value}");
+    assert!(
+        value.contains("ns")
+            || value.contains("µs")
+            || value.contains("ms")
+            || value.contains('s')
+            || value.contains('m')
+            || value.contains('h'),
+        "duration should contain a Go-style unit: {value}"
+    );
+}
 
     #[tokio::test]
     async fn sqlite_scoped_system_status_stays_truthful_501_when_capability_is_unsupported() {

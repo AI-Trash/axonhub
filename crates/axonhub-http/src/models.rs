@@ -1,6 +1,16 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::env;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+const BUILD_COMMIT: Option<&str> = option_env!("AXONHUB_BUILD_COMMIT");
+const BUILD_TIME: Option<&str> = option_env!("AXONHUB_BUILD_TIME");
+const GO_VERSION: Option<&str> = option_env!("AXONHUB_BUILD_GO_VERSION");
+const GO_VERSION_FALLBACK: &str = "n/a (Rust build)";
+
+static START_TIME: OnceLock<Instant> = OnceLock::new();
 
 #[derive(Debug, Clone, Default)]
 pub struct TraceConfig {
@@ -405,13 +415,134 @@ fn default_graphql_variables() -> Value {
 #[derive(Debug, Serialize)]
 pub(crate) struct HealthResponse {
     pub status: &'static str,
-    pub service: String,
+    pub timestamp: String,
     pub version: String,
-    pub backend: &'static str,
-    pub migration_status: &'static str,
-    pub api_parity: &'static str,
-    pub legacy_go_backend_present: bool,
-    pub config_source: Option<String>,
+    pub build: HealthBuildInfo,
+    pub uptime: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct HealthBuildInfo {
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(rename = "build_time", skip_serializing_if = "Option::is_none")]
+    pub build_time: Option<String>,
+    #[serde(rename = "go_version")]
+    pub go_version: String,
+    pub platform: String,
+    pub uptime: String,
+}
+
+impl HealthBuildInfo {
+    pub(crate) fn current(version: &str) -> Self {
+        Self {
+            version: version.to_owned(),
+            commit: BUILD_COMMIT
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            build_time: BUILD_TIME
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            go_version: GO_VERSION
+                .filter(|value| !value.is_empty())
+                .unwrap_or(GO_VERSION_FALLBACK)
+                .to_owned(),
+            platform: format!("{}/{}", env::consts::OS, env::consts::ARCH),
+            uptime: health_uptime(),
+        }
+    }
+}
+
+pub(crate) fn health_timestamp() -> String {
+    humantime::format_rfc3339_nanos(std::time::SystemTime::now()).to_string()
+}
+
+pub(crate) fn health_uptime() -> String {
+    format_go_duration(start_time().elapsed())
+}
+
+pub(crate) fn format_go_duration(duration: Duration) -> String {
+    const NANOS_PER_MICROSECOND: u128 = 1_000;
+    const NANOS_PER_MILLISECOND: u128 = 1_000_000;
+    const NANOS_PER_SECOND: u128 = 1_000_000_000;
+    const SECONDS_PER_MINUTE: u128 = 60;
+    const SECONDS_PER_HOUR: u128 = 60 * 60;
+
+    let total_nanos = duration.as_nanos();
+
+    if total_nanos == 0 {
+        return "0s".to_owned();
+    }
+
+    if total_nanos < NANOS_PER_SECOND {
+        if total_nanos < NANOS_PER_MICROSECOND {
+            return format!("{total_nanos}ns");
+        }
+
+        if total_nanos < NANOS_PER_MILLISECOND {
+            return format_decimal_duration(total_nanos, NANOS_PER_MICROSECOND, 3, "µs");
+        }
+
+        return format_decimal_duration(total_nanos, NANOS_PER_MILLISECOND, 6, "ms");
+    }
+
+    let total_seconds = total_nanos / NANOS_PER_SECOND;
+    let hours = total_seconds / SECONDS_PER_HOUR;
+    let minutes = (total_seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
+    let seconds = total_seconds % SECONDS_PER_MINUTE;
+    let remaining_nanos = total_nanos % NANOS_PER_SECOND;
+
+    let mut formatted = String::new();
+
+    if hours > 0 {
+        formatted.push_str(&hours.to_string());
+        formatted.push('h');
+    }
+
+    if minutes > 0 || hours > 0 {
+        formatted.push_str(&minutes.to_string());
+        formatted.push('m');
+    }
+
+    if remaining_nanos == 0 {
+        formatted.push_str(&seconds.to_string());
+        formatted.push('s');
+        return formatted;
+    }
+
+    formatted.push_str(&format_decimal_duration(
+        seconds * NANOS_PER_SECOND + remaining_nanos,
+        NANOS_PER_SECOND,
+        9,
+        "s",
+    ));
+    formatted
+}
+
+fn format_decimal_duration(
+    total_nanos: u128,
+    unit_nanos: u128,
+    max_fraction_digits: usize,
+    suffix: &str,
+) -> String {
+    let whole = total_nanos / unit_nanos;
+    let fractional = total_nanos % unit_nanos;
+
+    if fractional == 0 {
+        return format!("{whole}{suffix}");
+    }
+
+    let mut fraction = format!("{:0width$}", fractional, width = max_fraction_digits);
+    while fraction.ends_with('0') {
+        fraction.pop();
+    }
+
+    format!("{whole}.{fraction}{suffix}")
+}
+
+fn start_time() -> &'static Instant {
+    START_TIME.get_or_init(Instant::now)
 }
 
 #[derive(Debug, Serialize)]

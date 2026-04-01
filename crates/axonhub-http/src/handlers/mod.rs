@@ -15,8 +15,10 @@ use crate::errors::{
 };
 use crate::middleware::ActixRequest;
 use crate::models::{
-    CompatibilityRoute, GraphqlExecutionResult, GraphqlRequestPayload, HealthResponse,
+    CompatibilityRoute, GraphqlExecutionResult, GraphqlRequestPayload, HealthBuildInfo,
+    HealthResponse,
     OpenAiV1ExecutionRequest, OpenAiV1Route,
+    health_timestamp,
 };
 use crate::state::{
     HttpState, OpenAiV1Capability, RequestAuthContext, RequestContextState,
@@ -35,15 +37,14 @@ use std::sync::Arc;
 const AISDK_PROTOCOL_NOT_IMPLEMENTED_MESSAGE: &str = "AiSDK compatibility is not supported in the Rust HTTP slice yet. Requests that opt into the Vercel AI SDK protocol via `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` remain on the explicit `/v1/*` 501 boundary.";
 
 pub(crate) async fn health(state: web::Data<HttpState>) -> web::Json<HealthResponse> {
+    let build = HealthBuildInfo::current(&state.version);
+
     web::Json(HealthResponse {
-        status: "ok",
-        service: state.service_name.clone(),
+        status: "healthy",
+        timestamp: health_timestamp(),
         version: state.version.clone(),
-        backend: "rust",
-        migration_status: "progressive cutover",
-        api_parity: "supported_scope",
-        legacy_go_backend_present: false,
-        config_source: state.config_source.clone(),
+        uptime: build.uptime.clone(),
+        build,
     })
 }
 

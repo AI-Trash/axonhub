@@ -9,6 +9,7 @@ license.workspace = true
 actix-cors.workspace = true
 actix-web.workspace = true
 bytes.workspace = true
+humantime.workspace = true
 http.workspace = true
 http-body-util.workspace = true
 rust-embed.workspace = true
