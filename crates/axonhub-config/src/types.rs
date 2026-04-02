@@ -64,7 +64,7 @@ impl Default for TraceConfig {
         Self {
             thread_header: "AH-Thread-Id".to_owned(),
             trace_header: "AH-Trace-Id".to_owned(),
-            request_header: String::new(),
+            request_header: "AH-Request-Id".to_owned(),
             extra_trace_headers: Vec::new(),
             extra_trace_body_fields: Vec::new(),
             claude_code_trace_enabled: false,

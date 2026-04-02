@@ -272,7 +272,7 @@ fn preview_parse_get_and_validation_keep_current_contract() {
     assert_eq!(config.get("server.port"), Some(serde_json::json!(8090)));
     assert_eq!(
         config.get("server.trace.request_header"),
-        Some(serde_json::json!(""))
+        Some(serde_json::json!("AH-Request-Id"))
     );
     assert_eq!(
         config.get("cache.default_expiration"),
