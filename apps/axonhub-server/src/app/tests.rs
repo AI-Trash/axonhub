@@ -1121,7 +1121,7 @@ async fn postgres_router_signin_and_debug_context_routes_work_for_auth_and_conte
         admin_graphql: build_admin_graphql_capability("postgres", &dsn),
         openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
         provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+            message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
         },
         allow_no_auth: false,
         cors: disabled_test_cors(),
@@ -1348,7 +1348,7 @@ fn postgres_admin_request_content_route_downloads_seeded_content() {
     admin_graphql: build_admin_graphql_capability("postgres", &dsn),
     openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -1486,7 +1486,7 @@ async fn postgres_admin_graphql_route_executes_current_subset() {
     admin_graphql: build_admin_graphql_capability("postgresql", &dsn),
     openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -1698,7 +1698,7 @@ async fn postgres_openai_v1_subset_routes_execute_and_support_image_generations_
     admin_graphql: build_admin_graphql_capability("postgres", &dsn),
     openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2004,7 +2004,7 @@ async fn postgres_openai_v1_retries_same_channel_before_failover_and_records_att
     admin_graphql: build_admin_graphql_capability("postgres", &dsn),
     openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2193,7 +2193,7 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
     admin_graphql: build_admin_graphql_capability("postgres", &dsn),
     openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2365,7 +2365,7 @@ async fn main_router_serves_fresh_status_and_initialize_for_sqlite_scope() {
         &db_path.display().to_string(),
     ),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2566,7 +2566,7 @@ async fn postgres_bootstrap_capability_serves_fresh_status_and_initialize() {
     admin_graphql: build_admin_graphql_capability("postgres", &dsn),
     openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Use the legacy Go backend for these routes.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2732,7 +2732,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
         &db_path.display().to_string(),
     ),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2770,7 +2770,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
     assert_eq!(json["method"], "POST");
     assert_eq!(
         json["message"],
-        "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3."
+        "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
     );
 
     let exchange_response = app
@@ -2800,7 +2800,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
     assert_eq!(json["method"], "POST");
     assert_eq!(
         json["message"],
-        "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3."
+        "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
     );
 
     let exchange_response = app
@@ -2830,7 +2830,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
     assert_eq!(json["method"], "POST");
     assert_eq!(
         json["message"],
-        "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3."
+        "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
     );
 
     std::fs::remove_file(db_path).ok();
@@ -3013,7 +3013,7 @@ async fn unsupported_non_seaorm_dialect_keeps_graphql_routes_truthful() {
     admin_graphql: build_admin_graphql_capability("oracle", &db_path.display().to_string()),
     openapi_graphql: build_openapi_graphql_capability("oracle", &db_path.display().to_string()),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3122,7 +3122,7 @@ async fn sqlite_backed_openapi_graphql_route_executes_pilot_mutation() {
         &db_path.display().to_string(),
     ),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3204,7 +3204,7 @@ async fn postgres_openapi_graphql_route_executes_pilot_mutation() {
     admin_graphql: build_admin_graphql_capability("postgres", &dsn),
     openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3319,7 +3319,7 @@ async fn sqlite_backed_openapi_graphql_route_rejects_missing_or_invalid_service_
         &db_path.display().to_string(),
     ),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3458,7 +3458,7 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
         &db_path.display().to_string(),
     ),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3675,7 +3675,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         &db_path.display().to_string(),
     ),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -4196,7 +4196,7 @@ async fn sqlite_admin_request_content_route_enforces_project_scope_and_wrong_pro
         &db_path.display().to_string(),
     ),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -4347,7 +4347,7 @@ async fn sqlite_openapi_graphql_route_enforces_api_key_scope_and_service_account
         &db_path.display().to_string(),
     ),
     provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
