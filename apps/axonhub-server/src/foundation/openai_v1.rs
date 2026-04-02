@@ -979,6 +979,7 @@ impl SelectedOpenAiTarget {
             OpenAiV1Route::ResponsesCompact => format!("{trimmed}/responses/compact"),
             OpenAiV1Route::Embeddings => format!("{trimmed}/embeddings"),
             OpenAiV1Route::ImagesGenerations => format!("{trimmed}/images/generations"),
+            OpenAiV1Route::Realtime => format!("{trimmed}/realtime"),
         }
     }
 
@@ -1042,6 +1043,17 @@ pub(crate) fn validate_openai_request(
             if !object.contains_key("input") {
                 return Err(OpenAiV1Error::InvalidRequest {
                     message: "input is required".to_owned(),
+                });
+            }
+        }
+        OpenAiV1Route::Realtime => {
+            if object
+                .get("stream")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                return Err(OpenAiV1Error::InvalidRequest {
+                    message: "realtime JSON POST does not support streaming".to_owned(),
                 });
             }
         }
@@ -1168,7 +1180,7 @@ pub(crate) fn json_string_field<'a>(value: &'a Value, keys: &[&str]) -> Option<&
 pub(crate) fn extract_usage(route: OpenAiV1Route, response_body: &Value) -> Option<ExtractedUsage> {
     let usage = response_body.get("usage")?;
     match route {
-        OpenAiV1Route::Responses | OpenAiV1Route::ResponsesCompact => {
+        OpenAiV1Route::Responses | OpenAiV1Route::ResponsesCompact | OpenAiV1Route::Realtime => {
             let empty = Value::Null;
             let prompt_details = json_field(usage, &["input_tokens_details"]).unwrap_or(&empty);
             let completion_details =

@@ -219,6 +219,8 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
 
     struct FakeAdminPort;
 
+    struct FakeProviderEdgeAdminPort;
+
     impl FakeAuthPort {
         fn new() -> Self {
             Self {
@@ -468,10 +470,10 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                             OpenAiV1Route::ResponsesCompact => "resp_compact_rust",
                             OpenAiV1Route::Embeddings => "embed_rust",
                             OpenAiV1Route::ImagesGenerations => "imggen_rust",
-                            #[allow(unreachable_patterns)]
-                            _ => "other_rust",
+                            OpenAiV1Route::Realtime => "realtime_rust",
                         },
                         "model": request.body["model"].clone(),
+                        "path": request.path,
                         "project_id": request.project.id,
                         "channel_hint_id": request.channel_hint_id,
                         "path_params": request.path_params,
@@ -560,8 +562,32 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             &self,
             project_id: i64,
             request_id: i64,
-            _user: AuthUserContext,
+            user: AuthUserContext,
         ) -> Result<AdminContentDownload, AdminError> {
+            let has_read_requests_scope = user.is_owner
+                || user.scopes.iter().any(|scope| scope == "read_requests")
+                || user
+                    .roles
+                    .iter()
+                    .flat_map(|role| role.scopes.iter())
+                    .any(|scope| scope == "read_requests")
+                || user.projects.iter().any(|project| {
+                    project.project_id.id == project_id
+                        && (project.is_owner
+                            || project.scopes.iter().any(|scope| scope == "read_requests")
+                            || project
+                                .roles
+                                .iter()
+                                .flat_map(|role| role.scopes.iter())
+                                .any(|scope| scope == "read_requests"))
+                });
+
+            if !has_read_requests_scope {
+                return Err(AdminError::Forbidden {
+                    message: "permission denied".to_owned(),
+                });
+            }
+
             if project_id != 1 || request_id != 42 {
                 return Err(AdminError::NotFound {
                     message: "Request not found".to_owned(),
@@ -571,6 +597,91 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             Ok(AdminContentDownload {
                 filename: "video.mp4".to_owned(),
                 bytes: b"video-content".to_vec(),
+            })
+        }
+    }
+
+    impl ProviderEdgeAdminPort for FakeProviderEdgeAdminPort {
+        fn start_codex_oauth(
+            &self,
+            _request: &StartPkceOAuthRequest,
+        ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+            Ok(StartPkceOAuthResponse {
+                session_id: "codex-session".to_owned(),
+                auth_url: "https://example.com/codex/start".to_owned(),
+            })
+        }
+
+        fn exchange_codex_oauth(
+            &self,
+            _request: &ExchangeCallbackOAuthRequest,
+        ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+            Ok(ExchangeOAuthResponse {
+                credentials: "codex-credentials".to_owned(),
+            })
+        }
+
+        fn start_claudecode_oauth(
+            &self,
+            _request: &StartPkceOAuthRequest,
+        ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+            Ok(StartPkceOAuthResponse {
+                session_id: "claudecode-session".to_owned(),
+                auth_url: "https://example.com/claudecode/start".to_owned(),
+            })
+        }
+
+        fn exchange_claudecode_oauth(
+            &self,
+            _request: &ExchangeCallbackOAuthRequest,
+        ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+            Ok(ExchangeOAuthResponse {
+                credentials: "claudecode-credentials".to_owned(),
+            })
+        }
+
+        fn start_antigravity_oauth(
+            &self,
+            _request: &StartAntigravityOAuthRequest,
+        ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+            Ok(StartPkceOAuthResponse {
+                session_id: "antigravity-session".to_owned(),
+                auth_url: "https://example.com/antigravity/start".to_owned(),
+            })
+        }
+
+        fn exchange_antigravity_oauth(
+            &self,
+            _request: &ExchangeCallbackOAuthRequest,
+        ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+            Ok(ExchangeOAuthResponse {
+                credentials: "antigravity-credentials".to_owned(),
+            })
+        }
+
+        fn start_copilot_oauth(
+            &self,
+            _request: &StartCopilotOAuthRequest,
+        ) -> Result<StartCopilotOAuthResponse, ProviderEdgeAdminError> {
+            Ok(StartCopilotOAuthResponse {
+                session_id: "copilot-session".to_owned(),
+                user_code: "COPILOT-CODE".to_owned(),
+                verification_uri: "https://example.com/copilot/verify".to_owned(),
+                expires_in: 900,
+                interval: 5,
+            })
+        }
+
+        fn poll_copilot_oauth(
+            &self,
+            _request: &PollCopilotOAuthRequest,
+        ) -> Result<PollCopilotOAuthResponse, ProviderEdgeAdminError> {
+            Ok(PollCopilotOAuthResponse {
+                access_token: Some("copilot-access-token".to_owned()),
+                token_type: Some("Bearer".to_owned()),
+                scope: Some("openid profile".to_owned()),
+                status: "authorized".to_owned(),
+                message: None,
             })
         }
     }
@@ -667,6 +778,17 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         let mut state = test_state(system_bootstrap, allow_no_auth);
         state.openai_v1 = OpenAiV1Capability::Available {
             openai: Arc::new(FakeOpenAiV1Port),
+        };
+        state
+    }
+
+    fn test_state_with_provider_edge(
+        system_bootstrap: SystemBootstrapCapability,
+        allow_no_auth: bool,
+    ) -> HttpState {
+        let mut state = test_state(system_bootstrap, allow_no_auth);
+        state.provider_edge_admin = ProviderEdgeAdminCapability::Available {
+            provider_edge: Arc::new(FakeProviderEdgeAdminPort),
         };
         state
     }
@@ -1408,6 +1530,31 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[tokio::test]
+    async fn admin_request_content_route_forbids_admin_without_read_requests_scope() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/requests/42/content")
+                    .method(Method::GET)
+                    .header("Authorization", "Bearer limited-admin-token")
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_rest_error_response(response, StatusCode::FORBIDDEN, "permission denied").await;
+    }
+
+    #[tokio::test]
     async fn admin_antigravity_oauth_exchange_rejects_missing_or_invalid_admin_context() {
         let app = router(test_state(
             SystemBootstrapCapability::Available {
@@ -1447,6 +1594,48 @@ fn assert_go_duration_shape(value: &str) {
         assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
         let json = read_json(invalid_response).await;
         assert_eq!(json["error"]["message"], "Invalid token");
+    }
+
+    #[tokio::test]
+    async fn admin_provider_edge_oauth_requires_write_channels_scope() {
+        let app = router(test_state_with_provider_edge(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let forbidden = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/antigravity/oauth/start")
+                    .method(Method::POST)
+                    .header("Authorization", "Bearer limited-admin-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_rest_error_response(forbidden, StatusCode::FORBIDDEN, "permission denied").await;
+
+        let allowed = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/antigravity/oauth/start")
+                    .method(Method::POST)
+                    .header("Authorization", "Bearer valid-admin-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = assert_json_response(allowed, StatusCode::OK).await;
+        assert_eq!(json["auth_url"], "https://example.com/antigravity/start");
     }
 
     #[tokio::test]
@@ -2983,13 +3172,82 @@ fn assert_go_duration_shape(value: &str) {
         assert_eq!(json["legacy_go_backend_present"], false);
     }
 
+    #[tokio::test]
+    async fn v1_realtime_json_post_uses_openai_v1_execution_path() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/realtime")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::from(r#"{"model":"gpt-4o-realtime-preview","type":"response.create","response":{"modalities":["text"],"instructions":"Say hi"}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        assert_eq!(json["id"], "realtime_rust");
+        assert_eq!(json["model"], "gpt-4o-realtime-preview");
+        assert_eq!(json["path"], "/v1/realtime");
+        assert_eq!(json["project_id"], 1);
+    }
+
+    #[tokio::test]
+    async fn v1_realtime_upgrade_headers_stay_on_truthful_v1_boundary() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/realtime")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .header("Connection", "keep-alive, Upgrade")
+                    .header("Upgrade", "websocket")
+                    .header("Sec-WebSocket-Version", "13")
+                    .body(Body::from(r#"{"model":"gpt-4o-realtime-preview"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let json = read_json(response).await;
+        assert_eq!(json["error"], "not_implemented");
+        assert_eq!(json["route_family"], "/v1/*");
+        assert_eq!(json["method"], "POST");
+        assert_eq!(json["path"], "/v1/realtime");
+        assert_eq!(
+            json["message"],
+            "Rust realtime support currently covers only JSON POST `/v1/realtime` through the standard OpenAI `/v1` execution path. WebSocket/upgrade-style realtime transport remains on the explicit `/v1/*` 501 boundary."
+        );
+        assert_eq!(json["migration_status"], "progressive cutover");
+        assert_eq!(json["legacy_go_backend_present"], false);
+    }
+
     #[test]
     fn readme_unsupported_boundary_contract_matches_explicit_v1_guardrails() {
         let readme = include_str!("../../../README.md");
 
         for required_snippet in [
             "- **Image editing and image variants**: `POST /v1/images/edits`, `POST /v1/images/variations`, and other unmigrated image routes",
-            "- **Realtime API**: no dedicated Rust realtime/WebSocket route family; `/v1/realtime` returns `501 Not Implemented`",
+            "- **Realtime API**: JSON-only `POST /v1/realtime` uses the standard Rust OpenAI `/v1` execution path; dedicated realtime WebSocket transport, upgrade-style requests, and session-family routes remain on explicit `501 Not Implemented` boundaries",
             "- **AiSDK compatibility**: Vercel AI SDK protocol requests remain unsupported; `/v1` requests with `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` return `501 Not Implemented`",
         ] {
             assert!(
@@ -3002,7 +3260,9 @@ fn assert_go_duration_shape(value: &str) {
         for required_route in [
             "web::resource(\"/images/edits\").route(web::to(explicit_v1_not_implemented_boundary))",
             "web::resource(\"/images/variations\").route(web::to(explicit_v1_not_implemented_boundary))",
-            "web::resource(\"/realtime\").route(web::to(explicit_v1_not_implemented_boundary))",
+            "web::resource(\"/realtime\")",
+            "route(web::post().to(handlers::openai_v1::openai_realtime))",
+            "route(web::to(explicit_v1_not_implemented_boundary))",
         ] {
             assert!(
                 routes.contains(required_route),
@@ -3013,6 +3273,7 @@ fn assert_go_duration_shape(value: &str) {
         let handlers = include_str!("handlers/mod.rs");
         assert!(handlers.contains("X-Vercel-Ai-Ui-Message-Stream"));
         assert!(handlers.contains("X-Vercel-AI-Data-Stream"));
+        assert!(handlers.contains("Sec-WebSocket-"));
         assert!(handlers.contains("remain on the explicit `/v1/*` 501 boundary"));
     }
 

@@ -146,6 +146,7 @@ pub enum OpenAiV1Route {
     ResponsesCompact,
     Embeddings,
     ImagesGenerations,
+    Realtime,
 }
 
 impl OpenAiV1Route {
@@ -156,6 +157,7 @@ impl OpenAiV1Route {
             Self::ResponsesCompact => "openai/responses_compact",
             Self::Embeddings => "openai/embeddings",
             Self::ImagesGenerations => "openai/images_generations",
+            Self::Realtime => "openai/realtime",
         }
     }
 }

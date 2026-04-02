@@ -185,6 +185,7 @@ pub enum OpenAiV1Error {
 #[derive(Debug, Clone)]
 pub enum AdminError {
     BadRequest { message: String },
+    Forbidden { message: String },
     NotFound { message: String },
     Internal { message: String },
 }

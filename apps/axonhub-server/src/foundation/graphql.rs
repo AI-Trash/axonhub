@@ -26,12 +26,15 @@ use super::{
     ports::{AdminGraphqlRepository, OpenApiGraphqlRepository},
     repositories::graphql::{
         AdminGraphqlSubsetRepository, GraphqlAutoBackupSettingsRecord,
-        GraphqlDefaultDataStorageRecord, GraphqlStoragePolicyRecord,
-        GraphqlSystemChannelSettingsRecord,
+        GraphqlDefaultDataStorageRecord, GraphqlRoleSummaryRecord,
+        GraphqlStoragePolicyRecord, GraphqlSystemChannelSettingsRecord,
         OpenApiGraphqlMutationRepository,
         SeaOrmAdminGraphqlSubsetRepository, SeaOrmOpenApiGraphqlMutationRepository,
     },
-    shared::{format_unix_timestamp, graphql_gid, i64_to_i32},
+    shared::{
+        format_unix_timestamp, graphql_gid, i64_to_i32,
+    },
+    system::hash_password,
 };
 use serde_json::json;
 
@@ -425,10 +428,32 @@ async fn execute_admin_graphql_seaorm_request(
         return update_system_channel_settings_seaorm(&repository, payload.variables);
     }
 
-    for field in ["triggerAutoBackup", "checkProviderQuotas", "triggerGcCleanup"] {
-        if query.contains(field) {
-            return graphql_not_implemented_for_route("/admin/graphql", field);
+    if query.contains("createUser") {
+        if !user_has_system_scope(&user, super::authz::SCOPE_WRITE_USERS) {
+            return graphql_permission_denied("createUser");
         }
+
+        return create_user_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateUserStatus") {
+        if !user_has_system_scope(&user, super::authz::SCOPE_WRITE_USERS) {
+            return graphql_permission_denied("updateUserStatus");
+        }
+
+        return update_user_status_graphql_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateUser") {
+        if !user_has_system_scope(&user, super::authz::SCOPE_WRITE_USERS) {
+            return graphql_permission_denied("updateUser");
+        }
+
+        return update_user_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateMe") {
+        return update_me_seaorm(&repository, payload.variables, &user);
     }
 
     if query.contains("queryModels") {
@@ -740,6 +765,204 @@ fn update_system_channel_settings_seaorm(
     })
 }
 
+fn create_user_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlCreateUserInput>(
+        variables,
+        "input",
+        "user input is required",
+    )?;
+
+    let password_hash = hash_password(input.password.as_str())
+        .map_err(|error| format!("failed to hash password: {error}"))?;
+    let status = match input.status {
+        Some(UserStatus::Activated) => "activated",
+        Some(UserStatus::Deactivated) => "deactivated",
+        None => "activated",
+    };
+    let scopes_json = serde_json::to_string(&input.scopes.unwrap_or_default())
+        .map_err(|error| format!("failed to serialize scopes: {error}"))?;
+    let project_ids = parse_graphql_id_list(input.project_ids, "project")?;
+    let role_ids = parse_graphql_id_list(input.role_ids, "role")?;
+
+    let user_id = repository.create_user(
+        input.email.as_str(),
+        status,
+        input.prefer_language.unwrap_or_else(|| "en".to_owned()).as_str(),
+        password_hash.as_str(),
+        input.first_name.unwrap_or_default().as_str(),
+        input.last_name.unwrap_or_default().as_str(),
+        input.avatar.as_deref(),
+        input.is_owner.unwrap_or(false),
+        scopes_json.as_str(),
+        &project_ids,
+        &role_ids,
+    )?;
+
+    let user = load_graphql_user(repository, user_id)?.ok_or_else(|| "user not found".to_owned())?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"createUser": admin_user_json(&user)}}),
+    })
+}
+
+fn update_user_status_graphql_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let id = variables
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "user id is required".to_owned())?;
+    let user_id = parse_graphql_resource_id(id, "user")
+        .map_err(|_| "invalid user id".to_owned())?;
+    let status_value = variables
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "status is required".to_owned())?;
+    let status = match status_value {
+        "activated" => "activated",
+        "deactivated" => "deactivated",
+        _ => return Err(format!("invalid status: {status_value}")),
+    };
+
+    if !repository.update_user_status(user_id, status)? {
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {"updateUserStatus": Value::Null},
+                "errors": [{"message": "user not found"}],
+            }),
+        });
+    }
+
+    let user = load_graphql_user(repository, user_id)?.ok_or_else(|| "user not found".to_owned())?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateUserStatus": admin_user_json(&user)}}),
+    })
+}
+
+fn update_user_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let id = variables
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "user id is required".to_owned())?;
+    let user_id = parse_graphql_resource_id(id, "user")
+        .map_err(|_| "invalid user id".to_owned())?;
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdateUserInput>(
+        variables,
+        "input",
+        "user input is required",
+    )?;
+
+    if input.first_name.is_none()
+        && input.last_name.is_none()
+        && input.prefer_language.is_none()
+        && input.avatar.is_none()
+        && input.scopes.is_none()
+        && input.role_ids.is_none()
+    {
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {"updateUser": Value::Null},
+                "errors": [{"message": "no fields to update"}],
+            }),
+        });
+    }
+
+    let scopes_json = input
+        .scopes
+        .as_ref()
+        .map(|scopes| serde_json::to_string(scopes))
+        .transpose()
+        .map_err(|error| format!("failed to serialize scopes: {error}"))?;
+    let role_ids = input
+        .role_ids
+        .map(Some)
+        .map(|ids| parse_graphql_id_list(ids, "role"))
+        .transpose()?;
+
+    if !repository.update_user(
+        user_id,
+        input.first_name.as_deref(),
+        input.last_name.as_deref(),
+        input.prefer_language.as_deref(),
+        input.avatar.as_deref(),
+        scopes_json.as_deref(),
+        role_ids.as_deref(),
+    )? {
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {"updateUser": Value::Null},
+                "errors": [{"message": "user not found"}],
+            }),
+        });
+    }
+
+    let user = load_graphql_user(repository, user_id)?.ok_or_else(|| "user not found".to_owned())?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateUser": admin_user_json(&user)}}),
+    })
+}
+
+fn update_me_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+    user: &AuthUserContext,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdateMeInput>(
+        variables,
+        "input",
+        "user input is required",
+    )?;
+
+    if input.first_name.is_none()
+        && input.last_name.is_none()
+        && input.prefer_language.is_none()
+        && input.avatar.is_none()
+    {
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {"updateMe": Value::Null},
+                "errors": [{"message": "no fields to update"}],
+            }),
+        });
+    }
+
+    if !repository.update_user_profile(
+        user.id,
+        input.first_name.as_deref(),
+        input.last_name.as_deref(),
+        input.prefer_language.as_deref(),
+        input.avatar.as_deref(),
+    )? {
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {"updateMe": Value::Null},
+                "errors": [{"message": "user not found"}],
+            }),
+        });
+    }
+
+    let profile = load_graphql_user_profile(repository, user.id)?
+        .ok_or_else(|| "user not found".to_owned())?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateMe": admin_user_profile_json(&profile)}}),
+    })
+}
+
 fn load_storage_policy_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
 ) -> Result<StoredStoragePolicy, String> {
@@ -783,6 +1006,87 @@ fn load_default_data_storage_id_seaorm(
     }
 
     Ok(Some(id))
+}
+
+fn load_graphql_user_profile(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    user_id: i64,
+) -> Result<Option<AdminGraphqlUserInfo>, String> {
+    let Some(profile) = repository.query_user_profile(user_id)? else {
+        return Ok(None);
+    };
+    let roles = repository
+        .query_user_roles(user_id)?
+        .into_iter()
+        .map(role_record_to_graphql_role)
+        .collect::<Result<Vec<_>, _>>()?;
+    let projects = repository
+        .query_user_projects(user_id)?
+        .into_iter()
+        .map(|membership| {
+            let roles = repository
+                .query_project_roles(user_id, membership.project_id)?
+                .into_iter()
+                .map(role_record_to_graphql_role)
+                .collect::<Result<Vec<_>, _>>()?;
+            let scopes = parse_scope_json(membership.scopes.as_str());
+            Ok::<AdminGraphqlUserProjectInfo, String>(AdminGraphqlUserProjectInfo {
+                project_id: graphql_gid("project", membership.project_id),
+                is_owner: membership.is_owner,
+                scopes,
+                roles,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(Some(AdminGraphqlUserInfo {
+        id: graphql_gid("user", profile.id),
+        email: profile.email,
+        first_name: profile.first_name,
+        last_name: profile.last_name,
+        is_owner: profile.is_owner,
+        prefer_language: profile.prefer_language,
+        avatar: profile.avatar.filter(|value| !value.is_empty()),
+        scopes: parse_scope_json(profile.scopes.as_str()),
+        roles,
+        projects,
+    }))
+}
+
+fn load_graphql_user(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    user_id: i64,
+) -> Result<Option<AdminGraphqlUser>, String> {
+    let Some(user) = repository.query_user(user_id)? else {
+        return Ok(None);
+    };
+    let roles = repository
+        .query_user_roles(user_id)?
+        .into_iter()
+        .map(role_record_to_graphql_role)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(AdminGraphqlUser {
+        id: graphql_gid("user", user.id),
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        email: user.email,
+        status: user.status,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        is_owner: user.is_owner,
+        prefer_language: user.prefer_language,
+        scopes: parse_scope_json(user.scopes.as_str()),
+        roles: AdminGraphqlRoleConnection {
+            edges: roles
+                .into_iter()
+                .map(|node| AdminGraphqlRoleEdge {
+                    cursor: None,
+                    node: Some(node),
+                })
+                .collect(),
+            page_info: empty_page_info(),
+        },
+    }))
 }
 
 fn deserialize_setting_or_default<T, Record, F>(
@@ -905,6 +1209,103 @@ fn probe_frequency_graphql_name(value: ProbeFrequencySetting) -> &'static str {
         ProbeFrequencySetting::ThirtyMinutes => "THIRTY_MINUTES",
         ProbeFrequencySetting::OneHour => "ONE_HOUR",
     }
+}
+
+fn empty_page_info() -> AdminGraphqlPageInfo {
+    AdminGraphqlPageInfo {
+        has_next_page: false,
+        has_previous_page: false,
+        start_cursor: None,
+        end_cursor: None,
+    }
+}
+
+fn parse_scope_json(value: &str) -> Vec<String> {
+    serde_json::from_str(value).unwrap_or_default()
+}
+
+fn role_record_to_graphql_role(record: GraphqlRoleSummaryRecord) -> Result<AdminGraphqlRoleInfo, String> {
+    Ok(AdminGraphqlRoleInfo {
+        id: graphql_gid("role", record.id),
+        name: record.name,
+        scopes: parse_scope_json(record.scopes.as_str()),
+    })
+}
+
+fn admin_user_json(user: &AdminGraphqlUser) -> Value {
+    json!({
+        "id": user.id,
+        "createdAt": user.created_at,
+        "updatedAt": user.updated_at,
+        "email": user.email,
+        "status": user.status,
+        "firstName": user.first_name,
+        "lastName": user.last_name,
+        "isOwner": user.is_owner,
+        "preferLanguage": user.prefer_language,
+        "scopes": user.scopes,
+        "roles": {
+            "edges": user.roles.edges.iter().map(|edge| {
+                json!({
+                    "cursor": edge.cursor,
+                    "node": edge.node.as_ref().map(|node| {
+                        json!({
+                            "id": node.id,
+                            "name": node.name,
+                            "scopes": node.scopes,
+                        })
+                    })
+                })
+            }).collect::<Vec<_>>(),
+            "pageInfo": {
+                "hasNextPage": user.roles.page_info.has_next_page,
+                "hasPreviousPage": user.roles.page_info.has_previous_page,
+                "startCursor": user.roles.page_info.start_cursor,
+                "endCursor": user.roles.page_info.end_cursor,
+            }
+        }
+    })
+}
+
+fn admin_user_profile_json(user: &AdminGraphqlUserInfo) -> Value {
+    json!({
+        "id": user.id,
+        "email": user.email,
+        "firstName": user.first_name,
+        "lastName": user.last_name,
+        "isOwner": user.is_owner,
+        "preferLanguage": user.prefer_language,
+        "avatar": user.avatar,
+        "scopes": user.scopes,
+        "roles": user.roles.iter().map(|role| {
+            json!({
+                "id": role.id,
+                "name": role.name,
+                "scopes": role.scopes,
+            })
+        }).collect::<Vec<_>>(),
+        "projects": user.projects.iter().map(|project| {
+            json!({
+                "projectID": project.project_id,
+                "isOwner": project.is_owner,
+                "scopes": project.scopes,
+                "roles": project.roles.iter().map(|role| {
+                    json!({
+                        "id": role.id,
+                        "name": role.name,
+                        "scopes": role.scopes,
+                    })
+                }).collect::<Vec<_>>()
+            })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn parse_graphql_id_list(ids: Option<Vec<String>>, expected_type: &str) -> Result<Vec<i64>, String> {
+    ids.unwrap_or_default()
+        .into_iter()
+        .map(|value| parse_graphql_resource_id(value.as_str(), expected_type))
+        .collect()
 }
 
 fn generate_llm_api_key() -> Result<String, String> {
@@ -1224,7 +1625,8 @@ impl From<StoredProviderQuotaStatus> for AdminGraphqlProviderQuotaStatus {
     }
 }
 
-#[derive(Debug, Clone, InputObject)]
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
 #[graphql(name = "UpdateMeInput")]
 pub(crate) struct AdminGraphqlUpdateMeInput {
     pub(crate) first_name: Option<String>,
@@ -1343,7 +1745,8 @@ pub(crate) struct AdminGraphqlQueryModelsInput {
     pub(crate) last: Option<i32>,
 }
 
-#[derive(Debug, Clone, InputObject)]
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
 #[graphql(name = "CreateUserInput")]
 pub(crate) struct AdminGraphqlCreateUserInput {
     pub(crate) email: String,
@@ -1355,13 +1758,16 @@ pub(crate) struct AdminGraphqlCreateUserInput {
     pub(crate) avatar: Option<String>,
     pub(crate) is_owner: Option<bool>,
     pub(crate) scopes: Option<Vec<String>>,
+    #[serde(rename = "projectIDs")]
     #[graphql(name = "projectIDs")]
     pub(crate) project_ids: Option<Vec<String>>,
+    #[serde(rename = "roleIDs")]
     #[graphql(name = "roleIDs")]
     pub(crate) role_ids: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, InputObject)]
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
 #[graphql(name = "UpdateUserInput")]
 pub(crate) struct AdminGraphqlUpdateUserInput {
     #[graphql(name = "firstName")]
@@ -1374,6 +1780,7 @@ pub(crate) struct AdminGraphqlUpdateUserInput {
     pub(crate) avatar: Option<String>,
     #[graphql(name = "scopes")]
     pub(crate) scopes: Option<Vec<String>>,
+    #[serde(rename = "roleIDs")]
     #[graphql(name = "roleIDs")]
     pub(crate) role_ids: Option<Vec<String>>,
 }

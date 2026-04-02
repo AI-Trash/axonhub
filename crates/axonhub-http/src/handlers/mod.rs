@@ -35,6 +35,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 const AISDK_PROTOCOL_NOT_IMPLEMENTED_MESSAGE: &str = "AiSDK compatibility is not supported in the Rust HTTP slice yet. Requests that opt into the Vercel AI SDK protocol via `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` remain on the explicit `/v1/*` 501 boundary.";
+const REALTIME_UPGRADE_NOT_IMPLEMENTED_MESSAGE: &str = "Rust realtime support currently covers only JSON POST `/v1/realtime` through the standard OpenAI `/v1` execution path. WebSocket/upgrade-style realtime transport remains on the explicit `/v1/*` 501 boundary.";
 
 pub(crate) async fn health(state: web::Data<HttpState>) -> web::Json<HealthResponse> {
     let build = HealthBuildInfo::current(&state.version);
@@ -75,6 +76,10 @@ pub(crate) async fn execute_openai_request(
             None,
         )
         .with_message(message);
+    }
+
+    if let Some(response) = realtime_upgrade_not_implemented_response(&request, original_uri.clone()) {
+        return response;
     }
 
     if let Some(response) = aisdk_protocol_not_implemented_response(&request, original_uri.clone()) {
@@ -326,6 +331,21 @@ fn aisdk_protocol_not_implemented_response(
     })
 }
 
+fn realtime_upgrade_not_implemented_response(
+    request: &HttpRequest,
+    original_uri: Uri,
+) -> Option<HttpResponse> {
+    realtime_upgrade_header_present(request).then(|| {
+        not_implemented_response(
+            "/v1/*",
+            Method::from(request.method().clone()),
+            original_uri,
+            None,
+        )
+        .with_message(REALTIME_UPGRADE_NOT_IMPLEMENTED_MESSAGE)
+    })
+}
+
 fn aisdk_protocol_header_present(request: &HttpRequest) -> bool {
     ["X-Vercel-Ai-Ui-Message-Stream", "X-Vercel-AI-Data-Stream"]
         .into_iter()
@@ -336,6 +356,26 @@ fn aisdk_protocol_header_present(request: &HttpRequest) -> bool {
                 .and_then(|value| value.to_str().ok())
                 .is_some_and(|value| !value.trim().is_empty())
         })
+}
+
+fn realtime_upgrade_header_present(request: &HttpRequest) -> bool {
+    let has_upgrade = request
+        .headers()
+        .get("Upgrade")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_connection_upgrade = request
+        .headers()
+        .get("Connection")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.split(',').any(|token| token.trim().eq_ignore_ascii_case("upgrade")));
+    let has_sec_websocket = request.headers().keys().any(|name| {
+        name.as_str()
+            .to_ascii_lowercase()
+            .starts_with("sec-websocket-")
+    });
+
+    has_upgrade || has_connection_upgrade || has_sec_websocket
 }
 
 fn parse_json_body_for_compatibility(

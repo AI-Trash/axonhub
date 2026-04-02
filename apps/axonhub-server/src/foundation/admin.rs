@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use super::{
+    authz::{user_has_project_scope, user_has_system_scope, SCOPE_READ_REQUESTS},
     ports::AdminRepository,
     repositories::admin::{AdminStorageRepository, SeaOrmAdminStorageRepository},
     seaorm::SeaOrmConnectionFactory,
@@ -232,8 +233,16 @@ impl AdminPort for SeaOrmAdminService {
         &self,
         project_id: i64,
         request_id: i64,
-        _user: AuthUserContext,
+        user: AuthUserContext,
     ) -> Result<AdminContentDownload, AdminError> {
+        if !(user_has_system_scope(&user, SCOPE_READ_REQUESTS)
+            || user_has_project_scope(&user, project_id, SCOPE_READ_REQUESTS))
+        {
+            return Err(AdminError::Forbidden {
+                message: "permission denied".to_owned(),
+            });
+        }
+
         let request = self
             .storage
             .query_request_content_record(request_id)?

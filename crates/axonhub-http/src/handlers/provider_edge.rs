@@ -1,10 +1,41 @@
 use crate::errors::{error_response, execute_provider_edge_admin_request};
 use crate::handlers::provider_edge_admin_port;
-use crate::state::HttpState;
+use crate::state::{HttpState, RequestAuthContext, RequestContextState};
 use actix_web::http::{Method, StatusCode, Uri};
-use actix_web::{HttpRequest, HttpResponse, web};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, web};
 use bytes::Bytes;
 use std::sync::Arc;
+
+const WRITE_CHANNELS_SCOPE: &str = "write_channels";
+
+fn require_provider_edge_write_channels_scope(request: &HttpRequest) -> Result<(), HttpResponse> {
+    let extensions = request.extensions();
+    let user = extensions
+        .get::<RequestContextState>()
+        .and_then(|context| context.auth.as_ref())
+        .and_then(|auth| match auth {
+            RequestAuthContext::Admin(user) => Some(user),
+            RequestAuthContext::ApiKey(_) => None,
+        })
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid token"))?;
+
+    if user.is_owner
+        || user.scopes.iter().any(|scope| scope == WRITE_CHANNELS_SCOPE)
+        || user
+            .roles
+            .iter()
+            .flat_map(|role| role.scopes.iter())
+            .any(|scope| scope == WRITE_CHANNELS_SCOPE)
+    {
+        return Ok(());
+    }
+
+    Err(error_response(
+        StatusCode::FORBIDDEN,
+        "Forbidden",
+        "permission denied",
+    ))
+}
 
 fn unsupported_provider_edge_response<'a>(
     state: &'a HttpState,
@@ -26,6 +57,10 @@ pub async fn start_codex_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
+    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+        return response;
+    }
+
     let request_payload: crate::models::StartPkceOAuthRequest = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {
@@ -54,6 +89,10 @@ pub(crate) async fn exchange_codex_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
+    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+        return response;
+    }
+
     let request_payload: crate::models::ExchangeCallbackOAuthRequest = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {
@@ -82,6 +121,10 @@ pub async fn start_claudecode_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
+    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+        return response;
+    }
+
     let request_payload: crate::models::StartPkceOAuthRequest = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {
@@ -110,6 +153,10 @@ pub(crate) async fn exchange_claudecode_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
+    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+        return response;
+    }
+
     let request_payload: crate::models::ExchangeCallbackOAuthRequest = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {
@@ -138,6 +185,10 @@ pub async fn start_antigravity_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
+    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+        return response;
+    }
+
     let request_payload: crate::models::StartAntigravityOAuthRequest = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {
@@ -166,6 +217,10 @@ pub(crate) async fn exchange_antigravity_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
+    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+        return response;
+    }
+
     let request_payload: crate::models::ExchangeCallbackOAuthRequest = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {
@@ -194,6 +249,10 @@ pub async fn start_copilot_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
+    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+        return response;
+    }
+
     let request_payload = if body.is_empty() {
         crate::models::StartCopilotOAuthRequest {}
     } else {
@@ -230,6 +289,10 @@ pub(crate) async fn poll_copilot_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
+    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+        return response;
+    }
+
     let request_payload: crate::models::PollCopilotOAuthRequest = match serde_json::from_slice(&body) {
         Ok(payload) => payload,
         Err(_) => {

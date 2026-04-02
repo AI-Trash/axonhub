@@ -306,7 +306,8 @@ fn openai_route_model_type(route: OpenAiV1Route) -> &'static str {
         OpenAiV1Route::ChatCompletions
         | OpenAiV1Route::Responses
         | OpenAiV1Route::ResponsesCompact
-        | OpenAiV1Route::Embeddings => "",
+        | OpenAiV1Route::Embeddings
+        | OpenAiV1Route::Realtime => "",
     }
 }
 

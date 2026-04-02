@@ -197,6 +197,9 @@ pub(crate) async fn download_request_content(
         Err(crate::ports::AdminError::BadRequest { message }) => {
             error_response(StatusCode::BAD_REQUEST, "Bad Request", &message)
         }
+        Err(crate::ports::AdminError::Forbidden { message }) => {
+            error_response(StatusCode::FORBIDDEN, "Forbidden", &message)
+        }
         Err(crate::ports::AdminError::NotFound { message }) => {
             error_response(StatusCode::NOT_FOUND, "Not Found", &message)
         }

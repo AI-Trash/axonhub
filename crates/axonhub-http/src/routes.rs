@@ -148,6 +148,11 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
             web::resource("/images/generations")
                 .route(web::post().to(handlers::openai_v1::openai_images_generations)),
         )
+        .service(
+            web::resource("/realtime")
+                .route(web::post().to(handlers::openai_v1::openai_realtime))
+                .route(web::to(explicit_v1_not_implemented_boundary)),
+        )
         .service(web::resource("/images/edits").route(web::to(explicit_v1_not_implemented_boundary)))
         .service(web::resource("/images/variations").route(web::to(explicit_v1_not_implemented_boundary)))
         .service(
@@ -162,7 +167,6 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
         .service(
             web::resource("/messages").route(web::post().to(handlers::anthropic::anthropic_messages)),
         )
-        .service(web::resource("/realtime").route(web::to(explicit_v1_not_implemented_boundary)))
         .service(web::resource("/").route(web::to(handlers::not_found)))
         .default_service(web::route().to(handlers::not_found));
 }

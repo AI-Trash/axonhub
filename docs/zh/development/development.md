@@ -17,7 +17,7 @@ Rust 切片实现了以下已验证的 SQLite 和 PostgreSQL 能力面：
 - **管理只读路由**: `GET /admin/requests/:request_id/content`
 - **管理 GraphQL**: `POST /admin/graphql` 含 playground、当前受支持的设置管理子集，以及 OAuth 流程（Codex、Claude Code、Antigravity、Copilot）
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` 含 playground
-- **OpenAI 兼容 `/v1` 推理（仅标准 JSON 请求）**: `/models`、`/chat/completions`、`/responses`、`/responses/compact`、`/embeddings`、`/messages`、`/rerank`
+- **OpenAI 兼容 `/v1` 推理（仅标准 JSON 请求）**: `/models`、`/chat/completions`、`/responses`、`/responses/compact`、`/embeddings`、`/messages`、`/rerank`，以及仅支持 JSON 的 `POST /v1/realtime`
 - **视频生成**: `POST /v1/videos`、`GET /v1/videos/{id}`、`DELETE /v1/videos/{id}`
 - **其他提供商 API**: Jina、Anthropic、Gemini、Doubao 等路由（见 routes 文件）
 - **数据库支持**: SQLite 和 PostgreSQL 是 Rust 目标态契约中已完整验证的数据库
@@ -57,7 +57,7 @@ Rust 切片实现了以下已验证的 SQLite 和 PostgreSQL 能力面：
 - `/v1/images/edits` 及其余未迁移图像变体路由（代表性的已支持图像生成路由仍是 `/v1/images/generations`）
 - 更广泛的 `/admin/*` 写操作（用户管理、项目创建、角色分配等；不包含当前 canonical `/admin/graphql` 已支持的设置写操作子集）
 - 未纳入目标的提供商包装器
-- 实时 API 端点（代表性的 `/v1/realtime` 请求会停留在显式 `/v1/*` `501` 边界）
+- 超出仅支持 JSON `POST /v1/realtime` 之外的实时 API 传输（包括 upgrade/WebSocket 风格流量与 session 系列路由，它们会停留在显式 `/v1/*` `501` 边界）
 - `/v1/*` 上带有 Vercel AI SDK 协议标记头的请求（例如 `X-Vercel-Ai-Ui-Message-Stream: v1` 或 `X-Vercel-AI-Data-Stream: v1`）
 - 超越只读操作的完整管理后台
 
@@ -132,9 +132,9 @@ cargo run -p axonhub-server --
 
 - `/health` 返回真实健康状态
 - `/admin/system/status` 与 `/admin/system/initialize` 在受支持的 SQLite 与 PostgreSQL 迁移路径下可用
-- `/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/responses/compact`、`/v1/embeddings` 通过已迁移的 Rust 实用切片执行，并带有 auth/context、路由语义与 SQLite / PostgreSQL 持久化副作用
+- `/v1/models`、`/v1/chat/completions`、`/v1/responses`、`/v1/responses/compact`、`/v1/embeddings` 以及仅支持 JSON 的 `POST /v1/realtime` 通过已迁移的 Rust 实用切片执行，并带有 auth/context、路由语义与 SQLite / PostgreSQL 持久化副作用
 - SQLite 与 PostgreSQL 是当前仓库里 Rust 目标态支持的数据库；TiDB 与 Neon DB 仍保留在 Go 后端
-- 超出当前受支持子集的 `/admin/*` 写操作、未纳入目标的 `/v1/*` 路由（例如 `/v1/images/edits` 与 `/v1/realtime`）以及其他仍未迁移的路由族，都会继续作为显式边界返回结构化 `501 Not Implemented` JSON
+- 超出当前受支持子集的 `/admin/*` 写操作、未纳入目标的 `/v1/*` 路由（例如 `/v1/images/edits`）、`/v1/*` 下的 realtime upgrade/WebSocket/session 系列流量以及其他仍未迁移的路由族，都会继续作为显式边界返回结构化 `501 Not Implemented` JSON
 - 配置文件路径与 `AXONHUB_*` 环境变量命名对齐 `conf/conf.go` 的首个共享契约
 
 ## 前端开发

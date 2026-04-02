@@ -4006,7 +4006,8 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
     assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["enabled"], false);
     assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["frequency"], "ONE_HOUR");
 
-    let unsupported_trigger_backup = app
+    let trigger_backup = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/admin/graphql")
@@ -4018,11 +4019,58 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         )
         .await
         .unwrap();
-    assert_eq!(unsupported_trigger_backup.status(), StatusCode::NOT_IMPLEMENTED);
-    let unsupported_trigger_backup_json =
-        serde_json::from_slice::<serde_json::Value>(&read_body(unsupported_trigger_backup).await).unwrap();
-    assert_eq!(unsupported_trigger_backup_json["error"], "not_implemented");
-    assert_eq!(unsupported_trigger_backup_json["route_family"], "/admin/graphql");
+    assert_eq!(trigger_backup.status(), StatusCode::NOT_IMPLEMENTED);
+    let trigger_backup_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(trigger_backup).await).unwrap();
+    assert_eq!(trigger_backup_json["error"], "not_implemented");
+    assert_eq!(trigger_backup_json["route_family"], "/admin/graphql");
+    assert!(trigger_backup_json["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("triggerAutoBackup")));
+
+    let check_quotas = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"query":"mutation { checkProviderQuotas }"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(check_quotas.status(), StatusCode::NOT_IMPLEMENTED);
+    let check_quotas_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(check_quotas).await).unwrap();
+    assert_eq!(check_quotas_json["error"], "not_implemented");
+    assert_eq!(check_quotas_json["route_family"], "/admin/graphql");
+    assert!(check_quotas_json["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("checkProviderQuotas")));
+
+    let trigger_gc = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"query":"mutation { triggerGcCleanup }"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(trigger_gc.status(), StatusCode::NOT_IMPLEMENTED);
+    let trigger_gc_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(trigger_gc).await).unwrap();
+    assert_eq!(trigger_gc_json["error"], "not_implemented");
+    assert_eq!(trigger_gc_json["route_family"], "/admin/graphql");
+    assert!(trigger_gc_json["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("triggerGcCleanup")));
 
     let systems_connection = foundation.open_connection(true).unwrap();
     let storage_policy_value: String = systems_connection
@@ -4122,6 +4170,196 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
     );
 
     std::fs::remove_dir_all(backup_root).ok();
+    std::fs::remove_file(db_path).ok();
+}
+
+#[tokio::test]
+async fn sqlite_admin_graphql_route_supports_user_management_writes() {
+    let db_path = temp_sqlite_path("sqlite-admin-user-management-writes");
+    let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+    let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+    bootstrap
+        .initialize(&InitializeSystemRequest {
+            owner_email: "owner@example.com".to_owned(),
+            owner_password: "password123".to_owned(),
+            owner_first_name: "System".to_owned(),
+            owner_last_name: "Owner".to_owned(),
+            brand_name: "AxonHub".to_owned(),
+        })
+        .unwrap();
+
+    let admin_id = insert_sqlite_user(
+        &foundation,
+        "admin-users@example.com",
+        "password123",
+        &["write_users", "read_settings"],
+    );
+    let target_user_id = insert_sqlite_user(
+        &foundation,
+        "target-route@example.com",
+        "password123",
+        &[],
+    );
+    insert_sqlite_project_membership(&foundation, admin_id, 1, false, &[]);
+    insert_sqlite_project_membership(&foundation, target_user_id, 1, false, &["read_requests"]);
+
+    let connection = foundation.open_connection(true).unwrap();
+    let old_role_id = insert_sqlite_role(&foundation, "Route Old Role", "system", 0, &["read_settings"]);
+    let new_role_id = insert_sqlite_role(&foundation, "Route New Role", "system", 0, &["read_channels"]);
+    attach_sqlite_role(&foundation, target_user_id, old_role_id);
+    drop(connection);
+
+    let state = HttpState { service_name: "AxonHub".to_owned(),
+    version: "v0.9.20".to_owned(),
+    config_source: None,
+    system_bootstrap: build_system_bootstrap_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        "v0.9.20",
+    ),
+    identity: build_identity_capability("sqlite3", &db_path.display().to_string(), false),
+    request_context: build_request_context_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+        false,
+    ),
+    openai_v1: build_openai_v1_capability("sqlite3", &db_path.display().to_string()),
+    admin: build_admin_capability("sqlite3", &db_path.display().to_string()),
+    admin_graphql: build_admin_graphql_capability("sqlite3", &db_path.display().to_string()),
+    openapi_graphql: build_openapi_graphql_capability(
+        "sqlite3",
+        &db_path.display().to_string(),
+    ),
+    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        thread_header: Some("AH-Thread-Id".to_owned()),
+        trace_header: Some("AH-Trace-Id".to_owned()),
+        request_header: Some("X-Request-Id".to_owned()),
+        extra_trace_headers: Vec::new(),
+        extra_trace_body_fields: Vec::new(),
+        claude_code_trace_enabled: false,
+        codex_trace_enabled: false,
+    },  };
+
+    let app = router(state);
+    let admin_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "admin-users@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+    let target_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "target-route@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+
+    let create_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"query":"mutation CreateUser($input: CreateUserInput!) {{ createUser(input: $input) {{ id email firstName lastName preferLanguage scopes roles {{ edges {{ node {{ id name }} }} }} }} }}","variables":{{"input":{{"email":"route-create@example.com","password":"newpass123","firstName":"Route","lastName":"Create","scopes":["read_settings"],"roleIDs":["{}"]}}}}}}"#,
+                    graphql_gid("role", new_role_id)
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_user.status(), StatusCode::OK);
+    let create_user_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(create_user).await).unwrap();
+    assert_eq!(create_user_json["data"]["createUser"]["email"], "route-create@example.com");
+
+    let target_gid = graphql_gid("user", target_user_id);
+    let new_role_gid = graphql_gid("role", new_role_id);
+
+    let update_user_status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"query":"mutation UpdateUserStatus($id: ID!, $status: UserStatus!) {{ updateUserStatus(id: $id, status: $status) {{ id status }} }}","variables":{{"id":"{}","status":"deactivated"}}}}"#,
+                    target_gid
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(update_user_status.status(), StatusCode::OK);
+    let update_user_status_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(update_user_status).await).unwrap();
+    assert_eq!(update_user_status_json["data"]["updateUserStatus"]["status"], "deactivated");
+
+    let update_user = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"query":"mutation UpdateUser($id: ID!, $input: UpdateUserInput!) {{ updateUser(id: $id, input: $input) {{ id firstName preferLanguage scopes roles {{ edges {{ node {{ id name }} }} }} }} }}","variables":{{"id":"{}","input":{{"firstName":"RouteUpdated","preferLanguage":"fr","scopes":["read_channels"],"roleIDs":["{}"]}}}}}}"#,
+                    target_gid, new_role_gid
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(update_user.status(), StatusCode::OK);
+    let update_user_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(update_user).await).unwrap();
+    assert_eq!(update_user_json["data"]["updateUser"]["firstName"], "RouteUpdated");
+    assert_eq!(update_user_json["data"]["updateUser"]["preferLanguage"], "fr");
+    assert_eq!(
+        update_user_json["data"]["updateUser"]["roles"]["edges"][0]["node"]["id"],
+        new_role_gid
+    );
+
+    let update_me = app
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {target_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"mutation UpdateMe($input: UpdateMeInput!) { updateMe(input: $input) { email firstName lastName preferLanguage avatar projects { projectID } } }","variables":{"input":{"firstName":"Self","lastName":"Updated","preferLanguage":"ja","avatar":"https://example.com/self.png"}}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(update_me.status(), StatusCode::OK);
+    let update_me_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(update_me).await).unwrap();
+    assert_eq!(update_me_json["data"]["updateMe"]["email"], "target-route@example.com");
+    assert_eq!(update_me_json["data"]["updateMe"]["firstName"], "Self");
+    assert_eq!(update_me_json["data"]["updateMe"]["preferLanguage"], "ja");
+    assert_eq!(
+        update_me_json["data"]["updateMe"]["projects"][0]["projectID"],
+        graphql_gid("project", 1)
+    );
+
     std::fs::remove_file(db_path).ok();
 }
 

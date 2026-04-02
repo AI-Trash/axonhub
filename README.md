@@ -33,9 +33,9 @@ The Rust backend provides the following verified functionality for SQLite and Po
 - **Health & system**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
 - **Identity & context**: authentication, request context, JWT handling
 - **Admin read routes**: `GET /admin/requests/:request_id/content`
-- **Admin GraphQL**: `POST /admin/graphql` with playground and the current supported settings-management subset
+- **Admin GraphQL**: `POST /admin/graphql` with playground and the current supported canonical subset for settings management plus selected user-management writes; broader admin-write expansion is still in progress
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` with playground
-- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/responses/compact`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`
+- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/responses/compact`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`, JSON-only `POST /v1/realtime`
 - **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as listed in routes
 - **Database support**: SQLite and PostgreSQL
@@ -49,8 +49,8 @@ The Rust backend provides the following verified functionality for SQLite and Po
 Route families outside the verified scope return explicit Rust-side `501 Not Implemented` responses. These include:
 
 - **Image editing and image variants**: `POST /v1/images/edits`, `POST /v1/images/variations`, and other unmigrated image routes
-- **Realtime API**: no dedicated Rust realtime/WebSocket route family; `/v1/realtime` returns `501 Not Implemented`
-- **Broader admin management write surfaces**: user/project/role management, quota configuration, and other write operations outside the current canonical settings-management subset
+- **Realtime API**: JSON-only `POST /v1/realtime` uses the standard Rust OpenAI `/v1` execution path; dedicated realtime WebSocket transport, upgrade-style requests, and session-family routes remain on explicit `501 Not Implemented` boundaries
+- **Broader admin management write surfaces**: project/role management, quota configuration, operational mutations such as backup/quota-check/GC cleanup, and other write operations outside the current canonical settings-management + selected user-management subset
 - **Complete RBAC/permission system**: fine-grained access control beyond basic admin auth
 - **Core business logic surfaces**: channel/model association/fetching, usage/cost tracking, trace/thread management, system onboarding completeness
 - **Transformer/pipeline surfaces**: full provider orchestration, outbound transformers, middleware pipeline
@@ -245,7 +245,7 @@ The Rust backend is deployed through the following canonical artifacts:
 - Docker images `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
 - Compose example at `docker-compose.rust.yml`
 
-These artifacts provide the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed surface covered by the Rust test suite: `/health`, admin bootstrap/status, identity/request-context, admin read routes, the current canonical `/admin/graphql` subset (including the verified settings-write mutations), OpenAPI GraphQL, and the migrated inference families including `POST /v1/images/generations`. Any route family outside the verified scope returns explicit `501 Not Implemented` responses.
+These artifacts provide the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed surface covered by the Rust test suite: `/health`, admin bootstrap/status, identity/request-context, admin read routes, the current canonical `/admin/graphql` subset (including the verified settings-write mutations plus the currently expanded selected user-management slice), OpenAPI GraphQL, and the migrated inference families including `POST /v1/images/generations` plus JSON-only `POST /v1/realtime`. Dedicated realtime WebSocket/session transport and other route families outside the verified scope return explicit `501 Not Implemented` responses.
 
 ### Zero-Code Migration Example
 

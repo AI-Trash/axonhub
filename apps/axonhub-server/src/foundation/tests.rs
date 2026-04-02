@@ -2517,7 +2517,7 @@ struct TestHttpRequest {
     }
 
     #[test]
-    fn admin_request_content_download_allows_user_without_read_requests_scope() {
+    fn admin_request_content_download_forbids_user_without_read_requests_scope() {
         let db_path = temp_sqlite_path("task13-request-content-noscope");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
         let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
@@ -2616,16 +2616,15 @@ struct TestHttpRequest {
             projects: Vec::new(),
         };
 
-        let downloaded = admin
+        let denied = admin
             .download_request_content(project_id, request_id, user_without_read_requests.clone())
-            .unwrap();
-        assert_eq!(downloaded.filename, "test.txt");
-        assert_eq!(downloaded.bytes, b"test-content");
+            .unwrap_err();
+        assert!(matches!(denied, AdminError::Forbidden { .. }));
 
         let wrong_project = admin
             .download_request_content(project_id + 1, request_id, user_without_read_requests.clone())
             .unwrap_err();
-        assert!(matches!(wrong_project, AdminError::NotFound { .. }));
+        assert!(matches!(wrong_project, AdminError::Forbidden { .. }));
 
         fs::remove_dir_all(content_dir).ok();
         std::fs::remove_file(db_path).ok();
