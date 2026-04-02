@@ -10,6 +10,7 @@ pub(crate) const SYSTEM_KEY_BRAND_NAME: &str = "system_brand_name";
 pub(crate) const SYSTEM_KEY_DEFAULT_DATA_STORAGE: &str = "default_data_storage_id";
 pub(crate) const SYSTEM_KEY_STORAGE_POLICY: &str = "storage_policy";
 pub(crate) const SYSTEM_KEY_CHANNEL_SETTINGS: &str = "system_channel_settings";
+pub(crate) const SYSTEM_KEY_MODEL_SETTINGS: &str = "system_model_settings";
 pub(crate) const SYSTEM_KEY_AUTO_BACKUP_SETTINGS: &str = "system_auto_backup_settings";
 pub(crate) const PRIMARY_DATA_STORAGE_NAME: &str = "Primary";
 pub(crate) const PRIMARY_DATA_STORAGE_DESCRIPTION: &str = "Primary database storage";

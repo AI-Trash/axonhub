@@ -10,7 +10,9 @@ use rusqlite::{
     params, params_from_iter, types::Type as SqlType, Connection, Error as SqlError,
     OptionalExtension, Result as SqlResult,
 };
-use sea_orm::{ColumnTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+use sea_orm::{
+    ColumnTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
+};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 
@@ -187,7 +189,7 @@ fn file_storage_cache_query_statement() -> sea_orm::Statement {
         .select_only()
         .column(data_storages::Column::Id)
         .column(data_storages::Column::Settings)
-        .build(&DatabaseBackend::Sqlite)
+        .build(DatabaseBackend::Sqlite)
 }
 
 fn provider_quota_statuses_query_statement() -> sea_orm::Statement {
@@ -202,7 +204,7 @@ fn provider_quota_statuses_query_statement() -> sea_orm::Statement {
         .column(provider_quota_statuses::Column::Ready)
         .column(provider_quota_statuses::Column::NextCheckAt)
         .order_by_asc(provider_quota_statuses::Column::ChannelId)
-        .build(&DatabaseBackend::Sqlite)
+        .build(DatabaseBackend::Sqlite)
 }
 
 fn parse_optional_i64_column(
@@ -436,6 +438,9 @@ impl SqliteOperationalService {
                 enabled: probe.enabled,
                 frequency: probe.frequency,
             };
+        }
+        if let Some(query_all_channel_models) = input.query_all_channel_models {
+            settings.query_all_channel_models = query_all_channel_models;
         }
         self.store_json_setting(SYSTEM_KEY_CHANNEL_SETTINGS, &settings)?;
         Ok(settings)

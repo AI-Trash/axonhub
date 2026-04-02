@@ -6,7 +6,9 @@ use rusqlite::{
     params, params_from_iter, Connection as SqlConnection, Error as SqlError, OptionalExtension,
     Result as SqlResult,
 };
-use sea_orm::{ColumnTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
+use sea_orm::{
+    ColumnTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
+};
 
 use super::sqlite_support::{ensure_trace_tables, SqliteConnectionFactory};
 #[cfg(test)]
@@ -85,7 +87,7 @@ fn list_traces_by_project_query_statement(project_id: i64) -> sea_orm::Statement
         .column(traces::Column::ProjectId)
         .column(traces::Column::ThreadId)
         .order_by_desc(traces::Column::Id)
-        .build(&DatabaseBackend::Sqlite)
+        .build(DatabaseBackend::Sqlite)
 }
 
 fn rusqlite_values(statement: &sea_orm::Statement) -> SqlResult<Vec<rusqlite::types::Value>> {

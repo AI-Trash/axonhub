@@ -56,8 +56,16 @@ pub(crate) struct StoredChannelProbeSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub(crate) struct StoredSystemChannelSettings {
     pub(crate) probe: StoredChannelProbeSettings,
+    pub(crate) query_all_channel_models: bool,
+}
+
+impl Default for StoredSystemChannelSettings {
+    fn default() -> Self {
+        default_system_channel_settings()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -376,6 +384,7 @@ pub(crate) fn default_system_channel_settings() -> StoredSystemChannelSettings {
             enabled: true,
             frequency: ProbeFrequencySetting::FiveMinutes,
         },
+        query_all_channel_models: true,
     }
 }
 

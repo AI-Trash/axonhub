@@ -18,6 +18,7 @@ use super::{
         create_request_execution_seaorm, create_request_seaorm,
         default_data_storage_id_seaorm, enforce_api_key_quota_seaorm,
         list_enabled_model_records_seaorm,
+        query_system_channel_settings_seaorm,
         record_usage_seaorm, select_doubao_task_targets_seaorm,
         select_inference_targets_seaorm, select_target_channels_seaorm,
         update_request_execution_result_seaorm, update_request_result_seaorm,
@@ -46,7 +47,12 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         let models = db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
             let include = ModelInclude::parse(include_owned.as_deref());
-            let models = list_enabled_model_records_seaorm(&connection, db.backend())
+            let settings = query_system_channel_settings_seaorm(&connection).await?;
+            let models = list_enabled_model_records_seaorm(
+                &connection,
+                db.backend(),
+                settings.query_all_channel_models,
+            )
                 .await?
                 .into_iter()
                 .map(|record| record.into_openai_model(&include))
@@ -61,7 +67,13 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         let db = self.db.clone();
         let models = db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
-            list_enabled_model_records_seaorm(&connection, db.backend()).await
+            let settings = query_system_channel_settings_seaorm(&connection).await?;
+            list_enabled_model_records_seaorm(
+                &connection,
+                db.backend(),
+                settings.query_all_channel_models,
+            )
+            .await
         })?;
 
         let data = models
@@ -97,7 +109,13 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         let db = self.db.clone();
         let models = db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
-            list_enabled_model_records_seaorm(&connection, db.backend()).await
+            let settings = query_system_channel_settings_seaorm(&connection).await?;
+            list_enabled_model_records_seaorm(
+                &connection,
+                db.backend(),
+                settings.query_all_channel_models,
+            )
+            .await
         })?;
 
         Ok(GeminiModelListResponse {

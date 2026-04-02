@@ -140,6 +140,7 @@ pub(crate) struct AdminGraphqlChannelProbeSetting {
 #[graphql(name = "SystemChannelSettings", rename_fields = "camelCase")]
 pub(crate) struct AdminGraphqlSystemChannelSettings {
     pub(crate) probe: AdminGraphqlChannelProbeSetting,
+    pub(crate) query_all_channel_models: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, InputObject)]
@@ -155,6 +156,7 @@ pub(crate) struct AdminGraphqlUpdateChannelProbeSettingInput {
 #[graphql(name = "UpdateSystemChannelSettingsInput")]
 pub(crate) struct AdminGraphqlUpdateSystemChannelSettingsInput {
     pub(crate) probe: Option<AdminGraphqlUpdateChannelProbeSettingInput>,
+    pub(crate) query_all_channel_models: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, InputObject)]
@@ -722,6 +724,14 @@ fn update_system_channel_settings_seaorm(
         )?;
         settings.probe = super::admin::StoredChannelProbeSettings { enabled, frequency };
     }
+    if let Some(query_all_channel_models) = variables
+        .get("input")
+        .and_then(|input| input.get("queryAllChannelModels"))
+    {
+        settings.query_all_channel_models = query_all_channel_models
+            .as_bool()
+            .ok_or_else(|| "invalid queryAllChannelModels: expected boolean".to_owned())?;
+    }
     let value = serde_json::to_string(&settings).map_err(|error| error.to_string())?;
     repository.upsert_system_channel_settings(value.as_str())?;
     Ok(GraphqlExecutionResult {
@@ -873,7 +883,8 @@ fn system_channel_settings_json(settings: &StoredSystemChannelSettings) -> Value
         "probe": {
             "enabled": settings.probe.enabled,
             "frequency": probe_frequency_graphql_name(settings.probe.frequency),
-        }
+        },
+        "queryAllChannelModels": settings.query_all_channel_models,
     })
 }
 
@@ -1169,6 +1180,7 @@ impl From<StoredSystemChannelSettings> for AdminGraphqlSystemChannelSettings {
                 enabled: value.probe.enabled,
                 frequency: value.probe.frequency,
             },
+            query_all_channel_models: value.query_all_channel_models,
         }
     }
 }

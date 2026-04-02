@@ -2506,9 +2506,12 @@ where
 fn parse_for_test<I, T>(args: I) -> Result<AxonhubCliContract, clap::Error>
 where
     I: IntoIterator<Item = T>,
-    T: Into<String>,
+    T: Into<std::ffi::OsString> + Clone,
 {
-    let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    let args = args
+        .into_iter()
+        .map(|arg| arg.into().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
     parse_axonhub_cli(&args)
 }
 
@@ -3972,7 +3975,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
                 .header("Authorization", format!("Bearer {settings_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"query":"mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }","variables":{"input":{"probe":{"enabled":false,"frequency":"ONE_HOUR"}}}}"#,
+                    r#"{"query":"mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }","variables":{"input":{"queryAllChannelModels":false,"probe":{"enabled":false,"frequency":"ONE_HOUR"}}}}"#,
                 ))
                 .unwrap(),
         )
@@ -3991,7 +3994,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
                 .header("Authorization", format!("Bearer {settings_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"query":"{ systemChannelSettings { probe { enabled frequency } } }"}"#,
+                    r#"{"query":"{ systemChannelSettings { queryAllChannelModels probe { enabled frequency } } }"}"#,
                 ))
                 .unwrap(),
         )
@@ -3999,6 +4002,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         .unwrap();
     let channel_settings_query_json =
         serde_json::from_slice::<serde_json::Value>(&read_body(channel_settings_query).await).unwrap();
+    assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["queryAllChannelModels"], false);
     assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["enabled"], false);
     assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["frequency"], "ONE_HOUR");
 
@@ -4053,6 +4057,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         )
         .unwrap();
     assert!(channel_settings_value.contains("OneHour"));
+    assert!(channel_settings_value.contains("\"query_all_channel_models\":false"));
     systems_connection
         .execute(
             "UPDATE systems SET value = '0' WHERE key = ?1",

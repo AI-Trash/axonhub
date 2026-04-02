@@ -1,15 +1,17 @@
 use std::collections::{BTreeSet, HashMap};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axonhub_db_entity::{api_keys, channels, models, requests, request_executions, systems, usage_logs};
 use axonhub_http::{OpenAiModel, OpenAiV1Error, OpenAiV1ExecutionRequest, OpenAiV1Route};
 use serde::Deserialize;
+use serde_json::Value;
 use sea_orm::ActiveValue::Set;
-use sea_orm::sea_query::{Alias, Expr, ExprTrait, Func, SimpleExpr};
+use sea_orm::sea_query::{Alias, Expr, Func, SimpleExpr};
 use sea_orm::{ConnectionTrait, DatabaseBackend, PaginatorTrait, QueryResult, QuerySelect, QueryTrait};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::foundation::{
+    admin::default_system_channel_settings,
     openai_v1::{
         calculate_top_k, compare_openai_target_priority, extract_channel_api_key,
         derive_channel_model_entries, resolve_channel_model_entry, ChannelRoutingStats,
@@ -17,7 +19,7 @@ use crate::foundation::{
         PreparedCompatibilityRequest, SelectedOpenAiTarget, StoredModelRecord,
         UpdateRequestExecutionResultRecord, UpdateRequestResultRecord,
     },
-    shared::SYSTEM_KEY_DEFAULT_DATA_STORAGE,
+    shared::{SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_MODEL_SETTINGS},
 };
 
 fn int4_to_i64(value: i32) -> i64 {
@@ -229,16 +231,22 @@ pub(crate) async fn enforce_api_key_quota_seaorm(
 pub(crate) async fn list_enabled_model_records_seaorm(
     db: &impl ConnectionTrait,
     backend: DatabaseBackend,
+    query_all_channel_models: bool,
 ) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
-    list_routable_model_records_seaorm(db, backend).await
+    if query_all_channel_models {
+        list_routable_model_records_seaorm(db, backend).await
+    } else {
+        list_explicit_enabled_model_records_seaorm(db).await
+    }
 }
 
 pub(crate) async fn list_enabled_models_seaorm(
     db: &impl ConnectionTrait,
     backend: DatabaseBackend,
     include: &ModelInclude,
+    query_all_channel_models: bool,
 ) -> Result<Vec<OpenAiModel>, OpenAiV1Error> {
-    list_routable_model_records_seaorm(db, backend)
+    list_enabled_model_records_seaorm(db, backend, query_all_channel_models)
         .await
         .map(|records| {
             records
@@ -404,6 +412,7 @@ pub(crate) async fn select_inference_targets_seaorm(
 mod tests {
     use super::*;
     use sea_orm::ActiveValue::Set;
+    use sea_orm::sea_query::OnConflict;
 
     use crate::foundation::seaorm::SeaOrmConnectionFactory;
 
@@ -456,6 +465,40 @@ mod tests {
             deleted_at: Set(0),
             ..Default::default()
         })
+        .exec(db)
+        .await
+        .unwrap();
+    }
+
+    async fn upsert_system_channel_settings(db: &impl ConnectionTrait, value: &str) {
+        systems::Entity::insert(systems::ActiveModel {
+            key: Set(SYSTEM_KEY_CHANNEL_SETTINGS.to_owned()),
+            value: Set(value.to_owned()),
+            deleted_at: Set(0_i64),
+            ..Default::default()
+        })
+        .on_conflict(
+            OnConflict::column(systems::Column::Key)
+                .update_column(systems::Column::Value)
+                .to_owned(),
+        )
+        .exec(db)
+        .await
+        .unwrap();
+    }
+
+    async fn upsert_system_model_settings(db: &impl ConnectionTrait, value: &str) {
+        systems::Entity::insert(systems::ActiveModel {
+            key: Set(SYSTEM_KEY_MODEL_SETTINGS.to_owned()),
+            value: Set(value.to_owned()),
+            deleted_at: Set(0_i64),
+            ..Default::default()
+        })
+        .on_conflict(
+            OnConflict::column(systems::Column::Key)
+                .update_column(systems::Column::Value)
+                .to_owned(),
+        )
         .exec(db)
         .await
         .unwrap();
@@ -545,6 +588,115 @@ mod tests {
         assert_eq!(trimmed_targets[0].channel_id, trimmed_channel_id);
         assert_eq!(trimmed_targets[0].actual_model_id, "provider/trimmed-actual-model");
         assert_eq!(trimmed_targets[0].model.model_id, "provider/trimmed-actual-model");
+    }
+
+    #[tokio::test]
+    async fn list_enabled_model_records_seaorm_defaults_to_routable_models() {
+        let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+        let db = factory.connect_migrated().await.unwrap();
+
+        insert_channel(
+            &db,
+            "mapped-channel",
+            r#"["actual-model"]"#,
+            r#"{"modelMappings":[{"from":"alias-model","to":"actual-model"}]}"#,
+            100,
+        )
+        .await;
+        insert_model(&db, "actual-model").await;
+        insert_model(&db, "alias-model").await;
+
+        let settings = query_system_channel_settings_seaorm(&db).await.unwrap();
+        assert!(settings.query_all_channel_models);
+
+        let models = list_enabled_model_records_seaorm(
+            &db,
+            DatabaseBackend::Sqlite,
+            settings.query_all_channel_models,
+        )
+        .await
+        .unwrap();
+        let model_ids = models.into_iter().map(|model| model.model_id).collect::<Vec<_>>();
+
+        assert_eq!(model_ids, vec!["actual-model"]);
+    }
+
+    #[tokio::test]
+    async fn list_enabled_model_records_seaorm_returns_explicit_models_when_query_all_channel_models_disabled() {
+        let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+        let db = factory.connect_migrated().await.unwrap();
+
+        insert_channel(
+            &db,
+            "mapped-channel",
+            r#"["actual-model"]"#,
+            r#"{"modelMappings":[{"from":"alias-model","to":"actual-model"}]}"#,
+            100,
+        )
+        .await;
+        insert_model(&db, "actual-model").await;
+        insert_model(&db, "alias-model").await;
+        upsert_system_channel_settings(
+            &db,
+            r#"{"probe":{"enabled":true,"frequency":"FiveMinutes"},"query_all_channel_models":false}"#,
+        )
+        .await;
+
+        let settings = query_system_channel_settings_seaorm(&db).await.unwrap();
+        assert!(!settings.query_all_channel_models);
+
+        let models = list_enabled_model_records_seaorm(
+            &db,
+            DatabaseBackend::Sqlite,
+            settings.query_all_channel_models,
+        )
+        .await
+        .unwrap();
+        let model_ids = models.into_iter().map(|model| model.model_id).collect::<Vec<_>>();
+
+        assert_eq!(model_ids, vec!["actual-model", "alias-model"]);
+    }
+
+    #[tokio::test]
+    async fn query_system_channel_settings_seaorm_falls_back_to_legacy_model_settings() {
+        let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+        let db = factory.connect_migrated().await.unwrap();
+
+        upsert_system_model_settings(&db, r#"{"query_all_channel_models":false}"#).await;
+
+        let settings = query_system_channel_settings_seaorm(&db).await.unwrap();
+
+        assert!(!settings.query_all_channel_models);
+        assert!(settings.probe.enabled);
+    }
+
+    #[tokio::test]
+    async fn list_enabled_model_records_seaorm_uses_channel_settings_when_deriving_routable_models() {
+        let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+        let db = factory.connect_migrated().await.unwrap();
+
+        insert_channel(
+            &db,
+            "hidden-direct-channel",
+            r#"["actual-model"]"#,
+            r#"{"hideOriginalModels":true}"#,
+            100,
+        )
+        .await;
+        insert_model(&db, "actual-model").await;
+
+        let settings = query_system_channel_settings_seaorm(&db).await.unwrap();
+        assert!(settings.query_all_channel_models);
+
+        let models = list_enabled_model_records_seaorm(
+            &db,
+            DatabaseBackend::Sqlite,
+            settings.query_all_channel_models,
+        )
+        .await
+        .unwrap();
+
+        assert!(models.is_empty());
     }
 }
 
@@ -867,7 +1019,7 @@ async fn list_routable_model_records_seaorm(
             continue;
         }
 
-        for entry in derive_channel_model_entries(&channel.supported_models, "{}").into_values() {
+        for entry in derive_channel_model_entries(&channel.supported_models, &channel.settings).into_values() {
             routable_model_ids.insert(entry.actual_model_id);
         }
     }
@@ -877,6 +1029,103 @@ async fn list_routable_model_records_seaorm(
         .filter(|model| routable_model_ids.contains(&model.model_id))
         .map(stored_model_record_from_enabled_model_record)
         .collect())
+}
+
+async fn list_explicit_enabled_model_records_seaorm(
+    db: &impl ConnectionTrait,
+) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
+    models::Entity::find()
+        .filter(models::Column::DeletedAt.eq(0_i64))
+        .filter(models::Column::Status.eq("enabled"))
+        .order_by_asc(models::Column::Id)
+        .into_partial_model::<models::EnabledModelRecord>()
+        .all(db)
+        .await
+        .map_err(map_openai_db_err)
+        .map(|rows| {
+            rows.into_iter()
+                .map(stored_model_record_from_enabled_model_record)
+                .collect()
+        })
+}
+
+pub(crate) async fn query_system_channel_settings_seaorm(
+    db: &impl ConnectionTrait,
+) -> Result<crate::foundation::admin::StoredSystemChannelSettings, OpenAiV1Error> {
+    let raw_channel_settings = systems::Entity::find()
+        .filter(systems::Column::Key.eq(SYSTEM_KEY_CHANNEL_SETTINGS))
+        .filter(systems::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<systems::KeyValue>()
+        .one(db)
+        .await
+        .map_err(map_openai_db_err)?
+        .map(|row| row.value);
+
+    let mut settings = raw_channel_settings
+        .as_deref()
+        .map(parse_system_channel_settings_seaorm)
+        .transpose()?
+        .unwrap_or_else(default_system_channel_settings);
+
+    let query_all_channel_models_present = raw_channel_settings
+        .as_deref()
+        .map(channel_settings_has_query_all_channel_models_seaorm)
+        .transpose()?
+        .unwrap_or(false);
+    if !query_all_channel_models_present {
+        if let Some(query_all_channel_models) = systems::Entity::find()
+            .filter(systems::Column::Key.eq(SYSTEM_KEY_MODEL_SETTINGS))
+            .filter(systems::Column::DeletedAt.eq(0_i64))
+            .into_partial_model::<systems::KeyValue>()
+            .one(db)
+            .await
+            .map_err(map_openai_db_err)?
+            .map(|row| row.value)
+            .as_deref()
+            .map(parse_legacy_query_all_channel_models_seaorm)
+            .transpose()?
+            .flatten()
+        {
+            settings.query_all_channel_models = query_all_channel_models;
+        }
+    }
+
+    Ok(settings)
+}
+
+fn parse_system_channel_settings_seaorm(
+    raw: &str,
+) -> Result<crate::foundation::admin::StoredSystemChannelSettings, OpenAiV1Error> {
+    serde_json::from_str::<crate::foundation::admin::StoredSystemChannelSettings>(raw).map_err(
+        |error| OpenAiV1Error::Internal {
+            message: format!("Failed to decode system channel settings: {error}"),
+        },
+    )
+}
+
+fn channel_settings_has_query_all_channel_models_seaorm(
+    raw: &str,
+) -> Result<bool, OpenAiV1Error> {
+    let value = serde_json::from_str::<Value>(raw).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to decode system channel settings: {error}"),
+    })?;
+    Ok(value
+        .as_object()
+        .is_some_and(|object| object.contains_key("query_all_channel_models")))
+}
+
+fn parse_legacy_query_all_channel_models_seaorm(raw: &str) -> Result<Option<bool>, OpenAiV1Error> {
+    #[derive(Debug, Clone, Default, Deserialize)]
+    #[serde(default)]
+    struct LegacySystemModelSettings {
+        query_all_channel_models: Option<bool>,
+    }
+
+    serde_json::from_str::<LegacySystemModelSettings>(raw)
+        .map(|settings| settings.query_all_channel_models)
+        .map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to decode legacy system model settings: {error}"),
+        })
 }
 
 pub(crate) async fn select_doubao_task_targets_seaorm(

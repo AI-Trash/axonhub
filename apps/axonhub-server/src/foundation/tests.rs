@@ -1541,16 +1541,17 @@ struct TestHttpRequest {
                     .method(Method::POST)
                     .header("Authorization", format!("Bearer {token}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{
-                            "query": "mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }",
-                            "variables": {
-                                "input": {
-                                    "probe": {
-                                        "enabled": false,
-                                        "frequency": "ONE_HOUR"
-                                    }
-                                }
+                     .body(Body::from(
+                         r#"{
+                             "query": "mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }",
+                             "variables": {
+                                 "input": {
+                                     "queryAllChannelModels": false,
+                                     "probe": {
+                                         "enabled": false,
+                                         "frequency": "ONE_HOUR"
+                                     }
+                                 }
                             }
                         }"#,
                     ))
@@ -1567,6 +1568,179 @@ struct TestHttpRequest {
             .unwrap();
         assert!(!settings.probe.enabled);
         assert_eq!(settings.probe.frequency, super::admin::ProbeFrequencySetting::OneHour);
+        assert!(!settings.query_all_channel_models);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn sqlite_v1_models_returns_explicit_models_when_query_all_channel_models_disabled() {
+        let db_path = temp_sqlite_path("task9-openai-model-list-setting");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let api_key = "task9-model-list-user-key";
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                api_key,
+                "Task9 Model List User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS],
+            );
+        }
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Alias Mock",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["actual-model"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "actual-model",
+                settings_json: r#"{"modelMappings":[{"from":"alias-model","to":"actual-model"}]}"#,
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 9 model setting test",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "actual-model",
+                model_type: "chat",
+                name: "Actual Model",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 9 model setting test",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "alias-model",
+                model_type: "chat",
+                name: "Alias Model",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 9 model setting test",
+            })
+            .unwrap();
+
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
+
+        let default_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .method(Method::GET)
+                    .header("X-API-Key", api_key)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(default_response.status(), StatusCode::OK);
+        let default_json = read_json_response(default_response).await;
+        let default_ids = default_json["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|model| model["id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(default_ids, vec!["actual-model"]);
+
+        foundation
+            .system_settings()
+            .set_value(
+                super::shared::SYSTEM_KEY_CHANNEL_SETTINGS,
+                r#"{"probe":{"enabled":true,"frequency":"FiveMinutes"},"query_all_channel_models":false}"#,
+            )
+            .unwrap();
+
+        let explicit_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .method(Method::GET)
+                    .header("X-API-Key", api_key)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(explicit_response.status(), StatusCode::OK);
+        let explicit_json = read_json_response(explicit_response).await;
+        let explicit_ids = explicit_json["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|model| model["id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(explicit_ids, vec!["actual-model", "alias-model"]);
 
         std::fs::remove_file(db_path).ok();
     }

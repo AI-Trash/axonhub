@@ -7,9 +7,11 @@ use axonhub_http::{
     OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port, OpenAiV1Route,
 };
 use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
+    admin::{default_system_channel_settings, StoredSystemChannelSettings},
     identity::parse_json_string_vec,
     openai_v1::{
         calculate_top_k, compare_openai_target_priority, compatibility_upstream_method,
@@ -26,7 +28,7 @@ use super::{
     ports::OpenAiV1Repository,
     repositories::openai_v1::enforce_api_key_quota_seaorm,
     shared::{bool_to_sql, SqliteConnectionFactory, SqliteFoundation, USAGE_LOGS_TABLE_SQL},
-    system::{ensure_channel_model_tables, ensure_request_tables},
+    system::{ensure_channel_model_tables, ensure_request_tables, SystemSettingsStore},
 };
 
 #[cfg(test)]
@@ -137,7 +139,7 @@ impl ChannelModelStore {
         ensure_channel_model_tables(&connection)?;
 
         let include = ModelInclude::parse(include);
-        list_enabled_model_records(&connection)?
+        list_listed_model_records(&connection, &SystemSettingsStore::new(self.connection_factory.clone()))?
             .into_iter()
             .map(|record| Ok(record.into_openai_model(&include)))
             .collect()
@@ -146,7 +148,7 @@ impl ChannelModelStore {
     pub fn list_enabled_model_records(&self) -> SqlResult<Vec<StoredModelRecord>> {
         let connection = self.connection_factory.open(true)?;
         ensure_channel_model_tables(&connection)?;
-        list_enabled_model_records(&connection)
+        list_listed_model_records(&connection, &SystemSettingsStore::new(self.connection_factory.clone()))
     }
 
     pub fn list_channels(&self) -> SqlResult<Vec<StoredChannelSummary>> {
@@ -1314,6 +1316,106 @@ pub(crate) fn list_enabled_model_records(
     })?;
 
     rows.collect()
+}
+
+fn list_listed_model_records(
+    connection: &Connection,
+    settings_store: &SystemSettingsStore,
+) -> SqlResult<Vec<StoredModelRecord>> {
+    if load_system_channel_settings(settings_store)?.query_all_channel_models {
+        list_routable_model_records(connection)
+    } else {
+        list_enabled_model_records(connection)
+    }
+}
+
+fn load_system_channel_settings(
+    settings_store: &SystemSettingsStore,
+) -> SqlResult<StoredSystemChannelSettings> {
+    let raw_channel_settings = settings_store.value(super::shared::SYSTEM_KEY_CHANNEL_SETTINGS)?;
+    let mut settings = raw_channel_settings
+        .as_deref()
+        .map(parse_system_channel_settings)
+        .transpose()?
+        .unwrap_or_else(default_system_channel_settings);
+
+    let query_all_channel_models_present = raw_channel_settings
+        .as_deref()
+        .map(channel_settings_has_query_all_channel_models)
+        .transpose()?
+        .unwrap_or(false);
+    if !query_all_channel_models_present {
+        if let Some(query_all_channel_models) = settings_store
+            .value(super::shared::SYSTEM_KEY_MODEL_SETTINGS)?
+            .as_deref()
+            .map(parse_legacy_query_all_channel_models)
+            .transpose()?
+            .flatten()
+        {
+            settings.query_all_channel_models = query_all_channel_models;
+        }
+    }
+
+    Ok(settings)
+}
+
+fn parse_system_channel_settings(raw: &str) -> SqlResult<StoredSystemChannelSettings> {
+    serde_json::from_str::<StoredSystemChannelSettings>(raw).map_err(json_setting_decode_error)
+}
+
+fn channel_settings_has_query_all_channel_models(raw: &str) -> SqlResult<bool> {
+    let value = serde_json::from_str::<Value>(raw).map_err(json_setting_decode_error)?;
+    Ok(value
+        .as_object()
+        .is_some_and(|object| object.contains_key("query_all_channel_models")))
+}
+
+fn parse_legacy_query_all_channel_models(raw: &str) -> SqlResult<Option<bool>> {
+    #[derive(Deserialize)]
+    struct LegacySystemModelSettings {
+        query_all_channel_models: Option<bool>,
+    }
+
+    serde_json::from_str::<LegacySystemModelSettings>(raw)
+        .map(|settings| settings.query_all_channel_models)
+        .map_err(json_setting_decode_error)
+}
+
+fn json_setting_decode_error(error: serde_json::Error) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+}
+
+fn list_routable_model_records(connection: &Connection) -> SqlResult<Vec<StoredModelRecord>> {
+    let mut statement = connection.prepare(
+        "SELECT supported_models, settings
+         FROM channels
+         WHERE deleted_at = 0
+           AND status = 'enabled'
+         ORDER BY ordering_weight DESC, id ASC",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut routable_model_ids = std::collections::BTreeSet::new();
+    for row in rows {
+        let (supported_models_json, settings_json) = row?;
+        for entry in super::openai_v1::derive_channel_model_entries(
+            supported_models_json.as_str(),
+            settings_json.as_str(),
+        )
+        .into_values()
+        {
+            routable_model_ids.insert(entry.actual_model_id);
+        }
+    }
+
+    list_enabled_model_records(connection).map(|records| {
+        records
+            .into_iter()
+            .filter(|record| routable_model_ids.contains(&record.model_id))
+            .collect()
+    })
 }
 
 pub(crate) fn should_retry_openai_error(error: &OpenAiV1Error) -> bool {
