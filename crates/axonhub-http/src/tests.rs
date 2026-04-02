@@ -1785,6 +1785,43 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[tokio::test]
+    async fn request_context_falls_back_to_legacy_go_request_header_name() {
+        let mut state = test_state(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            true,
+        );
+        state.trace_config.request_header = None;
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/debug/context")
+                    .method(Method::POST)
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .header("AH-Thread-Id", "thread-1")
+                    .header("AH-Trace-Id", "trace-1")
+                    .header("AH-Request-Id", "req-legacy")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        assert_eq!(json["auth"]["mode"], "noauth");
+        assert_eq!(json["auth"]["api_key_id"], 12);
+        assert_eq!(json["auth"]["api_key_type"], "noauth");
+        assert_eq!(json["requestId"], "req-legacy");
+        assert_eq!(json["project"]["id"], 1);
+        assert_eq!(json["thread"]["threadId"], "thread-1");
+        assert_eq!(json["trace"]["traceId"], "trace-1");
+    }
+
+    #[tokio::test]
     async fn invalid_project_header_is_rejected() {
         let app = router(test_state(
             SystemBootstrapCapability::Available {

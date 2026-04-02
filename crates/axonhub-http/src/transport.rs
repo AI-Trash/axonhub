@@ -395,7 +395,7 @@ pub(crate) fn trace_request_header_name(config: &TraceConfig) -> String {
         .request_header
         .clone()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "X-Request-Id".to_owned())
+        .unwrap_or_else(|| "AH-Request-Id".to_owned())
 }
 
 pub(crate) fn trace_header_name(config: &TraceConfig) -> String {
