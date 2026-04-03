@@ -14,13 +14,16 @@ use axonhub_http::{
 use sea_orm::{ConnectionTrait, DatabaseBackend};
 
 use super::{
+    admin::parse_graphql_resource_id,
     admin::SqliteOperationalService,
     authz::{
-        api_key_has_scope, scope_strings, serialize_scope_slugs, user_has_project_scope,
-        user_has_system_scope, ScopeSlug, LLM_API_KEY_SCOPES, SCOPE_READ_CHANNELS,
+        authorize_user_system_scope, require_owner_bypass,
+        require_service_api_key_write_access, require_user_project_scope, scope_strings,
+        serialize_scope_slugs, ScopeSlug, LLM_API_KEY_SCOPES, SCOPE_READ_CHANNELS,
         SCOPE_READ_REQUESTS, SCOPE_READ_ROLES, SCOPE_READ_SETTINGS, SCOPE_READ_USERS,
-        SCOPE_WRITE_API_KEYS, SCOPE_WRITE_SETTINGS, SCOPE_WRITE_USERS,
+        SCOPE_WRITE_SETTINGS, SCOPE_WRITE_USERS,
     },
+    circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
     graphql::*,
     repositories::graphql::query_all_graphql,
     shared::{graphql_gid, SqliteFoundation},
@@ -55,6 +58,7 @@ pub(crate) struct OpenApiGraphqlRequestContext {
 pub(crate) struct AdminGraphqlQueryRoot {
     pub(crate) foundation: Arc<SqliteFoundation>,
     pub(crate) operational: Arc<SqliteOperationalService>,
+    pub(crate) circuit_breaker: SharedCircuitBreaker,
 }
 
 #[derive(Clone)]
@@ -73,10 +77,12 @@ pub(crate) struct OpenApiGraphqlMutationRoot {
 impl SqliteAdminGraphqlService {
     pub fn new(foundation: Arc<SqliteFoundation>) -> Self {
         let operational = Arc::new(SqliteOperationalService::new(foundation.clone()));
+        let circuit_breaker = SharedCircuitBreaker::new(CircuitBreakerPolicy::default());
         let schema = Schema::build(
             AdminGraphqlQueryRoot {
                 foundation,
                 operational: operational.clone(),
+                circuit_breaker,
             },
             AdminGraphqlMutationRoot { operational },
             EmptySubscription,
@@ -232,6 +238,8 @@ impl AdminGraphqlQueryRoot {
             .map(|channel| {
                 let mut gql = AdminGraphqlChannel::from(channel.clone());
                 gql.provider_quota_status = quota_by_channel.get(&channel.id).cloned();
+                gql.circuit_breaker_status = stored_circuit_breaker_status(channel.id, &self.circuit_breaker)
+                    .map(AdminGraphqlCircuitBreakerStatus::from);
                 gql
             })
             .collect())
@@ -784,9 +792,20 @@ impl AdminGraphqlMutationRoot {
             .map_err(async_graphql::Error::new)
     }
 
+    async fn reset_provider_quota(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(name = "channelID")] channel_id: String,
+    ) -> async_graphql::Result<bool> {
+        require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
+        let channel_id = parse_graphql_resource_id(channel_id.as_str(), "channel")?;
+        self.operational
+            .reset_provider_quota_status(channel_id)
+            .map_err(async_graphql::Error::new)
+    }
+
     async fn trigger_gc_cleanup(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
-        let request_context = ctx.data_unchecked::<AdminGraphqlRequestContext>();
-        if !user_has_system_scope(&request_context.user, SCOPE_WRITE_SETTINGS) {
+        if require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS).is_err() {
             return Err(async_graphql::Error::new(
                 "permission denied: requires write:settings scope",
             ));
@@ -1552,7 +1571,7 @@ pub(crate) fn require_admin_system_scope(
     scope: ScopeSlug,
 ) -> async_graphql::Result<()> {
     let request_context = ctx.data_unchecked::<AdminGraphqlRequestContext>();
-    if user_has_system_scope(&request_context.user, scope) {
+    if authorize_user_system_scope(&request_context.user, scope).is_ok() {
         Ok(())
     } else {
         Err(async_graphql::Error::new("permission denied"))
@@ -1561,7 +1580,7 @@ pub(crate) fn require_admin_system_scope(
 
 pub(crate) fn require_admin_owner(ctx: &Context<'_>) -> async_graphql::Result<()> {
     let request_context = ctx.data_unchecked::<AdminGraphqlRequestContext>();
-    if request_context.user.is_owner {
+    if require_owner_bypass(&request_context.user).is_ok() {
         Ok(())
     } else {
         Err(async_graphql::Error::new(
@@ -1576,9 +1595,7 @@ pub(crate) fn require_admin_project_scope(
     scope: ScopeSlug,
 ) -> async_graphql::Result<()> {
     let request_context = ctx.data_unchecked::<AdminGraphqlRequestContext>();
-    if user_has_system_scope(&request_context.user, scope)
-        || user_has_project_scope(&request_context.user, project_id, scope)
-    {
+    if require_user_project_scope(&request_context.user, project_id, scope).is_ok() {
         Ok(())
     } else {
         Err(async_graphql::Error::new("permission denied"))
@@ -1594,7 +1611,7 @@ pub(crate) fn create_llm_api_key(
     if trimmed_name.is_empty() {
         return Err(CreateLlmApiKeyError::InvalidName);
     }
-    if !api_key_has_scope(owner_api_key, SCOPE_WRITE_API_KEYS) {
+    if require_service_api_key_write_access(owner_api_key).is_err() {
         return Err(CreateLlmApiKeyError::PermissionDenied);
     }
 

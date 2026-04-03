@@ -459,4 +459,129 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
         path: &["provider_quota", "check_interval"],
         kind: EnvValueKind::String,
     },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
+        path: &["provider_edge", "codex", "authorize_url"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CODEX_TOKEN_URL",
+        path: &["provider_edge", "codex", "token_url"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CODEX_CLIENT_ID",
+        path: &["provider_edge", "codex", "client_id"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CODEX_REDIRECT_URI",
+        path: &["provider_edge", "codex", "redirect_uri"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CODEX_SCOPES",
+        path: &["provider_edge", "codex", "scopes"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CODEX_USER_AGENT",
+        path: &["provider_edge", "codex", "user_agent"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CLAUDECODE_AUTHORIZE_URL",
+        path: &["provider_edge", "claudecode", "authorize_url"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CLAUDECODE_TOKEN_URL",
+        path: &["provider_edge", "claudecode", "token_url"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CLAUDECODE_CLIENT_ID",
+        path: &["provider_edge", "claudecode", "client_id"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CLAUDECODE_REDIRECT_URI",
+        path: &["provider_edge", "claudecode", "redirect_uri"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CLAUDECODE_SCOPES",
+        path: &["provider_edge", "claudecode", "scopes"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_CLAUDECODE_USER_AGENT",
+        path: &["provider_edge", "claudecode", "user_agent"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_AUTHORIZE_URL",
+        path: &["provider_edge", "antigravity", "authorize_url"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_TOKEN_URL",
+        path: &["provider_edge", "antigravity", "token_url"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_ID",
+        path: &["provider_edge", "antigravity", "client_id"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_SECRET",
+        path: &["provider_edge", "antigravity", "client_secret"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_REDIRECT_URI",
+        path: &["provider_edge", "antigravity", "redirect_uri"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_SCOPES",
+        path: &["provider_edge", "antigravity", "scopes"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_LOAD_ENDPOINTS",
+        path: &["provider_edge", "antigravity", "load_endpoints"],
+        kind: EnvValueKind::StringList,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_USER_AGENT",
+        path: &["provider_edge", "antigravity", "user_agent"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_METADATA",
+        path: &["provider_edge", "antigravity", "client_metadata"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_COPILOT_DEVICE_CODE_URL",
+        path: &["provider_edge", "copilot", "device_code_url"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_COPILOT_ACCESS_TOKEN_URL",
+        path: &["provider_edge", "copilot", "access_token_url"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_COPILOT_CLIENT_ID",
+        path: &["provider_edge", "copilot", "client_id"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_PROVIDER_EDGE_COPILOT_SCOPE",
+        path: &["provider_edge", "copilot", "scope"],
+        kind: EnvValueKind::String,
+    },
 ];

@@ -16,8 +16,8 @@ use crate::errors::{
 use crate::middleware::ActixRequest;
 use crate::models::{
     CompatibilityRoute, GraphqlExecutionResult, GraphqlRequestPayload, HealthBuildInfo,
-    HealthResponse,
-    OpenAiV1ExecutionRequest, OpenAiV1Route,
+    HealthResponse, OpenAiMultipartBody, OpenAiRequestBody, OpenAiV1ExecutionRequest,
+    OpenAiV1Route,
     health_timestamp,
 };
 use crate::state::{
@@ -28,14 +28,15 @@ use actix_web::body::BoxBody;
 use actix_web::http::{Method, StatusCode, Uri};
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, web};
 use bytes::Bytes;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-const AISDK_PROTOCOL_NOT_IMPLEMENTED_MESSAGE: &str = "AiSDK compatibility is not supported in the Rust HTTP slice yet. Requests that opt into the Vercel AI SDK protocol via `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` remain on the explicit `/v1/*` 501 boundary.";
-const REALTIME_UPGRADE_NOT_IMPLEMENTED_MESSAGE: &str = "Rust realtime support currently covers only JSON POST `/v1/realtime` through the standard OpenAI `/v1` execution path. WebSocket/upgrade-style realtime transport remains on the explicit `/v1/*` 501 boundary.";
+const AISDK_UI_MESSAGE_STREAM_HEADER: &str = "X-Vercel-Ai-Ui-Message-Stream";
+const AISDK_DATA_STREAM_HEADER: &str = "X-Vercel-AI-Data-Stream";
+const AISDK_PROTOCOL_VERSION: &str = "v1";
 
 pub(crate) async fn health(state: web::Data<HttpState>) -> web::Json<HealthResponse> {
     let build = HealthBuildInfo::current(&state.version);
@@ -68,6 +69,11 @@ pub(crate) async fn execute_openai_request(
     original_uri: Uri,
     route: OpenAiV1Route,
 ) -> HttpResponse {
+    let aisdk_protocol = match detect_aisdk_protocol(&request) {
+        Ok(protocol) => protocol,
+        Err(response) => return response,
+    };
+
     if let OpenAiV1Capability::Unsupported { message } = &state.openai_v1 {
         return not_implemented_response(
             "/v1/*",
@@ -78,20 +84,65 @@ pub(crate) async fn execute_openai_request(
         .with_message(message);
     }
 
-    if let Some(response) = realtime_upgrade_not_implemented_response(&request, original_uri.clone()) {
-        return response;
-    }
-
-    if let Some(response) = aisdk_protocol_not_implemented_response(&request, original_uri.clone()) {
-        return response;
-    }
-
-    let body = match parse_json_body(body) {
+    let body = match parse_openai_json_body(body) {
         Ok(body) => body,
+        Err(response) => {
+            return match aisdk_protocol {
+                Some(protocol) => aisdk_json_error_response(protocol, StatusCode::BAD_REQUEST, "Invalid request format", "invalid_request"),
+                None => response,
+            }
+        }
+    };
+
+    if let Some(protocol) = aisdk_protocol {
+        return execute_aisdk_openai_request(state, request, original_uri, route, body, protocol).await;
+    }
+
+    execute_openai_request_with_body(state, request, original_uri, route, body, None).await
+}
+
+async fn execute_aisdk_openai_request(
+    state: HttpState,
+    request: HttpRequest,
+    original_uri: Uri,
+    route: OpenAiV1Route,
+    body: OpenAiRequestBody,
+    protocol: AiSdkProtocol,
+) -> HttpResponse {
+    let openai = match &state.openai_v1 {
+        OpenAiV1Capability::Unsupported { message } => {
+            return not_implemented_response(
+                "/v1/*",
+                Method::POST,
+                original_uri,
+                None,
+            )
+            .with_message(message)
+        }
+        OpenAiV1Capability::Available { openai } => openai,
+    };
+
+    let execution_request = match build_openai_execution_request(request, body, HashMap::new(), None) {
+        Ok(payload) => payload,
         Err(response) => return response,
     };
 
-    execute_openai_request_with_body(state, request, original_uri, route, body, None).await
+    let openai = Arc::clone(openai);
+    let execution_result = tokio::task::spawn_blocking(move || openai.execute(route, execution_request)).await;
+
+    match execution_result {
+        Ok(Ok(result)) => match aisdk_success_response(protocol, route, result) {
+            Ok(response) => response,
+            Err(message) => aisdk_json_error_response(protocol, StatusCode::BAD_REQUEST, &message, "invalid_request"),
+        },
+        Ok(Err(error)) => aisdk_openai_error_response(protocol, error),
+        Err(_) => aisdk_json_error_response(
+            protocol,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "OpenAI `/v1` execution task failed",
+            "internal_server_error",
+        ),
+    }
 }
 
 pub(crate) async fn execute_openai_request_with_body(
@@ -99,7 +150,7 @@ pub(crate) async fn execute_openai_request_with_body(
     request: HttpRequest,
     original_uri: Uri,
     route: OpenAiV1Route,
-    body: Value,
+    body: OpenAiRequestBody,
     channel_hint_id: Option<i64>,
 ) -> HttpResponse {
     let openai = match &state.openai_v1 {
@@ -177,7 +228,12 @@ pub(crate) async fn execute_compatibility_request(
         CompatibilityRoute::DoubaoGetTask | CompatibilityRoute::DoubaoDeleteTask => Value::Null,
     };
 
-    let execution_request = match build_openai_execution_request(request, body, path_params, None) {
+    let execution_request = match build_openai_execution_request(
+        request,
+        OpenAiRequestBody::Json(body),
+        path_params,
+        None,
+    ) {
         Ok(payload) => payload,
         Err(response) => return response,
     };
@@ -245,7 +301,7 @@ pub(crate) fn provider_edge_admin_port(
 
 pub(crate) fn build_openai_execution_request(
     request: HttpRequest,
-    body: Value,
+    body: OpenAiRequestBody,
     path_params: HashMap<String, String>,
     channel_hint_id: Option<i64>,
 ) -> Result<OpenAiV1ExecutionRequest, HttpResponse> {
@@ -265,10 +321,16 @@ pub(crate) fn build_openai_execution_request(
         )
     })?;
 
-    let api_key_id = context.auth.as_ref().and_then(|auth| match auth {
-        RequestAuthContext::ApiKey(key) => Some(key.id),
-        RequestAuthContext::Admin(_) => None,
-    });
+    let api_key = context
+        .auth
+        .as_ref()
+        .and_then(|auth| match auth {
+            RequestAuthContext::ApiKey(key) => Some(key.clone()),
+            RequestAuthContext::Admin(_) => None,
+        })
+        .ok_or_else(|| error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid API key"))?;
+
+    let api_key_id = Some(api_key.id);
 
     let client_ip = request
         .headers()
@@ -297,6 +359,7 @@ pub(crate) fn build_openai_execution_request(
         query,
         project,
         trace: context.trace,
+        api_key,
         api_key_id,
         client_ip,
         channel_hint_id,
@@ -316,49 +379,256 @@ pub(crate) fn parse_json_body(body: Bytes) -> Result<Value, HttpResponse> {
         .map_err(|_| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid request format"))
 }
 
-fn aisdk_protocol_not_implemented_response(
-    request: &HttpRequest,
-    original_uri: Uri,
-) -> Option<HttpResponse> {
-    aisdk_protocol_header_present(request).then(|| {
-        not_implemented_response(
-            "/v1/*",
-            Method::from(request.method().clone()),
-            original_uri,
-            None,
+pub(crate) fn parse_openai_json_body(body: Bytes) -> Result<OpenAiRequestBody, HttpResponse> {
+    parse_json_body(body).map(OpenAiRequestBody::Json)
+}
+
+pub(crate) fn parse_openai_multipart_body(
+    content_type: &str,
+    fields: Vec<crate::models::OpenAiMultipartField>,
+) -> Result<OpenAiRequestBody, HttpResponse> {
+    if fields.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "Bad Request",
+            "Request body is empty",
+        ));
+    }
+
+    Ok(OpenAiRequestBody::Multipart(OpenAiMultipartBody {
+        content_type: content_type.to_owned(),
+        fields,
+    }))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AiSdkProtocol {
+    UiMessageStream,
+    DataStream,
+}
+
+fn detect_aisdk_protocol(request: &HttpRequest) -> Result<Option<AiSdkProtocol>, HttpResponse> {
+    if let Some(value) = request
+        .headers()
+        .get(AISDK_UI_MESSAGE_STREAM_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if value.eq_ignore_ascii_case(AISDK_PROTOCOL_VERSION) {
+            return Ok(Some(AiSdkProtocol::UiMessageStream));
+        }
+
+        return Err(aisdk_json_error_response(
+            AiSdkProtocol::UiMessageStream,
+            StatusCode::BAD_REQUEST,
+            &format!(
+                "Unsupported AiSDK protocol version `{value}` for `{AISDK_UI_MESSAGE_STREAM_HEADER}`"
+            ),
+            "invalid_request",
+        ));
+    }
+
+    if let Some(value) = request
+        .headers()
+        .get(AISDK_DATA_STREAM_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if value.eq_ignore_ascii_case(AISDK_PROTOCOL_VERSION) {
+            return Ok(Some(AiSdkProtocol::DataStream));
+        }
+
+        return Err(aisdk_json_error_response(
+            AiSdkProtocol::DataStream,
+            StatusCode::BAD_REQUEST,
+            &format!(
+                "Unsupported AiSDK protocol version `{value}` for `{AISDK_DATA_STREAM_HEADER}`"
+            ),
+            "invalid_request",
+        ));
+    }
+
+    Ok(None)
+}
+
+fn aisdk_success_response(
+    protocol: AiSdkProtocol,
+    route: OpenAiV1Route,
+    result: crate::models::OpenAiV1ExecutionResponse,
+) -> Result<HttpResponse, String> {
+    let text = extract_aisdk_text(route, &result.body).ok_or_else(|| {
+        format!(
+            "AiSDK compatibility requires a text-generation response body for `{}`",
+            route.format()
         )
-        .with_message(AISDK_PROTOCOL_NOT_IMPLEMENTED_MESSAGE)
+    })?;
+    let message_id = result
+        .body
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("msg_axonhub_aisdk");
+
+    Ok(match protocol {
+        AiSdkProtocol::UiMessageStream => aisdk_ui_message_stream_response(message_id, text),
+        AiSdkProtocol::DataStream => aisdk_text_stream_response(text),
     })
 }
 
-fn realtime_upgrade_not_implemented_response(
-    request: &HttpRequest,
-    original_uri: Uri,
-) -> Option<HttpResponse> {
-    realtime_upgrade_header_present(request).then(|| {
-        not_implemented_response(
-            "/v1/*",
-            Method::from(request.method().clone()),
-            original_uri,
-            None,
-        )
-        .with_message(REALTIME_UPGRADE_NOT_IMPLEMENTED_MESSAGE)
-    })
+fn aisdk_ui_message_stream_response(message_id: &str, text: String) -> HttpResponse {
+    let text_id = format!("{message_id}_text");
+    let payload = [
+        json!({"type":"start","messageId":message_id}).to_string(),
+        json!({"type":"start-step"}).to_string(),
+        json!({"type":"text-start","id":text_id}).to_string(),
+        json!({"type":"text-delta","id":text_id,"delta":text}).to_string(),
+        json!({"type":"text-end","id":text_id}).to_string(),
+        json!({"type":"finish-step"}).to_string(),
+        json!({"type":"finish"}).to_string(),
+        "[DONE]".to_owned(),
+    ]
+    .join("\n");
+
+    HttpResponse::Ok()
+        .insert_header(("Content-Type", "text/event-stream; charset=utf-8"))
+        .insert_header((AISDK_UI_MESSAGE_STREAM_HEADER, AISDK_PROTOCOL_VERSION))
+        .insert_header(("Cache-Control", "no-cache"))
+        .insert_header(("Connection", "keep-alive"))
+        .body(payload)
 }
 
-fn aisdk_protocol_header_present(request: &HttpRequest) -> bool {
-    ["X-Vercel-Ai-Ui-Message-Stream", "X-Vercel-AI-Data-Stream"]
-        .into_iter()
-        .any(|name| {
-            request
-                .headers()
-                .get(name)
-                .and_then(|value| value.to_str().ok())
-                .is_some_and(|value| !value.trim().is_empty())
+fn aisdk_text_stream_response(text: String) -> HttpResponse {
+    let payload = [
+        format!("0:{}", serde_json::to_string(&text).unwrap_or_else(|_| "\"\"".to_owned())),
+        json!({"finishReason":"stop"}).to_string(),
+    ];
+
+    HttpResponse::Ok()
+        .insert_header(("Content-Type", "text/plain; charset=utf-8"))
+        .insert_header((AISDK_DATA_STREAM_HEADER, AISDK_PROTOCOL_VERSION))
+        .insert_header(("Cache-Control", "no-cache"))
+        .insert_header(("Connection", "keep-alive"))
+        .body(format!("{}\ne:{}\n", payload[0], payload[1]))
+}
+
+fn aisdk_openai_error_response(protocol: AiSdkProtocol, error: crate::ports::OpenAiV1Error) -> HttpResponse {
+    match error {
+        crate::ports::OpenAiV1Error::InvalidRequest { message } => {
+            aisdk_json_error_response(protocol, StatusCode::BAD_REQUEST, &message, "invalid_request")
+        }
+        crate::ports::OpenAiV1Error::Internal { message } => aisdk_json_error_response(
+            protocol,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &message,
+            "internal_server_error",
+        ),
+        crate::ports::OpenAiV1Error::Upstream { status, body } => {
+            let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+            let message = body
+                .get("error")
+                .and_then(|value| value.get("message"))
+                .and_then(Value::as_str)
+                .or_else(|| body.get("message").and_then(Value::as_str))
+                .unwrap_or("Upstream request failed");
+            let kind = body
+                .get("error")
+                .and_then(|value| value.get("type"))
+                .and_then(Value::as_str)
+                .or_else(|| body.get("type").and_then(Value::as_str))
+                .unwrap_or("upstream_error");
+            aisdk_json_error_response(protocol, status, message, kind)
+        }
+    }
+}
+
+fn aisdk_json_error_response(
+    protocol: AiSdkProtocol,
+    status: StatusCode,
+    message: &str,
+    kind: &str,
+) -> HttpResponse {
+    let mut builder = HttpResponse::build(status);
+    builder.insert_header(("Content-Type", "application/json"));
+
+    match protocol {
+        AiSdkProtocol::UiMessageStream => {
+            builder.insert_header((AISDK_UI_MESSAGE_STREAM_HEADER, AISDK_PROTOCOL_VERSION));
+        }
+        AiSdkProtocol::DataStream => {
+            builder.insert_header((AISDK_DATA_STREAM_HEADER, AISDK_PROTOCOL_VERSION));
+        }
+    }
+
+    builder.json(json!({"message": message, "type": kind}))
+}
+
+fn extract_aisdk_text(route: OpenAiV1Route, body: &Value) -> Option<String> {
+    match route {
+        OpenAiV1Route::ChatCompletions => {
+            extract_chat_completion_text(body).or_else(|| body.get("text").and_then(Value::as_str).map(ToOwned::to_owned))
+        }
+        OpenAiV1Route::Responses | OpenAiV1Route::ResponsesCompact | OpenAiV1Route::Realtime => {
+            extract_responses_text(body)
+                .or_else(|| extract_chat_completion_text(body))
+                .or_else(|| body.get("text").and_then(Value::as_str).map(ToOwned::to_owned))
+        }
+        OpenAiV1Route::Embeddings
+        | OpenAiV1Route::ImagesGenerations
+        | OpenAiV1Route::ImagesEdits
+        | OpenAiV1Route::ImagesVariations => None,
+    }
+}
+
+fn extract_chat_completion_text(body: &Value) -> Option<String> {
+    let message_content = body
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))?;
+
+    match message_content {
+        Value::String(value) if !value.is_empty() => Some(value.clone()),
+        Value::Array(parts) => Some(
+            parts
+                .iter()
+                .filter_map(|part| {
+                    part.get("text")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                })
+                .collect::<String>(),
+        )
+        .filter(|value| !value.is_empty()),
+        _ => None,
+    }
+}
+
+fn extract_responses_text(body: &Value) -> Option<String> {
+    if let Some(output_text) = body.get("output_text").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        return Some(output_text.to_owned());
+    }
+
+    body.get("output")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("content").and_then(Value::as_array))
+                .flatten()
+                .filter_map(|part| {
+                    part.get("text")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                })
+                .collect::<String>()
         })
+        .filter(|value| !value.is_empty())
 }
 
-fn realtime_upgrade_header_present(request: &HttpRequest) -> bool {
+pub(crate) fn realtime_upgrade_header_present(request: &HttpRequest) -> bool {
     let has_upgrade = request
         .headers()
         .get("Upgrade")

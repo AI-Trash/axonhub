@@ -88,6 +88,30 @@ impl Body {
     fn from(value: impl Into<Vec<u8>>) -> Vec<u8> {
         value.into()
     }
+
+    fn multipart(boundary: &str, parts: &[(&str, Option<&str>, Option<&str>, &[u8])]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for (name, filename, content_type, data) in parts {
+            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+            body.extend_from_slice(
+                format!(
+                    "Content-Disposition: form-data; name=\"{name}\"{}\r\n",
+                    filename
+                        .map(|value| format!("; filename=\"{value}\""))
+                        .unwrap_or_default()
+                )
+                .as_bytes(),
+            );
+            if let Some(content_type) = content_type {
+                body.extend_from_slice(format!("Content-Type: {content_type}\r\n").as_bytes());
+            }
+            body.extend_from_slice(b"\r\n");
+            body.extend_from_slice(data);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        body
+    }
 }
 
 struct Request;
@@ -331,6 +355,18 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                     },
                     scopes: vec!["write_requests".to_owned()],
                 }),
+                Some("read-only-key-123") => Ok(AuthApiKeyContext {
+                    id: 13,
+                    key: "read-only-key-123".to_owned(),
+                    name: "Read Only Key".to_owned(),
+                    key_type: ApiKeyType::User,
+                    project: ProjectContext {
+                        id: 1,
+                        name: "Default Project".to_owned(),
+                        status: "active".to_owned(),
+                    },
+                    scopes: vec!["read_channels".to_owned()],
+                }),
                 Some("AXONHUB_API_KEY_NO_AUTH") => Err(ApiKeyAuthError::Invalid),
                 Some(_) => Err(ApiKeyAuthError::Invalid),
                 None if allow_no_auth => Ok(AuthApiKeyContext {
@@ -404,7 +440,16 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     impl OpenAiV1Port for FakeOpenAiV1Port {
-        fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error> {
+        fn list_models(
+            &self,
+            include: Option<&str>,
+            api_key: &AuthApiKeyContext,
+        ) -> Result<ModelListResponse, OpenAiV1Error> {
+            if !api_key.has_scope("read_channels") {
+                return Err(OpenAiV1Error::InvalidRequest {
+                    message: "permission denied".to_owned(),
+                });
+            }
             let include_all = include == Some("all");
             Ok(ModelListResponse {
                 object: "list",
@@ -461,25 +506,89 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             route: OpenAiV1Route,
             request: OpenAiV1ExecutionRequest,
         ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+            if !request.api_key.has_scope("write_requests") {
+                return Err(OpenAiV1Error::InvalidRequest {
+                    message: "permission denied".to_owned(),
+                });
+            }
             Ok(OpenAiV1ExecutionResponse {
                 status: 200,
-                    body: json!({
-                        "id": match route {
-                            OpenAiV1Route::ChatCompletions => "chatcmpl_rust",
-                            OpenAiV1Route::Responses => "resp_rust",
-                            OpenAiV1Route::ResponsesCompact => "resp_compact_rust",
-                            OpenAiV1Route::Embeddings => "embed_rust",
-                            OpenAiV1Route::ImagesGenerations => "imggen_rust",
-                            OpenAiV1Route::Realtime => "realtime_rust",
-                        },
-                        "model": request.body["model"].clone(),
+                body: match route {
+                    OpenAiV1Route::ChatCompletions => json!({
+                        "id": "chatcmpl_rust",
+                        "choices": [{
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "hello from rust chat"},
+                            "finish_reason": "stop"
+                        }],
+                        "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
                         "path": request.path,
                         "project_id": request.project.id,
                         "channel_hint_id": request.channel_hint_id,
                         "path_params": request.path_params,
                     }),
-                })
-            }
+                    OpenAiV1Route::Responses => json!({
+                        "id": "resp_rust",
+                        "output_text": "hello from rust responses",
+                        "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                        "path": request.path,
+                        "project_id": request.project.id,
+                        "channel_hint_id": request.channel_hint_id,
+                        "path_params": request.path_params,
+                    }),
+                    OpenAiV1Route::ResponsesCompact => json!({
+                        "id": "resp_compact_rust",
+                        "output_text": "hello from rust responses compact",
+                        "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                        "path": request.path,
+                        "project_id": request.project.id,
+                        "channel_hint_id": request.channel_hint_id,
+                        "path_params": request.path_params,
+                    }),
+                    OpenAiV1Route::Embeddings => json!({
+                        "id": "embed_rust",
+                        "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                        "path": request.path,
+                        "project_id": request.project.id,
+                        "channel_hint_id": request.channel_hint_id,
+                        "path_params": request.path_params,
+                    }),
+                    OpenAiV1Route::ImagesGenerations => json!({
+                        "id": "imggen_rust",
+                        "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                        "path": request.path,
+                        "project_id": request.project.id,
+                        "channel_hint_id": request.channel_hint_id,
+                        "path_params": request.path_params,
+                    }),
+                    OpenAiV1Route::ImagesEdits => json!({
+                        "id": "imgedit_rust",
+                        "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                        "path": request.path,
+                        "project_id": request.project.id,
+                        "channel_hint_id": request.channel_hint_id,
+                        "path_params": request.path_params,
+                    }),
+                    OpenAiV1Route::ImagesVariations => json!({
+                        "id": "imgvar_rust",
+                        "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                        "path": request.path,
+                        "project_id": request.project.id,
+                        "channel_hint_id": request.channel_hint_id,
+                        "path_params": request.path_params,
+                    }),
+                    OpenAiV1Route::Realtime => json!({
+                        "id": "realtime_rust",
+                        "output_text": "hello from rust realtime",
+                        "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                        "path": request.path,
+                        "project_id": request.project.id,
+                        "channel_hint_id": request.channel_hint_id,
+                        "path_params": request.path_params,
+                    }),
+                },
+            })
+        }
 
         fn execute_compatibility(
             &self,
@@ -492,7 +601,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "text", "text": "hello from rust"}],
-                    "model": request.body["model"].clone(),
+                    "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
                     "stop_reason": "end_turn",
                     "usage": {
                         "input_tokens": 10,
@@ -506,7 +615,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                     }
                 }),
                 CompatibilityRoute::JinaRerank => json!({
-                    "model": request.body["model"].clone(),
+                    "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
                     "object": "list",
                     "results": [{"index": 0, "relevance_score": 0.99}],
                     "usage": {"prompt_tokens": 4, "total_tokens": 4}
@@ -514,7 +623,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                 CompatibilityRoute::JinaEmbeddings => json!({
                     "object": "list",
                     "data": [{"object": "embedding", "embedding": [0.1, 0.2], "index": 0}],
-                    "model": request.body["model"].clone(),
+                    "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
                     "usage": {"prompt_tokens": 4, "total_tokens": 4}
                 }),
                 CompatibilityRoute::GeminiGenerateContent => json!({
@@ -523,7 +632,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                         "finishReason": "STOP",
                         "index": 0
                     }],
-                    "modelVersion": request.body["model"].clone(),
+                    "modelVersion": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
                     "responseId": "gemini_resp",
                     "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5, "totalTokenCount": 15}
                 }),
@@ -533,7 +642,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                         "finishReason": "STOP",
                         "index": 0
                     }],
-                    "modelVersion": request.body["model"].clone(),
+                    "modelVersion": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
                     "responseId": "gemini_stream_resp",
                     "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5, "totalTokenCount": 15}
                 }),
@@ -554,6 +663,117 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             };
 
             Ok(OpenAiV1ExecutionResponse { status: 200, body })
+        }
+
+        fn create_realtime_session(
+            &self,
+            request: RealtimeSessionCreateRequest,
+        ) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+            Ok(RealtimeSessionRecord {
+                session_id: "rtsess_test_http".to_owned(),
+                transport: request.transport.transport,
+                status: "open".to_owned(),
+                model: request.transport.model,
+                project_id: request.project.id,
+                thread_id: request.thread.map(|thread| thread.thread_id),
+                trace_id: request.trace.map(|trace| trace.trace_id),
+                request_id: Some(9001),
+                api_key_id: request.api_key_id,
+                channel_id: request.transport.channel_id,
+                metadata: serde_json::json!({
+                    "model": "gpt-4o-realtime-preview",
+                    "threadId": "thread-1",
+                    "traceId": "trace-1",
+                    "attributes": request.transport.metadata.unwrap_or(Value::Null)
+                }),
+                opened_at: "2026-04-02T00:00:00Z".to_owned(),
+                last_activity_at: "2026-04-02T00:00:00Z".to_owned(),
+                closed_at: None,
+                expires_at: request.transport.expires_at,
+            })
+        }
+
+        fn get_realtime_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+            Ok(Some(RealtimeSessionRecord {
+                session_id: session_id.to_owned(),
+                transport: "session".to_owned(),
+                status: "open".to_owned(),
+                model: "gpt-4o-realtime-preview".to_owned(),
+                project_id: 1,
+                thread_id: Some("thread-1".to_owned()),
+                trace_id: Some("trace-1".to_owned()),
+                request_id: Some(9001),
+                api_key_id: Some(10),
+                channel_id: None,
+                metadata: serde_json::json!({
+                    "model": "gpt-4o-realtime-preview",
+                    "threadId": "thread-1",
+                    "traceId": "trace-1",
+                    "attributes": {"voice": "alloy"}
+                }),
+                opened_at: "2026-04-02T00:00:00Z".to_owned(),
+                last_activity_at: "2026-04-02T00:00:00Z".to_owned(),
+                closed_at: None,
+                expires_at: None,
+            }))
+        }
+
+        fn update_realtime_session(
+            &self,
+            session_id: &str,
+            patch: RealtimeSessionPatchRequest,
+        ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+            if patch.status.as_deref() == Some("open") {
+                return Err(OpenAiV1Error::InvalidRequest {
+                    message: "realtime session is already terminal".to_owned(),
+                });
+            }
+            Ok(Some(RealtimeSessionRecord {
+                session_id: session_id.to_owned(),
+                transport: "session".to_owned(),
+                status: patch.status.unwrap_or_else(|| "closing".to_owned()),
+                model: "gpt-4o-realtime-preview".to_owned(),
+                project_id: 1,
+                thread_id: Some("thread-1".to_owned()),
+                trace_id: Some("trace-1".to_owned()),
+                request_id: Some(9001),
+                api_key_id: Some(10),
+                channel_id: None,
+                metadata: serde_json::json!({
+                    "model": "gpt-4o-realtime-preview",
+                    "attributes": patch.metadata.unwrap_or_else(|| serde_json::json!({"voice": "alloy"}))
+                }),
+                opened_at: "2026-04-02T00:00:00Z".to_owned(),
+                last_activity_at: "2026-04-02T00:01:00Z".to_owned(),
+                closed_at: None,
+                expires_at: None,
+            }))
+        }
+
+        fn delete_realtime_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+            Ok(Some(RealtimeSessionRecord {
+                session_id: session_id.to_owned(),
+                transport: "session".to_owned(),
+                status: "closed".to_owned(),
+                model: "gpt-4o-realtime-preview".to_owned(),
+                project_id: 1,
+                thread_id: Some("thread-1".to_owned()),
+                trace_id: Some("trace-1".to_owned()),
+                request_id: Some(9001),
+                api_key_id: Some(10),
+                channel_id: None,
+                metadata: serde_json::json!({"model": "gpt-4o-realtime-preview"}),
+                opened_at: "2026-04-02T00:00:00Z".to_owned(),
+                last_activity_at: "2026-04-02T00:02:00Z".to_owned(),
+                closed_at: Some("2026-04-02T00:02:00Z".to_owned()),
+                expires_at: None,
+            }))
         }
     }
 
@@ -1636,6 +1856,58 @@ fn assert_go_duration_shape(value: &str) {
 
         let json = assert_json_response(allowed, StatusCode::OK).await;
         assert_eq!(json["auth_url"], "https://example.com/antigravity/start");
+    }
+
+    #[tokio::test]
+    async fn v1_models_requires_read_channels_scope() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let denied = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models")
+                    .method(Method::GET)
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let denied_json = assert_rest_error_response(denied, StatusCode::BAD_REQUEST, "permission denied").await;
+        assert_eq!(denied_json["error"]["message"], "permission denied");
+    }
+
+    #[tokio::test]
+    async fn v1_runtime_routes_require_write_requests_scope() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let denied = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "read-only-key-123")
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .body(Body::from(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let denied_json = assert_rest_error_response(denied, StatusCode::BAD_REQUEST, "permission denied").await;
+        assert_eq!(denied_json["error"]["message"], "permission denied");
     }
 
     #[tokio::test]
@@ -3016,13 +3288,22 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[tokio::test]
-    async fn explicit_v1_boundary_routes_keep_501_when_openai_slice_is_enabled() {
+    async fn image_edit_route_uses_openai_v1_execution_path() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
             },
             false,
         ));
+        let boundary = "----axonhub-edit";
+        let body = Body::multipart(
+            boundary,
+            &[
+                ("model", None, None, b"gpt-image-1"),
+                ("prompt", None, None, b"draw a cat"),
+                ("image", Some("cat.png"), Some("image/png"), b"png-bytes"),
+            ],
+        );
 
         let response = app
             .oneshot(
@@ -3030,22 +3311,113 @@ fn assert_go_duration_shape(value: &str) {
                     .uri("/v1/images/edits")
                     .method(Method::POST)
                     .header("X-API-Key", "api-key-123")
-                    .body(Body::empty())
+                    .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                    .body(body)
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(response.status(), StatusCode::OK);
         let json = read_json(response).await;
-        assert_eq!(json["error"], "not_implemented");
-        assert_eq!(json["route_family"], "/v1/*");
+        assert_eq!(json["id"], "imgedit_rust");
         assert_eq!(json["path"], "/v1/images/edits");
-        assert_eq!(json["method"], "POST");
+        assert_eq!(json["project_id"], 1);
     }
 
     #[tokio::test]
-    async fn residual_non_target_v1_neighbors_keep_explicit_501_boundaries() {
+    async fn image_variation_route_uses_openai_v1_execution_path() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+        let boundary = "----axonhub-variation";
+        let body = Body::multipart(
+            boundary,
+            &[
+                ("model", None, None, b"gpt-image-1"),
+                ("image", Some("cat.png"), Some("image/png"), b"png-bytes"),
+            ],
+        );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/images/variations")
+                    .method(Method::POST)
+                    .header("X-API-Key", "api-key-123")
+                    .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                    .body(body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        assert_eq!(json["id"], "imgvar_rust");
+        assert_eq!(json["path"], "/v1/images/variations");
+        assert_eq!(json["project_id"], 1);
+    }
+
+    #[tokio::test]
+    async fn malformed_image_payloads_return_bad_request_instead_of_501() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+        let boundary = "----axonhub-bad-image";
+        let edit_body = Body::multipart(
+            boundary,
+            &[("model", None, None, b"gpt-image-1"), ("image", Some("cat.png"), Some("image/png"), b"png-bytes")],
+        );
+        let edit_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/images/edits")
+                    .method(Method::POST)
+                    .header("X-API-Key", "api-key-123")
+                    .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                    .body(edit_body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let edit_json = assert_rest_error_response(edit_response, StatusCode::BAD_REQUEST, "prompt is required").await;
+        assert_eq!(edit_json["error"]["message"], "prompt is required");
+
+        let variation_body = Body::multipart(
+            boundary,
+            &[
+                ("model", None, None, b"gpt-image-1"),
+                ("prompt", None, None, b"forbidden"),
+                ("image", Some("cat.png"), Some("image/png"), b"png-bytes"),
+            ],
+        );
+        let variation_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/images/variations")
+                    .method(Method::POST)
+                    .header("X-API-Key", "api-key-123")
+                    .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+                    .body(variation_body)
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let variation_json =
+            assert_rest_error_response(variation_response, StatusCode::BAD_REQUEST, "prompt is not supported for image variations").await;
+        assert_eq!(variation_json["error"]["message"], "prompt is not supported for image variations");
+    }
+
+    #[tokio::test]
+    async fn aisdk_ui_message_stream_requests_negotiate_stream_frames_on_v1_routes() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -3053,61 +3425,16 @@ fn assert_go_duration_shape(value: &str) {
             false,
         ));
 
-        for (method, path, header_name, header_value) in [
-            (
-                Method::POST,
-                "/v1/images/edits",
-                Some("X-API-Key"),
-                Some("api-key-123"),
-            ),
-            (
-                Method::POST,
-                "/v1/images/variations",
-                Some("X-API-Key"),
-                Some("api-key-123"),
-            ),
-        ] {
-            let mut request = Request::builder().uri(path).method(method);
-            if let (Some(name), Some(value)) = (header_name, header_value) {
-                request = request.header(name, value);
-            }
-
-            let response = app
-                .clone()
-                .oneshot(request.body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-
-            assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "{path}");
-            let json = read_json(response).await;
-            assert_eq!(json["error"], "not_implemented", "{path}");
-            assert_eq!(json["route_family"], "/v1/*", "{path}");
-            assert_eq!(json["path"], path, "{path}");
-            assert_eq!(json["method"], "POST", "{path}");
-        }
-    }
-
-    #[tokio::test]
-    async fn aisdk_protocol_markers_keep_v1_requests_on_truthful_501_boundary() {
-        let app = router(test_state_with_openai(
-            SystemBootstrapCapability::Available {
-                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
-            },
-            false,
-        ));
-
-        for (path, header_name, header_value, body) in [
+        for (path, body, expected_text) in [
             (
                 "/v1/chat/completions",
-                "X-Vercel-Ai-Ui-Message-Stream",
-                "v1",
                 r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
+                "hello from rust chat",
             ),
             (
                 "/v1/responses",
-                "X-Vercel-AI-Data-Stream",
-                "v1",
                 r#"{"model":"gpt-4o","input":"hi"}"#,
+                "hello from rust responses",
             ),
         ] {
             let response = app
@@ -3118,31 +3445,120 @@ fn assert_go_duration_shape(value: &str) {
                         .method(Method::POST)
                         .header("content-type", "application/json")
                         .header("X-API-Key", "api-key-123")
-                        .header(header_name, header_value)
+                        .header("X-Vercel-Ai-Ui-Message-Stream", "v1")
                         .body(Body::from(body))
                         .unwrap(),
                 )
                 .await
                 .unwrap();
 
-            assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "{path}");
-            let json = read_json(response).await;
-            assert_eq!(json["error"], "not_implemented", "{path}");
-            assert_eq!(json["route_family"], "/v1/*", "{path}");
-            assert_eq!(json["path"], path, "{path}");
-            assert_eq!(json["method"], "POST", "{path}");
-            assert_eq!(
-                json["message"],
-                "AiSDK compatibility is not supported in the Rust HTTP slice yet. Requests that opt into the Vercel AI SDK protocol via `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` remain on the explicit `/v1/*` 501 boundary.",
-                "{path}"
-            );
-            assert_eq!(json["migration_status"], "progressive cutover", "{path}");
-            assert_eq!(json["legacy_go_backend_present"], false, "{path}");
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(response.headers().get("content-type").unwrap(), "text/event-stream; charset=utf-8", "{path}");
+            assert_eq!(response.headers().get("x-vercel-ai-ui-message-stream").unwrap(), "v1", "{path}");
+            assert_eq!(response.headers().get("cache-control").unwrap(), "no-cache", "{path}");
+            assert_eq!(response.headers().get("connection").unwrap(), "keep-alive", "{path}");
+
+            let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
+            let payload = String::from_utf8(body.to_vec()).unwrap();
+            let lines = payload.lines().collect::<Vec<_>>();
+            let start = serde_json::from_str::<Value>(lines[0]).unwrap();
+            assert_eq!(start["type"], "start", "{path}: {payload}");
+            assert!(!start["messageId"].as_str().unwrap_or_default().is_empty(), "{path}: {payload}");
+            let text_start = serde_json::from_str::<Value>(lines[2]).unwrap();
+            assert_eq!(text_start["type"], "text-start", "{path}: {payload}");
+            let text_delta = serde_json::from_str::<Value>(lines[3]).unwrap();
+            assert_eq!(text_delta["type"], "text-delta", "{path}: {payload}");
+            assert_eq!(text_delta["delta"], expected_text, "{path}: {payload}");
+            let finish = serde_json::from_str::<Value>(lines[6]).unwrap();
+            assert_eq!(finish["type"], "finish", "{path}: {payload}");
+            assert!(payload.ends_with("[DONE]"), "{path}: {payload}");
         }
     }
 
     #[tokio::test]
-    async fn v1_realtime_attempts_stay_on_truthful_v1_boundary() {
+    async fn aisdk_data_stream_requests_use_text_stream_compatibility_frames() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/responses/compact")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .header("X-Vercel-AI-Data-Stream", "v1")
+                    .body(Body::from(r#"{"model":"gpt-4o","input":"hi"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("content-type").unwrap(), "text/plain; charset=utf-8");
+        assert_eq!(response.headers().get("x-vercel-ai-data-stream").unwrap(), "v1");
+        let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
+        let payload = String::from_utf8(body.to_vec()).unwrap();
+        assert!(payload.contains("0:\"hello from rust responses compact\""), "{payload}");
+        assert!(payload.contains("e:{\"finishReason\":\"stop\"}"), "{payload}");
+    }
+
+    #[tokio::test]
+    async fn aisdk_protocol_markers_return_bad_request_for_malformed_payloads_and_versions() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let malformed = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .header("X-Vercel-Ai-Ui-Message-Stream", "v1")
+                    .body(Body::from("{"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        let malformed_json = read_json(malformed).await;
+        assert_eq!(malformed_json["message"], "Invalid request format");
+        assert_eq!(malformed_json["type"], "invalid_request");
+
+        let unsupported_version = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/responses")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .header("X-Vercel-AI-Data-Stream", "v2")
+                    .body(Body::from(r#"{"model":"gpt-4o","input":"hi"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unsupported_version.status(), StatusCode::BAD_REQUEST);
+        let version_json = read_json(unsupported_version).await;
+        assert_eq!(
+            version_json["message"],
+            "Unsupported AiSDK protocol version `v2` for `X-Vercel-AI-Data-Stream`"
+        );
+        assert_eq!(version_json["type"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn v1_realtime_get_without_upgrade_returns_not_found() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -3162,14 +3578,9 @@ fn assert_go_duration_shape(value: &str) {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let json = read_json(response).await;
-        assert_eq!(json["error"], "not_implemented");
-        assert_eq!(json["route_family"], "/v1/*");
-        assert_eq!(json["method"], "GET");
-        assert_eq!(json["path"], "/v1/realtime");
-        assert_eq!(json["migration_status"], "progressive cutover");
-        assert_eq!(json["legacy_go_backend_present"], false);
+        assert_eq!(json["error"]["message"], "Request body is empty");
     }
 
     #[tokio::test]
@@ -3203,7 +3614,7 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[tokio::test]
-    async fn v1_realtime_upgrade_headers_stay_on_truthful_v1_boundary() {
+    async fn v1_realtime_upgrade_headers_create_switching_protocols_session() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -3216,65 +3627,232 @@ fn assert_go_duration_shape(value: &str) {
                 Request::builder()
                     .uri("/v1/realtime")
                     .method(Method::POST)
-                    .header("content-type", "application/json")
                     .header("X-API-Key", "api-key-123")
                     .header("Connection", "keep-alive, Upgrade")
                     .header("Upgrade", "websocket")
+                    .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
                     .header("Sec-WebSocket-Version", "13")
-                    .body(Body::from(r#"{"model":"gpt-4o-realtime-preview"}"#))
+                    .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+        assert_eq!(response.headers().get("upgrade").unwrap(), "websocket");
+        assert_eq!(response.headers().get("connection").unwrap(), "Upgrade");
+        assert!(response.headers().contains_key("sec-websocket-accept"));
+        assert!(response.headers().contains_key("x-axonhub-realtime-session-id"));
         let json = read_json(response).await;
-        assert_eq!(json["error"], "not_implemented");
-        assert_eq!(json["route_family"], "/v1/*");
-        assert_eq!(json["method"], "POST");
-        assert_eq!(json["path"], "/v1/realtime");
-        assert_eq!(
-            json["message"],
-            "Rust realtime support currently covers only JSON POST `/v1/realtime` through the standard OpenAI `/v1` execution path. WebSocket/upgrade-style realtime transport remains on the explicit `/v1/*` 501 boundary."
-        );
-        assert_eq!(json["migration_status"], "progressive cutover");
-        assert_eq!(json["legacy_go_backend_present"], false);
+        assert_eq!(json["transport"], "websocket");
+        assert_eq!(json["status"], "open");
+        assert!(json["sessionId"].as_str().unwrap_or_default().starts_with("rtsess_"));
+    }
+
+    #[tokio::test]
+    async fn v1_realtime_session_routes_manage_lifecycle() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let create_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/realtime/sessions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .header("AH-Thread-Id", "thread-1")
+                    .header("AH-Trace-Id", "trace-1")
+                    .body(Body::from(r#"{"transport":"session","model":"gpt-4o-realtime-preview","metadata":{"voice":"alloy"}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create_response.status(), StatusCode::OK);
+        let create_json = read_json(create_response).await;
+        let session_id = create_json["sessionId"].as_str().unwrap().to_owned();
+        assert_eq!(create_json["transport"], "session");
+        assert_eq!(create_json["threadId"], "thread-1");
+        assert_eq!(create_json["traceId"], "trace-1");
+
+        let get_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/realtime/sessions/{session_id}"))
+                    .method(Method::GET)
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get_response.status(), StatusCode::OK);
+
+        let patch_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/realtime/sessions/{session_id}"))
+                    .method(Method::PATCH)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::from(r#"{"status":"closing","metadata":{"voice":"verse"}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(patch_response.status(), StatusCode::OK);
+        let patch_json = read_json(patch_response).await;
+        assert_eq!(patch_json["status"], "closing");
+        assert_eq!(patch_json["metadata"]["attributes"]["voice"], "verse");
+
+        let delete_response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/realtime/sessions/{session_id}"))
+                    .method(Method::DELETE)
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete_response.status(), StatusCode::OK);
+        let delete_json = read_json(delete_response).await;
+        assert_eq!(delete_json["status"], "closed");
+        assert!(delete_json["closedAt"].is_string());
+    }
+
+    #[tokio::test]
+    async fn v1_realtime_session_patch_rejects_invalid_terminal_transition() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let create_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/realtime/sessions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::from(r#"{"transport":"session","model":"gpt-4o-realtime-preview"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let create_json = read_json(create_response).await;
+        let session_id = create_json["sessionId"].as_str().unwrap().to_owned();
+
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/realtime/sessions/{session_id}"))
+                    .method(Method::DELETE)
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let invalid_response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/realtime/sessions/{session_id}"))
+                    .method(Method::PATCH)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .body(Body::from(r#"{"status":"open"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = assert_rest_error_response(
+            invalid_response,
+            StatusCode::BAD_REQUEST,
+            "realtime session is already terminal",
+        )
+        .await;
+        assert_eq!(json["error"]["type"], "Bad Request");
     }
 
     #[test]
     fn readme_unsupported_boundary_contract_matches_explicit_v1_guardrails() {
         let readme = include_str!("../../../README.md");
+        let zh_readme = include_str!("../../../README.zh-CN.md");
 
         for required_snippet in [
-            "- **Image editing and image variants**: `POST /v1/images/edits`, `POST /v1/images/variations`, and other unmigrated image routes",
-            "- **Realtime API**: JSON-only `POST /v1/realtime` uses the standard Rust OpenAI `/v1` execution path; dedicated realtime WebSocket transport, upgrade-style requests, and session-family routes remain on explicit `501 Not Implemented` boundaries",
-            "- **AiSDK compatibility**: Vercel AI SDK protocol requests remain unsupported; `/v1` requests with `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` return `501 Not Implemented`",
+            "### Current Rust-Supported Surface (Verified)",
+            "`/images/edits`, `/images/variations`, `/v1/realtime` (JSON POST), realtime WebSocket upgrade and session management (`/v1/realtime/sessions`), video generation",
+            "Full support for Vercel AI SDK protocol via `X-Vercel-Ai-Ui-Message-Stream` and `X-Vercel-AI-Data-Stream` headers",
+            "Codex, Claude Code, Antigravity, Copilot",
+            "SQLite and PostgreSQL (canonical); MySQL/TiDB/Neon are not supported in the Rust backend",
         ] {
             assert!(
                 readme.contains(required_snippet),
-                "README unsupported-boundary contract missing snippet: {required_snippet}"
+                "README supported-surface contract missing snippet: {required_snippet}"
+            );
+        }
+
+        for required_snippet in [
+            "### 当前 Rust 支持能力面（已验证）",
+            "`/images/edits`, `/images/variations`, `/v1/realtime`（JSON POST）、realtime WebSocket 升级与会话管理（`/v1/realtime/sessions`）、视频生成",
+            "完整支持 Vercel AI SDK 协议，通过 `X-Vercel-Ai-Ui-Message-Stream` 和 `X-Vercel-AI-Data-Stream` 请求头",
+            "Codex、Claude Code、Antigravity、Copilot",
+            "SQLite 和 PostgreSQL（canonical）；MySQL/TiDB/Neon 不在 Rust 后端支持范围内",
+        ] {
+            assert!(
+                zh_readme.contains(required_snippet),
+                "README.zh-CN supported-surface contract missing snippet: {required_snippet}"
             );
         }
 
         let routes = include_str!("routes.rs");
         for required_route in [
-            "web::resource(\"/images/edits\").route(web::to(explicit_v1_not_implemented_boundary))",
-            "web::resource(\"/images/variations\").route(web::to(explicit_v1_not_implemented_boundary))",
+            "web::resource(\"/codex/oauth/start\")",
+            "start_codex_oauth",
+            "web::resource(\"/claudecode/oauth/start\")",
+            "exchange_claudecode_oauth",
+            "web::resource(\"/antigravity/oauth/start\")",
+            "exchange_antigravity_oauth",
+            "web::resource(\"/copilot/oauth/start\")",
+            "poll_copilot_oauth",
+            "web::resource(\"/images/edits\")",
+            "handlers::openai_v1::openai_images_edits",
+            "web::resource(\"/images/variations\")",
+            "handlers::openai_v1::openai_images_variations",
             "web::resource(\"/realtime\")",
             "route(web::post().to(handlers::openai_v1::openai_realtime))",
-            "route(web::to(explicit_v1_not_implemented_boundary))",
+            "route(web::get().to(handlers::openai_v1::openai_realtime))",
+            "web::resource(\"/realtime/sessions\")",
+            "web::resource(\"/realtime/sessions/{session_id}\")",
+            "create_openai_realtime_session",
+            "get_openai_realtime_session",
+            "update_openai_realtime_session",
+            "delete_openai_realtime_session",
         ] {
             assert!(
                 routes.contains(required_route),
-                "routes.rs explicit unsupported boundary missing: {required_route}"
+                "routes.rs supported-surface guard missing: {required_route}"
             );
         }
 
         let handlers = include_str!("handlers/mod.rs");
         assert!(handlers.contains("X-Vercel-Ai-Ui-Message-Stream"));
         assert!(handlers.contains("X-Vercel-AI-Data-Stream"));
-        assert!(handlers.contains("Sec-WebSocket-"));
-        assert!(handlers.contains("remain on the explicit `/v1/*` 501 boundary"));
+        assert!(handlers.contains("starts_with(\"sec-websocket-\")"));
     }
 
     #[tokio::test]

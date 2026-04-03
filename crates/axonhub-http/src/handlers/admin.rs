@@ -4,8 +4,8 @@ use crate::errors::{
 };
 use crate::handlers::{execute_openai_request_with_body, parse_json_body};
 use crate::models::{
-    InitializeSystemRequest, InitializeSystemResponse, OpenAiV1Route, ProjectContext,
-    SignInRequest, SignInResponse, SystemStatusResponse,
+    InitializeSystemRequest, InitializeSystemResponse, OpenAiRequestBody, OpenAiV1Route,
+    ProjectContext, SignInRequest, SignInResponse, SystemStatusResponse,
 };
 use crate::state::{
     AdminCapability, HttpState, IdentityCapability, OpenAiV1Capability, RequestAuthContext,
@@ -247,7 +247,7 @@ pub(crate) async fn playground_chat(
         request,
         original_uri,
         OpenAiV1Route::ChatCompletions,
-        body,
+        OpenAiRequestBody::Json(body),
         channel_hint_id,
     )
     .await

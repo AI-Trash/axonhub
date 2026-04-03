@@ -1,7 +1,7 @@
 use axonhub_http::{ApiKeyAuthError, AuthUserContext, ProjectContext};
-use axonhub_db_entity::{api_keys, projects, roles, systems, user_projects, users};
+use axonhub_db_entity::{api_keys, projects, roles, systems, user_projects, user_roles, users};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-use sea_orm::{ColumnTrait, EntityTrait, ModelTrait, QueryFilter, QueryOrder};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 
 use crate::foundation::{
     authz::{is_project_role_assignment, is_system_role_assignment},
@@ -211,11 +211,21 @@ async fn query_user_roles_seaorm(
     _backend: sea_orm::DatabaseBackend,
     user_id: i64,
 ) -> Result<Vec<StoredRole>, ()> {
-    let Some(user) = users::Entity::find_by_id(user_id).one(db).await.map_err(|_| ())? else {
-        return Ok(Vec::new());
-    };
+    let role_ids = user_roles::Entity::find()
+        .filter(user_roles::Column::UserId.eq(user_id))
+        .select_only()
+        .column(user_roles::Column::RoleId)
+        .into_tuple::<i64>()
+        .all(db)
+        .await
+        .map_err(|_| ())?;
 
-    user.find_related(roles::Entity)
+    if role_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    roles::Entity::find()
+        .filter(roles::Column::Id.is_in(role_ids))
         .filter(roles::Column::DeletedAt.eq(0_i64))
         .order_by_asc(roles::Column::Id)
         .into_partial_model::<roles::Assignment>()
@@ -256,12 +266,8 @@ async fn build_user_context_seaorm(
         }
     }
 
-    let Some(user_model) = users::Entity::find_by_id(user.id).one(db).await.map_err(|_| ())? else {
-        return Err(());
-    };
-
-    let memberships = user_model
-        .find_related(user_projects::Entity)
+    let memberships = user_projects::Entity::find()
+        .filter(user_projects::Column::UserId.eq(user.id))
         .order_by_asc(user_projects::Column::ProjectId)
         .into_partial_model::<user_projects::MembershipLink>()
         .all(db)

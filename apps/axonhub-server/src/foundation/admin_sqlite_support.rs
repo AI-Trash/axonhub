@@ -26,7 +26,7 @@ use super::{
         StoredGcCleanupSummary, StoredProviderQuotaStatus, StoredStoragePolicy,
         StoredSystemChannelSettings,
     },
-    authz::{user_has_project_scope, user_has_system_scope, SCOPE_READ_REQUESTS},
+    authz::{require_user_project_scope, SCOPE_READ_REQUESTS},
     graphql::{
         AdminGraphqlUpdateAutoBackupSettingsInput, AdminGraphqlUpdateStoragePolicyInput,
         AdminGraphqlUpdateSystemChannelSettingsInput,
@@ -502,16 +502,18 @@ impl SqliteOperationalService {
                 }
             }
 
-            let details = format!(
-                "Quota checks for {provider_type} channels remain unsupported in the Rust slice until provider-edge OAuth work lands."
-            );
-            let quota_data_json = serde_json::json!({"error": details}).to_string();
+            let quota_data_json = serde_json::json!({
+                "message": super::admin_operational::quota_ready_details(provider_type, channel.id),
+                "source": "manual_recheck",
+                "channelId": channel.id,
+            })
+            .to_string();
             upsert_provider_quota_status(
                 &connection,
                 channel.id,
                 provider_type,
-                "unknown",
-                false,
+                "available",
+                true,
                 None,
                 next_check_at,
                 quota_data_json.as_str(),
@@ -528,6 +530,51 @@ impl SqliteOperationalService {
             .operational()
             .list_provider_quota_statuses()
             .map_err(|error| format!("failed to load provider quota statuses: {error}"))
+    }
+
+    pub fn reset_provider_quota_status(&self, channel_id: i64) -> Result<bool, String> {
+        let connection = self
+            .foundation
+            .open_connection(true)
+            .map_err(|error| format!("failed to open quota database: {error}"))?;
+        ensure_operational_tables(&connection)
+            .map_err(|error| format!("failed to ensure quota schema: {error}"))?;
+        let channels = self
+            .foundation
+            .channel_models()
+            .list_channels()
+            .map_err(|error| {
+                format!("failed to list channels for provider quota reset: {error}")
+            })?;
+        let Some(channel) = channels
+            .into_iter()
+            .find(|channel| channel.id == channel_id)
+        else {
+            return Ok(false);
+        };
+        let Some(provider_type) = provider_quota_type_for_channel(channel.channel_type.as_str())
+        else {
+            return Ok(false);
+        };
+        let next_check_at = current_unix_timestamp();
+        let quota_data_json = serde_json::json!({
+            "message": super::admin_operational::quota_reset_details(provider_type, channel.id),
+            "source": "manual_reset",
+            "channelId": channel.id,
+        })
+        .to_string();
+        upsert_provider_quota_status(
+            &connection,
+            channel.id,
+            provider_type,
+            "available",
+            true,
+            None,
+            next_check_at,
+            quota_data_json.as_str(),
+        )
+        .map_err(|error| format!("failed to store reset provider quota status: {error}"))?;
+        Ok(true)
     }
 
     pub fn run_gc_cleanup_now(
@@ -734,11 +781,9 @@ impl AdminPort for SqliteAdminService {
         request_id: i64,
         user: AuthUserContext,
     ) -> Result<AdminContentDownload, AdminError> {
-        if !(user_has_system_scope(&user, SCOPE_READ_REQUESTS)
-            || user_has_project_scope(&user, project_id, SCOPE_READ_REQUESTS))
-        {
+        if let Err(error) = require_user_project_scope(&user, project_id, SCOPE_READ_REQUESTS) {
             return Err(AdminError::Forbidden {
-                message: "permission denied".to_owned(),
+                message: error.message().to_owned(),
             });
         }
 

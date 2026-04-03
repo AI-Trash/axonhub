@@ -6,9 +6,9 @@ use axonhub_http::{
     ContextResolveError, GeminiModelListResponse, GraphqlExecutionResult, GraphqlRequestPayload,
     IdentityPort, InitializeSystemRequest, ModelListResponse, OpenAiV1Error,
     OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port, OpenAiV1Route,
-    OpenApiGraphqlPort, ProjectContext, RequestContextPort, SignInError, SignInRequest,
-    SignInSuccess, SystemBootstrapPort, SystemInitializeError, SystemQueryError, ThreadContext,
-    TraceContext,
+    OpenApiGraphqlPort, ProjectContext, RealtimeSessionCreateRequest, RealtimeSessionPatchRequest,
+    RealtimeSessionRecord, RequestContextPort, SignInError, SignInRequest, SignInSuccess,
+    SystemBootstrapPort, SystemInitializeError, SystemQueryError, ThreadContext, TraceContext,
 };
 
 use crate::foundation::ports::{
@@ -121,8 +121,12 @@ impl OpenAiV1ApplicationService {
 }
 
 impl OpenAiV1Port for OpenAiV1ApplicationService {
-    fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error> {
-        self.repository.list_models(include)
+    fn list_models(
+        &self,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<ModelListResponse, OpenAiV1Error> {
+        self.repository.list_models(include, api_key)
     }
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
@@ -147,6 +151,35 @@ impl OpenAiV1Port for OpenAiV1ApplicationService {
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
         self.repository.execute_compatibility(route, request)
+    }
+
+    fn create_realtime_session(
+        &self,
+        request: RealtimeSessionCreateRequest,
+    ) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+        self.repository.create_realtime_session(request)
+    }
+
+    fn get_realtime_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        self.repository.get_realtime_session(session_id)
+    }
+
+    fn update_realtime_session(
+        &self,
+        session_id: &str,
+        patch: RealtimeSessionPatchRequest,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        self.repository.update_realtime_session(session_id, patch)
+    }
+
+    fn delete_realtime_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        self.repository.delete_realtime_session(session_id)
     }
 }
 

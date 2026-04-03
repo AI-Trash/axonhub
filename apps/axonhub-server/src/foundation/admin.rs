@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use super::{
-    authz::{user_has_project_scope, user_has_system_scope, SCOPE_READ_REQUESTS},
+    authz::{require_user_project_scope, SCOPE_READ_REQUESTS},
     ports::AdminRepository,
     repositories::admin::{AdminStorageRepository, SeaOrmAdminStorageRepository},
     seaorm::SeaOrmConnectionFactory,
@@ -145,6 +145,15 @@ pub(crate) struct StoredProviderQuotaStatus {
     pub(crate) next_check_at: i64,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct StoredCircuitBreakerStatus {
+    pub(crate) channel_id: i64,
+    pub(crate) model_id: String,
+    pub(crate) state: String,
+    pub(crate) consecutive_failures: i32,
+    pub(crate) next_probe_at_seconds: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StoredGcCleanupSummary {
     pub(crate) requests_deleted: i64,
@@ -162,7 +171,7 @@ struct DataStorageRecord {
     settings_json: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StoredBackupPayload {
     pub(crate) version: String,
     pub(crate) timestamp: String,
@@ -172,7 +181,7 @@ pub(crate) struct StoredBackupPayload {
     pub(crate) api_keys: Vec<StoredBackupApiKey>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StoredBackupChannel {
     pub(crate) id: i64,
     pub(crate) name: String,
@@ -189,7 +198,7 @@ pub(crate) struct StoredBackupChannel {
     pub(crate) remark: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StoredBackupModel {
     pub(crate) id: i64,
     pub(crate) developer: String,
@@ -204,7 +213,7 @@ pub(crate) struct StoredBackupModel {
     pub(crate) remark: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StoredBackupApiKey {
     pub(crate) id: i64,
     pub(crate) project_id: i64,
@@ -235,11 +244,9 @@ impl AdminPort for SeaOrmAdminService {
         request_id: i64,
         user: AuthUserContext,
     ) -> Result<AdminContentDownload, AdminError> {
-        if !(user_has_system_scope(&user, SCOPE_READ_REQUESTS)
-            || user_has_project_scope(&user, project_id, SCOPE_READ_REQUESTS))
-        {
+        if let Err(error) = require_user_project_scope(&user, project_id, SCOPE_READ_REQUESTS) {
             return Err(AdminError::Forbidden {
-                message: "permission denied".to_owned(),
+                message: error.message().to_owned(),
             });
         }
 

@@ -149,12 +149,28 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
                 .route(web::post().to(handlers::openai_v1::openai_images_generations)),
         )
         .service(
+            web::resource("/images/edits")
+                .route(web::post().to(handlers::openai_v1::openai_images_edits)),
+        )
+        .service(
+            web::resource("/images/variations")
+                .route(web::post().to(handlers::openai_v1::openai_images_variations)),
+        )
+        .service(
             web::resource("/realtime")
                 .route(web::post().to(handlers::openai_v1::openai_realtime))
-                .route(web::to(explicit_v1_not_implemented_boundary)),
+                .route(web::get().to(handlers::openai_v1::openai_realtime)),
         )
-        .service(web::resource("/images/edits").route(web::to(explicit_v1_not_implemented_boundary)))
-        .service(web::resource("/images/variations").route(web::to(explicit_v1_not_implemented_boundary)))
+        .service(
+            web::resource("/realtime/sessions")
+                .route(web::post().to(handlers::openai_v1::create_openai_realtime_session)),
+        )
+        .service(
+            web::resource("/realtime/sessions/{session_id}")
+                .route(web::get().to(handlers::openai_v1::get_openai_realtime_session))
+                .route(web::patch().to(handlers::openai_v1::update_openai_realtime_session))
+                .route(web::delete().to(handlers::openai_v1::delete_openai_realtime_session)),
+        )
         .service(
             web::resource("/videos").route(web::post().to(handlers::openai_v1::openai_videos_create)),
         )

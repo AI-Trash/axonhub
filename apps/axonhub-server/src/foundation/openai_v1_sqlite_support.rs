@@ -2,9 +2,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axonhub_http::{
-    AnthropicModel, AnthropicModelListResponse, CompatibilityRoute, GeminiModel,
-    GeminiModelListResponse, ModelListResponse, OpenAiModel, OpenAiV1Error,
-    OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port, OpenAiV1Route,
+    AnthropicModel, AnthropicModelListResponse, AuthApiKeyContext, CompatibilityRoute,
+    GeminiModel, GeminiModelListResponse, ModelListResponse, OpenAiModel, OpenAiRequestBody,
+    OpenAiV1Error, OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port,
+    OpenAiV1Route, RealtimeSessionCreateRequest, RealtimeSessionPatchRequest,
+    RealtimeSessionRecord,
 };
 use rusqlite::{params, Connection, OptionalExtension, Result as SqlResult};
 use serde::Deserialize;
@@ -12,23 +14,31 @@ use serde_json::Value;
 
 use super::{
     admin::{default_system_channel_settings, StoredSystemChannelSettings},
+    authz::{require_api_key_scope, AuthzFailure, SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS},
+    circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
     identity::parse_json_string_vec,
     openai_v1::{
-        calculate_top_k, compare_openai_target_priority, compatibility_upstream_method,
-        compatibility_upstream_url, compatibility_usage, compute_usage_cost,
-        extract_channel_api_key, extract_usage, map_compatibility_response,
-        model_supported_by_channel, openai_error_message, prepare_compatibility_request,
-        rewrite_model, sanitize_headers_json, sqlite_timestamp_to_rfc3339, validate_openai_request,
-        ExtractedUsage, ModelInclude, NewRequestExecutionRecord, NewRequestRecord,
-        NewUsageLogRecord, PreparedCompatibilityRequest, SelectedOpenAiTarget,
-        StoredChannelSummary, StoredModelRecord, StoredRequestSummary,
-        UpdateRequestExecutionResultRecord, UpdateRequestResultRecord,
+        apply_blocking_upstream_request_body, calculate_top_k, compare_openai_target_priority,
+        compatibility_upstream_method, compatibility_upstream_url, compatibility_usage,
+        compute_usage_cost, current_realtime_timestamp, extract_channel_api_key, extract_usage,
+        generate_realtime_session_id, map_compatibility_response, model_supported_by_channel,
+        mark_provider_quota_ready_seaorm, maybe_persist_provider_quota_error_seaorm,
+        openai_error_message, prepare_compatibility_request,
+        prepare_outbound_request_with_prompt_protection, realtime_route_format,
+        realtime_session_record_from_model, validate_realtime_session_patch,
+        validate_realtime_session_transport, request_model_id,
+        sanitize_headers_json, attach_realtime_context_metadata, build_realtime_session_metadata,
+        sqlite_timestamp_to_rfc3339, validate_openai_request, ExtractedUsage, ModelInclude,
+        NewRequestExecutionRecord, NewRequestRecord, NewUsageLogRecord,
+        PreparedCompatibilityRequest, SelectedOpenAiTarget, StoredChannelSummary,
+        StoredModelRecord, StoredRequestSummary, UpdateRequestExecutionResultRecord,
+        UpdateRequestResultRecord,
         DEFAULT_MAX_SAME_CHANNEL_RETRIES,
     },
     ports::OpenAiV1Repository,
     repositories::openai_v1::enforce_api_key_quota_seaorm,
     shared::{bool_to_sql, SqliteConnectionFactory, SqliteFoundation, USAGE_LOGS_TABLE_SQL},
-    system::{ensure_channel_model_tables, ensure_request_tables, SystemSettingsStore},
+    system::{ensure_channel_model_tables, ensure_prompt_tables, ensure_request_tables, SystemSettingsStore},
 };
 
 #[cfg(test)]
@@ -182,6 +192,7 @@ impl ChannelModelStore {
         channel_type: &str,
         model_type: &str,
         preferred_channel_id: Option<i64>,
+        circuit_breaker: &SharedCircuitBreaker,
     ) -> SqlResult<Vec<SelectedOpenAiTarget>> {
         let connection = self.connection_factory.open(true)?;
         ensure_channel_model_tables(&connection)?;
@@ -189,7 +200,7 @@ impl ChannelModelStore {
 
         let mut statement = connection.prepare(
             "SELECT c.id, c.base_url, c.credentials, c.supported_models, c.ordering_weight,
-                    m.created_at, m.developer, m.model_id, m.type, m.name, m.icon, m.remark, m.model_card
+                    m.created_at, m.developer, m.model_id, m.type, m.name, m.icon, m.remark, m.model_card, c.type
               FROM channels c
               JOIN models m ON m.model_id = ?1
               WHERE c.deleted_at = 0
@@ -223,13 +234,19 @@ impl ChannelModelStore {
 
             let channel_id: i64 = row.get(0)?;
             let ordering_weight: i64 = row.get(4)?;
+            let actual_model_id: String = row.get(7)?;
             let routing_stats = query_channel_routing_stats(&connection, channel_id)?;
+            if provider_channel_is_blocked(&connection, channel_id)?
+                || circuit_breaker.is_blocked(channel_id, actual_model_id.as_str())
+            {
+                continue;
+            }
 
             let model = StoredModelRecord {
                 id: 0,
                 created_at: row.get(5)?,
                 developer: row.get(6)?,
-                model_id: row.get(7)?,
+                model_id: actual_model_id.clone(),
                 model_type: row.get(8)?,
                 name: row.get(9)?,
                 icon: row.get(10)?,
@@ -241,9 +258,11 @@ impl ChannelModelStore {
                 channel_id,
                 base_url: row.get(1)?,
                 api_key,
-                actual_model_id: request_model_id.to_owned(),
+                actual_model_id: actual_model_id.clone(),
+                provider_type: super::admin::provider_quota_type_for_channel(&row.get::<_, String>(13)?).map(str::to_owned),
                 ordering_weight,
                 trace_affinity: preferred_trace_channel_id == Some(channel_id),
+                circuit_breaker: circuit_breaker.current_snapshot(channel_id, actual_model_id.as_str()),
                 routing_stats,
                 model,
             });
@@ -585,44 +604,83 @@ impl UsageCostStore {
 
 pub struct SqliteOpenAiV1Service {
     pub(crate) foundation: Arc<SqliteFoundation>,
+    circuit_breaker: SharedCircuitBreaker,
 }
 
 impl SqliteOpenAiV1Service {
     pub(crate) const DEFAULT_MAX_CHANNEL_RETRIES: usize = 2;
 
     pub fn new(foundation: Arc<SqliteFoundation>) -> Self {
-        Self { foundation }
+        Self {
+            foundation,
+            circuit_breaker: SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_circuit_breaker(
+        foundation: Arc<SqliteFoundation>,
+        circuit_breaker: SharedCircuitBreaker,
+    ) -> Self {
+        Self {
+            foundation,
+            circuit_breaker,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_circuit_breaker_policy(
+        foundation: Arc<SqliteFoundation>,
+        policy: CircuitBreakerPolicy,
+    ) -> Self {
+        Self::new_with_circuit_breaker(foundation, SharedCircuitBreaker::new(policy))
     }
 
     fn select_target_channels(
         &self,
         request: &OpenAiV1ExecutionRequest,
-        _route: OpenAiV1Route,
+        route: OpenAiV1Route,
     ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
-        let request_model = request
-            .body
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| OpenAiV1Error::InvalidRequest {
-                message: "model is required".to_owned(),
-            })?;
+        let request_model = request_model_id(&request.body)?;
 
-        let targets = self
-            .foundation
-            .channel_models()
-            .select_inference_targets(
-                request_model,
-                request.trace.as_ref().map(|trace| trace.id),
-                Self::DEFAULT_MAX_CHANNEL_RETRIES,
-                "openai",
-                "",
-                request.channel_hint_id,
-            )
-            .map_err(|error| OpenAiV1Error::Internal {
-                message: format!("Failed to resolve upstream target: {error}"),
-            })?;
+        let model_type = match route {
+            OpenAiV1Route::ImagesGenerations
+            | OpenAiV1Route::ImagesEdits
+            | OpenAiV1Route::ImagesVariations => "image",
+            OpenAiV1Route::ChatCompletions
+            | OpenAiV1Route::Responses
+            | OpenAiV1Route::ResponsesCompact
+            | OpenAiV1Route::Embeddings
+            | OpenAiV1Route::Realtime => "",
+        };
+        let mut targets = Vec::new();
+        for channel_type in ["openai", "codex", "claudecode"] {
+            targets.extend(
+                self.foundation
+                    .channel_models()
+                    .select_inference_targets(
+                        request_model.as_str(),
+                        request.trace.as_ref().map(|trace| trace.id),
+                        Self::DEFAULT_MAX_CHANNEL_RETRIES,
+                        channel_type,
+                        model_type,
+                        request.channel_hint_id,
+                        &self.circuit_breaker,
+                    )
+                    .map_err(|error| OpenAiV1Error::Internal {
+                        message: format!("Failed to resolve upstream target: {error}"),
+                    })?,
+            );
+        }
+        targets.sort_by(compare_openai_target_priority);
+        if let Some(preferred_channel_id) = request.channel_hint_id {
+            if let Some(index) = targets.iter().position(|target| target.channel_id == preferred_channel_id) {
+                let preferred = targets.remove(index);
+                targets.insert(0, preferred);
+            }
+        }
+        let top_k = calculate_top_k(targets.len(), Self::DEFAULT_MAX_CHANNEL_RETRIES);
+        targets.truncate(top_k);
 
         if targets.is_empty() {
             Err(OpenAiV1Error::InvalidRequest {
@@ -710,6 +768,7 @@ impl SqliteOpenAiV1Service {
         status: u16,
         response_body: Value,
         usage: Option<ExtractedUsage>,
+        circuit_breaker: &SharedCircuitBreaker,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
         let response_body_json =
             serde_json::to_string(&response_body).map_err(|error| OpenAiV1Error::Internal {
@@ -720,69 +779,138 @@ impl SqliteOpenAiV1Service {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
 
-        self.foundation
-            .requests()
-            .update_request_result(&UpdateRequestResultRecord {
-                request_id,
-                status: "completed",
-                external_id: external_id.as_deref(),
-                response_body_json: Some(response_body_json.as_str()),
-                channel_id: Some(target.channel_id),
-            })
+        let mut connection = self
+            .foundation
+            .open_connection(true)
+            .map_err(|error| OpenAiV1Error::Internal {
+                message: format!("Failed to open request persistence connection: {error}"),
+            })?;
+        ensure_prompt_tables(&connection).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to ensure prompt protection tables: {error}"),
+        })?;
+        ensure_request_tables(&connection).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to ensure request tables: {error}"),
+        })?;
+        connection.execute_batch(USAGE_LOGS_TABLE_SQL).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to ensure usage log table: {error}"),
+        })?;
+        let transaction = connection.transaction().map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to start completion transaction: {error}"),
+        })?;
+
+        transaction
+            .execute(
+                "UPDATE requests
+                 SET updated_at = CURRENT_TIMESTAMP,
+                     channel_id = COALESCE(?2, channel_id),
+                     external_id = COALESCE(?3, external_id),
+                     response_body = COALESCE(?4, response_body),
+                     status = ?5
+                 WHERE id = ?1",
+                params![
+                    request_id,
+                    Some(target.channel_id),
+                    external_id.as_deref(),
+                    Some(response_body_json.as_str()),
+                    "completed",
+                ],
+            )
             .map_err(|error| OpenAiV1Error::Internal {
                 message: format!("Failed to update request: {error}"),
             })?;
-        self.foundation
-            .requests()
-            .update_request_execution_result(&UpdateRequestExecutionResultRecord {
-                execution_id,
-                status: "completed",
-                external_id: external_id.as_deref(),
-                response_body_json: Some(response_body_json.as_str()),
-                response_status_code: Some(status as i64),
-                error_message: None,
-            })
+        transaction
+            .execute(
+                "UPDATE request_executions
+                 SET updated_at = CURRENT_TIMESTAMP,
+                     external_id = COALESCE(?2, external_id),
+                     response_body = COALESCE(?3, response_body),
+                     response_status_code = COALESCE(?4, response_status_code),
+                     error_message = COALESCE(?5, error_message),
+                     status = ?6
+                 WHERE id = ?1",
+                params![
+                    execution_id,
+                    external_id.as_deref(),
+                    Some(response_body_json.as_str()),
+                    Some(status as i64),
+                    Option::<&str>::None,
+                    "completed",
+                ],
+            )
             .map_err(|error| OpenAiV1Error::Internal {
                 message: format!("Failed to update request execution: {error}"),
             })?;
 
         if let Some(usage) = usage {
             let usage_cost = compute_usage_cost(&target.model, &usage);
-            if let Ok(cost_items_json) = serde_json::to_string(&usage_cost.cost_items) {
-                let _ = self
-                    .foundation
-                    .usage_costs()
-                    .record_usage(&NewUsageLogRecord {
+            let cost_items_json = serde_json::to_string(&usage_cost.cost_items).map_err(|error| {
+                OpenAiV1Error::Internal {
+                    message: format!("Failed to serialize usage cost items: {error}"),
+                }
+            })?;
+            transaction
+                .execute(
+                    "INSERT INTO usage_logs (
+                        request_id, api_key_id, project_id, channel_id, model_id,
+                        prompt_tokens, completion_tokens, total_tokens,
+                        prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens,
+                        prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h,
+                        completion_audio_tokens, completion_reasoning_tokens,
+                        completion_accepted_prediction_tokens, completion_rejected_prediction_tokens,
+                        source, format, total_cost, cost_items, cost_price_reference_id, deleted_at
+                    ) VALUES (
+                        ?1, ?2, ?3, ?4, ?5,
+                        ?6, ?7, ?8,
+                        ?9, ?10, ?11,
+                        ?12, ?13,
+                        ?14, ?15,
+                        ?16, ?17,
+                        ?18, ?19, ?20, ?21, ?22, 0
+                    )",
+                    params![
                         request_id,
-                        api_key_id: request.api_key_id,
-                        project_id: request.project.id,
-                        channel_id: Some(target.channel_id),
-                        model_id: target.actual_model_id.as_str(),
-                        prompt_tokens: usage.prompt_tokens,
-                        completion_tokens: usage.completion_tokens,
-                        total_tokens: usage.total_tokens,
-                        prompt_audio_tokens: usage.prompt_audio_tokens,
-                        prompt_cached_tokens: usage.prompt_cached_tokens,
-                        prompt_write_cached_tokens: usage.prompt_write_cached_tokens,
-                        prompt_write_cached_tokens_5m: usage.prompt_write_cached_tokens_5m,
-                        prompt_write_cached_tokens_1h: usage.prompt_write_cached_tokens_1h,
-                        completion_audio_tokens: usage.completion_audio_tokens,
-                        completion_reasoning_tokens: usage.completion_reasoning_tokens,
-                        completion_accepted_prediction_tokens: usage
-                            .completion_accepted_prediction_tokens,
-                        completion_rejected_prediction_tokens: usage
-                            .completion_rejected_prediction_tokens,
-                        source: "api",
-                        format: route_format,
-                        total_cost: usage_cost.total_cost,
-                        cost_items_json: cost_items_json.as_str(),
-                        cost_price_reference_id: usage_cost
-                            .price_reference_id
-                            .as_deref()
-                            .unwrap_or(""),
-                    });
-            }
+                        request.api_key_id,
+                        request.project.id,
+                        Some(target.channel_id),
+                        target.actual_model_id.as_str(),
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                        usage.total_tokens,
+                        usage.prompt_audio_tokens,
+                        usage.prompt_cached_tokens,
+                        usage.prompt_write_cached_tokens,
+                        usage.prompt_write_cached_tokens_5m,
+                        usage.prompt_write_cached_tokens_1h,
+                        usage.completion_audio_tokens,
+                        usage.completion_reasoning_tokens,
+                        usage.completion_accepted_prediction_tokens,
+                        usage.completion_rejected_prediction_tokens,
+                        "api",
+                        route_format,
+                        usage_cost.total_cost,
+                        cost_items_json.as_str(),
+                        usage_cost.price_reference_id.as_deref().unwrap_or(""),
+                    ],
+                )
+                .map_err(|error| OpenAiV1Error::Internal {
+                    message: format!("Failed to persist usage log: {error}"),
+                })?;
         }
+
+        transaction.commit().map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to commit completion transaction: {error}"),
+        })?;
+
+        self.foundation.seaorm().run_sync({
+            let target = target.clone();
+            move |db| async move {
+                let connection = db.connect_migrated().await.map_err(|connect_error| OpenAiV1Error::Internal {
+                    message: format!("Failed to open provider quota connection: {connect_error}"),
+                })?;
+                mark_provider_quota_ready_seaorm(&connection, db.backend(), &target).await
+            }
+        })?;
+        circuit_breaker.record_success(target.channel_id, target.actual_model_id.as_str());
 
         Ok(OpenAiV1ExecutionResponse {
             status,
@@ -801,7 +929,7 @@ impl SqliteOpenAiV1Service {
         route_format: &str,
         upstream_method: reqwest::Method,
         targets: Vec<SelectedOpenAiTarget>,
-        upstream_body: &Value,
+        upstream_body: &OpenAiRequestBody,
         upstream_headers: &HashMap<String, String>,
         data_storage_id: Option<i64>,
         upstream_url_for_target: UrlBuilder,
@@ -828,11 +956,7 @@ impl SqliteOpenAiV1Service {
             serde_json::to_string(&request.body).map_err(|error| OpenAiV1Error::Internal {
                 message: format!("Failed to serialize request body: {error}"),
             })?;
-        let stream = request
-            .body
-            .get("stream")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+        let stream = request.body.stream_flag();
 
         let request_id = self
             .foundation
@@ -869,15 +993,32 @@ impl SqliteOpenAiV1Service {
         for (index, target) in targets.iter().enumerate() {
             let mut same_channel_attempts = 0;
             loop {
-                let attempt_upstream_body = if upstream_body.is_null() {
-                    Value::Null
-                } else {
-                    rewrite_model(upstream_body, target.actual_model_id.as_str())
+                let prepared_attempt = match self.foundation.seaorm().run_sync({
+                    let upstream_body = upstream_body.clone();
+                    let upstream_headers = upstream_headers.clone();
+                    let actual_model_id = target.actual_model_id.clone();
+                    let api_key = target.api_key.clone();
+                    move |db| async move {
+                        let connection = db.connect_migrated().await.map_err(|error| OpenAiV1Error::Internal {
+                            message: format!("Failed to open prompt protection connection: {error}"),
+                        })?;
+                        prepare_outbound_request_with_prompt_protection(
+                            &connection,
+                            db.backend(),
+                            &upstream_body,
+                            &upstream_headers,
+                            actual_model_id.as_str(),
+                            api_key.as_str(),
+                        )
+                        .await
+                    }
+                }) {
+                    Ok(prepared_attempt) => prepared_attempt,
+                    Err(error) => {
+                        self.mark_request_failed(request_id, Some(target.channel_id), None, None)?;
+                        return Err(error);
+                    }
                 };
-                let attempt_upstream_body_json = serde_json::to_string(&attempt_upstream_body)
-                    .map_err(|error| OpenAiV1Error::Internal {
-                        message: format!("Failed to serialize upstream request body: {error}"),
-                    })?;
 
                 self.foundation
                     .requests()
@@ -901,7 +1042,7 @@ impl SqliteOpenAiV1Service {
                         external_id: None,
                         model_id: target.actual_model_id.as_str(),
                         format: route_format,
-                        request_body_json: attempt_upstream_body_json.as_str(),
+                        request_body_json: prepared_attempt.body_json.as_str(),
                         response_body_json: None,
                         response_chunks_json: None,
                         error_message: "",
@@ -924,19 +1065,18 @@ impl SqliteOpenAiV1Service {
                 };
 
                 let attempt_result = (|| -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-                    let built_headers = super::openai_v1::build_upstream_headers(
-                        upstream_headers,
-                        target.api_key.as_str(),
-                    )?;
                     let client = reqwest::blocking::Client::new();
                     let mut upstream_request = client
                         .request(
                             upstream_method.clone(),
                             upstream_url_for_target(target).as_str(),
                         )
-                        .headers(built_headers);
+                        .headers(prepared_attempt.headers.clone());
                     if matches!(upstream_method, reqwest::Method::POST) {
-                        upstream_request = upstream_request.json(&attempt_upstream_body);
+                        upstream_request = apply_blocking_upstream_request_body(
+                            upstream_request,
+                            &prepared_attempt.body,
+                        )?;
                     }
                     let upstream_response = upstream_request.send().map_err(|error| {
                         OpenAiV1Error::Internal {
@@ -969,6 +1109,7 @@ impl SqliteOpenAiV1Service {
                             status,
                             response_body,
                             usage,
+                            &self.circuit_breaker,
                         )
                     } else {
                         Err(OpenAiV1Error::Upstream {
@@ -981,6 +1122,20 @@ impl SqliteOpenAiV1Service {
                 match attempt_result {
                     Ok(response) => return Ok(response),
                     Err(error) => {
+                        if self.should_retry(&error) {
+                            self.circuit_breaker
+                                .record_failure(target.channel_id, target.actual_model_id.as_str());
+                        }
+                        self.foundation.seaorm().run_sync({
+                            let target = target.clone();
+                            let error = error.clone();
+                            move |db| async move {
+                                let connection = db.connect_migrated().await.map_err(|connect_error| OpenAiV1Error::Internal {
+                                    message: format!("Failed to open provider quota connection: {connect_error}"),
+                                })?;
+                                maybe_persist_provider_quota_error_seaorm(&connection, &target, &error).await
+                            }
+                        })?;
                         let (response_body, response_status_code, external_id) = match &error {
                             OpenAiV1Error::Upstream { status, body } => (
                                 Some(body),
@@ -1062,6 +1217,7 @@ impl SqliteOpenAiV1Service {
                 prepared.channel_type,
                 prepared.model_type,
                 None,
+                &self.circuit_breaker,
             )
             .map_err(|error| OpenAiV1Error::Internal {
                 message: format!("Failed to resolve upstream target: {error}"),
@@ -1084,8 +1240,24 @@ impl SqliteOpenAiV1Service {
     }
 }
 
+fn provider_channel_is_blocked(connection: &Connection, channel_id: i64) -> SqlResult<bool> {
+    let row: Option<(String, i64)> = connection
+        .query_row(
+            "SELECT status, ready FROM provider_quota_statuses WHERE channel_id = ?1 LIMIT 1",
+            [channel_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    Ok(row.is_some_and(|(status, ready)| ready == 0 || status.eq_ignore_ascii_case("exhausted")))
+}
+
 impl OpenAiV1Port for SqliteOpenAiV1Service {
-    fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error> {
+    fn list_models(
+        &self,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<ModelListResponse, OpenAiV1Error> {
+        require_api_key_scope(api_key, SCOPE_READ_CHANNELS).map_err(sqlite_authz_openai_error)?;
         let models = self
             .foundation
             .channel_models()
@@ -1168,7 +1340,10 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
         route: OpenAiV1Route,
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+        require_api_key_scope(&request.api_key, SCOPE_WRITE_REQUESTS)
+            .map_err(sqlite_authz_openai_error)?;
         validate_openai_request(route, &request.body)?;
+        let request_model_id = request_model_id(&request.body)?;
 
         let targets = self.select_target_channels(&request, route)?;
         let data_storage_id = self
@@ -1178,19 +1353,13 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
             .map_err(|error| OpenAiV1Error::Internal {
                 message: format!("Failed to load data storage configuration: {error}"),
             })?;
-
-        let upstream_body = rewrite_model(&request.body, targets[0].actual_model_id.as_str());
         self.execute_shared_route(
             &request,
-            request
-                .body
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
+            request_model_id.as_str(),
             route.format(),
             reqwest::Method::POST,
             targets,
-            &upstream_body,
+            &request.body,
             &request.headers,
             data_storage_id,
             |target| target.upstream_url(route),
@@ -1227,6 +1396,7 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
                     prepared.channel_type,
                     prepared.model_type,
                     None,
+                    &self.circuit_breaker,
                 )
                 .map_err(|error| OpenAiV1Error::Internal {
                     message: format!("Failed to resolve upstream target: {error}"),
@@ -1242,11 +1412,6 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
             });
         }
 
-        let upstream_body = if prepared.upstream_body.is_null() {
-            Value::Null
-        } else {
-            rewrite_model(&prepared.upstream_body, targets[0].actual_model_id.as_str())
-        };
         let route_task_id = prepared.task_id.clone();
         self.execute_shared_route(
             &request,
@@ -1254,7 +1419,7 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
             route.format(),
             compatibility_upstream_method(route),
             targets,
-            &upstream_body,
+            &OpenAiRequestBody::Json(prepared.upstream_body.clone()),
             &request.headers,
             data_storage_id,
             move |target| compatibility_upstream_url(target, route, route_task_id.as_deref()),
@@ -1262,11 +1427,224 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
             |response_body| compatibility_usage(route, response_body),
         )
     }
+
+    fn create_realtime_session(
+        &self,
+        request: RealtimeSessionCreateRequest,
+    ) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+        validate_realtime_session_transport(&request)?;
+        self.foundation.seaorm().run_sync({
+            let api_key_id = request.api_key_id;
+            move |db| async move {
+                let connection = db.connect_migrated().await.map_err(|error| OpenAiV1Error::Internal {
+                    message: format!("Failed to open quota database connection: {error}"),
+                })?;
+                enforce_api_key_quota_seaorm(&connection, db.backend(), api_key_id).await
+            }
+        })?;
+
+        let metadata_json = build_realtime_session_metadata(
+            &request.transport.model,
+            request.client_ip.as_deref(),
+            request.request_id.as_deref(),
+            request.transport.metadata.clone(),
+        )?;
+        let metadata_json = attach_realtime_context_metadata(
+            metadata_json,
+            request.thread.as_ref().map(|thread| thread.thread_id.as_str()),
+            request.trace.as_ref().map(|trace| trace.trace_id.as_str()),
+        )?;
+        let request_body_json = serde_json::to_string(&request.transport).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to serialize realtime session request: {error}"),
+        })?;
+        let request_id = self
+            .foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: request.api_key_id,
+                project_id: request.project.id,
+                trace_id: request.trace.as_ref().map(|trace| trace.id),
+                data_storage_id: self.foundation.system_settings().default_data_storage_id().map_err(|error| OpenAiV1Error::Internal {
+                    message: format!("Failed to load data storage configuration: {error}"),
+                })?,
+                source: "api",
+                model_id: request.transport.model.as_str(),
+                format: realtime_route_format(request.transport.transport.as_str()),
+                request_headers_json: "{}",
+                request_body_json: request_body_json.as_str(),
+                response_body_json: None,
+                response_chunks_json: None,
+                channel_id: request.transport.channel_id,
+                external_id: None,
+                status: "processing",
+                stream: false,
+                client_ip: request.client_ip.as_deref().unwrap_or(""),
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .map_err(|error| OpenAiV1Error::Internal {
+                message: format!("Failed to persist realtime request: {error}"),
+            })?;
+
+        let session_id = generate_realtime_session_id()?;
+        let connection = self.foundation.open_connection(true).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to open realtime session database: {error}"),
+        })?;
+        ensure_prompt_tables(&connection).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to ensure prompt protection tables: {error}"),
+        })?;
+        ensure_request_tables(&connection).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to ensure realtime session schema: {error}"),
+        })?;
+        connection.execute(
+            "INSERT INTO realtime_sessions (project_id, thread_id, trace_id, request_id, api_key_id, channel_id, session_id, transport, status, metadata, opened_at, last_activity_at, closed_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open', ?9, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, ?10)",
+            params![
+                request.project.id,
+                request.thread.as_ref().map(|thread| thread.id),
+                request.trace.as_ref().map(|trace| trace.id),
+                request_id,
+                request.api_key_id,
+                request.transport.channel_id,
+                session_id,
+                request.transport.transport,
+                metadata_json,
+                request.transport.expires_at,
+            ],
+        ).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to insert realtime session: {error}"),
+        })?;
+
+        let record = <Self as OpenAiV1Port>::get_realtime_session(self, &session_id)?
+            .ok_or_else(|| OpenAiV1Error::Internal {
+                message: "Realtime session was created but could not be reloaded".to_owned(),
+            })?;
+        let response_body_json = serde_json::to_string(&record).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to serialize realtime session response: {error}"),
+        })?;
+        self.foundation
+            .requests()
+            .update_request_result(&UpdateRequestResultRecord {
+                request_id,
+                status: "completed",
+                external_id: Some(record.session_id.as_str()),
+                response_body_json: Some(response_body_json.as_str()),
+                channel_id: record.channel_id,
+            })
+            .map_err(|error| OpenAiV1Error::Internal {
+                message: format!("Failed to finalize realtime request: {error}"),
+            })?;
+        Ok(record)
+    }
+
+    fn get_realtime_session(&self, session_id: &str) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        let connection = self.foundation.open_connection(true).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to open realtime session database: {error}"),
+        })?;
+        ensure_prompt_tables(&connection).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to ensure prompt protection tables: {error}"),
+        })?;
+        ensure_request_tables(&connection).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to ensure realtime session schema: {error}"),
+        })?;
+        let row = connection.query_row(
+            "SELECT id, project_id, thread_id, trace_id, request_id, api_key_id, channel_id, session_id, transport, status, metadata, opened_at, last_activity_at, closed_at, expires_at
+             FROM realtime_sessions WHERE session_id = ?1 LIMIT 1",
+            [session_id],
+            |row| {
+                Ok(axonhub_db_entity::realtime_sessions::Model {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    thread_id: row.get(2)?,
+                    trace_id: row.get(3)?,
+                    request_id: row.get(4)?,
+                    api_key_id: row.get(5)?,
+                    channel_id: row.get(6)?,
+                    session_id: row.get(7)?,
+                    transport: row.get(8)?,
+                    status: row.get(9)?,
+                    metadata: row.get(10)?,
+                    opened_at: row.get(11)?,
+                    last_activity_at: row.get(12)?,
+                    closed_at: row.get(13)?,
+                    expires_at: row.get(14)?,
+                })
+            },
+        ).optional().map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to query realtime session: {error}"),
+        })?;
+        row.map(realtime_session_record_from_model).transpose()
+    }
+
+    fn update_realtime_session(
+        &self,
+        session_id: &str,
+        patch: RealtimeSessionPatchRequest,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        let existing = <Self as OpenAiV1Port>::get_realtime_session(self, session_id)?;
+        let Some(existing) = existing else {
+            return Ok(None);
+        };
+        validate_realtime_session_patch(existing.status.as_str(), patch.status.as_deref())?;
+
+        let mut metadata = existing.metadata.clone();
+        if let Some(attributes) = patch.metadata {
+            metadata["attributes"] = attributes;
+        }
+        let metadata_json = serde_json::to_string(&metadata).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to serialize realtime session metadata: {error}"),
+        })?;
+        let next_status = patch.status.unwrap_or(existing.status);
+        let closed_at = if matches!(next_status.as_str(), "closed" | "failed") {
+            Some(current_realtime_timestamp())
+        } else {
+            existing.closed_at
+        };
+
+        let connection = self.foundation.open_connection(true).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to open realtime session database: {error}"),
+        })?;
+        ensure_prompt_tables(&connection).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to ensure prompt protection tables: {error}"),
+        })?;
+        ensure_request_tables(&connection).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to ensure realtime session schema: {error}"),
+        })?;
+        connection.execute(
+            "UPDATE realtime_sessions
+             SET status = ?2, metadata = ?3, last_activity_at = CURRENT_TIMESTAMP, closed_at = ?4, expires_at = COALESCE(?5, expires_at)
+             WHERE session_id = ?1",
+            params![session_id, next_status, metadata_json, closed_at, patch.expires_at],
+        ).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to update realtime session: {error}"),
+        })?;
+        <Self as OpenAiV1Port>::get_realtime_session(self, session_id)
+    }
+
+    fn delete_realtime_session(&self, session_id: &str) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::update_realtime_session(
+            self,
+            session_id,
+            RealtimeSessionPatchRequest {
+                status: Some("closed".to_owned()),
+                metadata: None,
+                expires_at: None,
+            },
+        )
+    }
 }
 
 impl OpenAiV1Repository for SqliteOpenAiV1Service {
-    fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error> {
-        <Self as OpenAiV1Port>::list_models(self, include)
+    fn list_models(
+        &self,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<ModelListResponse, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::list_models(self, include, api_key)
     }
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
@@ -1291,6 +1669,35 @@ impl OpenAiV1Repository for SqliteOpenAiV1Service {
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
         <Self as OpenAiV1Port>::execute_compatibility(self, route, request)
+    }
+
+    fn create_realtime_session(
+        &self,
+        request: RealtimeSessionCreateRequest,
+    ) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::create_realtime_session(self, request)
+    }
+
+    fn get_realtime_session(&self, session_id: &str) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::get_realtime_session(self, session_id)
+    }
+
+    fn update_realtime_session(
+        &self,
+        session_id: &str,
+        patch: RealtimeSessionPatchRequest,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::update_realtime_session(self, session_id, patch)
+    }
+
+    fn delete_realtime_session(&self, session_id: &str) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::delete_realtime_session(self, session_id)
+    }
+}
+
+fn sqlite_authz_openai_error(error: AuthzFailure) -> OpenAiV1Error {
+    OpenAiV1Error::InvalidRequest {
+        message: error.message().to_owned(),
     }
 }
 

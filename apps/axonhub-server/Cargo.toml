@@ -25,6 +25,7 @@ opentelemetry-stdout.workspace = true
 opentelemetry_sdk.workspace = true
 postgres.workspace = true
 reqwest.workspace = true
+regex = "1.11.1"
 rusqlite.workspace = true
 sea-orm.workspace = true
 serde.workspace = true

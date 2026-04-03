@@ -2,6 +2,101 @@ use axonhub_http::{AuthApiKeyContext, AuthUserContext};
 pub(crate) const SYSTEM_ROLE_PROJECT_ID: i64 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthzPrincipalKind {
+    User,
+    ApiKey,
+}
+
+impl AuthzPrincipalKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::ApiKey => "api_key",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BypassBoundary {
+    Owner,
+}
+
+impl BypassBoundary {
+    pub(crate) const fn reason(self) -> &'static str {
+        match self {
+            Self::Owner => "owner_bypass",
+        }
+    }
+
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::Owner => "permission denied: owner access required",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthzFailure {
+    MissingScope {
+        principal: AuthzPrincipalKind,
+        scope: ScopeSlug,
+    },
+    MissingProjectScope {
+        principal: AuthzPrincipalKind,
+        project_id: i64,
+        scope: ScopeSlug,
+    },
+    MissingBypass {
+        principal: AuthzPrincipalKind,
+        bypass: BypassBoundary,
+    },
+}
+
+impl AuthzFailure {
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::MissingScope { .. } | Self::MissingProjectScope { .. } => "permission denied",
+            Self::MissingBypass { bypass, .. } => bypass.message(),
+        }
+    }
+
+    pub(crate) fn audit_reason(self) -> String {
+        match self {
+            Self::MissingScope { principal, scope } => {
+                format!("missing_scope:{}:{}", principal.as_str(), scope.as_str())
+            }
+            Self::MissingProjectScope {
+                principal,
+                project_id,
+                scope,
+            } => format!(
+                "missing_project_scope:{}:{}:{}",
+                principal.as_str(),
+                project_id,
+                scope.as_str()
+            ),
+            Self::MissingBypass { principal, bypass } => {
+                format!("missing_bypass:{}:{}", principal.as_str(), bypass.reason())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AuditBypassBoundary {
+    pub(crate) bypass: BypassBoundary,
+    pub(crate) principal: AuthzPrincipalKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AdminAuthorizationOutcome {
+    Allowed,
+    Bypass(AuditBypassBoundary),
+}
+
+pub(crate) type AuthzResult<T> = Result<T, AuthzFailure>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScopeLevel {
     System,
     Project,
@@ -260,21 +355,12 @@ pub(crate) fn serialize_scope_slugs(scopes: &[ScopeSlug]) -> Result<String, serd
     serde_json::to_string(&scope_strings(scopes))
 }
 
-pub(crate) fn contains_scope(scopes: &[String], scope: ScopeSlug) -> bool {
-    scopes.iter().any(|current| current == scope.as_str())
-}
-
 pub(crate) fn api_key_has_scope(api_key: &AuthApiKeyContext, scope: ScopeSlug) -> bool {
-    contains_scope(&api_key.scopes, scope)
+    api_key.has_scope(scope.as_str())
 }
 
 pub(crate) fn user_has_system_scope(user: &AuthUserContext, scope: ScopeSlug) -> bool {
-    user.is_owner
-        || contains_scope(&user.scopes, scope)
-        || user
-            .roles
-            .iter()
-            .any(|role| contains_scope(&role.scopes, scope))
+    user.has_system_scope(scope.as_str())
 }
 
 pub(crate) fn user_has_project_scope(
@@ -282,19 +368,92 @@ pub(crate) fn user_has_project_scope(
     project_id: i64,
     scope: ScopeSlug,
 ) -> bool {
+    user.has_project_scope(project_id, scope.as_str())
+}
+
+pub(crate) fn require_user_system_scope(
+    user: &AuthUserContext,
+    scope: ScopeSlug,
+) -> AuthzResult<()> {
+    if user_has_system_scope(user, scope) {
+        Ok(())
+    } else {
+        Err(AuthzFailure::MissingScope {
+            principal: AuthzPrincipalKind::User,
+            scope,
+        })
+    }
+}
+
+pub(crate) fn require_user_project_scope(
+    user: &AuthUserContext,
+    project_id: i64,
+    scope: ScopeSlug,
+) -> AuthzResult<()> {
+    if user_has_system_scope(user, scope) || user_has_project_scope(user, project_id, scope) {
+        Ok(())
+    } else {
+        Err(AuthzFailure::MissingProjectScope {
+            principal: AuthzPrincipalKind::User,
+            project_id,
+            scope,
+        })
+    }
+}
+
+pub(crate) fn require_api_key_scope(
+    api_key: &AuthApiKeyContext,
+    scope: ScopeSlug,
+) -> AuthzResult<()> {
+    if api_key_has_scope(api_key, scope) {
+        Ok(())
+    } else {
+        Err(AuthzFailure::MissingScope {
+            principal: AuthzPrincipalKind::ApiKey,
+            scope,
+        })
+    }
+}
+
+pub(crate) fn authorize_user_system_scope(
+    user: &AuthUserContext,
+    scope: ScopeSlug,
+) -> AuthzResult<AdminAuthorizationOutcome> {
     if user.is_owner {
-        return true;
+        return Ok(AdminAuthorizationOutcome::Bypass(AuditBypassBoundary {
+            bypass: BypassBoundary::Owner,
+            principal: AuthzPrincipalKind::User,
+        }));
     }
 
-    user.projects.iter().any(|project| {
-        project.project_id.id == project_id
-            && (project.is_owner
-                || contains_scope(&project.scopes, scope)
-                || project
-                    .roles
-                    .iter()
-                    .any(|role| contains_scope(&role.scopes, scope)))
-    })
+    require_user_system_scope(user, scope)?;
+    Ok(AdminAuthorizationOutcome::Allowed)
+}
+
+pub(crate) fn require_owner_bypass(user: &AuthUserContext) -> AuthzResult<AuditBypassBoundary> {
+    if user.is_owner {
+        Ok(AuditBypassBoundary {
+            bypass: BypassBoundary::Owner,
+            principal: AuthzPrincipalKind::User,
+        })
+    } else {
+        Err(AuthzFailure::MissingBypass {
+            principal: AuthzPrincipalKind::User,
+            bypass: BypassBoundary::Owner,
+        })
+    }
+}
+
+pub(crate) fn require_service_api_key_write_access(api_key: &AuthApiKeyContext) -> AuthzResult<()> {
+    require_api_key_scope(api_key, SCOPE_WRITE_API_KEYS)?;
+    if api_key.is_service_account() {
+        Ok(())
+    } else {
+        Err(AuthzFailure::MissingScope {
+            principal: AuthzPrincipalKind::ApiKey,
+            scope: SCOPE_WRITE_API_KEYS,
+        })
+    }
 }
 
 pub(crate) fn is_system_role_assignment(project_id: i64, level: &str) -> bool {
@@ -427,5 +586,89 @@ mod tests {
             ROLE_LEVEL_SYSTEM.as_str(),
             7
         ));
+    }
+
+    #[test]
+    fn admin_authorization_outcome_tracks_owner_bypass_boundary() {
+        let mut user = user_with_context();
+        user.is_owner = true;
+
+        let outcome = authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).unwrap();
+        assert_eq!(
+            outcome,
+            AdminAuthorizationOutcome::Bypass(AuditBypassBoundary {
+                bypass: BypassBoundary::Owner,
+                principal: AuthzPrincipalKind::User,
+            })
+        );
+    }
+
+    #[test]
+    fn user_project_scope_requirement_rejects_missing_project_membership_scope() {
+        let user = user_with_context();
+        let error = require_user_project_scope(&user, 7, SCOPE_READ_REQUESTS).unwrap_err();
+        assert_eq!(
+            error,
+            AuthzFailure::MissingProjectScope {
+                principal: AuthzPrincipalKind::User,
+                project_id: 7,
+                scope: SCOPE_READ_REQUESTS,
+            }
+        );
+        assert_eq!(error.message(), "permission denied");
+    }
+
+    #[test]
+    fn service_api_key_write_access_requires_service_account_and_scope() {
+        let user_key = AuthApiKeyContext {
+            id: 1,
+            key: "user-key".to_owned(),
+            name: "User Key".to_owned(),
+            key_type: ApiKeyType::User,
+            project: ProjectContext {
+                id: 7,
+                name: "Default Project".to_owned(),
+                status: "active".to_owned(),
+            },
+            scopes: scope_strings(&[SCOPE_WRITE_API_KEYS]),
+        };
+        assert_eq!(
+            require_service_api_key_write_access(&user_key).unwrap_err(),
+            AuthzFailure::MissingScope {
+                principal: AuthzPrincipalKind::ApiKey,
+                scope: SCOPE_WRITE_API_KEYS,
+            }
+        );
+
+        let service_key = AuthApiKeyContext {
+            key_type: ApiKeyType::ServiceAccount,
+            ..user_key
+        };
+        assert!(require_service_api_key_write_access(&service_key).is_ok());
+    }
+
+    #[test]
+    fn authz_failure_audit_reasons_are_stable_and_auditable() {
+        let missing_owner = AuthzFailure::MissingBypass {
+            principal: AuthzPrincipalKind::User,
+            bypass: BypassBoundary::Owner,
+        };
+        assert_eq!(
+            missing_owner.message(),
+            "permission denied: owner access required"
+        );
+        assert_eq!(
+            missing_owner.audit_reason(),
+            "missing_bypass:user:owner_bypass"
+        );
+
+        let missing_scope = AuthzFailure::MissingScope {
+            principal: AuthzPrincipalKind::ApiKey,
+            scope: SCOPE_WRITE_API_KEYS,
+        };
+        assert_eq!(
+            missing_scope.audit_reason(),
+            "missing_scope:api_key:write_api_keys"
+        );
     }
 }

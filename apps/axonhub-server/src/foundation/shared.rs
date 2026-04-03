@@ -8,6 +8,7 @@ pub(crate) const SYSTEM_KEY_VERSION: &str = "system_version";
 pub(crate) const SYSTEM_KEY_SECRET_KEY: &str = "system_jwt_secret_key";
 pub(crate) const SYSTEM_KEY_BRAND_NAME: &str = "system_brand_name";
 pub(crate) const SYSTEM_KEY_DEFAULT_DATA_STORAGE: &str = "default_data_storage_id";
+pub(crate) const SYSTEM_KEY_ONBOARDED: &str = "system_onboarded";
 pub(crate) const SYSTEM_KEY_STORAGE_POLICY: &str = "storage_policy";
 pub(crate) const SYSTEM_KEY_CHANNEL_SETTINGS: &str = "system_channel_settings";
 pub(crate) const SYSTEM_KEY_MODEL_SETTINGS: &str = "system_model_settings";
@@ -267,6 +268,59 @@ CREATE TABLE IF NOT EXISTS request_executions (
     metrics_latency_ms INTEGER,
     metrics_first_token_latency_ms INTEGER,
     request_headers TEXT NOT NULL DEFAULT '{}'
+);
+";
+
+pub(crate) const REALTIME_SESSIONS_TABLE_SQL: &str = "
+CREATE TABLE IF NOT EXISTS realtime_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    thread_id INTEGER,
+    trace_id INTEGER,
+    request_id INTEGER,
+    api_key_id INTEGER,
+    channel_id INTEGER,
+    session_id TEXT NOT NULL UNIQUE,
+    transport TEXT NOT NULL,
+    status TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    opened_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_activity_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at TEXT,
+    expires_at TEXT
+);
+";
+
+pub(crate) const PROMPTS_TABLE_SQL: &str = "
+CREATE TABLE IF NOT EXISTS prompts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at INTEGER NOT NULL DEFAULT 0,
+    project_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'disabled',
+    \"order\" INTEGER NOT NULL DEFAULT 0,
+    settings TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(project_id, name, deleted_at)
+);
+";
+
+pub(crate) const PROMPT_PROTECTION_RULES_TABLE_SQL: &str = "
+CREATE TABLE IF NOT EXISTS prompt_protection_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at INTEGER NOT NULL DEFAULT 0,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    pattern TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'disabled',
+    settings TEXT NOT NULL,
+    UNIQUE(name, deleted_at)
 );
 ";
 

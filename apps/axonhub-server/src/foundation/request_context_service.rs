@@ -6,7 +6,10 @@ use axonhub_http::{
 pub(crate) use super::request_context_sqlite_support::SqliteRequestContextService;
 use super::{
     ports::RequestContextRepository,
-    repositories::request_context::{SeaOrmTraceContextRepository, TraceContextRepository},
+    repositories::request_context::{
+        validate_trace_thread_association, SeaOrmTraceContextRepository, TraceContextRepository,
+    },
+    request_context::{normalize_context_key, thread_belongs_to_project},
     seaorm::SeaOrmConnectionFactory,
 };
 
@@ -35,9 +38,9 @@ impl RequestContextPort for SeaOrmRequestContextService {
         project_id: i64,
         thread_id: &str,
     ) -> Result<Option<ThreadContext>, ContextResolveError> {
-        let thread_id = thread_id.trim().to_owned();
+        let thread_id = normalize_context_key(thread_id);
         if let Some(existing) = self.repository.query_thread(&thread_id)? {
-            if existing.project_id == project_id {
+            if thread_belongs_to_project(&existing, project_id) {
                 return Ok(Some(existing));
             }
             return Err(ContextResolveError::Internal);
@@ -57,15 +60,27 @@ impl RequestContextPort for SeaOrmRequestContextService {
         trace_id: &str,
         thread_db_id: Option<i64>,
     ) -> Result<Option<TraceContext>, ContextResolveError> {
-        let trace_id = trace_id.trim().to_owned();
+        let trace_id = normalize_context_key(trace_id);
+        let thread = match thread_db_id {
+            Some(thread_db_id) => Some(
+                self.repository
+                    .query_thread_by_db_id(thread_db_id)?
+                    .ok_or(ContextResolveError::Internal)?,
+            ),
+            None => None,
+        };
+
         if let Some(existing) = self.repository.query_trace(&trace_id)? {
-            if existing.project_id == project_id
-                && (thread_db_id.is_none() || existing.thread_id == thread_db_id)
-            {
-                return Ok(Some(existing));
-            }
-            return Err(ContextResolveError::Internal);
+            validate_trace_thread_association(
+                project_id,
+                thread.as_ref(),
+                Some(&existing),
+                thread_db_id,
+            )?;
+            return Ok(Some(existing));
         }
+
+        validate_trace_thread_association(project_id, thread.as_ref(), None, thread_db_id)?;
 
         let id = self
             .repository

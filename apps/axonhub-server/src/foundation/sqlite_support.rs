@@ -10,8 +10,8 @@ use rusqlite::{
     Result as SqlResult, Transaction,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter,
-    QueryOrder, Set, TransactionTrait,
+    ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set, TransactionTrait,
 };
 use std::sync::Arc;
 
@@ -29,14 +29,16 @@ use super::{
         DEFAULT_SERVICE_API_KEY_NAME, DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_NAME,
         DEFAULT_USER_API_KEY_VALUE, MODELS_TABLE_SQL, NO_AUTH_API_KEY_NAME,
         NO_AUTH_API_KEY_VALUE, PRIMARY_DATA_STORAGE_DESCRIPTION, PRIMARY_DATA_STORAGE_NAME,
-        PRIMARY_DATA_STORAGE_SETTINGS_JSON, PROJECTS_TABLE_SQL,
-        PROVIDER_QUOTA_STATUSES_TABLE_SQL, REQUESTS_TABLE_SQL, REQUEST_EXECUTIONS_TABLE_SQL,
+        PRIMARY_DATA_STORAGE_SETTINGS_JSON, PROJECTS_TABLE_SQL, PROMPTS_TABLE_SQL,
+        PROMPT_PROTECTION_RULES_TABLE_SQL,
+        PROVIDER_QUOTA_STATUSES_TABLE_SQL, REALTIME_SESSIONS_TABLE_SQL, REQUESTS_TABLE_SQL, REQUEST_EXECUTIONS_TABLE_SQL,
         ROLES_TABLE_SQL, SYSTEMS_TABLE_SQL, SYSTEM_KEY_BRAND_NAME,
         SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_INITIALIZED, SYSTEM_KEY_SECRET_KEY,
-        SYSTEM_KEY_VERSION, THREADS_TABLE_SQL, TRACES_TABLE_SQL, USAGE_LOGS_TABLE_SQL,
+        SYSTEM_KEY_ONBOARDED, SYSTEM_KEY_VERSION, THREADS_TABLE_SQL, TRACES_TABLE_SQL, USAGE_LOGS_TABLE_SQL,
         USERS_TABLE_SQL, USER_PROJECTS_TABLE_SQL, USER_ROLES_TABLE_SQL,
     },
 };
+use crate::foundation::request_context::{OnboardingRecord, serialize_onboarding_record};
 
 pub(crate) type SeaOrmDbFactory = SeaOrmConnectionFactory;
 
@@ -310,6 +312,10 @@ impl SystemBootstrapPort for SqliteBootstrapService {
             SYSTEM_KEY_DEFAULT_DATA_STORAGE,
             &primary_data_storage_id.to_string(),
         )?;
+        let onboarding = default_onboarding_record();
+        let onboarding = serialize_onboarding_record(&onboarding)
+            .map_err(|error| SystemInitializeError::InitializeFailed(error.to_string()))?;
+        upsert_system_value(&tx, SYSTEM_KEY_ONBOARDED, &onboarding)?;
         upsert_system_value(&tx, SYSTEM_KEY_INITIALIZED, "true")?;
 
         tx.commit()
@@ -366,6 +372,10 @@ pub(crate) async fn seaorm_initialize(
         &primary_data_storage_id.to_string(),
     )
     .await?;
+    let onboarding = default_onboarding_record();
+    let onboarding = serialize_onboarding_record(&onboarding)
+        .map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
+    upsert_system_value_seaorm(&tx, engine, SYSTEM_KEY_ONBOARDED, &onboarding).await?;
     upsert_system_value_seaorm(&tx, engine, SYSTEM_KEY_INITIALIZED, "true").await?;
 
     tx.commit().await
@@ -400,16 +410,23 @@ pub(crate) async fn upsert_system_value_seaorm<C>(
 where
     C: ConnectionTrait,
 {
-    let existing = systems::Entity::find()
+    let existing_id = systems::Entity::find()
         .filter(systems::Column::Key.eq(key))
+        .select_only()
+        .column(systems::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?;
 
-    if let Some(existing) = existing {
-        let mut active_model: systems::ActiveModel = existing.into();
-        active_model.value = Set(value.to_owned());
-        active_model.deleted_at = Set(0_i64);
-        active_model.update(db).await?;
+    if let Some(existing_id) = existing_id {
+        systems::Entity::update(systems::ActiveModel {
+            id: Set(existing_id),
+            value: Set(value.to_owned()),
+            deleted_at: Set(0_i64),
+            ..Default::default()
+        })
+        .exec(db)
+        .await?;
         return Ok(());
     }
 
@@ -431,13 +448,16 @@ pub(crate) async fn ensure_primary_data_storage_seaorm<C>(
 where
     C: ConnectionTrait,
 {
-    if let Some(storage) = data_storages::Entity::find()
+    if let Some(storage_id) = data_storages::Entity::find()
         .filter(data_storages::Column::PrimaryFlag.eq(true))
         .filter(data_storages::Column::DeletedAt.eq(0_i64))
+        .select_only()
+        .column(data_storages::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?
     {
-        return Ok(storage.id);
+        return Ok(storage_id);
     }
 
     data_storages::Entity::insert(data_storages::ActiveModel {
@@ -458,9 +478,11 @@ where
         .filter(data_storages::Column::Name.eq(PRIMARY_DATA_STORAGE_NAME))
         .filter(data_storages::Column::DeletedAt.eq(0_i64))
         .order_by_desc(data_storages::Column::Id)
+        .select_only()
+        .column(data_storages::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?
-        .map(|storage| storage.id)
         .ok_or_else(|| {
             sea_orm::DbErr::Custom("missing inserted primary data storage".to_owned())
         })
@@ -480,13 +502,16 @@ pub(crate) async fn ensure_owner_user_seaorm<C>(
 where
     C: ConnectionTrait,
 {
-    if let Some(user) = users::Entity::find()
+    if let Some(user_id) = users::Entity::find()
         .filter(users::Column::IsOwner.eq(true))
         .filter(users::Column::DeletedAt.eq(0_i64))
+        .select_only()
+        .column(users::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?
     {
-        return Ok(user.id);
+        return Ok(user_id);
     }
 
     let password_hash =
@@ -510,9 +535,11 @@ where
     users::Entity::find()
         .filter(users::Column::Email.eq(request.owner_email.trim()))
         .filter(users::Column::DeletedAt.eq(0_i64))
+        .select_only()
+        .column(users::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?
-        .map(|user| user.id)
         .ok_or_else(|| sea_orm::DbErr::Custom("missing inserted owner user".to_owned()))
 }
 
@@ -523,13 +550,16 @@ pub(crate) async fn ensure_default_project_seaorm<C>(
 where
     C: ConnectionTrait,
 {
-    if let Some(project) = projects::Entity::find()
+    if let Some(project_id) = projects::Entity::find()
         .filter(projects::Column::DeletedAt.eq(0_i64))
         .order_by_asc(projects::Column::Id)
+        .select_only()
+        .column(projects::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?
     {
-        return Ok(project.id);
+        return Ok(project_id);
     }
 
     projects::Entity::insert(projects::ActiveModel {
@@ -548,9 +578,11 @@ where
         .filter(projects::Column::Status.eq("active"))
         .filter(projects::Column::DeletedAt.eq(0_i64))
         .order_by_desc(projects::Column::Id)
+        .select_only()
+        .column(projects::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?
-        .map(|project| project.id)
         .ok_or_else(|| sea_orm::DbErr::Custom("missing inserted default project".to_owned()))
 }
 
@@ -563,16 +595,23 @@ pub(crate) async fn ensure_owner_project_membership_seaorm<C>(
 where
     C: ConnectionTrait,
 {
-    let existing = user_projects::Entity::find()
+    let existing_id = user_projects::Entity::find()
         .filter(user_projects::Column::UserId.eq(user_id))
         .filter(user_projects::Column::ProjectId.eq(project_id))
+        .select_only()
+        .column(user_projects::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?;
 
-    if let Some(existing) = existing {
-        let mut active_model: user_projects::ActiveModel = existing.into();
-        active_model.is_owner = Set(true);
-        active_model.update(db).await?;
+    if let Some(existing_id) = existing_id {
+        user_projects::Entity::update(user_projects::ActiveModel {
+            id: Set(existing_id),
+            is_owner: Set(true),
+            ..Default::default()
+        })
+        .exec(db)
+        .await?;
         return Ok(());
     }
 
@@ -615,18 +654,25 @@ where
 {
     let scopes_json = serialize_scope_slugs(scopes)
         .map_err(|error| sea_orm::DbErr::Custom(format!("failed to serialize scopes: {error}")))?;
-    let existing = roles::Entity::find()
+    let existing_id = roles::Entity::find()
         .filter(roles::Column::ProjectId.eq(project_id))
         .filter(roles::Column::Name.eq(name))
+        .select_only()
+        .column(roles::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?;
 
-    if let Some(existing) = existing {
-        let mut active_model: roles::ActiveModel = existing.into();
-        active_model.level = Set(level.as_str().to_owned());
-        active_model.scopes = Set(scopes_json);
-        active_model.deleted_at = Set(0_i64);
-        active_model.update(db).await?;
+    if let Some(existing_id) = existing_id {
+        roles::Entity::update(roles::ActiveModel {
+            id: Set(existing_id),
+            level: Set(level.as_str().to_owned()),
+            scopes: Set(scopes_json),
+            deleted_at: Set(0_i64),
+            ..Default::default()
+        })
+        .exec(db)
+        .await?;
         return Ok(());
     }
 
@@ -673,19 +719,26 @@ where
 {
     let scopes_json = serialize_scope_slugs(scopes)
         .map_err(|error| sea_orm::DbErr::Custom(format!("failed to serialize scopes: {error}")))?;
-    let existing = api_keys::Entity::find()
+    let existing_id = api_keys::Entity::find()
         .filter(api_keys::Column::Key.eq(key))
+        .select_only()
+        .column(api_keys::Column::Id)
+        .into_tuple::<i64>()
         .one(db)
         .await?;
 
-    if let Some(existing) = existing {
-        let mut active_model: api_keys::ActiveModel = existing.into();
-        active_model.name = Set(name.to_owned());
-        active_model.type_field = Set(key_type.to_owned());
-        active_model.status = Set("enabled".to_owned());
-        active_model.scopes = Set(scopes_json);
-        active_model.deleted_at = Set(0_i64);
-        active_model.update(db).await?;
+    if let Some(existing_id) = existing_id {
+        api_keys::Entity::update(api_keys::ActiveModel {
+            id: Set(existing_id),
+            name: Set(name.to_owned()),
+            type_field: Set(key_type.to_owned()),
+            status: Set("enabled".to_owned()),
+            scopes: Set(scopes_json),
+            deleted_at: Set(0_i64),
+            ..Default::default()
+        })
+        .exec(db)
+        .await?;
         return Ok(());
     }
 
@@ -726,6 +779,7 @@ pub(crate) fn ensure_all_foundation_tables(db: &SqlConnection) -> SqlResult<()> 
     ensure_identity_tables(db)?;
     ensure_trace_tables(db)?;
     ensure_channel_model_tables(db)?;
+    ensure_prompt_tables(db)?;
     ensure_request_tables(db)?;
     db.execute_batch(USAGE_LOGS_TABLE_SQL)
 }
@@ -755,7 +809,13 @@ pub(crate) fn ensure_channel_model_tables(db: &SqlConnection) -> SqlResult<()> {
 
 pub(crate) fn ensure_request_tables(db: &SqlConnection) -> SqlResult<()> {
     db.execute_batch(REQUESTS_TABLE_SQL)?;
-    db.execute_batch(REQUEST_EXECUTIONS_TABLE_SQL)
+    db.execute_batch(REQUEST_EXECUTIONS_TABLE_SQL)?;
+    db.execute_batch(REALTIME_SESSIONS_TABLE_SQL)
+}
+
+pub(crate) fn ensure_prompt_tables(db: &SqlConnection) -> SqlResult<()> {
+    db.execute_batch(PROMPTS_TABLE_SQL)?;
+    db.execute_batch(PROMPT_PROTECTION_RULES_TABLE_SQL)
 }
 
 pub(crate) fn ensure_operational_tables(db: &SqlConnection) -> SqlResult<()> {
@@ -1018,4 +1078,8 @@ pub(crate) fn upsert_system_value(
     )
     .map(|_| ())
     .map_err(|error| SystemInitializeError::InitializeFailed(error.to_string()))
+}
+
+fn default_onboarding_record() -> OnboardingRecord {
+    OnboardingRecord::default()
 }

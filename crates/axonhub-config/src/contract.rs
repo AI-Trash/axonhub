@@ -301,6 +301,106 @@ const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
         key: "provider_quota.check_interval",
         description: "Provider quota poll interval",
     },
+    SupportedConfigKey {
+        key: "provider_edge.codex.authorize_url",
+        description: "Codex OAuth authorization URL",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.codex.token_url",
+        description: "Codex OAuth token URL",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.codex.client_id",
+        description: "Codex OAuth client ID",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.codex.redirect_uri",
+        description: "Codex OAuth redirect URI",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.codex.scopes",
+        description: "Codex OAuth scopes",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.codex.user_agent",
+        description: "Codex OAuth user agent",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.claudecode.authorize_url",
+        description: "Claude Code OAuth authorization URL",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.claudecode.token_url",
+        description: "Claude Code OAuth token URL",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.claudecode.client_id",
+        description: "Claude Code OAuth client ID",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.claudecode.redirect_uri",
+        description: "Claude Code OAuth redirect URI",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.claudecode.scopes",
+        description: "Claude Code OAuth scopes",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.claudecode.user_agent",
+        description: "Claude Code OAuth user agent",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.antigravity.authorize_url",
+        description: "Antigravity OAuth authorization URL",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.antigravity.token_url",
+        description: "Antigravity OAuth token URL",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.antigravity.client_id",
+        description: "Antigravity OAuth client ID",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.antigravity.client_secret",
+        description: "Antigravity OAuth client secret",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.antigravity.redirect_uri",
+        description: "Antigravity OAuth redirect URI",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.antigravity.scopes",
+        description: "Antigravity OAuth scopes",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.antigravity.load_endpoints",
+        description: "Antigravity project lookup endpoints",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.antigravity.user_agent",
+        description: "Antigravity OAuth user agent",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.antigravity.client_metadata",
+        description: "Antigravity OAuth client metadata JSON",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.copilot.device_code_url",
+        description: "Copilot OAuth device-code URL",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.copilot.access_token_url",
+        description: "Copilot OAuth access-token URL",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.copilot.client_id",
+        description: "Copilot OAuth client ID",
+    },
+    SupportedConfigKey {
+        key: "provider_edge.copilot.scope",
+        description: "Copilot OAuth scope",
+    },
 ];
 
 const SUPPORTED_CONFIG_ALIASES: &[SupportedConfigAlias] = &[

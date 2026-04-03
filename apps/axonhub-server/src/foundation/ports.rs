@@ -6,8 +6,9 @@ use axonhub_http::{
     AuthApiKeyContext, AuthUserContext, CompatibilityRoute, ContextResolveError,
     GeminiModelListResponse, GraphqlExecutionResult, GraphqlRequestPayload,
     InitializeSystemRequest, ModelListResponse, OpenAiV1Error, OpenAiV1ExecutionRequest,
-    OpenAiV1ExecutionResponse, OpenAiV1Route, ProjectContext, SignInError, SignInRequest,
-    SignInSuccess, SystemInitializeError, SystemQueryError, ThreadContext, TraceContext,
+    OpenAiV1ExecutionResponse, OpenAiV1Route, ProjectContext, RealtimeSessionCreateRequest,
+    RealtimeSessionPatchRequest, RealtimeSessionRecord, SignInError, SignInRequest, SignInSuccess,
+    SystemInitializeError, SystemQueryError, ThreadContext, TraceContext,
 };
 
 pub(crate) trait SystemBootstrapRepository: Send + Sync {
@@ -54,7 +55,11 @@ pub(crate) trait RequestContextRepository: Send + Sync {
 }
 
 pub(crate) trait OpenAiV1Repository: Send + Sync {
-    fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error>;
+    fn list_models(
+        &self,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<ModelListResponse, OpenAiV1Error>;
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error>;
 
@@ -71,6 +76,27 @@ pub(crate) trait OpenAiV1Repository: Send + Sync {
         route: CompatibilityRoute,
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error>;
+
+    fn create_realtime_session(
+        &self,
+        request: RealtimeSessionCreateRequest,
+    ) -> Result<RealtimeSessionRecord, OpenAiV1Error>;
+
+    fn get_realtime_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error>;
+
+    fn update_realtime_session(
+        &self,
+        session_id: &str,
+        patch: RealtimeSessionPatchRequest,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error>;
+
+    fn delete_realtime_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error>;
 }
 
 pub(crate) trait AdminRepository: Send + Sync {

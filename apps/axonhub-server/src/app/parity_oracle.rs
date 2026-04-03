@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use actix_web::body::BoxBody;
@@ -21,6 +22,7 @@ use super::capabilities::{
     build_provider_edge_admin_capability, build_request_context_capability,
     build_system_bootstrap_capability,
 };
+use crate::foundation::provider_edge::PROVIDER_EDGE_REQUIRED_ENV_VARS;
 use crate::foundation::shared::{DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE};
 
 #[derive(Deserialize)]
@@ -83,6 +85,9 @@ impl TestApp {
             for (name, value) in headers {
                 let normalized = match (name.as_str(), value.as_str()) {
                     ("X-API-Key", "default-user") => DEFAULT_USER_API_KEY_VALUE,
+                    ("Authorization", "Bearer valid-admin-token") => {
+                        return_with_bearer_token(&self.state)
+                    }
                     _ => value.as_str(),
                 };
                 actix_request = actix_request.insert_header((name.as_str(), normalized));
@@ -90,6 +95,58 @@ impl TestApp {
         }
         let body = request.body.unwrap_or_default().into_bytes();
         Ok(actix_test::call_service(&app, actix_request.set_payload(body).to_request()).await)
+    }
+}
+
+fn return_with_bearer_token(state: &HttpState) -> &'static str {
+    Box::leak(format!("Bearer {}", issue_admin_token_for_fixture(state)).into_boxed_str())
+}
+
+fn issue_admin_token_for_fixture(state: &HttpState) -> String {
+    match &state.identity {
+        axonhub_http::IdentityCapability::Available { identity } => {
+            let request = axonhub_http::SignInRequest {
+                email: "owner@example.com".to_owned(),
+                password: "password123".to_owned(),
+            };
+
+            match identity.admin_signin(&request) {
+                Ok(success) => success.token,
+                Err(axonhub_http::SignInError::InvalidCredentials) => {
+                    bootstrap_state_for_admin_signin(state);
+                    identity
+                        .admin_signin(&request)
+                        .expect("issue admin token for parity fixture after bootstrap")
+                        .token
+                }
+                Err(error) => panic!("issue admin token for parity fixture: {error:?}"),
+            }
+        }
+        axonhub_http::IdentityCapability::Unsupported { message } => {
+            panic!("identity capability unavailable for parity fixture: {message}")
+        }
+    }
+}
+
+fn bootstrap_state_for_admin_signin(state: &HttpState) {
+    match &state.system_bootstrap {
+        axonhub_http::SystemBootstrapCapability::Available { system } => {
+            match system.initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            }) {
+                Ok(()) | Err(axonhub_http::SystemInitializeError::AlreadyInitialized) => {}
+                Err(error) => {
+                    panic!("failed to bootstrap parity fixture before admin signin: {error:?}")
+                }
+            }
+        }
+        axonhub_http::SystemBootstrapCapability::Unsupported { message } => {
+            panic!("system bootstrap unavailable for parity fixture: {message}")
+        }
     }
 }
 
@@ -112,6 +169,11 @@ async fn parity_oracle_emit_suite() {
         "gemini_models_basic" => emit_gemini_models_basic(&suite, fixture).await,
         "provider_edge_codex_start_invalid_json" => {
             emit_provider_edge_codex_start_invalid_json(&suite, fixture).await
+        }
+        "provider_edge_claudecode_start_invalid_json"
+        | "provider_edge_antigravity_start_invalid_json"
+        | "provider_edge_copilot_start_invalid_json" => {
+            emit_http_handler_parity(&suite, fixture).await
         }
         "http_handler_parity" => emit_http_handler_parity(&suite, fixture).await,
         "openapi_graphql_create_llm_api_key" => {
@@ -136,6 +198,143 @@ fn load_fixture(path: &Path) -> OracleFixture {
         "unsupported parity fixture schema version"
     );
     fixture
+}
+
+fn provider_edge_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+struct ProviderEdgeEnvFixture {
+    previous: Vec<(&'static str, Option<String>)>,
+}
+
+impl ProviderEdgeEnvFixture {
+    fn new() -> Self {
+        let previous = PROVIDER_EDGE_REQUIRED_ENV_VARS
+            .iter()
+            .map(|key| (*key, env::var(key).ok()))
+            .collect::<Vec<_>>();
+
+        for key in PROVIDER_EDGE_REQUIRED_ENV_VARS {
+            env::remove_var(key);
+        }
+
+        Self { previous }
+    }
+
+    fn set_all(&self) {
+        for (key, value) in provider_edge_env_values() {
+            env::set_var(key, value);
+        }
+    }
+}
+
+impl Drop for ProviderEdgeEnvFixture {
+    fn drop(&mut self) {
+        for (key, value) in &self.previous {
+            match value {
+                Some(value) => env::set_var(key, value),
+                None => env::remove_var(key),
+            }
+        }
+    }
+}
+
+fn provider_edge_env_values() -> Vec<(&'static str, &'static str)> {
+    vec![
+        (
+            "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
+            "https://example.test/codex/authorize",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CODEX_TOKEN_URL",
+            "https://example.test/codex/token",
+        ),
+        ("AXONHUB_PROVIDER_EDGE_CODEX_CLIENT_ID", "codex-client-id"),
+        (
+            "AXONHUB_PROVIDER_EDGE_CODEX_REDIRECT_URI",
+            "http://localhost:1455/auth/callback",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CODEX_SCOPES",
+            "openid profile email offline_access",
+        ),
+        ("AXONHUB_PROVIDER_EDGE_CODEX_USER_AGENT", "codex-test-agent"),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_AUTHORIZE_URL",
+            "https://example.test/claudecode/authorize",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_TOKEN_URL",
+            "https://example.test/claudecode/token",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_CLIENT_ID",
+            "claudecode-client-id",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_REDIRECT_URI",
+            "http://localhost:54545/callback",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_SCOPES",
+            "org:create_api_key user:profile user:inference",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_CLAUDECODE_USER_AGENT",
+            "claudecode-test-agent",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_AUTHORIZE_URL",
+            "https://example.test/antigravity/authorize",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_TOKEN_URL",
+            "https://example.test/antigravity/token",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_ID",
+            "antigravity-client-id",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_SECRET",
+            "antigravity-client-secret",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_REDIRECT_URI",
+            "http://localhost:51121/oauth-callback",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_SCOPES",
+            "scope-a scope-b",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_LOAD_ENDPOINTS",
+            "https://example.test/load-a,https://example.test/load-b",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_USER_AGENT",
+            "antigravity-test-agent",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_CLIENT_METADATA",
+            r#"{"ideType":"ANTIGRAVITY"}"#,
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_COPILOT_DEVICE_CODE_URL",
+            "https://example.test/copilot/device/code",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_COPILOT_ACCESS_TOKEN_URL",
+            "https://example.test/copilot/access/token",
+        ),
+        (
+            "AXONHUB_PROVIDER_EDGE_COPILOT_CLIENT_ID",
+            "copilot-client-id",
+        ),
+        ("AXONHUB_PROVIDER_EDGE_COPILOT_SCOPE", "read:user"),
+    ]
 }
 
 fn temp_sqlite_path(name: &str) -> PathBuf {
@@ -308,29 +507,10 @@ async fn emit_provider_edge_codex_start_invalid_json(
     fixture: OracleFixture,
 ) -> OracleOutput {
     let db_path = temp_sqlite_path("provider-edge-invalid-json");
-    let state = sqlite_state(&db_path);
-    let app = actix_test::init_service(
-        App::new()
-            .app_data(web::Data::new(state))
-            .service(
-                web::resource("/admin/codex/oauth/start")
-                    .route(web::post().to(axonhub_http::parity_start_codex_oauth)),
-            ),
-    )
-    .await;
-    let mut request = actix_test::TestRequest::post().uri(&fixture.request.path);
-    if let Some(headers) = fixture.request.headers.as_ref() {
-        for (name, value) in headers {
-            request = request.insert_header((name.as_str(), value.as_str()));
-        }
-    }
-    let response = actix_test::call_service(
-        &app,
-        request
-            .set_payload(fixture.request.body.unwrap_or_default().into_bytes())
-            .to_request(),
-    )
-    .await;
+    let response = TestApp::new(sqlite_state(&db_path))
+        .oneshot(fixture.request)
+        .await
+        .unwrap();
     let output = response_to_output(suite, response, false).await;
     fs::remove_file(db_path).ok();
     output
@@ -343,6 +523,17 @@ async fn emit_http_handler_parity(suite: &str, fixture: OracleFixture) -> Oracle
     }
     let state = sqlite_state(&db_path);
     let handler = fixture.handler.as_deref().expect("handler fixture is required");
+    if matches!(
+        handler,
+        "provider_edge_claudecode_start_invalid_json"
+            | "provider_edge_antigravity_start_invalid_json"
+            | "provider_edge_copilot_start_invalid_json"
+    ) {
+        let response = TestApp::new(state).oneshot(fixture.request).await.unwrap();
+        let output = response_to_output(suite, response, false).await;
+        fs::remove_file(db_path).ok();
+        return output;
+    }
     let app = match handler {
         "admin_initialize_invalid_json" => actix_test::init_service(
             App::new()
@@ -511,6 +702,97 @@ async fn response_to_output(
         content_type,
         body,
     }
+}
+
+#[tokio::test]
+async fn provider_edge_start_invalid_json_parity_fixtures_cover_all_supported_providers() {
+    let _lock = provider_edge_env_lock().lock().expect("lock provider-edge env");
+    let env_fixture = ProviderEdgeEnvFixture::new();
+    env_fixture.set_all();
+
+    for (suite, path, route_family) in [
+        (
+            "provider_edge_claudecode_start_invalid_json",
+            "/admin/claudecode/oauth/start",
+            "/admin/claudecode/oauth/start",
+        ),
+        (
+            "provider_edge_antigravity_start_invalid_json",
+            "/admin/antigravity/oauth/start",
+            "/admin/antigravity/oauth/start",
+        ),
+        (
+            "provider_edge_copilot_start_invalid_json",
+            "/admin/copilot/oauth/start",
+            "/admin/copilot/oauth/start",
+        ),
+    ] {
+        let output = emit_http_handler_parity(
+            suite,
+            OracleFixture {
+                schema_version: 1,
+                emitter: Some(suite.to_owned()),
+                request: OracleRequest {
+                    method: "POST".to_owned(),
+                    path: path.to_owned(),
+                    headers: Some(BTreeMap::from([
+                        (
+                            "Authorization".to_owned(),
+                            "Bearer valid-admin-token".to_owned(),
+                        ),
+                        ("content-type".to_owned(), "application/json".to_owned()),
+                    ])),
+                    body: Some("{not-json".to_owned()),
+                },
+                model: None,
+                handler: Some(suite.to_owned()),
+                normalize_generated_key: None,
+            },
+        )
+        .await;
+
+        assert_eq!(output.suite, suite);
+        assert_eq!(output.status, 400);
+        assert_eq!(output.content_type, "application/json");
+        assert_eq!(output.body["error"]["type"], "Bad Request");
+        assert_eq!(output.body["error"]["message"], "invalid request format");
+        assert_eq!(output.headers.get("content-type"), Some(&"application/json".to_owned()));
+        assert_ne!(output.body["error"]["message"], route_family);
+    }
+
+    let codex_output = emit_provider_edge_codex_start_invalid_json(
+        "provider_edge_codex_start_invalid_json",
+        OracleFixture {
+            schema_version: 1,
+            emitter: Some("provider_edge_codex_start_invalid_json".to_owned()),
+            request: OracleRequest {
+                method: "POST".to_owned(),
+                path: "/admin/codex/oauth/start".to_owned(),
+                headers: Some(BTreeMap::from([
+                    (
+                        "Authorization".to_owned(),
+                        "Bearer valid-admin-token".to_owned(),
+                    ),
+                    ("content-type".to_owned(), "application/json".to_owned()),
+                ])),
+                body: Some("{not-json".to_owned()),
+            },
+            model: None,
+            handler: None,
+            normalize_generated_key: None,
+        },
+    )
+    .await;
+
+    assert_eq!(codex_output.suite, "provider_edge_codex_start_invalid_json");
+    assert_eq!(codex_output.status, 400);
+    assert_eq!(codex_output.content_type, "application/json");
+    assert_eq!(codex_output.body["error"]["type"], "Bad Request");
+    assert_eq!(codex_output.body["error"]["message"], "invalid request format");
+    assert_eq!(
+        codex_output.headers.get("content-type"),
+        Some(&"application/json".to_owned())
+    );
 }
 
 fn normalize_content_type(value: &str) -> String {

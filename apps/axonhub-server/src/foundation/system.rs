@@ -2,7 +2,7 @@ use axonhub_http::{InitializeSystemRequest, SystemBootstrapPort, SystemInitializ
 
 pub(crate) use super::sqlite_support::{
     ensure_all_foundation_tables, ensure_channel_model_tables, ensure_identity_tables,
-    ensure_operational_tables, ensure_request_tables, hash_password, verify_password,
+    ensure_operational_tables, ensure_prompt_tables, ensure_request_tables, hash_password, verify_password,
     SeaOrmDbFactory, SqliteBootstrapService, SystemSettingsStore,
 };
 use super::sqlite_support;

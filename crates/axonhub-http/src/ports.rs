@@ -3,7 +3,8 @@ use crate::models::{
     ExchangeCallbackOAuthRequest, ExchangeOAuthResponse, GeminiModelListResponse,
     GraphqlExecutionResult, GraphqlRequestPayload, InitializeSystemRequest, ModelListResponse,
     OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Route, PollCopilotOAuthRequest,
-    PollCopilotOAuthResponse, ProjectContext, SignInRequest, SignInSuccess,
+    PollCopilotOAuthResponse, ProjectContext, RealtimeSessionCreateRequest,
+    RealtimeSessionPatchRequest, RealtimeSessionRecord, SignInRequest, SignInSuccess,
     StartAntigravityOAuthRequest, StartCopilotOAuthRequest, StartCopilotOAuthResponse,
     StartPkceOAuthRequest, StartPkceOAuthResponse, ThreadContext, TraceContext,
 };
@@ -53,7 +54,11 @@ pub trait RequestContextPort: Send + Sync {
 }
 
 pub trait OpenAiV1Port: Send + Sync {
-    fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error>;
+    fn list_models(
+        &self,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<ModelListResponse, OpenAiV1Error>;
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error>;
 
@@ -70,6 +75,27 @@ pub trait OpenAiV1Port: Send + Sync {
         route: crate::models::CompatibilityRoute,
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error>;
+
+    fn create_realtime_session(
+        &self,
+        request: RealtimeSessionCreateRequest,
+    ) -> Result<RealtimeSessionRecord, OpenAiV1Error>;
+
+    fn get_realtime_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error>;
+
+    fn update_realtime_session(
+        &self,
+        session_id: &str,
+        patch: RealtimeSessionPatchRequest,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error>;
+
+    fn delete_realtime_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error>;
 }
 
 pub trait AdminPort: Send + Sync {

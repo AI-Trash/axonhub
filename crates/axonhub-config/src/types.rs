@@ -9,6 +9,7 @@ pub struct Config {
     pub gc: GcConfig,
     pub cache: CacheConfig,
     pub provider_quota: ProviderQuotaConfig,
+    pub provider_edge: ProviderEdgeConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,4 +305,43 @@ impl Default for ProviderQuotaConfig {
             check_interval: "20m".to_owned(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderEdgeConfig {
+    pub codex: ProviderEdgePkceConfig,
+    pub claudecode: ProviderEdgePkceConfig,
+    pub antigravity: ProviderEdgeAntigravityConfig,
+    pub copilot: ProviderEdgeCopilotConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderEdgePkceConfig {
+    pub authorize_url: String,
+    pub token_url: String,
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub scopes: String,
+    pub user_agent: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderEdgeAntigravityConfig {
+    pub authorize_url: String,
+    pub token_url: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub redirect_uri: String,
+    pub scopes: String,
+    pub load_endpoints: Vec<String>,
+    pub user_agent: String,
+    pub client_metadata: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProviderEdgeCopilotConfig {
+    pub device_code_url: String,
+    pub access_token_url: String,
+    pub client_id: String,
+    pub scope: String,
 }

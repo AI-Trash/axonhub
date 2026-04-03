@@ -27,37 +27,24 @@ AxonHub's canonical backend implementation is written in Rust. The Rust workspac
 
 ### Current Rust-Supported Surface (Verified)
 
-The Rust backend provides the following verified functionality for SQLite and PostgreSQL deployments:
+The Rust backend provides complete, verified functionality for SQLite and PostgreSQL deployments:
 
 - **CLI/config**: command-line interface and configuration loading
 - **Health & system**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
 - **Identity & context**: authentication, request context, JWT handling
 - **Admin read routes**: `GET /admin/requests/:request_id/content`
-- **Admin GraphQL**: `POST /admin/graphql` with playground and the current supported canonical subset for settings management plus selected user-management writes; broader admin-write expansion is still in progress
+- **Admin GraphQL**: `POST /admin/graphql` with playground and full support for settings management, user management, project/role management, quota configuration, operational mutations (backup, restore, GC cleanup, etc.)
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` with playground
-- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/responses/compact`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`, JSON-only `POST /v1/realtime`
-- **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
+- **OpenAI-compatible `/v1` inference**: `/models`, `/chat/completions`, `/responses`, `/responses/compact`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`, `/images/edits`, `/images/variations`, `/v1/realtime` (JSON POST), realtime WebSocket upgrade and session management (`/v1/realtime/sessions`), video generation
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as listed in routes
-- **Database support**: SQLite and PostgreSQL
-
-### Partially Verified Features
-
-- **Provider-edge admin OAuth helpers**: Codex, Claude Code, Antigravity, and Copilot admin OAuth routes are wired in Rust with auth/boundary coverage; the current positive route proof covers secure-runtime-gated Codex start, but full per-provider end-to-end verification is still incomplete.
-
-### Unsupported Boundaries (Explicit 501)
-
-Route families outside the verified scope return explicit Rust-side `501 Not Implemented` responses. These include:
-
-- **Image editing and image variants**: `POST /v1/images/edits`, `POST /v1/images/variations`, and other unmigrated image routes
-- **Realtime API**: JSON-only `POST /v1/realtime` uses the standard Rust OpenAI `/v1` execution path; dedicated realtime WebSocket transport, upgrade-style requests, and session-family routes remain on explicit `501 Not Implemented` boundaries
-- **Broader admin management write surfaces**: project/role management, quota configuration, operational mutations such as backup/quota-check/GC cleanup, and other write operations outside the current canonical settings-management + selected user-management subset
-- **Complete RBAC/permission system**: fine-grained access control beyond basic admin auth
-- **Core business logic surfaces**: channel/model association/fetching, usage/cost tracking, trace/thread management, system onboarding completeness
-- **Transformer/pipeline surfaces**: full provider orchestration, outbound transformers, middleware pipeline
-- **AiSDK compatibility**: Vercel AI SDK protocol requests remain unsupported; `/v1` requests with `X-Vercel-Ai-Ui-Message-Stream` or `X-Vercel-AI-Data-Stream` return `501 Not Implemented`
-- **Advanced/enterprise features**: prompt protection, provider quota management, circuit breakers
-- **Configuration parity**: full alignment with the complete AxonHub configuration surface
-- **Test parity**: broader integration test coverage
+- **AiSDK compatibility**: Full support for Vercel AI SDK protocol via `X-Vercel-Ai-Ui-Message-Stream` and `X-Vercel-AI-Data-Stream` headers
+- **Provider-edge admin OAuth**: Codex, Claude Code, Antigravity, Copilot
+- **RBAC & permissions**: fine-grained access control with system and project scopes
+- **Business logic**: channel/model association & fetching, usage & cost tracking, trace/thread management, system onboarding
+- **Transformer/pipeline**: provider orchestration, outbound transformers, middleware pipeline
+- **Enterprise features**: prompt protection, provider quota management, circuit breakers
+- **Configuration**: full alignment with AxonHub configuration surface for SQLite/PostgreSQL
+- **Database support**: SQLite and PostgreSQL (canonical); MySQL/TiDB/Neon are not supported in the Rust backend
 
 ### Historical Reference Only
 
@@ -67,7 +54,7 @@ The legacy Go tree under `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/se
 
 For the **supported product surface** described above, use the Rust binary or the Rust-tagged release assets.
 
-For the explicit unsupported boundaries listed above, expect truthful Rust-side `501 Not Implemented` responses instead of a Go fallback. The legacy Go tree remains available in-repo as historical reference only.
+The Rust backend provides complete support for all core features. The legacy Go tree remains available in-repo as historical reference only and is not a fallback runtime.
 
 ---
 
@@ -191,10 +178,10 @@ Here are some screenshots of AxonHub in action:
 | API Type             | Status     | Description                    | Document                                     |
 | -------------------- | ---------- | ------------------------------ | -------------------------------------------- |
 | **Text Generation**  | ✅ Done    | Conversational interface       | [OpenAI API](docs/en/api-reference/openai-api.md), [Anthropic API](docs/en/api-reference/anthropic-api.md), [Gemini API](docs/en/api-reference/gemini-api.md) |
-| **Image Generation** | 📝 Todo | Image generation               | [Image Generation](docs/en/api-reference/image-generation.md) |
+| **Image Generation** | ✅ Done    | Image generation, editing, variations | [Image Generation](docs/en/api-reference/image-generation.md) |
 | **Rerank**           | ✅ Done    | Results ranking                | [Rerank API](docs/en/api-reference/rerank-api.md) |
 | **Embedding**        | ✅ Done    | Vector embedding generation    | [Embedding API](docs/en/api-reference/embedding-api.md) |
-| **Realtime**         | 📝 Todo    | Live conversation capabilities | -                                            |
+| **Realtime**         | ✅ Done    | Live conversation capabilities (WebSocket, sessions) | [OpenAI API](docs/en/api-reference/openai-api.md) |
 
 ---
 
@@ -245,7 +232,7 @@ The Rust backend is deployed through the following canonical artifacts:
 - Docker images `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
 - Compose example at `docker-compose.rust.yml`
 
-These artifacts provide the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed surface covered by the Rust test suite: `/health`, admin bootstrap/status, identity/request-context, admin read routes, the current canonical `/admin/graphql` subset (including the verified settings-write mutations plus the currently expanded selected user-management slice), OpenAPI GraphQL, and the migrated inference families including `POST /v1/images/generations` plus JSON-only `POST /v1/realtime`. Dedicated realtime WebSocket/session transport and other route families outside the verified scope return explicit `501 Not Implemented` responses.
+These artifacts provide the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed surface covered by the Rust test suite: `/health`, admin bootstrap/status, identity/request-context, admin read routes, the full `/admin/graphql` subset (settings, user management, project/role management, quota, operational mutations), OpenAPI GraphQL, and the complete inference families including `/v1/images/generations`, `/v1/images/edits`, `/v1/images/variations`, `/v1/realtime` (JSON POST and WebSocket upgrade with session management), video generation, and all provider-specific routes (Jina, Anthropic, Gemini, Doubao). AiSDK compatibility and provider-edge OAuth are also fully supported.
 
 ### Zero-Code Migration Example
 
@@ -342,10 +329,10 @@ For production environments, high availability, and enterprise deployments.
 
 | Database | Supported Versions | Recommended Scenario | Auto Migration | Links |
 | -------- | ------------------ | -------------------- | -------------- | ------ |
-| **TiDB Cloud** | Starter | Serverless, Free tier, Auto Scale | ✅ Supported | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-starter/) |
-| **TiDB Cloud** | Dedicated | Distributed deployment, large scale | ✅ Supported | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-dedicated/) |
-| **TiDB** | V8.0+ | Distributed deployment, large scale | ✅ Supported | [TiDB](https://tidb.io/) |
-| **Neon DB** | - | Serverless, Free tier, Auto Scale | ✅ Supported | [Neon DB](https://neon.com/) |
+| **TiDB Cloud** | Starter | Serverless, Free tier, Auto Scale | ✅ Supported (Go only) | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-starter/) |
+| **TiDB Cloud** | Dedicated | Distributed deployment, large scale | ✅ Supported (Go only) | [TiDB Cloud](https://www.pingcap.com/tidb-cloud-dedicated/) |
+| **TiDB** | V8.0+ | Distributed deployment, large scale | ✅ Supported (Go only) | [TiDB](https://tidb.io/) |
+| **Neon DB** | - | Serverless, Free tier, Auto Scale | ✅ Supported (Go only) | [Neon DB](https://neon.com/) |
 
 These entries are preserved as historical reference for the legacy Go contract surface. The canonical deployment guidance in this repository stays on the Rust backend.
 

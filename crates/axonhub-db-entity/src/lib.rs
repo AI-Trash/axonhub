@@ -87,6 +87,12 @@ pub mod api_keys {
         pub project_id: i64,
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[sea_orm(entity = "Entity")]
+    pub struct ProfilesOnly {
+        pub profiles: String,
+    }
+
     impl ActiveModelBehavior for ActiveModel {}
 }
 
@@ -482,8 +488,12 @@ pub mod projects {
     pub enum Relation {
         #[sea_orm(has_many = "super::api_keys::Entity")]
         ApiKeys,
+        #[sea_orm(has_many = "super::operational_runs::Entity")]
+        OperationalRuns,
         #[sea_orm(has_many = "super::prompts::Entity")]
         Prompts,
+        #[sea_orm(has_many = "super::realtime_sessions::Entity")]
+        RealtimeSessions,
         #[sea_orm(has_many = "super::request_executions::Entity")]
         RequestExecutions,
         #[sea_orm(has_many = "super::requests::Entity")]
@@ -506,9 +516,21 @@ pub mod projects {
         }
     }
 
+    impl Related<super::operational_runs::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::OperationalRuns.def()
+        }
+    }
+
     impl Related<super::prompts::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::Prompts.def()
+        }
+    }
+
+    impl Related<super::realtime_sessions::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::RealtimeSessions.def()
         }
     }
 
@@ -592,6 +614,109 @@ pub mod prompt_protection_rules {
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+pub mod realtime_sessions {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "realtime_sessions")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub project_id: i64,
+        pub thread_id: Option<i64>,
+        pub trace_id: Option<i64>,
+        pub request_id: Option<i64>,
+        pub api_key_id: Option<i64>,
+        pub channel_id: Option<i64>,
+        pub session_id: String,
+        pub transport: String,
+        pub status: String,
+        pub metadata: String,
+        pub opened_at: String,
+        pub last_activity_at: String,
+        pub closed_at: Option<String>,
+        pub expires_at: Option<String>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::projects::Entity",
+            from = "Column::ProjectId",
+            to = "super::projects::Column::Id"
+        )]
+        Projects,
+        #[sea_orm(
+            belongs_to = "super::threads::Entity",
+            from = "Column::ThreadId",
+            to = "super::threads::Column::Id"
+        )]
+        Threads,
+        #[sea_orm(
+            belongs_to = "super::traces::Entity",
+            from = "Column::TraceId",
+            to = "super::traces::Column::Id"
+        )]
+        Traces,
+        #[sea_orm(
+            belongs_to = "super::requests::Entity",
+            from = "Column::RequestId",
+            to = "super::requests::Column::Id"
+        )]
+        Requests,
+        #[sea_orm(
+            belongs_to = "super::api_keys::Entity",
+            from = "Column::ApiKeyId",
+            to = "super::api_keys::Column::Id"
+        )]
+        ApiKeys,
+        #[sea_orm(
+            belongs_to = "super::channels::Entity",
+            from = "Column::ChannelId",
+            to = "super::channels::Column::Id"
+        )]
+        Channels,
+    }
+
+    impl Related<super::projects::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Projects.def()
+        }
+    }
+
+    impl Related<super::threads::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Threads.def()
+        }
+    }
+
+    impl Related<super::traces::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Traces.def()
+        }
+    }
+
+    impl Related<super::requests::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Requests.def()
+        }
+    }
+
+    impl Related<super::api_keys::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::ApiKeys.def()
+        }
+    }
+
+    impl Related<super::channels::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Channels.def()
+        }
+    }
 
     impl ActiveModelBehavior for ActiveModel {}
 }
@@ -835,6 +960,8 @@ pub mod requests {
         Traces,
         #[sea_orm(has_many = "super::usage_logs::Entity")]
         UsageLogs,
+        #[sea_orm(has_many = "super::realtime_sessions::Entity")]
+        RealtimeSessions,
     }
 
     impl Related<super::api_keys::Entity> for Entity {
@@ -876,6 +1003,12 @@ pub mod requests {
     impl Related<super::usage_logs::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::UsageLogs.def()
+        }
+    }
+
+    impl Related<super::realtime_sessions::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::RealtimeSessions.def()
         }
     }
 
@@ -983,6 +1116,82 @@ pub mod roles {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+pub mod operational_runs {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "operational_runs")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub operation_type: String,
+        pub trigger_source: String,
+        pub status: String,
+        pub result_payload: Option<String>,
+        pub error_message: Option<String>,
+        pub initiated_by_user_id: Option<i64>,
+        pub data_storage_id: Option<i64>,
+        pub channel_id: Option<i64>,
+        pub project_id: Option<i64>,
+        pub started_at: String,
+        pub finished_at: Option<String>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::users::Entity",
+            from = "Column::InitiatedByUserId",
+            to = "super::users::Column::Id"
+        )]
+        Users,
+        #[sea_orm(
+            belongs_to = "super::data_storages::Entity",
+            from = "Column::DataStorageId",
+            to = "super::data_storages::Column::Id"
+        )]
+        DataStorages,
+        #[sea_orm(
+            belongs_to = "super::channels::Entity",
+            from = "Column::ChannelId",
+            to = "super::channels::Column::Id"
+        )]
+        Channels,
+        #[sea_orm(
+            belongs_to = "super::projects::Entity",
+            from = "Column::ProjectId",
+            to = "super::projects::Column::Id"
+        )]
+        Projects,
+    }
+
+    impl Related<super::users::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Users.def()
+        }
+    }
+
+    impl Related<super::data_storages::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::DataStorages.def()
+        }
+    }
+
+    impl Related<super::channels::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Channels.def()
+        }
+    }
+
+    impl Related<super::projects::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::Projects.def()
+        }
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 pub mod systems {
     use sea_orm::{entity::prelude::*, FromQueryResult};
 
@@ -1034,6 +1243,8 @@ pub mod threads {
         Projects,
         #[sea_orm(has_many = "super::traces::Entity")]
         Traces,
+        #[sea_orm(has_many = "super::realtime_sessions::Entity")]
+        RealtimeSessions,
     }
 
     impl Related<super::projects::Entity> for Entity {
@@ -1045,6 +1256,12 @@ pub mod threads {
     impl Related<super::traces::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::Traces.def()
+        }
+    }
+
+    impl Related<super::realtime_sessions::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::RealtimeSessions.def()
         }
     }
 
@@ -1090,6 +1307,8 @@ pub mod traces {
             to = "super::threads::Column::Id"
         )]
         Threads,
+        #[sea_orm(has_many = "super::realtime_sessions::Entity")]
+        RealtimeSessions,
     }
 
     impl Related<super::projects::Entity> for Entity {
@@ -1107,6 +1326,12 @@ pub mod traces {
     impl Related<super::threads::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::Threads.def()
+        }
+    }
+
+    impl Related<super::realtime_sessions::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::RealtimeSessions.def()
         }
     }
 
@@ -1347,6 +1572,8 @@ pub mod users {
         ApiKeys,
         #[sea_orm(has_many = "super::channel_override_templates::Entity")]
         ChannelOverrideTemplates,
+        #[sea_orm(has_many = "super::operational_runs::Entity")]
+        OperationalRuns,
         #[sea_orm(has_many = "super::user_projects::Entity")]
         UserProjects,
         #[sea_orm(has_many = "super::user_roles::Entity")]
@@ -1362,6 +1589,12 @@ pub mod users {
     impl Related<super::channel_override_templates::Entity> for Entity {
         fn to() -> RelationDef {
             Relation::ChannelOverrideTemplates.def()
+        }
+    }
+
+    impl Related<super::operational_runs::Entity> for Entity {
+        fn to() -> RelationDef {
+            Relation::OperationalRuns.def()
         }
     }
 
@@ -1501,6 +1734,10 @@ mod tests {
             channels::Relation::ChannelModelPrices.def().to_tbl,
             channel_model_prices::Entity.table_ref()
         );
+        assert_eq!(
+            <users::Entity as Related<operational_runs::Entity>>::to().to_tbl,
+            operational_runs::Entity.table_ref()
+        );
     }
 
     #[test]
@@ -1520,6 +1757,46 @@ mod tests {
         assert_eq!(
             <users::Entity as Related<channel_override_templates::Entity>>::to().to_tbl,
             channel_override_templates::Entity.table_ref()
+        );
+        assert_eq!(
+            <projects::Entity as Related<realtime_sessions::Entity>>::to().to_tbl,
+            realtime_sessions::Entity.table_ref()
+        );
+    }
+
+    #[test]
+    fn realtime_and_operational_run_relations_target_expected_tables() {
+        assert_eq!(
+            realtime_sessions::Relation::Projects.def().to_tbl,
+            projects::Entity.table_ref()
+        );
+        assert_eq!(
+            realtime_sessions::Relation::Threads.def().to_tbl,
+            threads::Entity.table_ref()
+        );
+        assert_eq!(
+            realtime_sessions::Relation::Traces.def().to_tbl,
+            traces::Entity.table_ref()
+        );
+        assert_eq!(
+            realtime_sessions::Relation::Requests.def().to_tbl,
+            requests::Entity.table_ref()
+        );
+        assert_eq!(
+            operational_runs::Relation::Users.def().to_tbl,
+            users::Entity.table_ref()
+        );
+        assert_eq!(
+            operational_runs::Relation::DataStorages.def().to_tbl,
+            data_storages::Entity.table_ref()
+        );
+        assert_eq!(
+            operational_runs::Relation::Channels.def().to_tbl,
+            channels::Entity.table_ref()
+        );
+        assert_eq!(
+            operational_runs::Relation::Projects.def().to_tbl,
+            projects::Entity.table_ref()
         );
     }
 

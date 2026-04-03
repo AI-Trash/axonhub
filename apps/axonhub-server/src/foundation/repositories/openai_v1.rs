@@ -11,14 +11,17 @@ use sea_orm::{ConnectionTrait, DatabaseBackend, PaginatorTrait, QueryResult, Que
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::foundation::{
+    admin::provider_quota_type_for_channel,
     admin::default_system_channel_settings,
+    circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
     openai_v1::{
         calculate_top_k, compare_openai_target_priority, extract_channel_api_key,
-        derive_channel_model_entries, resolve_channel_model_entry, ChannelRoutingStats,
-        ModelInclude, NewRequestExecutionRecord, NewRequestRecord, NewUsageLogRecord,
-        PreparedCompatibilityRequest, SelectedOpenAiTarget, StoredModelRecord,
-        UpdateRequestExecutionResultRecord, UpdateRequestResultRecord,
+        derive_channel_model_entries, request_model_id, resolve_channel_model_entry,
+        ChannelRoutingStats, ModelInclude, NewRequestExecutionRecord, NewRequestRecord,
+        NewUsageLogRecord, PreparedCompatibilityRequest, SelectedOpenAiTarget,
+        StoredModelRecord, UpdateRequestExecutionResultRecord, UpdateRequestResultRecord,
     },
+    repositories::common::query_all,
     shared::{SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_MODEL_SETTINGS},
 };
 
@@ -261,26 +264,19 @@ pub(crate) async fn select_target_channels_seaorm(
     backend: DatabaseBackend,
     request: &OpenAiV1ExecutionRequest,
     route: OpenAiV1Route,
+    circuit_breaker: &SharedCircuitBreaker,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
-    let request_model = request
-        .body
-        .get("model")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OpenAiV1Error::InvalidRequest {
-            message: "model is required".to_owned(),
-        })?;
+    let request_model = request_model_id(&request.body)?;
 
-    let targets = select_inference_targets_seaorm(
+    let mut targets = select_openai_route_targets_seaorm(
         db,
         backend,
-        request_model,
+        request_model.as_str(),
         request.trace.as_ref().map(|trace| trace.id),
         2,
-        "openai",
         openai_route_model_type(route),
         request.channel_hint_id,
+        circuit_breaker,
     )
     .await?;
 
@@ -300,9 +296,50 @@ pub(crate) async fn select_target_channels_seaorm(
     }
 }
 
+async fn select_openai_route_targets_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    request_model_id: &str,
+    trace_id: Option<i64>,
+    max_channel_retries: usize,
+    model_type: &str,
+    preferred_channel_id: Option<i64>,
+    circuit_breaker: &SharedCircuitBreaker,
+) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
+    let mut targets = Vec::new();
+    for channel_type in ["openai", "codex", "claudecode"] {
+        targets.extend(
+            select_inference_targets_seaorm(
+                db,
+                backend,
+                request_model_id,
+                trace_id,
+                max_channel_retries,
+                channel_type,
+                model_type,
+                preferred_channel_id,
+                circuit_breaker,
+            )
+            .await?,
+        );
+    }
+    targets.sort_by(compare_openai_target_priority);
+    if let Some(preferred_channel_id) = preferred_channel_id {
+        if let Some(index) = targets.iter().position(|target| target.channel_id == preferred_channel_id) {
+            let preferred = targets.remove(index);
+            targets.insert(0, preferred);
+        }
+    }
+    let top_k = calculate_top_k(targets.len(), max_channel_retries);
+    targets.truncate(top_k);
+    Ok(targets)
+}
+
 fn openai_route_model_type(route: OpenAiV1Route) -> &'static str {
     match route {
         OpenAiV1Route::ImagesGenerations => "image",
+        OpenAiV1Route::ImagesEdits => "image",
+        OpenAiV1Route::ImagesVariations => "image",
         OpenAiV1Route::ChatCompletions
         | OpenAiV1Route::Responses
         | OpenAiV1Route::ResponsesCompact
@@ -320,6 +357,7 @@ pub(crate) async fn select_inference_targets_seaorm(
     channel_type: &str,
     model_type: &str,
     preferred_channel_id: Option<i64>,
+    circuit_breaker: &SharedCircuitBreaker,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
     let preferred_trace_channel_id = match trace_id {
         Some(trace_id) => query_preferred_trace_channel_id_seaorm(db, backend, trace_id, request_model_id).await?,
@@ -352,6 +390,12 @@ pub(crate) async fn select_inference_targets_seaorm(
             continue;
         }
 
+        if provider_channel_is_blocked_seaorm(db, backend, channel.id).await?
+            || circuit_breaker.is_blocked(channel.id, model_entry.actual_model_id.as_str())
+        {
+            continue;
+        }
+
         actual_model_ids.insert(model_entry.actual_model_id.clone());
         resolved_channels.push((channel, model_entry, api_key));
     }
@@ -360,20 +404,25 @@ pub(crate) async fn select_inference_targets_seaorm(
         return Ok(Vec::new());
     }
 
-    let enabled_models = models::Entity::find()
-        .filter(models::Column::DeletedAt.eq(0_i64))
-        .filter(models::Column::Status.eq("enabled"))
-        .filter(models::Column::ModelId.is_in(actual_model_ids.into_iter().collect::<Vec<_>>()))
-        .apply_if((!model_type.is_empty()).then_some(model_type), |query, model_type| {
-            query.filter(models::Column::TypeField.eq(model_type))
-        })
-        .into_partial_model::<models::EnabledModelRecord>()
-        .all(db)
-        .await
-        .map_err(map_openai_db_err)?;
+    let enabled_model_ids = actual_model_ids.into_iter().collect::<BTreeSet<_>>();
+    let enabled_models = query_all(
+        db,
+        backend,
+        "SELECT id, CAST(created_at AS TEXT) AS created_at, developer, model_id, type, name, icon, COALESCE(remark, ''), model_card FROM models WHERE deleted_at = 0 AND status = 'enabled' AND (?1 = '' OR type = ?1) ORDER BY id ASC",
+        "SELECT id, CAST(created_at AS TEXT) AS created_at, developer, model_id, type, name, icon, COALESCE(remark, ''), model_card FROM models WHERE deleted_at = 0 AND status = 'enabled' AND ($1 = '' OR type = $1) ORDER BY id ASC",
+        "SELECT id, CAST(created_at AS CHAR) AS created_at, developer, model_id, type, name, icon, COALESCE(remark, ''), model_card FROM models WHERE deleted_at = 0 AND status = 'enabled' AND (?1 = '' OR type = ?1) ORDER BY id ASC",
+        vec![model_type.into()],
+    )
+    .await
+    .map_err(map_openai_db_err)?
+    .into_iter()
+    .map(stored_model_record_from_seaorm_row)
+    .collect::<Result<Vec<_>, _>>()?
+    .into_iter()
+    .filter(|model| enabled_model_ids.contains(&model.model_id))
+    .collect::<Vec<_>>();
     let enabled_models_by_id = enabled_models
         .into_iter()
-        .map(stored_model_record_from_enabled_model_record)
         .map(|model| (model.model_id.clone(), model))
         .collect::<HashMap<_, _>>();
 
@@ -390,8 +439,10 @@ pub(crate) async fn select_inference_targets_seaorm(
             base_url: channel.base_url.unwrap_or_default(),
             api_key,
             actual_model_id: model_entry.actual_model_id,
+            provider_type: provider_quota_type_for_channel(channel_type).map(str::to_owned),
             ordering_weight,
             trace_affinity: preferred_trace_channel_id == Some(channel_id),
+            circuit_breaker: circuit_breaker.current_snapshot(channel_id, model.model_id.as_str()),
             routing_stats,
             model,
         });
@@ -409,12 +460,36 @@ pub(crate) async fn select_inference_targets_seaorm(
     Ok(candidates)
 }
 
+async fn provider_channel_is_blocked_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    channel_id: i64,
+) -> Result<bool, OpenAiV1Error> {
+    let row = query_all(
+        db,
+        backend,
+        "SELECT status, ready, next_reset_at, next_check_at FROM provider_quota_statuses WHERE channel_id = ?1 LIMIT 1",
+        "SELECT status, ready, CAST(next_reset_at AS TEXT), CAST(next_check_at AS TEXT) FROM provider_quota_statuses WHERE channel_id = $1 LIMIT 1",
+        "SELECT status, ready, next_reset_at, next_check_at FROM provider_quota_statuses WHERE channel_id = ?1 LIMIT 1",
+        vec![channel_id.into()],
+    )
+    .await
+    .map_err(map_openai_db_err)?;
+    let Some(row) = row.into_iter().next() else {
+        return Ok(false);
+    };
+    let status: String = row.try_get_by_index(0).map_err(map_openai_db_err)?;
+    let ready: bool = row.try_get_by_index(1).map_err(map_openai_db_err)?;
+    Ok(!ready || status.eq_ignore_ascii_case("exhausted"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sea_orm::ActiveValue::Set;
     use sea_orm::sea_query::OnConflict;
 
+    use crate::foundation::circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker};
     use crate::foundation::seaorm::SeaOrmConnectionFactory;
 
     async fn insert_channel(
@@ -548,6 +623,7 @@ mod tests {
             "openai",
             "chat",
             None,
+            &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
         )
         .await
         .unwrap();
@@ -565,6 +641,7 @@ mod tests {
             "openai",
             "chat",
             None,
+            &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
         )
         .await
         .unwrap();
@@ -582,6 +659,7 @@ mod tests {
             "openai",
             "chat",
             None,
+            &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
         )
         .await
         .unwrap();
@@ -708,6 +786,7 @@ async fn load_active_api_key_quota_seaorm(
 ) -> Result<Option<ParsedApiKeyQuota>, OpenAiV1Error> {
     let profiles_json = api_keys::Entity::find_by_id(api_key_id)
         .filter(api_keys::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<api_keys::ProfilesOnly>()
         .one(db)
         .await
         .map_err(map_openai_db_err)?
@@ -1161,6 +1240,7 @@ pub(crate) async fn select_doubao_task_targets_seaorm(
         prepared.channel_type,
         prepared.model_type,
         None,
+        &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
     )
     .await?;
     if let Some(index) = targets.iter().position(|target| target.channel_id == request_hint.channel_id) {
@@ -1204,7 +1284,7 @@ pub(crate) async fn create_request_seaorm(
     _backend: DatabaseBackend,
     record: &NewRequestRecord<'_>,
 ) -> Result<i64, OpenAiV1Error> {
-    requests::Entity::insert(requests::ActiveModel {
+    let mut model = requests::ActiveModel {
         api_key_id: Set(record.api_key_id),
         project_id: Set(record.project_id),
         trace_id: Set(record.trace_id),
@@ -1226,9 +1306,13 @@ pub(crate) async fn create_request_seaorm(
         content_saved: Set(record.content_saved),
         content_storage_id: Set(record.content_storage_id),
         content_storage_key: Set(record.content_storage_key.map(ToOwned::to_owned)),
-        content_saved_at: Set(record.content_saved_at.map(ToOwned::to_owned)),
         ..Default::default()
-    })
+    };
+    if let Some(content_saved_at) = record.content_saved_at {
+        model.content_saved_at = Set(Some(content_saved_at.to_owned()));
+    }
+
+    requests::Entity::insert(model)
     .exec(db)
     .await
     .map(|inserted| inserted.last_insert_id)
@@ -1390,7 +1474,7 @@ fn map_openai_db_err(error: sea_orm::DbErr) -> OpenAiV1Error {
 fn stored_model_record_from_seaorm_row(row: QueryResult) -> Result<StoredModelRecord, OpenAiV1Error> {
     Ok(StoredModelRecord {
         id: row.try_get_by_index(0).map_err(map_openai_db_err)?,
-        created_at: row.try_get_by_index(1).map_err(map_openai_db_err)?,
+        created_at: row.try_get_by_index(1).unwrap_or_default(),
         developer: row.try_get_by_index(2).map_err(map_openai_db_err)?,
         model_id: row.try_get_by_index(3).map_err(map_openai_db_err)?,
         model_type: row.try_get_by_index(4).map_err(map_openai_db_err)?,

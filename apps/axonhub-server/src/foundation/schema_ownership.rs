@@ -125,7 +125,12 @@ const BOOTSTRAP_CONTROL_TABLES: &[&str] = &[
 const REQUEST_CONTEXT_TABLES: &[&str] = &["threads", "traces"];
 const CATALOG_TABLES: &[&str] = &["channels", "models"];
 const REQUEST_LEDGER_TABLES: &[&str] = &["requests", "request_executions", "usage_logs"];
-const OPERATIONAL_TABLES: &[&str] = &["channel_probes", "provider_quota_statuses"];
+const OPERATIONAL_TABLES: &[&str] = &[
+    "channel_probes",
+    "provider_quota_statuses",
+    "realtime_sessions",
+    "operational_runs",
+];
 const PERSISTENCE_EXTENSION_TABLES: &[&str] = &[
     "prompts",
     "prompt_protection_rules",
@@ -267,7 +272,7 @@ const CURRENT_SCHEMA_OWNERSHIP_CONTRACT: SchemaOwnershipContract = SchemaOwnersh
         entity_crate_path: CANONICAL_SEAORM_ENTITY_CRATE_PATH,
         current_repository_adapter_path: CURRENT_PERSISTENCE_ADAPTER_PATH,
     },
-    supported_runtime_dialects: &["sqlite", "postgres", "mysql"],
+    supported_runtime_dialects: &["sqlite", "postgres"],
     verified_runtime_dialects: &["sqlite", "postgres"],
     future_runtime_dialects: &[],
     table_groups: CURRENT_TABLE_GROUPS,
@@ -337,10 +342,7 @@ mod tests {
             contract.repository_structure.entity_crate_path,
             "crates/axonhub-db-entity"
         );
-        assert_eq!(
-            contract.supported_runtime_dialects,
-            ["sqlite", "postgres", "mysql"]
-        );
+        assert_eq!(contract.supported_runtime_dialects, ["sqlite", "postgres"]);
         assert_eq!(contract.verified_runtime_dialects, ["sqlite", "postgres"]);
         assert!(contract.future_runtime_dialects.is_empty());
     }
@@ -354,10 +356,6 @@ mod tests {
         assert_eq!(
             SeaOrmConnectionFactory::postgres("postgres://localhost/axonhub".to_owned()).backend(),
             DatabaseBackend::Postgres
-        );
-        assert_eq!(
-            SeaOrmConnectionFactory::mysql("mysql://localhost:3306/axonhub".to_owned()).backend(),
-            DatabaseBackend::MySql
         );
     }
 
@@ -392,7 +390,12 @@ mod tests {
         );
         assert_eq!(
             operational.tables,
-            ["channel_probes", "provider_quota_statuses"]
+            [
+                "channel_probes",
+                "provider_quota_statuses",
+                "realtime_sessions",
+                "operational_runs",
+            ]
         );
         assert_eq!(
             persistence_extension.tables,

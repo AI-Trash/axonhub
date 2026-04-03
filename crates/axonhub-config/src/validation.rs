@@ -69,6 +69,10 @@ impl Config {
             );
         }
 
+        if provider_edge_is_configured(&self.provider_edge) {
+            validate_provider_edge(&self.provider_edge, &mut errors);
+        }
+
         validate_cors_methods(&self.server.cors.allowed_methods, &mut errors);
         validate_cors_headers(
             &self.server.cors.allowed_headers,
@@ -119,6 +123,9 @@ impl Config {
         ensure_cors_methods(&self.server.cors.allowed_methods)?;
         ensure_cors_headers(&self.server.cors.allowed_headers, "allowed_headers")?;
         ensure_cors_headers(&self.server.cors.exposed_headers, "exposed_headers")?;
+        if provider_edge_is_configured(&self.provider_edge) {
+            ensure_provider_edge(&self.provider_edge)?;
+        }
 
         Ok(())
     }
@@ -166,6 +173,260 @@ impl Config {
             ("cache.redis.expiration", &self.cache.redis.expiration),
         ]
     }
+}
+
+fn validate_provider_edge(config: &crate::types::ProviderEdgeConfig, errors: &mut Vec<String>) {
+    validate_required_string(
+        "provider_edge.codex.authorize_url",
+        &config.codex.authorize_url,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.codex.token_url",
+        &config.codex.token_url,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.codex.client_id",
+        &config.codex.client_id,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.codex.redirect_uri",
+        &config.codex.redirect_uri,
+        errors,
+    );
+    validate_required_string("provider_edge.codex.scopes", &config.codex.scopes, errors);
+    validate_required_string(
+        "provider_edge.codex.user_agent",
+        &config.codex.user_agent,
+        errors,
+    );
+
+    validate_required_string(
+        "provider_edge.claudecode.authorize_url",
+        &config.claudecode.authorize_url,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.claudecode.token_url",
+        &config.claudecode.token_url,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.claudecode.client_id",
+        &config.claudecode.client_id,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.claudecode.redirect_uri",
+        &config.claudecode.redirect_uri,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.claudecode.scopes",
+        &config.claudecode.scopes,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.claudecode.user_agent",
+        &config.claudecode.user_agent,
+        errors,
+    );
+
+    validate_required_string(
+        "provider_edge.antigravity.authorize_url",
+        &config.antigravity.authorize_url,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.antigravity.token_url",
+        &config.antigravity.token_url,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.antigravity.client_id",
+        &config.antigravity.client_id,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.antigravity.client_secret",
+        &config.antigravity.client_secret,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.antigravity.redirect_uri",
+        &config.antigravity.redirect_uri,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.antigravity.scopes",
+        &config.antigravity.scopes,
+        errors,
+    );
+    if config.antigravity.load_endpoints.is_empty() {
+        errors.push("provider_edge.antigravity.load_endpoints cannot be empty".to_owned());
+    }
+    validate_required_string(
+        "provider_edge.antigravity.user_agent",
+        &config.antigravity.user_agent,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.antigravity.client_metadata",
+        &config.antigravity.client_metadata,
+        errors,
+    );
+
+    validate_required_string(
+        "provider_edge.copilot.device_code_url",
+        &config.copilot.device_code_url,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.copilot.access_token_url",
+        &config.copilot.access_token_url,
+        errors,
+    );
+    validate_required_string(
+        "provider_edge.copilot.client_id",
+        &config.copilot.client_id,
+        errors,
+    );
+    validate_required_string("provider_edge.copilot.scope", &config.copilot.scope, errors);
+}
+
+fn ensure_provider_edge(config: &crate::types::ProviderEdgeConfig) -> Result<()> {
+    ensure_required_string(
+        "provider_edge.codex.authorize_url",
+        &config.codex.authorize_url,
+    )?;
+    ensure_required_string("provider_edge.codex.token_url", &config.codex.token_url)?;
+    ensure_required_string("provider_edge.codex.client_id", &config.codex.client_id)?;
+    ensure_required_string(
+        "provider_edge.codex.redirect_uri",
+        &config.codex.redirect_uri,
+    )?;
+    ensure_required_string("provider_edge.codex.scopes", &config.codex.scopes)?;
+    ensure_required_string("provider_edge.codex.user_agent", &config.codex.user_agent)?;
+
+    ensure_required_string(
+        "provider_edge.claudecode.authorize_url",
+        &config.claudecode.authorize_url,
+    )?;
+    ensure_required_string(
+        "provider_edge.claudecode.token_url",
+        &config.claudecode.token_url,
+    )?;
+    ensure_required_string(
+        "provider_edge.claudecode.client_id",
+        &config.claudecode.client_id,
+    )?;
+    ensure_required_string(
+        "provider_edge.claudecode.redirect_uri",
+        &config.claudecode.redirect_uri,
+    )?;
+    ensure_required_string("provider_edge.claudecode.scopes", &config.claudecode.scopes)?;
+    ensure_required_string(
+        "provider_edge.claudecode.user_agent",
+        &config.claudecode.user_agent,
+    )?;
+
+    ensure_required_string(
+        "provider_edge.antigravity.authorize_url",
+        &config.antigravity.authorize_url,
+    )?;
+    ensure_required_string(
+        "provider_edge.antigravity.token_url",
+        &config.antigravity.token_url,
+    )?;
+    ensure_required_string(
+        "provider_edge.antigravity.client_id",
+        &config.antigravity.client_id,
+    )?;
+    ensure_required_string(
+        "provider_edge.antigravity.client_secret",
+        &config.antigravity.client_secret,
+    )?;
+    ensure_required_string(
+        "provider_edge.antigravity.redirect_uri",
+        &config.antigravity.redirect_uri,
+    )?;
+    ensure_required_string(
+        "provider_edge.antigravity.scopes",
+        &config.antigravity.scopes,
+    )?;
+    if config.antigravity.load_endpoints.is_empty() {
+        return Err(anyhow!(
+            "provider_edge.antigravity.load_endpoints cannot be empty"
+        ));
+    }
+    ensure_required_string(
+        "provider_edge.antigravity.user_agent",
+        &config.antigravity.user_agent,
+    )?;
+    ensure_required_string(
+        "provider_edge.antigravity.client_metadata",
+        &config.antigravity.client_metadata,
+    )?;
+
+    ensure_required_string(
+        "provider_edge.copilot.device_code_url",
+        &config.copilot.device_code_url,
+    )?;
+    ensure_required_string(
+        "provider_edge.copilot.access_token_url",
+        &config.copilot.access_token_url,
+    )?;
+    ensure_required_string("provider_edge.copilot.client_id", &config.copilot.client_id)?;
+    ensure_required_string("provider_edge.copilot.scope", &config.copilot.scope)?;
+
+    Ok(())
+}
+
+fn provider_edge_is_configured(config: &crate::types::ProviderEdgeConfig) -> bool {
+    [
+        config.codex.authorize_url.as_str(),
+        config.codex.token_url.as_str(),
+        config.codex.client_id.as_str(),
+        config.codex.redirect_uri.as_str(),
+        config.codex.scopes.as_str(),
+        config.codex.user_agent.as_str(),
+        config.claudecode.authorize_url.as_str(),
+        config.claudecode.token_url.as_str(),
+        config.claudecode.client_id.as_str(),
+        config.claudecode.redirect_uri.as_str(),
+        config.claudecode.scopes.as_str(),
+        config.claudecode.user_agent.as_str(),
+        config.antigravity.authorize_url.as_str(),
+        config.antigravity.token_url.as_str(),
+        config.antigravity.client_id.as_str(),
+        config.antigravity.client_secret.as_str(),
+        config.antigravity.redirect_uri.as_str(),
+        config.antigravity.scopes.as_str(),
+        config.antigravity.user_agent.as_str(),
+        config.antigravity.client_metadata.as_str(),
+        config.copilot.device_code_url.as_str(),
+        config.copilot.access_token_url.as_str(),
+        config.copilot.client_id.as_str(),
+        config.copilot.scope.as_str(),
+    ]
+    .iter()
+    .any(|value| !value.trim().is_empty())
+        || !config.antigravity.load_endpoints.is_empty()
+}
+
+fn validate_required_string(field: &str, value: &str, errors: &mut Vec<String>) {
+    if value.trim().is_empty() {
+        errors.push(format!("{field} cannot be empty"));
+    }
+}
+
+fn ensure_required_string(field: &str, value: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(anyhow!("{field} cannot be empty"));
+    }
+    Ok(())
 }
 
 fn ensure_log_level(level: &str) -> Result<()> {

@@ -2,6 +2,7 @@ use axonhub_db_entity::{projects, threads, traces};
 use axonhub_http::{ContextResolveError, ProjectContext, ThreadContext, TraceContext};
 use sea_orm::{ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 
+use crate::foundation::request_context::trace_matches_project_and_thread;
 use crate::foundation::seaorm::SeaOrmConnectionFactory;
 
 pub(crate) trait TraceContextRepository: Send + Sync {
@@ -9,6 +10,10 @@ pub(crate) trait TraceContextRepository: Send + Sync {
     fn query_thread(&self, thread_id: &str) -> Result<Option<ThreadContext>, ContextResolveError>;
     fn insert_thread(&self, project_id: i64, thread_id: &str) -> Result<i64, ContextResolveError>;
     fn query_trace(&self, trace_id: &str) -> Result<Option<TraceContext>, ContextResolveError>;
+    fn query_thread_by_db_id(
+        &self,
+        thread_db_id: i64,
+    ) -> Result<Option<ThreadContext>, ContextResolveError>;
     fn insert_trace(
         &self,
         project_id: i64,
@@ -97,6 +102,19 @@ impl TraceContextRepository for SeaOrmTraceContextRepository {
                 .map_err(|_| ContextResolveError::Internal)
         })
     }
+
+    fn query_thread_by_db_id(
+        &self,
+        thread_db_id: i64,
+    ) -> Result<Option<ThreadContext>, ContextResolveError> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|_| ContextResolveError::Internal)?;
+            query_thread_by_db_id_seaorm(&connection, thread_db_id)
+                .await
+                .map_err(|_| ContextResolveError::Internal)
+        })
+    }
 }
 
 async fn query_thread_seaorm(
@@ -132,6 +150,23 @@ async fn insert_thread_seaorm(
     Ok(inserted.last_insert_id)
 }
 
+async fn query_thread_by_db_id_seaorm(
+    db: &impl sea_orm::ConnectionTrait,
+    thread_db_id: i64,
+) -> Result<Option<ThreadContext>, sea_orm::DbErr> {
+    threads::Entity::find_by_id(thread_db_id)
+        .into_partial_model::<threads::ResolveContext>()
+        .one(db)
+        .await
+        .map(|thread| {
+            thread.map(|thread| ThreadContext {
+                id: thread.id,
+                thread_id: thread.thread_id,
+                project_id: thread.project_id,
+            })
+        })
+}
+
 async fn query_trace_seaorm(
     db: &impl sea_orm::ConnectionTrait,
     trace_id: &str,
@@ -149,6 +184,27 @@ async fn query_trace_seaorm(
                 thread_id: trace.thread_id,
             })
         })
+}
+
+pub(crate) fn validate_trace_thread_association(
+    project_id: i64,
+    thread: Option<&ThreadContext>,
+    trace: Option<&TraceContext>,
+    requested_thread_db_id: Option<i64>,
+) -> Result<(), ContextResolveError> {
+    if let Some(thread) = thread {
+        if thread.project_id != project_id {
+            return Err(ContextResolveError::Internal);
+        }
+    }
+
+    if let Some(trace) = trace {
+        if !trace_matches_project_and_thread(trace, project_id, requested_thread_db_id) {
+            return Err(ContextResolveError::Internal);
+        }
+    }
+
+    Ok(())
 }
 
 async fn insert_trace_seaorm(

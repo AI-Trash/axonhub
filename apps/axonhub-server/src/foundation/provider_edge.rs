@@ -240,11 +240,6 @@ impl SqliteProviderEdgeAdminService {
             ));
         }
 
-        let callback = parse_callback(provider, request.callback_url.as_str())?;
-        if callback.state != request.session_id {
-            return Err(provider_edge_invalid_request("oauth state mismatch"));
-        }
-
         let session = self.take_session(request.session_id.as_str())?;
         let (code_verifier, project_id) = match session {
             ProviderEdgeSession::Pkce {
@@ -273,6 +268,11 @@ impl SqliteProviderEdgeAdminService {
                 ))
             }
         };
+
+        let callback = parse_callback(provider, request.callback_url.as_str())?;
+        if callback.state != request.session_id {
+            return Err(provider_edge_invalid_request("oauth state mismatch"));
+        }
 
         let token = self.exchange_provider_token(
             provider,
@@ -1291,7 +1291,10 @@ pub(crate) fn base64_url_no_padding(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::sync::Mutex;
+    use std::thread;
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1462,5 +1465,468 @@ mod tests {
         fixture.set_all();
 
         assert!(SqliteProviderEdgeAdminService::from_env().is_some());
+    }
+
+    fn read_http_request(stream: &mut std::net::TcpStream) -> (String, Vec<u8>) {
+        let mut request_bytes = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        let mut header_end = None;
+        let mut expected_body_len = None;
+
+        loop {
+            let size = stream.read(&mut buffer).expect("read request");
+            if size == 0 {
+                break;
+            }
+            request_bytes.extend_from_slice(&buffer[..size]);
+
+            if header_end.is_none() {
+                header_end = request_bytes
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|position| position + 4);
+                if let Some(end) = header_end {
+                    let headers = String::from_utf8_lossy(&request_bytes[..end]);
+                    expected_body_len = headers
+                        .lines()
+                        .find_map(|line| {
+                            line.split_once(':').and_then(|(name, value)| {
+                                name.trim()
+                                    .eq_ignore_ascii_case("content-length")
+                                    .then(|| value.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                        })
+                        .or(Some(0));
+                }
+            }
+
+            if let (Some(end), Some(body_len)) = (header_end, expected_body_len) {
+                if request_bytes.len() >= end + body_len {
+                    let raw = String::from_utf8_lossy(&request_bytes).to_string();
+                    let body = request_bytes[end..end + body_len].to_vec();
+                    return (raw, body);
+                }
+            }
+        }
+
+        (
+            String::from_utf8_lossy(&request_bytes).to_string(),
+            Vec::new(),
+        )
+    }
+
+    fn start_http_server<F>(handler: F) -> String
+    where
+        F: Fn(String, Vec<u8>) -> String + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("read local addr");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let (request, body) = read_http_request(&mut stream);
+            let response = handler(request, body);
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+        format!("http://{address}")
+    }
+
+    fn http_json_response(status_line: &str, body: &str) -> String {
+        format!(
+            "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn http_form_response(status_line: &str, body: &str) -> String {
+        format!(
+            "{status_line}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    fn test_provider_edge_config() -> ProviderEdgeAdminConfig {
+        ProviderEdgeAdminConfig {
+            codex_authorize_url: "https://example.test/codex/authorize".to_owned(),
+            codex_token_url: "https://example.test/codex/token".to_owned(),
+            codex_client_id: "codex-client-id".to_owned(),
+            codex_redirect_uri: "http://localhost:1455/auth/callback".to_owned(),
+            codex_scopes: "openid profile email offline_access".to_owned(),
+            codex_user_agent: "codex-test-agent".to_owned(),
+            claudecode_authorize_url: "https://example.test/claudecode/authorize".to_owned(),
+            claudecode_token_url: "https://example.test/claudecode/token".to_owned(),
+            claudecode_client_id: "claudecode-client-id".to_owned(),
+            claudecode_redirect_uri: "http://localhost:54545/callback".to_owned(),
+            claudecode_scopes: "org:create_api_key user:profile user:inference".to_owned(),
+            claudecode_user_agent: "claudecode-test-agent".to_owned(),
+            antigravity_authorize_url: "https://example.test/antigravity/authorize".to_owned(),
+            antigravity_token_url: "https://example.test/antigravity/token".to_owned(),
+            antigravity_client_id: "antigravity-client-id".to_owned(),
+            antigravity_client_secret: "antigravity-client-secret".to_owned(),
+            antigravity_redirect_uri: "http://localhost:51121/oauth-callback".to_owned(),
+            antigravity_scopes: "scope-a scope-b".to_owned(),
+            antigravity_load_endpoints: vec!["https://example.test/load-a".to_owned()],
+            antigravity_user_agent: "antigravity-test-agent".to_owned(),
+            antigravity_client_metadata: r#"{"ideType":"ANTIGRAVITY"}"#.to_owned(),
+            copilot_device_code_url: "https://example.test/copilot/device/code".to_owned(),
+            copilot_access_token_url: "https://example.test/copilot/access/token".to_owned(),
+            copilot_client_id: "copilot-client-id".to_owned(),
+            copilot_scope: "read:user".to_owned(),
+        }
+    }
+
+    #[test]
+    fn parse_callback_supports_claudecode_fragment_state() {
+        let parsed = parse_callback(
+            PkceProvider::ClaudeCode,
+            "http://localhost:54545/callback?code=test-code#test-state",
+        )
+        .expect("parse callback");
+
+        assert_eq!(parsed.code, "test-code");
+        assert_eq!(parsed.state, "test-state");
+    }
+
+    #[test]
+    fn parse_callback_rejects_missing_claudecode_state() {
+        let error = parse_callback(
+            PkceProvider::ClaudeCode,
+            "http://localhost:54545/callback?code=test-code",
+        )
+        .expect_err("missing state should fail");
+
+        match error {
+            ProviderEdgeAdminError::InvalidRequest { message } => {
+                assert_eq!(
+                    message,
+                    "state parameter not found in callback_url (should be after # or in query)"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn codex_exchange_consumes_session_after_state_mismatch() {
+        let service = SqliteProviderEdgeAdminService::new(test_provider_edge_config());
+        let start = service
+            .start_codex_oauth(&StartPkceOAuthRequest {})
+            .expect("start codex oauth");
+
+        let mismatch = service
+            .exchange_codex_oauth(&ExchangeCallbackOAuthRequest {
+                session_id: start.session_id.clone(),
+                callback_url: "http://localhost:1455/auth/callback?code=test-code&state=mismatch"
+                    .to_owned(),
+            })
+            .expect_err("state mismatch should fail");
+
+        match mismatch {
+            ProviderEdgeAdminError::InvalidRequest { message } => {
+                assert_eq!(message, "oauth state mismatch");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let replay = service
+            .exchange_codex_oauth(&ExchangeCallbackOAuthRequest {
+                session_id: start.session_id,
+                callback_url:
+                    "http://localhost:1455/auth/callback?code=test-code&state=unused-session"
+                        .to_owned(),
+            })
+            .expect_err("replay after mismatch should fail");
+
+        match replay {
+            ProviderEdgeAdminError::InvalidRequest { message } => {
+                assert_eq!(message, "invalid or expired oauth session");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn claudecode_exchange_posts_json_and_returns_credentials_json() {
+        let token_server_url = start_http_server(|request, body| {
+            assert!(request.starts_with("POST /token HTTP/1.1"));
+            assert!(
+                request.contains("content-type: application/json")
+                    || request.contains("Content-Type: application/json")
+            );
+            assert!(
+                request.contains("user-agent: claudecode-test-agent")
+                    || request.contains("User-Agent: claudecode-test-agent")
+            );
+
+            let payload: Value = serde_json::from_slice(&body).expect("json body");
+            assert_eq!(payload["grant_type"], "authorization_code");
+            assert_eq!(payload["code"], "test-code");
+            assert_eq!(payload["client_id"], "claudecode-client-id");
+            assert_eq!(payload["redirect_uri"], "http://localhost:54545/callback");
+            assert!(payload["state"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()));
+            assert!(payload["code_verifier"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()));
+
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"access_token":"claude-access","refresh_token":"claude-refresh","id_token":"claude-id","expires_in":3600,"token_type":"bearer","scope":"org:create_api_key user:profile"}"#,
+            )
+        });
+
+        let mut config = test_provider_edge_config();
+        config.claudecode_token_url = format!("{token_server_url}/token");
+        let service = SqliteProviderEdgeAdminService::new(config);
+        let start = service
+            .start_claudecode_oauth(&StartPkceOAuthRequest {})
+            .expect("start claudecode oauth");
+        let session_id = start.session_id.clone();
+
+        let response = service
+            .exchange_claudecode_oauth(&ExchangeCallbackOAuthRequest {
+                session_id: session_id.clone(),
+                callback_url: format!(
+                    "http://localhost:54545/callback?code=test-code#{session_id}"
+                ),
+            })
+            .expect("exchange claudecode oauth");
+
+        let credentials: Value =
+            serde_json::from_str(&response.credentials).expect("credentials json");
+        assert_eq!(credentials["client_id"], "claudecode-client-id");
+        assert_eq!(credentials["access_token"], "claude-access");
+        assert_eq!(credentials["refresh_token"], "claude-refresh");
+        assert_eq!(credentials["id_token"], "claude-id");
+        assert_eq!(credentials["token_type"], "bearer");
+        assert_eq!(
+            credentials["scopes"],
+            serde_json::json!(["org:create_api_key", "user:profile"])
+        );
+        assert!(credentials["expires_at"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z')));
+    }
+
+    #[test]
+    fn antigravity_exchange_returns_refresh_token_with_project_id_and_rejects_empty_load_endpoints()
+    {
+        let token_server_url = start_http_server(|request, body| {
+            assert!(request.starts_with("POST /token HTTP/1.1"));
+            assert!(
+                request.contains("content-type: application/x-www-form-urlencoded")
+                    || request.contains("Content-Type: application/x-www-form-urlencoded")
+            );
+            let body = String::from_utf8(body).expect("form body");
+            assert!(body.contains("grant_type=authorization_code"));
+            assert!(body.contains("client_id=antigravity-client-id"));
+            assert!(body.contains("client_secret=antigravity-client-secret"));
+            assert!(body.contains("code=test-code"));
+
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"access_token":"ag-access","refresh_token":"ag-refresh","expires_in":3600,"token_type":"bearer"}"#,
+            )
+        });
+
+        let mut config = test_provider_edge_config();
+        config.antigravity_token_url = format!("{token_server_url}/token");
+        config.antigravity_load_endpoints = Vec::new();
+        let service = SqliteProviderEdgeAdminService::new(config.clone());
+
+        let start_with_project = service
+            .start_antigravity_oauth(&StartAntigravityOAuthRequest {
+                project_id: "project-123".to_owned(),
+            })
+            .expect("start antigravity oauth");
+
+        let response = service
+            .exchange_antigravity_oauth(&ExchangeCallbackOAuthRequest {
+                session_id: start_with_project.session_id.clone(),
+                callback_url: format!(
+                    "http://localhost:51121/oauth-callback?code=test-code&state={}",
+                    start_with_project.session_id
+                ),
+            })
+            .expect("exchange antigravity oauth");
+        assert_eq!(response.credentials, "ag-refresh|project-123");
+
+        let second_token_server_url = start_http_server(|_, _| {
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"access_token":"ag-access-2","refresh_token":"ag-refresh-2","expires_in":3600,"token_type":"bearer"}"#,
+            )
+        });
+        let mut config_without_project = config;
+        config_without_project.antigravity_token_url = format!("{second_token_server_url}/token");
+        let service_without_project = SqliteProviderEdgeAdminService::new(config_without_project);
+        let start_without_project = service_without_project
+            .start_antigravity_oauth(&StartAntigravityOAuthRequest {
+                project_id: String::new(),
+            })
+            .expect("start antigravity oauth without project");
+
+        let error = service_without_project
+            .exchange_antigravity_oauth(&ExchangeCallbackOAuthRequest {
+                session_id: start_without_project.session_id.clone(),
+                callback_url: format!(
+                    "http://localhost:51121/oauth-callback?code=test-code&state={}",
+                    start_without_project.session_id
+                ),
+            })
+            .expect_err("missing endpoints should fail");
+
+        match error {
+            ProviderEdgeAdminError::BadGateway { message } => {
+                assert_eq!(
+                    message,
+                    "failed to resolve project id and none provided: no load endpoints configured"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn copilot_start_and_poll_cover_form_and_error_responses() {
+        let device_server_url = start_http_server(|request, body| {
+            assert!(request.starts_with("POST /device HTTP/1.1"));
+            assert!(
+                request.contains("content-type: application/x-www-form-urlencoded")
+                    || request.contains("Content-Type: application/x-www-form-urlencoded")
+            );
+            let body = String::from_utf8(body).expect("form body");
+            assert!(body.contains("client_id=copilot-client-id"));
+            assert!(body.contains("scope=read%3Auser"));
+
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"device_code":"device-code-123","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}"#,
+            )
+        });
+        let token_server_url = start_http_server(|request, body| {
+            assert!(request.starts_with("POST /token HTTP/1.1"));
+            let body = String::from_utf8(body).expect("form body");
+            assert!(body.contains("client_id=copilot-client-id"));
+            assert!(body.contains("device_code=device-code-123"));
+            assert!(
+                body.contains("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code")
+            );
+
+            http_form_response(
+                "HTTP/1.1 200 OK",
+                "access_token=gho_form_token&token_type=bearer&scope=read%3Auser",
+            )
+        });
+
+        let mut config = test_provider_edge_config();
+        config.copilot_device_code_url = format!("{device_server_url}/device");
+        config.copilot_access_token_url = format!("{token_server_url}/token");
+        let service = SqliteProviderEdgeAdminService::new(config);
+
+        let start = service
+            .start_copilot_oauth(&StartCopilotOAuthRequest {})
+            .expect("start copilot oauth");
+        assert_eq!(start.user_code, "ABCD-EFGH");
+        assert_eq!(start.verification_uri, "https://github.com/login/device");
+        assert_eq!(start.expires_in, 900);
+        assert_eq!(start.interval, 5);
+
+        let poll = service
+            .poll_copilot_oauth(&PollCopilotOAuthRequest {
+                session_id: start.session_id.clone(),
+            })
+            .expect("poll copilot oauth");
+        assert_eq!(poll.status, "complete");
+        assert_eq!(poll.access_token.as_deref(), Some("gho_form_token"));
+        assert_eq!(poll.token_type.as_deref(), Some("bearer"));
+        assert_eq!(poll.scope.as_deref(), Some("read:user"));
+
+        let replay = service
+            .poll_copilot_oauth(&PollCopilotOAuthRequest {
+                session_id: start.session_id,
+            })
+            .expect_err("session should be deleted after success");
+        match replay {
+            ProviderEdgeAdminError::InvalidRequest { message } => {
+                assert_eq!(message, "invalid or expired session");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let pending_token_url = start_http_server(|_, _| {
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"error":"authorization_pending","error_description":"pending"}"#,
+            )
+        });
+        let device_server_url = start_http_server(|_, _| {
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"device_code":"device-code-456","user_code":"WXYZ-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}"#,
+            )
+        });
+        let mut config = test_provider_edge_config();
+        config.copilot_device_code_url = format!("{device_server_url}/device");
+        config.copilot_access_token_url = format!("{pending_token_url}/token");
+        let pending_service = SqliteProviderEdgeAdminService::new(config);
+        let pending_start = pending_service
+            .start_copilot_oauth(&StartCopilotOAuthRequest {})
+            .expect("start pending copilot oauth");
+        let pending = pending_service
+            .poll_copilot_oauth(&PollCopilotOAuthRequest {
+                session_id: pending_start.session_id,
+            })
+            .expect("pending poll should succeed");
+        assert_eq!(pending.status, "pending");
+        assert_eq!(
+            pending.message.as_deref(),
+            Some(PROVIDER_EDGE_COPILOT_PENDING_MESSAGE)
+        );
+
+        let denied_token_url = start_http_server(|_, _| {
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"error":"access_denied","error_description":"denied"}"#,
+            )
+        });
+        let device_server_url = start_http_server(|_, _| {
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"device_code":"device-code-789","user_code":"QWER-9876","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}"#,
+            )
+        });
+        let mut config = test_provider_edge_config();
+        config.copilot_device_code_url = format!("{device_server_url}/device");
+        config.copilot_access_token_url = format!("{denied_token_url}/token");
+        let denied_service = SqliteProviderEdgeAdminService::new(config);
+        let denied_start = denied_service
+            .start_copilot_oauth(&StartCopilotOAuthRequest {})
+            .expect("start denied copilot oauth");
+        let denied = denied_service
+            .poll_copilot_oauth(&PollCopilotOAuthRequest {
+                session_id: denied_start.session_id.clone(),
+            })
+            .expect_err("access denied should fail");
+        match denied {
+            ProviderEdgeAdminError::InvalidRequest { message } => {
+                assert_eq!(message, "access denied by user");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        let replay = denied_service
+            .poll_copilot_oauth(&PollCopilotOAuthRequest {
+                session_id: denied_start.session_id,
+            })
+            .expect_err("denied session should be deleted");
+        match replay {
+            ProviderEdgeAdminError::InvalidRequest { message } => {
+                assert_eq!(message, "invalid or expired session");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

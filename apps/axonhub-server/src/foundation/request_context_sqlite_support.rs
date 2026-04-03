@@ -13,7 +13,10 @@ use sea_orm::{
 use super::sqlite_support::{ensure_trace_tables, SqliteConnectionFactory};
 #[cfg(test)]
 use super::{
-    identity_service::IdentityAuthService, ports::RequestContextRepository,
+    identity_service::IdentityAuthService,
+    ports::RequestContextRepository,
+    repositories::request_context::validate_trace_thread_association,
+    request_context::{normalize_context_key, thread_belongs_to_project},
     sqlite_support::SqliteFoundation,
 };
 #[cfg(test)]
@@ -151,10 +154,11 @@ pub(crate) fn get_or_create_thread(
     project_id: i64,
     thread_id: &str,
 ) -> SqlResult<ThreadContext> {
+    let thread_id = normalize_context_key(thread_id);
     let existing = connection
         .query_row(
             "SELECT id, thread_id, project_id FROM threads WHERE thread_id = ?1 LIMIT 1",
-            [thread_id],
+            [thread_id.as_str()],
             |row| {
                 Ok(ThreadContext {
                     id: row.get(0)?,
@@ -166,7 +170,7 @@ pub(crate) fn get_or_create_thread(
         .optional()?;
 
     if let Some(thread) = existing {
-        if thread.project_id == project_id {
+        if thread_belongs_to_project(&thread, project_id) {
             return Ok(thread);
         }
         return Err(SqlError::InvalidQuery);
@@ -174,12 +178,12 @@ pub(crate) fn get_or_create_thread(
 
     connection.execute(
         "INSERT INTO threads (project_id, thread_id) VALUES (?1, ?2)",
-        params![project_id, thread_id],
+        params![project_id, thread_id.as_str()],
     )?;
 
     Ok(ThreadContext {
         id: connection.last_insert_rowid(),
-        thread_id: thread_id.to_owned(),
+        thread_id,
         project_id,
     })
 }
@@ -191,10 +195,34 @@ pub(crate) fn get_or_create_trace(
     trace_id: &str,
     thread_db_id: Option<i64>,
 ) -> SqlResult<TraceContext> {
+    let trace_id = normalize_context_key(trace_id);
+    let thread = thread_db_id
+        .map(|thread_db_id| {
+            connection
+                .query_row(
+                    "SELECT id, thread_id, project_id FROM threads WHERE id = ?1 LIMIT 1",
+                    [thread_db_id],
+                    |row| {
+                        Ok(ThreadContext {
+                            id: row.get(0)?,
+                            thread_id: row.get(1)?,
+                            project_id: row.get(2)?,
+                        })
+                    },
+                )
+                .optional()
+        })
+        .transpose()?
+        .flatten();
+
+    if thread_db_id.is_some() && thread.as_ref().is_none() {
+        return Err(SqlError::InvalidQuery);
+    }
+
     let existing = connection
         .query_row(
             "SELECT id, trace_id, project_id, thread_id FROM traces WHERE trace_id = ?1 LIMIT 1",
-            [trace_id],
+            [trace_id.as_str()],
             |row| {
                 Ok(TraceContext {
                     id: row.get(0)?,
@@ -207,22 +235,22 @@ pub(crate) fn get_or_create_trace(
         .optional()?;
 
     if let Some(trace) = existing {
-        if trace.project_id == project_id
-            && (thread_db_id.is_none() || trace.thread_id == thread_db_id)
-        {
-            return Ok(trace);
-        }
-        return Err(SqlError::InvalidQuery);
+        validate_trace_thread_association(project_id, thread.as_ref(), Some(&trace), thread_db_id)
+            .map_err(|_| SqlError::InvalidQuery)?;
+        return Ok(trace);
     }
+
+    validate_trace_thread_association(project_id, thread.as_ref(), None, thread_db_id)
+        .map_err(|_| SqlError::InvalidQuery)?;
 
     connection.execute(
         "INSERT INTO traces (project_id, trace_id, thread_id) VALUES (?1, ?2, ?3)",
-        params![project_id, trace_id, thread_db_id],
+        params![project_id, trace_id.as_str(), thread_db_id],
     )?;
 
     Ok(TraceContext {
         id: connection.last_insert_rowid(),
-        trace_id: trace_id.to_owned(),
+        trace_id,
         project_id,
         thread_id: thread_db_id,
     })
@@ -257,7 +285,7 @@ impl RequestContextService {
         thread_id: &str,
     ) -> Result<Option<ThreadContext>, ContextResolveError> {
         self.trace_contexts
-            .get_or_create_thread(project_id, thread_id.trim())
+            .get_or_create_thread(project_id, thread_id)
             .map(Some)
             .map_err(|_| ContextResolveError::Internal)
     }
@@ -269,7 +297,7 @@ impl RequestContextService {
         thread_db_id: Option<i64>,
     ) -> Result<Option<TraceContext>, ContextResolveError> {
         self.trace_contexts
-            .get_or_create_trace(project_id, trace_id.trim(), thread_db_id)
+            .get_or_create_trace(project_id, trace_id, thread_db_id)
             .map(Some)
             .map_err(|_| ContextResolveError::Internal)
     }

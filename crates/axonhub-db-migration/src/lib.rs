@@ -6,6 +6,7 @@ mod m20260326_000003_catalog_schema;
 mod m20260326_000004_request_ledger_schema;
 mod m20260326_000005_operational_schema;
 mod m20260327_000006_persistence_extension_schema;
+mod m20260402_000007_operational_runtime_schema;
 
 pub struct Migrator;
 
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260326_000004_request_ledger_schema::Migration),
             Box::new(m20260326_000005_operational_schema::Migration),
             Box::new(m20260327_000006_persistence_extension_schema::Migration),
+            Box::new(m20260402_000007_operational_runtime_schema::Migration),
         ]
     }
 }
@@ -26,8 +28,15 @@ impl MigratorTrait for Migrator {
 #[cfg(test)]
 mod tests {
     use super::Migrator;
+    use crate::m20260402_000007_operational_runtime_schema::{
+        operational_runs_table_statement, realtime_sessions_table_statement,
+    };
     use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement};
-    use sea_orm_migration::MigratorTrait;
+    use sea_orm_migration::{prelude::{PostgresQueryBuilder, TableCreateStatement}, MigratorTrait};
+
+    fn table_sql(statement: TableCreateStatement) -> String {
+        statement.to_string(PostgresQueryBuilder)
+    }
 
     async fn table_exists(db: &sea_orm::DatabaseConnection, table: &str) -> bool {
         let row = db
@@ -98,5 +107,39 @@ mod tests {
             )
             .await
         );
+
+        for table in ["realtime_sessions", "operational_runs"] {
+            assert!(table_exists(&db, table).await, "missing table {table}");
+        }
+
+        assert!(column_exists(&db, "realtime_sessions", "session_id").await);
+        assert!(column_exists(&db, "realtime_sessions", "transport").await);
+        assert!(column_exists(&db, "realtime_sessions", "metadata").await);
+        assert!(column_exists(&db, "operational_runs", "operation_type").await);
+        assert!(column_exists(&db, "operational_runs", "trigger_source").await);
+        assert!(column_exists(&db, "operational_runs", "result_payload").await);
+    }
+
+    #[test]
+    fn postgres_operational_runtime_schema_statements_include_expected_contract() {
+        let realtime_sessions_sql =
+            table_sql(realtime_sessions_table_statement(DatabaseBackend::Postgres));
+        let operational_runs_sql =
+            table_sql(operational_runs_table_statement(DatabaseBackend::Postgres));
+
+        assert!(realtime_sessions_sql.contains("realtime_sessions"));
+        assert!(realtime_sessions_sql.contains("session_id"));
+        assert!(realtime_sessions_sql.contains("transport"));
+        assert!(realtime_sessions_sql.contains("timestamp with time zone"));
+        assert!(realtime_sessions_sql.contains("project_id"));
+        assert!(realtime_sessions_sql.contains("projects"));
+
+        assert!(operational_runs_sql.contains("operational_runs"));
+        assert!(operational_runs_sql.contains("operation_type"));
+        assert!(operational_runs_sql.contains("result_payload"));
+        assert!(operational_runs_sql.contains("trigger_source"));
+        assert!(operational_runs_sql.contains("started_at"));
+        assert!(operational_runs_sql.contains("initiated_by_user_id"));
+        assert!(operational_runs_sql.contains("users"));
     }
 }

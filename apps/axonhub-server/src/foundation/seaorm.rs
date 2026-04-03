@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axonhub_db_migration::{Migrator, MigratorTrait};
@@ -9,41 +10,47 @@ use sea_orm::{
 
 #[derive(Debug, Clone)]
 pub(crate) enum SeaOrmConnectionFactory {
-    Sqlite { dsn: String },
-    Postgres { dsn: String },
-    MySql { dsn: String },
+    Sqlite { dsn: String, instance_id: u64 },
+    Postgres { dsn: String, instance_id: u64 },
+}
+
+static NEXT_FACTORY_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_factory_instance_id() -> u64 {
+    NEXT_FACTORY_INSTANCE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 impl SeaOrmConnectionFactory {
     pub(crate) fn sqlite(dsn: String) -> Self {
-        Self::Sqlite { dsn }
+        Self::Sqlite {
+            dsn,
+            instance_id: next_factory_instance_id(),
+        }
     }
 
     pub(crate) fn postgres(dsn: String) -> Self {
-        Self::Postgres { dsn }
-    }
-
-    pub(crate) fn mysql(dsn: String) -> Self {
-        Self::MySql { dsn }
+        Self::Postgres {
+            dsn,
+            instance_id: next_factory_instance_id(),
+        }
     }
 
     pub(crate) fn backend(&self) -> DatabaseBackend {
         match self {
             Self::Sqlite { .. } => DatabaseBackend::Sqlite,
             Self::Postgres { .. } => DatabaseBackend::Postgres,
-            Self::MySql { .. } => DatabaseBackend::MySql,
         }
     }
 
-    pub(crate) fn dsn(&self) -> &str {
+    pub(crate) fn instance_id(&self) -> u64 {
         match self {
-            Self::Sqlite { dsn } | Self::Postgres { dsn } | Self::MySql { dsn } => dsn,
+            Self::Sqlite { instance_id, .. } | Self::Postgres { instance_id, .. } => *instance_id,
         }
     }
 
     pub(crate) fn runtime_dsn(&self) -> String {
         match self {
-            Self::Sqlite { dsn } => {
+            Self::Sqlite { dsn, .. } => {
                 if dsn == ":memory:" {
                     "sqlite::memory:".to_owned()
                 } else if dsn.starts_with("sqlite:") {
@@ -52,7 +59,7 @@ impl SeaOrmConnectionFactory {
                     format!("sqlite://{}?mode=rwc", dsn)
                 }
             }
-            Self::Postgres { dsn } | Self::MySql { dsn } => dsn.clone(),
+            Self::Postgres { dsn, .. } => dsn.clone(),
         }
     }
 

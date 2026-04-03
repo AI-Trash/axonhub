@@ -1,19 +1,28 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axonhub_db_entity::realtime_sessions;
 use axonhub_http::{
-    AnthropicModel, AnthropicModelListResponse, CompatibilityRoute, GeminiModel,
-    GeminiModelListResponse, ModelCapabilities, ModelListResponse, ModelPricing, OpenAiModel,
-    OpenAiV1Error, OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port,
-    OpenAiV1Route,
+    AnthropicModel, AnthropicModelListResponse, AuthApiKeyContext, CompatibilityRoute,
+    GeminiModel, GeminiModelListResponse, ModelCapabilities, ModelListResponse, ModelPricing,
+    OpenAiModel, OpenAiMultipartBody, OpenAiRequestBody, OpenAiV1Error,
+    OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port, OpenAiV1Route,
+    RealtimeSessionCreateRequest, RealtimeSessionPatchRequest, RealtimeSessionRecord,
 };
+use getrandom::getrandom;
+use hex::encode as hex_encode;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use sea_orm::{ConnectionTrait, DatabaseBackend};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
+    admin::provider_quota_type_for_channel,
+    admin_operational::{persist_provider_quota_status_seaorm, quota_exhausted_details, quota_ready_details},
+    authz::{require_api_key_scope, AuthzFailure, SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS},
+    circuit_breaker::{ChannelBreakerStatus, CircuitBreakerPolicy, CircuitBreakerSnapshot, CircuitBreakerState, SharedCircuitBreaker},
     ports::OpenAiV1Repository,
+    prompt_protection::{apply_prompt_protection, load_enabled_prompt_protection_rules_seaorm},
     repositories::openai_v1::{
         create_request_execution_seaorm, create_request_seaorm,
         default_data_storage_id_seaorm, enforce_api_key_quota_seaorm,
@@ -24,24 +33,42 @@ use super::{
         update_request_execution_result_seaorm, update_request_result_seaorm,
     },
     seaorm::SeaOrmConnectionFactory,
+    shared::current_unix_timestamp,
 };
 
 pub(crate) use super::openai_v1_sqlite_support::*;
 
 pub struct SeaOrmOpenAiV1Service {
     db: SeaOrmConnectionFactory,
+    circuit_breaker: SharedCircuitBreaker,
 }
 
+pub(crate) const DEFAULT_MAX_CHANNEL_RETRIES: usize = 2;
 pub(crate) const DEFAULT_MAX_SAME_CHANNEL_RETRIES: usize = 2;
 
 impl SeaOrmOpenAiV1Service {
     pub fn new(db: SeaOrmConnectionFactory) -> Self {
-        Self { db }
+        let circuit_breaker = SharedCircuitBreaker::with_factory(&db);
+        Self { db, circuit_breaker }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_circuit_breaker_policy(
+        db: SeaOrmConnectionFactory,
+        policy: CircuitBreakerPolicy,
+    ) -> Self {
+        let circuit_breaker = SharedCircuitBreaker::with_factory_and_policy(&db, policy);
+        Self { db, circuit_breaker }
     }
 }
 
 impl OpenAiV1Port for SeaOrmOpenAiV1Service {
-    fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error> {
+    fn list_models(
+        &self,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<ModelListResponse, OpenAiV1Error> {
+        require_api_key_scope(api_key, SCOPE_READ_CHANNELS).map_err(authz_openai_error)?;
         let db = self.db.clone();
         let include_owned = include.map(ToOwned::to_owned);
         let models = db.run_sync(move |db| async move {
@@ -139,26 +166,37 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         route: OpenAiV1Route,
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+        require_api_key_scope(&request.api_key, SCOPE_WRITE_REQUESTS).map_err(authz_openai_error)?;
         validate_openai_request(route, &request.body)?;
         let route_format = route.format().to_owned();
+        let request_model_id = request_model_id(&request.body)?;
         let db = self.db.clone();
+        let circuit_breaker = self.circuit_breaker.clone();
 
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
             let backend = db.backend();
-            let targets = select_target_channels_seaorm(&connection, backend, &request, route).await?;
+            let targets = select_target_channels_seaorm(
+                &connection,
+                backend,
+                &request,
+                route,
+                &circuit_breaker,
+            )
+            .await?;
             let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
             execute_shared_route_seaorm(
                 &connection,
                 backend,
                 &request,
-                request.body.get("model").and_then(Value::as_str).unwrap_or_default(),
+                request_model_id.as_str(),
                 route_format.as_str(),
                 reqwest::Method::POST,
                 targets,
                 &request.body,
                 &request.headers,
                 data_storage_id,
+                &circuit_breaker,
                 |target| target.upstream_url(route),
                 Ok,
                 |response_body| extract_usage(route, response_body),
@@ -173,6 +211,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
         let db = self.db.clone();
+        let circuit_breaker = self.circuit_breaker.clone();
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
             let backend = db.backend();
@@ -189,10 +228,11 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                     backend,
                     prepared.request_model_id.as_str(),
                     request.trace.as_ref().map(|trace| trace.id),
-                    2,
+                    DEFAULT_MAX_CHANNEL_RETRIES,
                     prepared.channel_type,
                     prepared.model_type,
                     None,
+                    &circuit_breaker,
                 )
                 .await?
             };
@@ -215,9 +255,10 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 route.format(),
                 compatibility_upstream_method(route),
                 targets,
-                &prepared.upstream_body,
+                &OpenAiRequestBody::Json(prepared.upstream_body.clone()),
                 &request.headers,
                 data_storage_id,
+                &circuit_breaker,
                 move |target| compatibility_upstream_url(target, route, route_task_id.as_deref()),
                 |response_body| map_compatibility_response(route, response_body),
                 |response_body| compatibility_usage(route, response_body),
@@ -225,11 +266,57 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
             .await
         })
     }
+
+    fn create_realtime_session(
+        &self,
+        request: RealtimeSessionCreateRequest,
+    ) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            create_realtime_session_seaorm(&connection, db.backend(), request).await
+        })
+    }
+
+    fn get_realtime_session(&self, session_id: &str) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        let db = self.db.clone();
+        let session_id = session_id.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            get_realtime_session_seaorm(&connection, &session_id).await
+        })
+    }
+
+    fn update_realtime_session(
+        &self,
+        session_id: &str,
+        patch: RealtimeSessionPatchRequest,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        let db = self.db.clone();
+        let session_id = session_id.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            update_realtime_session_seaorm(&connection, &session_id, patch).await
+        })
+    }
+
+    fn delete_realtime_session(&self, session_id: &str) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        let db = self.db.clone();
+        let session_id = session_id.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            delete_realtime_session_seaorm(&connection, &session_id).await
+        })
+    }
 }
 
 impl OpenAiV1Repository for SeaOrmOpenAiV1Service {
-    fn list_models(&self, include: Option<&str>) -> Result<ModelListResponse, OpenAiV1Error> {
-        <Self as OpenAiV1Port>::list_models(self, include)
+    fn list_models(
+        &self,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<ModelListResponse, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::list_models(self, include, api_key)
     }
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
@@ -255,6 +342,358 @@ impl OpenAiV1Repository for SeaOrmOpenAiV1Service {
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
         <Self as OpenAiV1Port>::execute_compatibility(self, route, request)
     }
+
+    fn create_realtime_session(
+        &self,
+        request: RealtimeSessionCreateRequest,
+    ) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::create_realtime_session(self, request)
+    }
+
+    fn get_realtime_session(&self, session_id: &str) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::get_realtime_session(self, session_id)
+    }
+
+    fn update_realtime_session(
+        &self,
+        session_id: &str,
+        patch: RealtimeSessionPatchRequest,
+    ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::update_realtime_session(self, session_id, patch)
+    }
+
+    fn delete_realtime_session(&self, session_id: &str) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::delete_realtime_session(self, session_id)
+    }
+}
+
+fn authz_openai_error(error: AuthzFailure) -> OpenAiV1Error {
+    OpenAiV1Error::InvalidRequest {
+        message: error.message().to_owned(),
+    }
+}
+
+pub(crate) async fn create_realtime_session_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    request: RealtimeSessionCreateRequest,
+) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+    validate_realtime_session_transport(&request)?;
+    enforce_api_key_quota_seaorm(db, backend, request.api_key_id).await?;
+
+    let session_id = generate_realtime_session_id()?;
+    let request_body_json = serde_json::to_string(&request.transport).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to serialize realtime session request: {error}"),
+    })?;
+    let metadata_json = build_realtime_session_metadata(
+        &request.transport.model,
+        request.client_ip.as_deref(),
+        request.request_id.as_deref(),
+        request.transport.metadata.clone(),
+    )?;
+    let metadata_json = attach_realtime_context_metadata(
+        metadata_json,
+        request.thread.as_ref().map(|thread| thread.thread_id.as_str()),
+        request.trace.as_ref().map(|trace| trace.trace_id.as_str()),
+    )?;
+    let data_storage_id = default_data_storage_id_seaorm(db, backend).await?;
+    let request_row_id = create_request_seaorm(
+        db,
+        backend,
+        &NewRequestRecord {
+            api_key_id: request.api_key_id,
+            project_id: request.project.id,
+            trace_id: request.trace.as_ref().map(|trace| trace.id),
+            data_storage_id,
+            source: "api",
+            model_id: request.transport.model.as_str(),
+            format: realtime_route_format(request.transport.transport.as_str()),
+            request_headers_json: "{}",
+            request_body_json: request_body_json.as_str(),
+            response_body_json: None,
+            response_chunks_json: None,
+            channel_id: request.transport.channel_id,
+            external_id: None,
+            status: "processing",
+            stream: false,
+            client_ip: request.client_ip.as_deref().unwrap_or(""),
+            metrics_latency_ms: None,
+            metrics_first_token_latency_ms: None,
+            content_saved: false,
+            content_storage_id: None,
+            content_storage_key: None,
+            content_saved_at: None,
+        },
+    )
+    .await?;
+
+    realtime_sessions::Entity::insert(realtime_sessions::ActiveModel {
+        project_id: Set(request.project.id),
+        thread_id: Set(request.thread.as_ref().map(|thread| thread.id)),
+        trace_id: Set(request.trace.as_ref().map(|trace| trace.id)),
+        request_id: Set(Some(request_row_id)),
+        api_key_id: Set(request.api_key_id),
+        channel_id: Set(request.transport.channel_id),
+        session_id: Set(session_id.clone()),
+        transport: Set(request.transport.transport.clone()),
+        status: Set("open".to_owned()),
+        metadata: Set(metadata_json),
+        opened_at: Set(current_realtime_timestamp()),
+        last_activity_at: Set(current_realtime_timestamp()),
+        closed_at: Set(None),
+        expires_at: Set(request.transport.expires_at.clone()),
+        ..Default::default()
+    })
+    .exec(db)
+    .await
+    .map_err(map_openai_db_err)?;
+
+    let record = get_realtime_session_seaorm(db, &session_id)
+        .await?
+        .ok_or_else(|| OpenAiV1Error::Internal {
+            message: "Realtime session was created but could not be reloaded".to_owned(),
+        })?;
+    let response_body_json = serde_json::to_string(&record).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to serialize realtime session response: {error}"),
+    })?;
+    update_request_result_seaorm(
+        db,
+        backend,
+        &UpdateRequestResultRecord {
+            request_id: request_row_id,
+            status: "completed",
+            external_id: Some(record.session_id.as_str()),
+            response_body_json: Some(response_body_json.as_str()),
+            channel_id: record.channel_id,
+        },
+    )
+    .await?;
+
+    Ok(record)
+}
+
+pub(crate) async fn get_realtime_session_seaorm(
+    db: &impl ConnectionTrait,
+    session_id: &str,
+) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+    realtime_sessions::Entity::find()
+        .filter(realtime_sessions::Column::SessionId.eq(session_id))
+        .one(db)
+        .await
+        .map_err(map_openai_db_err)?
+        .map(realtime_session_record_from_model)
+        .transpose()
+}
+
+pub(crate) async fn update_realtime_session_seaorm(
+    db: &impl ConnectionTrait,
+    session_id: &str,
+    patch: RealtimeSessionPatchRequest,
+) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+    let Some(model) = realtime_sessions::Entity::find()
+        .filter(realtime_sessions::Column::SessionId.eq(session_id))
+        .one(db)
+        .await
+        .map_err(map_openai_db_err)?
+    else {
+        return Ok(None);
+    };
+
+    validate_realtime_session_patch(model.status.as_str(), patch.status.as_deref())?;
+    let merged_metadata = merge_realtime_session_metadata(model.metadata.as_str(), patch.metadata)?;
+    let next_status = patch.status.unwrap_or_else(|| model.status.clone());
+    let closed_at = if realtime_session_terminal_status(next_status.as_str()) {
+        Some(current_realtime_timestamp())
+    } else {
+        model.closed_at.clone()
+    };
+
+    let mut active: realtime_sessions::ActiveModel = model.into();
+    active.status = Set(next_status);
+    active.metadata = Set(merged_metadata);
+    active.last_activity_at = Set(current_realtime_timestamp());
+    active.closed_at = Set(closed_at);
+    if let Some(expires_at) = patch.expires_at {
+        active.expires_at = Set(Some(expires_at));
+    }
+
+    let updated = active.update(db).await.map_err(map_openai_db_err)?;
+    Ok(Some(realtime_session_record_from_model(updated)?))
+}
+
+pub(crate) async fn delete_realtime_session_seaorm(
+    db: &impl ConnectionTrait,
+    session_id: &str,
+) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+    update_realtime_session_seaorm(
+        db,
+        session_id,
+        RealtimeSessionPatchRequest {
+            status: Some("closed".to_owned()),
+            metadata: None,
+            expires_at: None,
+        },
+    )
+    .await
+}
+
+pub(crate) fn realtime_session_record_from_model(
+    model: realtime_sessions::Model,
+) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+    let metadata: Value = serde_json::from_str(model.metadata.as_str()).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to decode realtime session metadata: {error}"),
+    })?;
+    let model_id = metadata
+        .get("model")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .unwrap_or_default();
+
+    Ok(RealtimeSessionRecord {
+        session_id: model.session_id,
+        transport: model.transport,
+        status: model.status,
+        model: model_id,
+        project_id: model.project_id,
+        thread_id: metadata
+            .get("threadId")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        trace_id: metadata
+            .get("traceId")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        request_id: model.request_id,
+        api_key_id: model.api_key_id,
+        channel_id: model.channel_id,
+        metadata,
+        opened_at: model.opened_at,
+        last_activity_at: model.last_activity_at,
+        closed_at: model.closed_at,
+        expires_at: model.expires_at,
+    })
+}
+
+pub(crate) fn validate_realtime_session_transport(
+    request: &RealtimeSessionCreateRequest,
+) -> Result<(), OpenAiV1Error> {
+    let transport = request.transport.transport.trim();
+    if !matches!(transport, "websocket" | "session") {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "transport must be `websocket` or `session`".to_owned(),
+        });
+    }
+    if request.transport.model.trim().is_empty() {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "model is required".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_realtime_session_patch(
+    current_status: &str,
+    next_status: Option<&str>,
+) -> Result<(), OpenAiV1Error> {
+    let Some(next_status) = next_status else {
+        return Ok(());
+    };
+    if !matches!(next_status, "open" | "closing" | "closed" | "failed") {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "status must be `open`, `closing`, `closed`, or `failed`".to_owned(),
+        });
+    }
+    if realtime_session_terminal_status(current_status) && current_status != next_status {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "realtime session is already terminal".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn realtime_session_terminal_status(status: &str) -> bool {
+    matches!(status, "closed" | "failed")
+}
+
+pub(crate) fn realtime_route_format(transport: &str) -> &'static str {
+    match transport {
+        "websocket" => "openai/realtime_upgrade",
+        _ => "openai/realtime_session",
+    }
+}
+
+pub(crate) fn current_realtime_timestamp() -> String {
+    humantime::format_rfc3339_seconds(SystemTime::now()).to_string()
+}
+
+pub(crate) fn generate_realtime_session_id() -> Result<String, OpenAiV1Error> {
+    let mut bytes = [0_u8; 16];
+    getrandom(&mut bytes).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to generate realtime session id: {error}"),
+    })?;
+    Ok(format!("rtsess_{}", hex_encode(bytes)))
+}
+
+pub(crate) fn build_realtime_session_metadata(
+    model: &str,
+    client_ip: Option<&str>,
+    request_id: Option<&str>,
+    user_metadata: Option<Value>,
+) -> Result<String, OpenAiV1Error> {
+    let mut metadata = serde_json::Map::new();
+    metadata.insert("model".to_owned(), Value::String(model.to_owned()));
+    if let Some(client_ip) = client_ip.filter(|value| !value.is_empty()) {
+        metadata.insert("clientIp".to_owned(), Value::String(client_ip.to_owned()));
+    }
+    if let Some(request_id) = request_id.filter(|value| !value.is_empty()) {
+        metadata.insert("requestId".to_owned(), Value::String(request_id.to_owned()));
+    }
+    if let Some(value) = user_metadata {
+        metadata.insert("attributes".to_owned(), value);
+    }
+    serde_json::to_string(&Value::Object(metadata)).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to encode realtime session metadata: {error}"),
+    })
+}
+
+pub(crate) fn attach_realtime_context_metadata(
+    current: String,
+    thread_id: Option<&str>,
+    trace_id: Option<&str>,
+) -> Result<String, OpenAiV1Error> {
+    let mut value: Value = serde_json::from_str(current.as_str()).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to decode realtime session metadata: {error}"),
+    })?;
+    let object = value.as_object_mut().ok_or_else(|| OpenAiV1Error::Internal {
+        message: "Realtime session metadata must be a JSON object".to_owned(),
+    })?;
+    if let Some(thread_id) = thread_id {
+        object.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+    }
+    if let Some(trace_id) = trace_id {
+        object.insert("traceId".to_owned(), Value::String(trace_id.to_owned()));
+    }
+    serde_json::to_string(&value).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to encode realtime session metadata: {error}"),
+    })
+}
+
+pub(crate) fn merge_realtime_session_metadata(
+    current: &str,
+    patch_metadata: Option<Value>,
+) -> Result<String, OpenAiV1Error> {
+    let mut value: Value = serde_json::from_str(current).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to decode realtime session metadata: {error}"),
+    })?;
+    if let Some(metadata) = patch_metadata {
+        let object = value.as_object_mut().ok_or_else(|| OpenAiV1Error::Internal {
+            message: "Realtime session metadata must be a JSON object".to_owned(),
+        })?;
+        object.insert("attributes".to_owned(), metadata);
+    }
+    serde_json::to_string(&value).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to encode realtime session metadata: {error}"),
+    })
 }
 
 fn map_openai_db_err(error: sea_orm::DbErr) -> OpenAiV1Error {
@@ -271,9 +710,10 @@ async fn execute_shared_route_seaorm<UrlBuilder, ResponseMapper, UsageExtractor>
     route_format: &str,
     upstream_method: reqwest::Method,
     targets: Vec<SelectedOpenAiTarget>,
-    upstream_body: &Value,
+    upstream_body: &OpenAiRequestBody,
     upstream_headers: &HashMap<String, String>,
     data_storage_id: Option<i64>,
+    circuit_breaker: &SharedCircuitBreaker,
     upstream_url_for_target: UrlBuilder,
     response_mapper: ResponseMapper,
     usage_extractor: UsageExtractor,
@@ -289,7 +729,7 @@ where
     let request_body_json = serde_json::to_string(&request.body).map_err(|error| OpenAiV1Error::Internal {
         message: format!("Failed to serialize request body: {error}"),
     })?;
-    let stream = request.body.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    let stream = request.body.stream_flag();
 
     let request_id = create_request_seaorm(
         db,
@@ -325,16 +765,23 @@ where
     for (index, target) in targets.iter().enumerate() {
         let mut same_channel_attempts = 0;
         loop {
-            let attempt_upstream_body = if upstream_body.is_null() {
-                Value::Null
-            } else {
-                rewrite_model(upstream_body, target.actual_model_id.as_str())
-            };
-            let attempt_upstream_body_json = serde_json::to_string(&attempt_upstream_body).map_err(|error| {
-                OpenAiV1Error::Internal {
-                    message: format!("Failed to serialize upstream request body: {error}"),
+            let prepared_attempt = match prepare_outbound_request_with_prompt_protection(
+                db,
+                backend,
+                upstream_body,
+                upstream_headers,
+                target.actual_model_id.as_str(),
+                target.api_key.as_str(),
+            )
+            .await
+            {
+                Ok(prepared_attempt) => prepared_attempt,
+                Err(error) => {
+                    mark_request_failed_seaorm(db, backend, request_id, Some(target.channel_id), None, None)
+                        .await?;
+                    return Err(error);
                 }
-            })?;
+            };
 
             update_request_result_seaorm(
                 db,
@@ -355,15 +802,15 @@ where
                 &NewRequestExecutionRecord {
                     project_id: request.project.id,
                     request_id,
-                    channel_id: Some(target.channel_id),
-                    data_storage_id,
-                    external_id: None,
-                    model_id: target.actual_model_id.as_str(),
-                    format: route_format,
-                    request_body_json: attempt_upstream_body_json.as_str(),
-                    response_body_json: None,
-                    response_chunks_json: None,
-                    error_message: "",
+                        channel_id: Some(target.channel_id),
+                        data_storage_id,
+                        external_id: None,
+                        model_id: target.actual_model_id.as_str(),
+                        format: route_format,
+                        request_body_json: prepared_attempt.body_json.as_str(),
+                        response_body_json: None,
+                        response_chunks_json: None,
+                        error_message: "",
                     response_status_code: None,
                     status: "processing",
                     stream,
@@ -375,13 +822,12 @@ where
             .await?;
 
             let attempt_result = async {
-                let built_headers = build_upstream_headers(upstream_headers, target.api_key.as_str())?;
                 let client_http = reqwest::Client::new();
                 let mut upstream_request = client_http
                     .request(upstream_method.clone(), upstream_url_for_target(target).as_str())
-                    .headers(built_headers);
+                    .headers(prepared_attempt.headers.clone());
                 if matches!(upstream_method, reqwest::Method::POST) {
-                    upstream_request = upstream_request.json(&attempt_upstream_body);
+                    upstream_request = apply_upstream_request_body(upstream_request, &prepared_attempt.body)?;
                 }
                 let upstream_response = upstream_request.send().await.map_err(|error| OpenAiV1Error::Internal {
                     message: format!("Failed to execute upstream request: {error}"),
@@ -408,6 +854,7 @@ where
                         status,
                         response_body,
                         usage,
+                        circuit_breaker,
                     )
                     .await
                 } else {
@@ -422,6 +869,10 @@ where
             match attempt_result {
                 Ok(response) => return Ok(response),
                 Err(error) => {
+                    maybe_persist_provider_quota_error_seaorm(db, target, &error).await?;
+                    if should_retry_openai_error(&error) {
+                        circuit_breaker.record_failure(target.channel_id, target.actual_model_id.as_str());
+                    }
                     let (response_body, response_status_code, external_id) = match &error {
                         OpenAiV1Error::Upstream { status, body } => (
                             Some(body),
@@ -470,9 +921,11 @@ where
         }
     }
 
-    Err(last_error.unwrap_or_else(|| OpenAiV1Error::Internal {
+    let terminal_error = last_error.unwrap_or_else(|| OpenAiV1Error::Internal {
         message: "No upstream channel attempt was executed".to_owned(),
-    }))
+    });
+    mark_request_failed_seaorm(db, backend, request_id, None, None, None).await?;
+    Err(terminal_error)
 }
 
 async fn complete_execution_seaorm(
@@ -486,11 +939,52 @@ async fn complete_execution_seaorm(
     status: u16,
     response_body: Value,
     usage: Option<ExtractedUsage>,
+    circuit_breaker: &SharedCircuitBreaker,
 ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
     let response_body_json = serde_json::to_string(&response_body).map_err(|error| OpenAiV1Error::Internal {
         message: format!("Failed to serialize upstream response: {error}"),
     })?;
     let external_id = response_body.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
+    if let Some(usage) = usage {
+        let usage_cost = compute_usage_cost(&target.model, &usage);
+        let cost_items_json = serde_json::to_string(&usage_cost.cost_items).map_err(|error| {
+            OpenAiV1Error::Internal {
+                message: format!("Failed to serialize usage cost items: {error}"),
+            }
+        })?;
+        record_usage_seaorm(
+            db,
+            backend,
+            &NewUsageLogRecord {
+                request_id,
+                api_key_id: request.api_key_id,
+                project_id: request.project.id,
+                channel_id: Some(target.channel_id),
+                model_id: target.actual_model_id.as_str(),
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                total_tokens: usage.total_tokens,
+                prompt_audio_tokens: usage.prompt_audio_tokens,
+                prompt_cached_tokens: usage.prompt_cached_tokens,
+                prompt_write_cached_tokens: usage.prompt_write_cached_tokens,
+                prompt_write_cached_tokens_5m: usage.prompt_write_cached_tokens_5m,
+                prompt_write_cached_tokens_1h: usage.prompt_write_cached_tokens_1h,
+                completion_audio_tokens: usage.completion_audio_tokens,
+                completion_reasoning_tokens: usage.completion_reasoning_tokens,
+                completion_accepted_prediction_tokens: usage.completion_accepted_prediction_tokens,
+                completion_rejected_prediction_tokens: usage.completion_rejected_prediction_tokens,
+                source: "api",
+                format: route_format,
+                total_cost: usage_cost.total_cost,
+                cost_items_json: cost_items_json.as_str(),
+                cost_price_reference_id: usage_cost.price_reference_id.as_deref().unwrap_or(""),
+            },
+        )
+        .await?;
+    }
+
+    mark_provider_quota_ready_seaorm(db, backend, target).await?;
+
     update_request_result_seaorm(
         db,
         backend,
@@ -516,43 +1010,69 @@ async fn complete_execution_seaorm(
         },
     )
     .await?;
-
-    if let Some(usage) = usage {
-        let usage_cost = compute_usage_cost(&target.model, &usage);
-        if let Ok(cost_items_json) = serde_json::to_string(&usage_cost.cost_items) {
-            let _ = record_usage_seaorm(
-                db,
-                backend,
-                &NewUsageLogRecord {
-                    request_id,
-                    api_key_id: request.api_key_id,
-                    project_id: request.project.id,
-                    channel_id: Some(target.channel_id),
-                    model_id: target.actual_model_id.as_str(),
-                    prompt_tokens: usage.prompt_tokens,
-                    completion_tokens: usage.completion_tokens,
-                    total_tokens: usage.total_tokens,
-                    prompt_audio_tokens: usage.prompt_audio_tokens,
-                    prompt_cached_tokens: usage.prompt_cached_tokens,
-                    prompt_write_cached_tokens: usage.prompt_write_cached_tokens,
-                    prompt_write_cached_tokens_5m: usage.prompt_write_cached_tokens_5m,
-                    prompt_write_cached_tokens_1h: usage.prompt_write_cached_tokens_1h,
-                    completion_audio_tokens: usage.completion_audio_tokens,
-                    completion_reasoning_tokens: usage.completion_reasoning_tokens,
-                    completion_accepted_prediction_tokens: usage.completion_accepted_prediction_tokens,
-                    completion_rejected_prediction_tokens: usage.completion_rejected_prediction_tokens,
-                    source: "api",
-                    format: route_format,
-                    total_cost: usage_cost.total_cost,
-                    cost_items_json: cost_items_json.as_str(),
-                    cost_price_reference_id: usage_cost.price_reference_id.as_deref().unwrap_or(""),
-                },
-            )
-            .await;
-        }
-    }
+    circuit_breaker.record_success(target.channel_id, target.actual_model_id.as_str());
 
     Ok(OpenAiV1ExecutionResponse { status, body: response_body })
+}
+
+pub(crate) async fn mark_provider_quota_ready_seaorm(
+    db: &impl ConnectionTrait,
+    _backend: DatabaseBackend,
+    target: &SelectedOpenAiTarget,
+) -> Result<(), OpenAiV1Error> {
+    let Some(provider_type) = target.provider_type.as_deref() else {
+        return Ok(());
+    };
+    persist_provider_quota_status_seaorm(
+        db,
+        target.channel_id,
+        provider_type,
+        "available",
+        true,
+        None,
+        current_unix_timestamp(),
+        serde_json::json!({
+            "message": quota_ready_details(provider_type, target.channel_id),
+            "source": "runtime_success",
+            "channelId": target.channel_id,
+        })
+        .to_string(),
+    )
+    .await
+    .map_err(|message| OpenAiV1Error::Internal { message })
+}
+
+pub(crate) async fn maybe_persist_provider_quota_error_seaorm(
+    db: &impl ConnectionTrait,
+    target: &SelectedOpenAiTarget,
+    error: &OpenAiV1Error,
+) -> Result<(), OpenAiV1Error> {
+    let Some(provider_type) = target.provider_type.as_deref() else {
+        return Ok(());
+    };
+    let status = match error {
+        OpenAiV1Error::Upstream { status, .. } if *status == 429 => *status,
+        _ => return Ok(()),
+    };
+    let message = openai_error_message(error);
+    persist_provider_quota_status_seaorm(
+        db,
+        target.channel_id,
+        provider_type,
+        "exhausted",
+        false,
+        None,
+        current_unix_timestamp(),
+        serde_json::json!({
+            "message": quota_exhausted_details(provider_type, target.channel_id, message.as_str()),
+            "source": "runtime_error",
+            "channelId": target.channel_id,
+            "statusCode": status,
+        })
+        .to_string(),
+    )
+    .await
+    .map_err(|message| OpenAiV1Error::Internal { message })
 }
 
 async fn mark_request_failed_seaorm(
@@ -667,8 +1187,10 @@ pub struct SelectedOpenAiTarget {
     pub base_url: String,
     pub api_key: String,
     pub actual_model_id: String,
+    pub provider_type: Option<String>,
     pub ordering_weight: i64,
     pub trace_affinity: bool,
+    pub circuit_breaker: Option<CircuitBreakerSnapshot>,
     pub routing_stats: ChannelRoutingStats,
     pub model: StoredModelRecord,
 }
@@ -979,13 +1501,16 @@ impl SelectedOpenAiTarget {
             OpenAiV1Route::ResponsesCompact => format!("{trimmed}/responses/compact"),
             OpenAiV1Route::Embeddings => format!("{trimmed}/embeddings"),
             OpenAiV1Route::ImagesGenerations => format!("{trimmed}/images/generations"),
+            OpenAiV1Route::ImagesEdits => format!("{trimmed}/images/edits"),
+            OpenAiV1Route::ImagesVariations => format!("{trimmed}/images/variations"),
             OpenAiV1Route::Realtime => format!("{trimmed}/realtime"),
         }
     }
 
-    fn base_routing_priority_key(&self) -> (i64, i64, i64) {
+    fn base_routing_priority_key(&self) -> (i64, i64, i64, i64) {
         (
             if self.trace_affinity { 0 } else { 1 },
+            self.circuit_breaker_penalty(),
             if self.routing_stats.last_status_failed {
                 1
             } else {
@@ -994,12 +1519,43 @@ impl SelectedOpenAiTarget {
             self.routing_stats.consecutive_failures,
         )
     }
+
+    fn circuit_breaker_penalty(&self) -> i64 {
+        self.circuit_breaker
+            .as_ref()
+            .map(|snapshot| match snapshot.state {
+                CircuitBreakerState::Closed => 0,
+                CircuitBreakerState::HalfOpen => 1,
+                CircuitBreakerState::Open => 2,
+            })
+            .unwrap_or(0)
+    }
+}
+
+pub(crate) fn stored_channel_breaker_status(
+    status: ChannelBreakerStatus,
+) -> Option<(String, String, i32, Option<i64>)> {
+    let snapshot = status.active?;
+    Some((
+        snapshot.model_id,
+        snapshot.state.as_str().to_owned(),
+        i32::try_from(snapshot.consecutive_failures).unwrap_or(i32::MAX),
+        snapshot.next_probe_in_seconds,
+    ))
 }
 
 pub(crate) fn validate_openai_request(
     route: OpenAiV1Route,
-    body: &Value,
+    body: &OpenAiRequestBody,
 ) -> Result<(), OpenAiV1Error> {
+    if matches!(route, OpenAiV1Route::ImagesEdits | OpenAiV1Route::ImagesVariations) {
+        let _ = request_model_id(body)?;
+        return validate_openai_image_multipart_request(route, body);
+    }
+
+    let body = body.as_json().ok_or_else(|| OpenAiV1Error::InvalidRequest {
+        message: "Invalid request format".to_owned(),
+    })?;
     let object = body
         .as_object()
         .ok_or_else(|| OpenAiV1Error::InvalidRequest {
@@ -1078,6 +1634,7 @@ pub(crate) fn validate_openai_request(
                 });
             }
         }
+        OpenAiV1Route::ImagesEdits | OpenAiV1Route::ImagesVariations => unreachable!(),
     }
 
     Ok(())
@@ -1092,6 +1649,69 @@ pub(crate) fn rewrite_model(body: &Value, actual_model_id: &str) -> Value {
         );
     }
     rewritten
+}
+
+pub(crate) fn rewrite_request_body(body: &OpenAiRequestBody, actual_model_id: &str) -> OpenAiRequestBody {
+    match body {
+        OpenAiRequestBody::Json(value) => OpenAiRequestBody::Json(rewrite_model(value, actual_model_id)),
+        OpenAiRequestBody::Multipart(multipart) => {
+            let fields = multipart
+                .fields
+                .iter()
+                .map(|field| {
+                    let mut rewritten = field.clone();
+                    if rewritten.name == "model" {
+                        rewritten.data = actual_model_id.as_bytes().to_vec();
+                    }
+                    rewritten
+                })
+                .collect::<Vec<_>>();
+            OpenAiRequestBody::Multipart(OpenAiMultipartBody {
+                content_type: multipart.content_type.clone(),
+                fields,
+            })
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedOutboundRequest {
+    pub(crate) body: OpenAiRequestBody,
+    pub(crate) body_json: String,
+    pub(crate) headers: HeaderMap,
+}
+
+pub(crate) fn prepare_outbound_request(
+    original_body: &OpenAiRequestBody,
+    original_headers: &HashMap<String, String>,
+    actual_model_id: &str,
+    api_key: &str,
+) -> Result<PreparedOutboundRequest, OpenAiV1Error> {
+    let body = rewrite_request_body(original_body, actual_model_id);
+    let body_json = serde_json::to_string(&body).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to serialize upstream request body: {error}"),
+    })?;
+    let headers = build_upstream_headers(original_headers, api_key)?;
+
+    Ok(PreparedOutboundRequest {
+        body,
+        body_json,
+        headers,
+    })
+}
+
+pub(crate) async fn prepare_outbound_request_with_prompt_protection(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    original_body: &OpenAiRequestBody,
+    original_headers: &HashMap<String, String>,
+    actual_model_id: &str,
+    api_key: &str,
+) -> Result<PreparedOutboundRequest, OpenAiV1Error> {
+    let rewritten = rewrite_request_body(original_body, actual_model_id);
+    let rules = load_enabled_prompt_protection_rules_seaorm(db, backend).await?;
+    let protected = apply_prompt_protection(&rewritten, &rules)?;
+    prepare_outbound_request(&protected, original_headers, actual_model_id, api_key)
 }
 
 pub(crate) fn sanitize_headers_json(headers: &HashMap<String, String>) -> String {
@@ -1128,10 +1748,6 @@ pub(crate) fn build_upstream_headers(
         })?,
     );
     headers.insert(
-        reqwest::header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    headers.insert(
         reqwest::header::ACCEPT,
         HeaderValue::from_static("application/json"),
     );
@@ -1155,6 +1771,141 @@ pub(crate) fn build_upstream_headers(
     }
 
     Ok(headers)
+}
+
+pub(crate) fn apply_upstream_request_body(
+    request: reqwest::RequestBuilder,
+    body: &OpenAiRequestBody,
+) -> Result<reqwest::RequestBuilder, OpenAiV1Error> {
+    match body {
+        OpenAiRequestBody::Json(value) => Ok(request.json(value)),
+        OpenAiRequestBody::Multipart(multipart) => {
+            let mut form = reqwest::multipart::Form::new();
+            for field in &multipart.fields {
+                let base_part = reqwest::multipart::Part::bytes(field.data.clone());
+                let with_name = match &field.file_name {
+                    Some(file_name) => base_part.file_name(file_name.clone()),
+                    None => base_part,
+                };
+                let part = if let Some(content_type) = &field.content_type {
+                    with_name.mime_str(content_type).map_err(|error| OpenAiV1Error::InvalidRequest {
+                        message: format!("Invalid image payload: {error}"),
+                    })?
+                } else {
+                    with_name
+                };
+                form = form.part(field.name.clone(), part);
+            }
+            Ok(request.multipart(form))
+        }
+    }
+}
+
+pub(crate) fn apply_blocking_upstream_request_body(
+    request: reqwest::blocking::RequestBuilder,
+    body: &OpenAiRequestBody,
+) -> Result<reqwest::blocking::RequestBuilder, OpenAiV1Error> {
+    match body {
+        OpenAiRequestBody::Json(value) => Ok(request.json(value)),
+        OpenAiRequestBody::Multipart(multipart) => {
+            let mut form = reqwest::blocking::multipart::Form::new();
+            for field in &multipart.fields {
+                let base_part = reqwest::blocking::multipart::Part::bytes(field.data.clone());
+                let with_name = match &field.file_name {
+                    Some(file_name) => base_part.file_name(file_name.clone()),
+                    None => base_part,
+                };
+                let part = if let Some(content_type) = &field.content_type {
+                    with_name.mime_str(content_type).map_err(|error| OpenAiV1Error::InvalidRequest {
+                        message: format!("Invalid image payload: {error}"),
+                    })?
+                } else {
+                    with_name
+                };
+                form = form.part(field.name.clone(), part);
+            }
+            Ok(request.multipart(form))
+        }
+    }
+}
+
+pub(crate) fn request_model_id(body: &OpenAiRequestBody) -> Result<String, OpenAiV1Error> {
+    match body {
+        OpenAiRequestBody::Json(value) => value
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| OpenAiV1Error::InvalidRequest {
+                message: "model is required".to_owned(),
+            }),
+        OpenAiRequestBody::Multipart(multipart) => multipart
+            .fields
+            .iter()
+            .find(|field| field.name == "model")
+            .and_then(|field| String::from_utf8(field.data.clone()).ok())
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| OpenAiV1Error::InvalidRequest {
+                message: "model is required".to_owned(),
+            }),
+    }
+}
+
+pub(crate) fn json_request_body(body: &OpenAiRequestBody) -> Result<&Value, OpenAiV1Error> {
+    body.as_json().ok_or_else(|| OpenAiV1Error::InvalidRequest {
+        message: "Invalid request format".to_owned(),
+    })
+}
+
+fn validate_openai_image_multipart_request(
+    route: OpenAiV1Route,
+    body: &OpenAiRequestBody,
+) -> Result<(), OpenAiV1Error> {
+    let multipart = match body {
+        OpenAiRequestBody::Multipart(multipart) => multipart,
+        OpenAiRequestBody::Json(_) => {
+            return Err(OpenAiV1Error::InvalidRequest {
+                message: "Invalid request format".to_owned(),
+            })
+        }
+    };
+
+    let image_fields = multipart
+        .fields
+        .iter()
+        .filter(|field| field.name == "image" || field.name == "image[]")
+        .collect::<Vec<_>>();
+    if image_fields.is_empty() {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "image is required".to_owned(),
+        });
+    }
+
+    if matches!(route, OpenAiV1Route::ImagesVariations) && image_fields.len() != 1 {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "image variations require exactly one image".to_owned(),
+        });
+    }
+
+    if matches!(route, OpenAiV1Route::ImagesEdits)
+        && !multipart.fields.iter().any(|field| field.name == "prompt" && !field.data.is_empty())
+    {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "prompt is required".to_owned(),
+        });
+    }
+
+    if matches!(route, OpenAiV1Route::ImagesVariations)
+        && multipart.fields.iter().any(|field| field.name == "prompt" && !field.data.is_empty())
+    {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "prompt is not supported for image variations".to_owned(),
+        });
+    }
+
+    Ok(())
 }
 
 pub(crate) fn json_field<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
@@ -1231,7 +1982,9 @@ pub(crate) fn extract_usage(route: OpenAiV1Route, response_body: &Value) -> Opti
         }
         OpenAiV1Route::ChatCompletions
         | OpenAiV1Route::Embeddings
-        | OpenAiV1Route::ImagesGenerations => {
+        | OpenAiV1Route::ImagesGenerations
+        | OpenAiV1Route::ImagesEdits
+        | OpenAiV1Route::ImagesVariations => {
             let empty = Value::Null;
             let prompt_details = json_field(usage, &["prompt_tokens_details"]).unwrap_or(&empty);
             let completion_details =
@@ -1446,12 +2199,12 @@ pub(crate) fn prepare_compatibility_request(
     request: &OpenAiV1ExecutionRequest,
 ) -> Result<PreparedCompatibilityRequest, OpenAiV1Error> {
     match route {
-        CompatibilityRoute::AnthropicMessages => prepare_anthropic_request(&request.body),
-        CompatibilityRoute::JinaRerank => prepare_jina_rerank_request(&request.body),
-        CompatibilityRoute::JinaEmbeddings => prepare_jina_embedding_request(&request.body),
+        CompatibilityRoute::AnthropicMessages => prepare_anthropic_request(json_request_body(&request.body)?),
+        CompatibilityRoute::JinaRerank => prepare_jina_rerank_request(json_request_body(&request.body)?),
+        CompatibilityRoute::JinaEmbeddings => prepare_jina_embedding_request(json_request_body(&request.body)?),
         CompatibilityRoute::GeminiGenerateContent
         | CompatibilityRoute::GeminiStreamGenerateContent => prepare_gemini_request(route, request),
-        CompatibilityRoute::DoubaoCreateTask => prepare_doubao_create_request(&request.body),
+        CompatibilityRoute::DoubaoCreateTask => prepare_doubao_create_request(json_request_body(&request.body)?),
         CompatibilityRoute::DoubaoGetTask | CompatibilityRoute::DoubaoDeleteTask => {
             prepare_doubao_task_lookup_request(route, request)
         }
@@ -1848,7 +2601,7 @@ pub(crate) fn prepare_gemini_request(
     route: CompatibilityRoute,
     request: &OpenAiV1ExecutionRequest,
 ) -> Result<PreparedCompatibilityRequest, OpenAiV1Error> {
-    let body = &request.body;
+    let body = json_request_body(&request.body)?;
     let object = body
         .as_object()
         .ok_or_else(|| OpenAiV1Error::InvalidRequest {

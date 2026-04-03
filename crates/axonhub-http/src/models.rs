@@ -53,6 +53,35 @@ pub struct AuthUserContext {
     pub projects: Vec<UserProjectInfo>,
 }
 
+impl AuthUserContext {
+    pub fn has_system_scope(&self, scope: &str) -> bool {
+        self.is_owner
+            || self.scopes.iter().any(|current| current == scope)
+            || self
+                .roles
+                .iter()
+                .flat_map(|role| role.scopes.iter())
+                .any(|current| current == scope)
+    }
+
+    pub fn has_project_scope(&self, project_id: i64, scope: &str) -> bool {
+        if self.is_owner {
+            return true;
+        }
+
+        self.projects.iter().any(|project| {
+            project.project_id.id == project_id
+                && (project.is_owner
+                    || project.scopes.iter().any(|current| current == scope)
+                    || project
+                        .roles
+                        .iter()
+                        .flat_map(|role| role.scopes.iter())
+                        .any(|current| current == scope))
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoleInfo {
     pub name: String,
@@ -85,6 +114,16 @@ pub struct AuthApiKeyContext {
     pub key_type: ApiKeyType,
     pub project: ProjectContext,
     pub scopes: Vec<String>,
+}
+
+impl AuthApiKeyContext {
+    pub fn has_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|current| current == scope)
+    }
+
+    pub fn is_service_account(&self) -> bool {
+        matches!(self.key_type, ApiKeyType::ServiceAccount)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,6 +185,8 @@ pub enum OpenAiV1Route {
     ResponsesCompact,
     Embeddings,
     ImagesGenerations,
+    ImagesEdits,
+    ImagesVariations,
     Realtime,
 }
 
@@ -157,8 +198,47 @@ impl OpenAiV1Route {
             Self::ResponsesCompact => "openai/responses_compact",
             Self::Embeddings => "openai/embeddings",
             Self::ImagesGenerations => "openai/images_generations",
+            Self::ImagesEdits => "openai/images_edits",
+            Self::ImagesVariations => "openai/images_variations",
             Self::Realtime => "openai/realtime",
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenAiMultipartField {
+    pub name: String,
+    pub file_name: Option<String>,
+    pub content_type: Option<String>,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenAiMultipartBody {
+    pub content_type: String,
+    pub fields: Vec<OpenAiMultipartField>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OpenAiRequestBody {
+    Json(Value),
+    Multipart(OpenAiMultipartBody),
+}
+
+impl OpenAiRequestBody {
+    pub fn as_json(&self) -> Option<&Value> {
+        match self {
+            Self::Json(value) => Some(value),
+            Self::Multipart(_) => None,
+        }
+    }
+
+    pub fn stream_flag(&self) -> bool {
+        self.as_json()
+            .and_then(|value| value.get("stream"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
     }
 }
 
@@ -192,12 +272,13 @@ impl CompatibilityRoute {
 #[derive(Debug, Clone)]
 pub struct OpenAiV1ExecutionRequest {
     pub headers: HashMap<String, String>,
-    pub body: Value,
+    pub body: OpenAiRequestBody,
     pub path: String,
     pub path_params: HashMap<String, String>,
     pub query: HashMap<String, String>,
     pub project: ProjectContext,
     pub trace: Option<TraceContext>,
+    pub api_key: AuthApiKeyContext,
     pub api_key_id: Option<i64>,
     pub client_ip: Option<String>,
     pub channel_hint_id: Option<i64>,
@@ -207,6 +288,69 @@ pub struct OpenAiV1ExecutionRequest {
 pub struct OpenAiV1ExecutionResponse {
     pub status: u16,
     pub body: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RealtimeSessionTransportRequest {
+    pub transport: String,
+    pub model: String,
+    #[serde(rename = "channelId", skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(rename = "expiresAt", default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RealtimeSessionPatchRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+    #[serde(rename = "expiresAt", default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RealtimeSessionRecord {
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+    pub transport: String,
+    pub status: String,
+    pub model: String,
+    #[serde(rename = "projectId")]
+    pub project_id: i64,
+    #[serde(rename = "threadId", skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(rename = "traceId", skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+    #[serde(rename = "requestId", skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<i64>,
+    #[serde(rename = "apiKeyId", skip_serializing_if = "Option::is_none")]
+    pub api_key_id: Option<i64>,
+    #[serde(rename = "channelId", skip_serializing_if = "Option::is_none")]
+    pub channel_id: Option<i64>,
+    pub metadata: Value,
+    #[serde(rename = "openedAt")]
+    pub opened_at: String,
+    #[serde(rename = "lastActivityAt")]
+    pub last_activity_at: String,
+    #[serde(rename = "closedAt", skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<String>,
+    #[serde(rename = "expiresAt", skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RealtimeSessionCreateRequest {
+    pub project: ProjectContext,
+    pub thread: Option<ThreadContext>,
+    pub trace: Option<TraceContext>,
+    pub api_key_id: Option<i64>,
+    pub client_ip: Option<String>,
+    pub request_id: Option<String>,
+    pub transport: RealtimeSessionTransportRequest,
 }
 
 #[derive(Debug, Clone)]

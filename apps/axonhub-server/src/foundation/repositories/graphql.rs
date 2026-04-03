@@ -1,5 +1,5 @@
 use axonhub_db_entity::{
-    api_keys, channels, data_storages, models, projects, provider_quota_statuses, roles, systems,
+    api_keys, channels, data_storages, projects, provider_quota_statuses, roles, systems,
     user_projects, user_roles, users,
 };
 use axonhub_http::AuthApiKeyContext;
@@ -11,6 +11,7 @@ use sea_orm::{
 use crate::foundation::seaorm::SeaOrmConnectionFactory;
 
 use super::common::query_all;
+use super::openai_v1::{list_enabled_model_records_seaorm, query_system_channel_settings_seaorm};
 
 #[derive(Debug, Clone)]
 pub(crate) struct GraphqlModelStatusRecord {
@@ -188,6 +189,10 @@ pub(crate) struct SeaOrmOpenApiGraphqlMutationRepository {
 impl SeaOrmAdminGraphqlSubsetRepository {
     pub(crate) fn new(db: SeaOrmConnectionFactory) -> Self {
         Self { db }
+    }
+
+    pub(crate) fn db(&self) -> SeaOrmConnectionFactory {
+        self.db.clone()
     }
 }
 
@@ -552,21 +557,37 @@ pub(crate) async fn query_all_graphql(
 async fn query_model_statuses_seaorm(
     db: &impl sea_orm::ConnectionTrait,
 ) -> Result<Vec<GraphqlModelStatusRecord>, String> {
-    models::Entity::find()
-        .filter(models::Column::DeletedAt.eq(0_i64))
-        .order_by_asc(models::Column::Id)
-        .into_partial_model::<models::GraphqlStatus>()
-        .all(db)
+    let settings = query_system_channel_settings_seaorm(db)
         .await
-        .map(|rows| {
-            rows.into_iter()
-                .map(|row| GraphqlModelStatusRecord {
-                    id: row.id,
-                    status: row.status,
-                })
-                .collect()
-        })
-        .map_err(|error| error.to_string())
+        .map_err(|error| match error {
+            axonhub_http::OpenAiV1Error::InvalidRequest { message }
+            | axonhub_http::OpenAiV1Error::Internal { message } => message,
+            axonhub_http::OpenAiV1Error::Upstream { status, body } => {
+                format!("unexpected upstream error while listing models: {status} {body}")
+            }
+        })?;
+
+    list_enabled_model_records_seaorm(
+        db,
+        db.get_database_backend(),
+        settings.query_all_channel_models,
+    )
+    .await
+    .map(|rows| {
+        rows.into_iter()
+            .map(|row| GraphqlModelStatusRecord {
+                id: row.id,
+                status: "enabled".to_owned(),
+            })
+            .collect()
+    })
+    .map_err(|error| match error {
+        axonhub_http::OpenAiV1Error::InvalidRequest { message }
+        | axonhub_http::OpenAiV1Error::Internal { message } => message,
+        axonhub_http::OpenAiV1Error::Upstream { status, body } => {
+            format!("unexpected upstream error while listing models: {status} {body}")
+        }
+    })
 }
 
 async fn query_data_storage_status_seaorm(
@@ -835,7 +856,7 @@ async fn create_user_seaorm(
         password: Set(password_hash.to_owned()),
         first_name: Set(first_name.to_owned()),
         last_name: Set(last_name.to_owned()),
-        avatar: Set(avatar.map(ToOwned::to_owned)),
+        avatar: Set(Some(avatar.unwrap_or_default().to_owned())),
         is_owner: Set(is_owner),
         scopes: Set(scopes_json.to_owned()),
         deleted_at: Set(0_i64),

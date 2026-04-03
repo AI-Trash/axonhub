@@ -43,7 +43,6 @@ pub(crate) struct ServerCapabilities {
 enum PersistenceProfile {
     Sqlite { db: SeaOrmConnectionFactory },
     Postgres { db: SeaOrmConnectionFactory },
-    MySql { db: SeaOrmConnectionFactory },
     Unsupported,
 }
 
@@ -58,12 +57,6 @@ impl PersistenceProfile {
         if dialect.eq_ignore_ascii_case("postgres") || dialect.eq_ignore_ascii_case("postgresql") {
             return Self::Postgres {
                 db: SeaOrmConnectionFactory::postgres(dsn.to_owned()),
-            };
-        }
-
-        if dialect.eq_ignore_ascii_case("mysql") {
-            return Self::MySql {
-                db: SeaOrmConnectionFactory::mysql(dsn.to_owned()),
             };
         }
 
@@ -152,9 +145,7 @@ fn build_system_bootstrap_capability_from_profile(
     version: &str,
 ) -> SystemBootstrapCapability {
     match profile {
-        PersistenceProfile::Sqlite { db }
-        | PersistenceProfile::Postgres { db }
-        | PersistenceProfile::MySql { db } => {
+        PersistenceProfile::Sqlite { db } | PersistenceProfile::Postgres { db } => {
             let repository: Arc<dyn SystemBootstrapRepository> =
                 Arc::new(SeaOrmBootstrapService::new(db.clone(), version.to_owned()));
             SystemBootstrapCapability::Available {
@@ -172,9 +163,7 @@ fn build_identity_capability_from_profile(
     allow_no_auth: bool,
 ) -> IdentityCapability {
     match profile {
-        PersistenceProfile::Sqlite { db }
-        | PersistenceProfile::Postgres { db }
-        | PersistenceProfile::MySql { db } => {
+        PersistenceProfile::Sqlite { db } | PersistenceProfile::Postgres { db } => {
             let repository: Arc<dyn IdentityRepository> =
                 Arc::new(SeaOrmIdentityService::new(db.clone(), allow_no_auth));
             IdentityCapability::Available {
@@ -192,9 +181,7 @@ fn build_request_context_capability_from_profile(
     allow_no_auth: bool,
 ) -> RequestContextCapability {
     match profile {
-        PersistenceProfile::Sqlite { db }
-        | PersistenceProfile::Postgres { db }
-        | PersistenceProfile::MySql { db } => {
+        PersistenceProfile::Sqlite { db } | PersistenceProfile::Postgres { db } => {
             let repository: Arc<dyn RequestContextRepository> =
                 Arc::new(SeaOrmRequestContextService::new(db.clone(), allow_no_auth));
             RequestContextCapability::Available {
@@ -209,9 +196,7 @@ fn build_request_context_capability_from_profile(
 
 fn build_openai_v1_capability_from_profile(profile: &PersistenceProfile) -> OpenAiV1Capability {
     match profile {
-        PersistenceProfile::Sqlite { db }
-        | PersistenceProfile::Postgres { db }
-        | PersistenceProfile::MySql { db } => {
+        PersistenceProfile::Sqlite { db } | PersistenceProfile::Postgres { db } => {
             let repository: Arc<dyn OpenAiV1Repository> =
                 Arc::new(SeaOrmOpenAiV1Service::new(db.clone()));
             OpenAiV1Capability::Available {
@@ -226,9 +211,7 @@ fn build_openai_v1_capability_from_profile(profile: &PersistenceProfile) -> Open
 
 fn build_admin_capability_from_profile(profile: &PersistenceProfile) -> AdminCapability {
     match profile {
-        PersistenceProfile::Sqlite { db }
-        | PersistenceProfile::Postgres { db }
-        | PersistenceProfile::MySql { db } => {
+        PersistenceProfile::Sqlite { db } | PersistenceProfile::Postgres { db } => {
             let repository: Arc<dyn AdminRepository> =
                 Arc::new(SeaOrmAdminService::new(db.clone()));
             AdminCapability::Available {
@@ -245,9 +228,7 @@ fn build_admin_graphql_capability_from_profile(
     profile: &PersistenceProfile,
 ) -> AdminGraphqlCapability {
     match profile {
-        PersistenceProfile::Sqlite { db }
-        | PersistenceProfile::Postgres { db }
-        | PersistenceProfile::MySql { db } => {
+        PersistenceProfile::Sqlite { db } | PersistenceProfile::Postgres { db } => {
             let repository: Arc<dyn AdminGraphqlRepository> =
                 Arc::new(SeaOrmAdminGraphqlService::new(db.clone()));
             AdminGraphqlCapability::Available {
@@ -264,9 +245,7 @@ fn build_openapi_graphql_capability_from_profile(
     profile: &PersistenceProfile,
 ) -> OpenApiGraphqlCapability {
     match profile {
-        PersistenceProfile::Sqlite { db }
-        | PersistenceProfile::Postgres { db }
-        | PersistenceProfile::MySql { db } => {
+        PersistenceProfile::Sqlite { db } | PersistenceProfile::Postgres { db } => {
             let repository: Arc<dyn OpenApiGraphqlRepository> =
                 Arc::new(SeaOrmOpenApiGraphqlService::new(db.clone()));
             OpenApiGraphqlCapability::Available {

@@ -250,6 +250,92 @@ db:
 }
 
 #[test]
+fn load_exposes_provider_edge_config_surface_from_yaml_and_env() {
+    let _lock = test_guard();
+    let fixture = TestFixture::new("provider-edge-config-surface");
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+provider_edge:
+  codex:
+    authorize_url: "https://file.example.test/codex/authorize"
+    token_url: "https://file.example.test/codex/token"
+    client_id: "file-codex-client"
+    redirect_uri: "http://localhost:1455/auth/callback"
+    scopes: "openid profile"
+    user_agent: "file-codex-agent"
+  claudecode:
+    authorize_url: "https://file.example.test/claudecode/authorize"
+    token_url: "https://file.example.test/claudecode/token"
+    client_id: "file-claudecode-client"
+    redirect_uri: "http://localhost:54545/callback"
+    scopes: "org:create_api_key user:profile"
+    user_agent: "file-claudecode-agent"
+  antigravity:
+    authorize_url: "https://file.example.test/antigravity/authorize"
+    token_url: "https://file.example.test/antigravity/token"
+    client_id: "file-antigravity-client"
+    client_secret: "file-antigravity-secret"
+    redirect_uri: "http://localhost:51121/oauth-callback"
+    scopes: "scope-a scope-b"
+    load_endpoints: ["https://file.example.test/load-a"]
+    user_agent: "file-antigravity-agent"
+    client_metadata: '{"ideType":"ANTIGRAVITY"}'
+  copilot:
+    device_code_url: "https://file.example.test/copilot/device"
+    access_token_url: "https://file.example.test/copilot/token"
+    client_id: "file-copilot-client"
+    scope: "read:user"
+"#,
+    );
+    fixture.set_env(
+        "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
+        "https://env.example.test/codex/authorize",
+    );
+    fixture.set_env(
+        "AXONHUB_PROVIDER_EDGE_ANTIGRAVITY_LOAD_ENDPOINTS",
+        "https://env.example.test/load-a, https://env.example.test/load-b",
+    );
+    fixture.set_env("AXONHUB_PROVIDER_EDGE_COPILOT_SCOPE", "repo read:user");
+
+    let loaded = LoadedConfig::load().unwrap();
+
+    assert_eq!(
+        loaded.config.provider_edge.codex.authorize_url,
+        "https://env.example.test/codex/authorize"
+    );
+    assert_eq!(
+        loaded.config.provider_edge.codex.client_id,
+        "file-codex-client"
+    );
+    assert_eq!(
+        loaded.config.provider_edge.antigravity.load_endpoints,
+        vec![
+            "https://env.example.test/load-a".to_owned(),
+            "https://env.example.test/load-b".to_owned()
+        ]
+    );
+    assert_eq!(loaded.config.provider_edge.copilot.scope, "repo read:user");
+    assert_eq!(
+        loaded.get("provider_edge.codex.authorize_url"),
+        Some(serde_json::json!(
+            "https://env.example.test/codex/authorize"
+        ))
+    );
+    assert_eq!(
+        loaded.get("provider_edge.antigravity.load_endpoints"),
+        Some(serde_json::json!([
+            "https://env.example.test/load-a",
+            "https://env.example.test/load-b"
+        ]))
+    );
+    assert_eq!(
+        loaded.get("provider_edge.copilot.scope"),
+        Some(serde_json::json!("repo read:user"))
+    );
+}
+
+#[test]
 fn preview_parse_get_and_validation_keep_current_contract() {
     let config = Config::default();
 
@@ -279,6 +365,10 @@ fn preview_parse_get_and_validation_keep_current_contract() {
         Some(serde_json::json!("5m"))
     );
     assert_eq!(config.get("provider_edge.client_id"), None);
+    assert_eq!(
+        config.get("provider_edge.codex.client_id"),
+        Some(serde_json::json!(""))
+    );
     assert_eq!(config.validation_errors(), Vec::<String>::new());
 
     let mut invalid = Config::default();
@@ -293,7 +383,7 @@ fn preview_parse_get_and_validation_keep_current_contract() {
     invalid.metrics.exporter.exporter_type = "bogus".to_owned();
     invalid.server.cors.enabled = true;
     invalid.server.cors.allowed_origins.clear();
-    invalid.server.cors.allowed_methods = vec!["INVALID_METHOD".to_owned()];
+    invalid.server.cors.allowed_methods = vec!["INV@LID".to_owned()];
     invalid.server.cors.allowed_headers = vec!["Invalid@Header".to_owned()];
     invalid.server.cors.exposed_headers = vec!["X-Valid".to_owned(), "Invalid Header".to_owned()];
 
@@ -309,11 +399,67 @@ fn preview_parse_get_and_validation_keep_current_contract() {
              "cache.mode must be one of: memory, redis, two-level".to_owned(),
              "metrics.exporter.type must be one of: stdout, otlpgrpc, otlphttp when metrics are enabled".to_owned(),
              "server.cors.allowed_origins cannot be empty when CORS is enabled".to_owned(),
-             "server.cors.allowed_methods contains invalid method 'INVALID_METHOD'".to_owned(),
+             "server.cors.allowed_methods contains invalid method 'INV@LID'".to_owned(),
              "server.cors.allowed_headers contains invalid header name 'Invalid@Header'".to_owned(),
             "server.cors.exposed_headers contains invalid header name 'Invalid Header'".to_owned(),
          ]
      );
+}
+
+#[test]
+fn preview_and_validation_cover_provider_edge_when_configured() {
+    let mut config = Config::default();
+    config.provider_edge.codex.authorize_url = "https://example.test/codex/authorize".to_owned();
+    config.provider_edge.codex.token_url = "https://example.test/codex/token".to_owned();
+    config.provider_edge.codex.client_id = "codex-client-id".to_owned();
+    config.provider_edge.codex.redirect_uri = "http://localhost:1455/auth/callback".to_owned();
+    config.provider_edge.codex.scopes = "openid profile".to_owned();
+    config.provider_edge.codex.user_agent = "codex-agent".to_owned();
+    config.provider_edge.claudecode.authorize_url =
+        "https://example.test/claudecode/authorize".to_owned();
+    config.provider_edge.claudecode.token_url = "https://example.test/claudecode/token".to_owned();
+    config.provider_edge.claudecode.client_id = "claudecode-client-id".to_owned();
+    config.provider_edge.claudecode.redirect_uri = "http://localhost:54545/callback".to_owned();
+    config.provider_edge.claudecode.scopes = "org:create_api_key user:profile".to_owned();
+    config.provider_edge.claudecode.user_agent = "claudecode-agent".to_owned();
+    config.provider_edge.antigravity.authorize_url =
+        "https://example.test/antigravity/authorize".to_owned();
+    config.provider_edge.antigravity.token_url =
+        "https://example.test/antigravity/token".to_owned();
+    config.provider_edge.antigravity.client_id = "antigravity-client-id".to_owned();
+    config.provider_edge.antigravity.client_secret = "antigravity-secret".to_owned();
+    config.provider_edge.antigravity.redirect_uri =
+        "http://localhost:51121/oauth-callback".to_owned();
+    config.provider_edge.antigravity.scopes = "scope-a scope-b".to_owned();
+    config.provider_edge.antigravity.load_endpoints =
+        vec!["https://example.test/load-a".to_owned()];
+    config.provider_edge.antigravity.user_agent = "antigravity-agent".to_owned();
+    config.provider_edge.antigravity.client_metadata = r#"{"ideType":"ANTIGRAVITY"}"#.to_owned();
+    config.provider_edge.copilot.device_code_url =
+        "https://example.test/copilot/device/code".to_owned();
+    config.provider_edge.copilot.access_token_url =
+        "https://example.test/copilot/access/token".to_owned();
+    config.provider_edge.copilot.client_id = "copilot-client-id".to_owned();
+    config.provider_edge.copilot.scope = "read:user".to_owned();
+
+    let yaml_preview = config.preview(PreviewFormat::Yaml).unwrap();
+    assert!(yaml_preview.contains("provider_edge:"));
+    assert!(yaml_preview.contains("codex:"));
+    assert!(yaml_preview.contains("authorize_url: https://example.test/codex/authorize"));
+    assert!(yaml_preview.contains("load_endpoints:"));
+
+    assert_eq!(config.validation_errors(), Vec::<String>::new());
+    assert!(config.ensure_loadable().is_ok());
+
+    config.provider_edge.antigravity.load_endpoints.clear();
+    assert_eq!(
+        config.validation_errors(),
+        vec!["provider_edge.antigravity.load_endpoints cannot be empty".to_owned()]
+    );
+    assert_eq!(
+        config.ensure_loadable().unwrap_err().to_string(),
+        "provider_edge.antigravity.load_endpoints cannot be empty"
+    );
 }
 
 #[test]
@@ -328,10 +474,30 @@ fn supported_key_tables_document_current_config_surface() {
     assert!(supported_config_keys()
         .iter()
         .any(|entry| entry.key == "metrics.exporter.type"));
+    assert!(supported_config_keys()
+        .iter()
+        .any(|entry| entry.key == "provider_edge.codex.authorize_url"));
+    assert!(supported_config_keys()
+        .iter()
+        .any(|entry| entry.key == "provider_edge.antigravity.load_endpoints"));
     assert!(supported_config_aliases()
         .iter()
         .any(|entry| entry.key == "cache.memory.expiration"
             && entry.canonical_key == "cache.default_expiration"));
+}
+
+#[test]
+fn load_rejects_partially_configured_provider_edge_surface() {
+    let _lock = test_guard();
+    let fixture = TestFixture::new("provider-edge-partial-config");
+    fixture.set_env(
+        "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
+        "https://example.test/codex/authorize",
+    );
+
+    let error = LoadedConfig::load().unwrap_err().to_string();
+
+    assert!(error.contains("provider_edge.codex.token_url cannot be empty"));
 }
 
 #[test]
@@ -351,7 +517,7 @@ provider_edge:
     let error = LoadedConfig::load().unwrap_err().to_string();
 
     assert!(error.contains("failed to validate config file contract: ./config.yml"));
-    assert!(error.contains("unsupported config key 'provider_edge'"));
+    assert!(error.contains("unsupported config key 'provider_edge.codex_client_id'"));
     assert!(error.contains("conf/conf.go"));
     assert!(!error.contains("legacy Go backend"));
     assert!(!error.contains("migration-slice"));
