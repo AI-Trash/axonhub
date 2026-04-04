@@ -76,6 +76,7 @@ pub mod api_keys {
         pub status: String,
         pub project_id: i64,
         pub scopes: String,
+        pub profiles: String,
     }
 
     #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
@@ -305,6 +306,7 @@ pub mod channels {
         pub credentials: String,
         pub supported_models: String,
         pub settings: String,
+        pub tags: String,
         pub ordering_weight: i32,
         #[sea_orm(from_col = "type_field")]
         pub channel_type: String,

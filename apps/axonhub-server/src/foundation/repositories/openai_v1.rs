@@ -41,7 +41,7 @@ struct ParsedApiKeyProfiles {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
-struct ParsedApiKeyProfile {
+pub(crate) struct ParsedApiKeyProfile {
     name: String,
     #[serde(rename = "channelIDs")]
     channel_ids: Vec<i64>,
@@ -661,6 +661,7 @@ mod tests {
             "chat",
             None,
             &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
+            None,
         )
         .await
         .unwrap();
@@ -679,6 +680,7 @@ mod tests {
             "chat",
             None,
             &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
+            None,
         )
         .await
         .unwrap();
@@ -697,6 +699,7 @@ mod tests {
             "chat",
             None,
             &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
+            None,
         )
         .await
         .unwrap();
@@ -729,6 +732,7 @@ mod tests {
             &db,
             DatabaseBackend::Sqlite,
             settings.query_all_channel_models,
+            None,
         )
         .await
         .unwrap();
@@ -765,6 +769,7 @@ mod tests {
             &db,
             DatabaseBackend::Sqlite,
             settings.query_all_channel_models,
+            None,
         )
         .await
         .unwrap();
@@ -808,6 +813,7 @@ mod tests {
             &db,
             DatabaseBackend::Sqlite,
             settings.query_all_channel_models,
+            None,
         )
         .await
         .unwrap();
@@ -1303,6 +1309,7 @@ pub(crate) async fn select_doubao_task_targets_seaorm(
     request: &OpenAiV1ExecutionRequest,
     prepared: &PreparedCompatibilityRequest,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
+    let active_profile = active_api_key_profile(request.api_key.profiles_json.as_deref());
     let task_id = prepared
         .task_id
         .as_deref()
@@ -1330,6 +1337,7 @@ pub(crate) async fn select_doubao_task_targets_seaorm(
         prepared.model_type,
         None,
         &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
+        active_profile.as_ref(),
     )
     .await?;
     if let Some(index) = targets.iter().position(|target| target.channel_id == request_hint.channel_id) {

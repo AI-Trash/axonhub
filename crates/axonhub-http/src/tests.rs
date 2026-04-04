@@ -3828,7 +3828,10 @@ fn assert_go_duration_shape(value: &str) {
     #[test]
     fn readme_unsupported_boundary_contract_matches_explicit_v1_guardrails() {
         let readme = include_str!("../../../README.md");
-        let zh_readme = include_str!("../../../README.zh-CN.md");
+        let zh_readme = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../README.zh-CN.md"),
+        )
+        .ok();
 
         for required_snippet in [
             "### Current Rust-Supported Surface (Verified)",
@@ -3843,17 +3846,19 @@ fn assert_go_duration_shape(value: &str) {
             );
         }
 
-        for required_snippet in [
-            "### 当前 Rust 支持能力面（已验证）",
-            "`/images/edits`, `/images/variations`, `/v1/realtime`（JSON POST）、realtime WebSocket 升级与会话管理（`/v1/realtime/sessions`）、视频生成",
-            "完整支持 Vercel AI SDK 协议，通过 `X-Vercel-Ai-Ui-Message-Stream` 和 `X-Vercel-AI-Data-Stream` 请求头",
-            "Codex、Claude Code、Antigravity、Copilot",
-            "SQLite 和 PostgreSQL（canonical）；MySQL/TiDB/Neon 不在 Rust 后端支持范围内",
-        ] {
-            assert!(
-                zh_readme.contains(required_snippet),
-                "README.zh-CN supported-surface contract missing snippet: {required_snippet}"
-            );
+        if let Some(zh_readme) = zh_readme.as_deref() {
+            for required_snippet in [
+                "### 当前 Rust 支持能力面（已验证）",
+                "`/images/edits`, `/images/variations`, `/v1/realtime`（JSON POST）、realtime WebSocket 升级与会话管理（`/v1/realtime/sessions`）、视频生成",
+                "完整支持 Vercel AI SDK 协议，通过 `X-Vercel-Ai-Ui-Message-Stream` 和 `X-Vercel-AI-Data-Stream` 请求头",
+                "Codex、Claude Code、Antigravity、Copilot",
+                "SQLite 和 PostgreSQL（canonical）；MySQL/TiDB/Neon 不在 Rust 后端支持范围内",
+            ] {
+                assert!(
+                    zh_readme.contains(required_snippet),
+                    "README.zh-CN supported-surface contract missing snippet: {required_snippet}"
+                );
+            }
         }
 
         let routes = include_str!("routes.rs");

@@ -71,6 +71,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         require_api_key_scope(api_key, SCOPE_READ_CHANNELS).map_err(authz_openai_error)?;
         let db = self.db.clone();
         let include_owned = include.map(ToOwned::to_owned);
+        let profiles_json = api_key.profiles_json.clone();
         let models = db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
             let include = ModelInclude::parse(include_owned.as_deref());
@@ -79,7 +80,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 &connection,
                 db.backend(),
                 settings.query_all_channel_models,
-                api_key.profiles_json.as_deref(),
+                profiles_json.as_deref(),
             )
                 .await?
                 .into_iter()
@@ -101,6 +102,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         let db = self.db.clone();
         let model_id = model_id.to_owned();
         let include_owned = include.map(ToOwned::to_owned);
+        let profiles_json = api_key.profiles_json.clone();
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
             let include = ModelInclude::parse(include_owned.as_deref());
@@ -109,7 +111,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 &connection,
                 db.backend(),
                 settings.query_all_channel_models,
-                api_key.profiles_json.as_deref(),
+                profiles_json.as_deref(),
             )
             .await?
             .into_iter()
@@ -130,7 +132,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 &connection,
                 db.backend(),
                 settings.query_all_channel_models,
-                api_key.profiles_json.as_deref(),
+                None,
             )
             .await
         })?;
@@ -173,7 +175,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 &connection,
                 db.backend(),
                 settings.query_all_channel_models,
-                api_key.profiles_json.as_deref(),
+                None,
             )
             .await
         })?;
@@ -267,6 +269,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                     prepared.model_type,
                     None,
                     &circuit_breaker,
+                    None,
                 )
                 .await?
             };

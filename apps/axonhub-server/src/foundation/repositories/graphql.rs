@@ -571,6 +571,7 @@ async fn query_model_statuses_seaorm(
         db,
         db.get_database_backend(),
         settings.query_all_channel_models,
+        None,
     )
     .await
     .map(|rows| {
