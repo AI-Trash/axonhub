@@ -33,7 +33,7 @@ cp config.example.yml config.yml
 ### 3. Start the stack
 
 ```bash
-docker-compose -f docker-compose.rust.yml up -d
+docker-compose up -d
 ```
 
 ### 4. Open AxonHub
@@ -54,7 +54,7 @@ cargo run -p axonhub-server -- build-info
 You can also pull the published Rust image directly:
 
 ```bash
-docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
+docker run --rm -p 8090:8090 ghcr.io/summpot/axonhub:latest
 ```
 
 That image is best for quickly validating the current Rust-supported surface. `/health` is the immediate readiness check; the bootstrap/system routes plus the practical OpenAI-compatible `/v1` surface remain limited to the verified SQLite- and PostgreSQL-backed Rust backend paths. TiDB/Neon remain legacy-reference dialect material in the Go tree.

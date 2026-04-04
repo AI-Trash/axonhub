@@ -8,9 +8,9 @@ Today:
 
 - the **Rust backend** is the supported runtime for the verified SQLite- and PostgreSQL-backed replacement scope in this repository: CLI/config, `/health`, admin bootstrap/status/auth/read routes, admin GraphQL, OpenAPI GraphQL, request-context/auth foundations, and the migrated inference families already covered by repo evidence,
 - route families outside that verified scope still return explicit Rust `501 Not Implemented` payloads,
-- `looplj/axonhub:latest` remains available only as the rollback target while the Go retirement gates are being closed.
+- `ghcr.io/summpot/axonhub:latest` is continuously refreshed from `master`, and tagged releases additionally publish `ghcr.io/summpot/axonhub:<tag>`.
 
-Use the Rust workspace, `ghcr.io/looplj/axonhub:rust-latest`, or `docker-compose.rust.yml` for the supported runtime. Keep `looplj/axonhub:latest` only for rollback rehearsal or recovery validation.
+Use the Rust workspace or `ghcr.io/summpot/axonhub:latest` for the supported runtime.
 
 ## Overview
 
@@ -18,15 +18,19 @@ This guide covers Docker and Docker Compose deployment for the supported Rust ru
 
 ## Rust Cutover Docker Path
 
-The repository publishes a dedicated Rust image for the supported replacement scope:
+The repository publishes a single canonical GHCR image for the supported replacement scope:
 
-- image tags: `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
-- compose example: `docker compose -f docker-compose.rust.yml up -d`
+- image tags:
+  - `ghcr.io/summpot/axonhub:latest` for every push to `master`
+  - `ghcr.io/summpot/axonhub:<tag>` when the Git ref is a tag
+- architecture: multi-platform manifest (`linux/amd64` + `linux/arm64`) under the same tag
+- build cache: GitHub Actions cache (`type=gha,mode=max`) plus registry cache (`ghcr.io/summpot/axonhub:buildcache`)
+- compose example: `docker compose up -d`
 
 Example:
 
 ```bash
-docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
+docker run --rm -p 8090:8090 ghcr.io/summpot/axonhub:latest
 ```
 
 The compose example keeps the Rust runtime's default SQLite data and other relative runtime files on a named Docker volume. A one-off `docker run --rm` container is intentionally ephemeral unless you add your own volume mounts.
@@ -75,13 +79,13 @@ log:
 ### 3. Start Services
 
 ```bash
-docker compose -f docker-compose.rust.yml up -d
+docker compose up -d
 ```
 
 ### 4. Verify Deployment
 
 ```bash
-docker compose -f docker-compose.rust.yml ps
+docker compose ps
 ```
 
 Access the application at `http://localhost:8090`.
@@ -93,7 +97,7 @@ version: '3.8'
 
 services:
   axonhub:
-    image: ghcr.io/looplj/axonhub:rust-latest
+    image: ghcr.io/summpot/axonhub:latest
     ports:
       - "8090:8090"
     volumes:

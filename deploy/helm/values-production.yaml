@@ -12,7 +12,7 @@ axonhub:
   replicaCount: 2
   
   image:
-    repository: looplj/axonhub
+    repository: ghcr.io/summpot/axonhub
     tag: "latest"
     pullPolicy: IfNotPresent
   

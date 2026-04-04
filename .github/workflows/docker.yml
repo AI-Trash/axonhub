@@ -1,9 +1,19 @@
-name: Publish Docker image
+name: Publish GHCR image
 
 on:
   push:
+    branches:
+      - master
     tags:
-      - 'v*'
+      - '**'
+
+permissions:
+  packages: write
+  contents: read
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate_rust_workspace:
@@ -26,50 +36,48 @@ jobs:
       - name: Run Rust workspace tests
         run: cargo test --workspace --locked
 
-  build_single_arch:
-    name: Build & push canonical Rust image (${{ matrix.arch }}) [native]
-    needs: [validate_rust_workspace]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-
-    permissions:
-      packages: write
-      contents: read
+  build_and_push_ghcr:
+    name: Build & push canonical Rust image (GHCR)
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Check out (shallow)
+      - name: Check out
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: Resolve tag, write VERSION, and set build metadata
+      - name: Resolve image metadata
         run: |
-          git fetch --tags --force --depth=1
-          TAG=${GITHUB_REF#refs/tags/}
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          echo "GHCR_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER}/axonhub" >> "$GITHUB_ENV"
+          OWNER_LC=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          RAW_IMAGE_NAME="${GHCR_IMAGE_NAME:-${REPO_NAME}}"
+          IMAGE_NAME_LC=$(echo "${RAW_IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME_LC="${IMAGE_NAME_LC#ghcr.io/}"
+
+          if [[ "${IMAGE_NAME_LC}" == */* ]]; then
+            GHCR_IMAGE="ghcr.io/${IMAGE_NAME_LC}"
+          else
+            GHCR_IMAGE="ghcr.io/${OWNER_LC}/${IMAGE_NAME_LC}"
+          fi
+
+          echo "GHCR_IMAGE=${GHCR_IMAGE}" >> "$GITHUB_ENV"
           echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
-          echo "$TAG" > internal/build/VERSION
-          echo "Building canonical Rust tag: $TAG for ${{ matrix.arch }}"
+
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION_VALUE="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION_VALUE="dev-${GITHUB_SHA::12}"
+          fi
+
+          echo "$VERSION_VALUE" > internal/build/VERSION
+          echo "Build version: $VERSION_VALUE"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -77,88 +85,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (labels)
+      - name: Extract image tags and labels
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            looplj/axonhub
-            ${{ env.GHCR_IMAGE }}
+          images: ${{ env.GHCR_IMAGE }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
+            type=ref,event=tag
 
-      - name: Build & push single-arch canonical Rust image
+      - name: Build & push multi-arch canonical Rust image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            looplj/axonhub:${{ env.TAG }}-${{ matrix.arch }}
-            looplj/axonhub:latest-${{ matrix.arch }}
-            ${{ env.GHCR_IMAGE }}:${{ env.TAG }}-${{ matrix.arch }}
-            ${{ env.GHCR_IMAGE }}:latest-${{ matrix.arch }}
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             AXONHUB_BUILD_COMMIT=${{ github.sha }}
             AXONHUB_BUILD_TIME=${{ env.BUILD_TIME }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            AXONHUB_BUILD_RUST_VERSION=stable
+          cache-from: |
+            type=gha,scope=axonhub-ghcr
+            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
+          cache-to: |
+            type=gha,mode=max,scope=axonhub-ghcr
+            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache,mode=max
           provenance: false
           sbom: false
-
-  create_manifests:
-    name: Create canonical Rust multi-arch manifests
-    needs: [build_single_arch]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-
-    permissions:
-      packages: write
-      contents: read
-
-    steps:
-      - name: Extract tag
-        run: |
-          echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
-          echo "GHCR_IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER}/axonhub" >> "$GITHUB_ENV"
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create & push manifest (Docker Hub - version)
-        run: |
-          docker buildx imagetools create \
-            -t looplj/axonhub:${TAG} \
-            looplj/axonhub:${TAG}-amd64 \
-            looplj/axonhub:${TAG}-arm64
-
-      - name: Create & push manifest (Docker Hub - latest)
-        run: |
-          docker buildx imagetools create \
-            -t looplj/axonhub:latest \
-            looplj/axonhub:latest-amd64 \
-            looplj/axonhub:latest-arm64
-
-      - name: Create & push manifest (GHCR - version)
-        run: |
-          docker buildx imagetools create \
-            -t ${GHCR_IMAGE}:${TAG} \
-            ${GHCR_IMAGE}:${TAG}-amd64 \
-            ${GHCR_IMAGE}:${TAG}-arm64
-
-      - name: Create & push manifest (GHCR - latest)
-        run: |
-          docker buildx imagetools create \
-            -t ${GHCR_IMAGE}:latest \
-            ${GHCR_IMAGE}:latest-amd64 \
-            ${GHCR_IMAGE}:latest-arm64

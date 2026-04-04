@@ -8,9 +8,9 @@
 
 - **Rust 后端** 已经是仓库内已验证 SQLite 与 PostgreSQL 替代范围的受支持运行时：CLI/config、`/health`、admin bootstrap/status/auth/read 路由、admin GraphQL、OpenAPI GraphQL、request-context/auth 基础能力，以及仓库证据已覆盖的 inference 路由族；
 - 超出该已验证范围的路由族，仍然会由 Rust 返回显式 `501 Not Implemented`；
-- `looplj/axonhub:latest` 只在 Go 退役闸门关闭前作为回滚目标保留。
+- `ghcr.io/summpot/axonhub:latest` 会在每次 `master` 推送时持续更新；当 Git 引用为 tag 时，还会额外发布 `ghcr.io/summpot/axonhub:<tag>`。
 
-对于当前受支持的运行时，请使用 Rust workspace、`ghcr.io/looplj/axonhub:rust-latest` 或 `docker-compose.rust.yml`。只有在做回滚演练或恢复验证时，才保留 `looplj/axonhub:latest`。
+对于当前受支持的运行时，请使用 Rust workspace 或 `ghcr.io/summpot/axonhub:latest`。
 
 ## 概述
 
@@ -18,15 +18,19 @@
 
 ## Rust 切换 Docker 路径
 
-仓库现在会发布面向当前受支持替代范围的专用 Rust 镜像：
+仓库现在会发布面向当前受支持替代范围的单一 GHCR canonical 镜像：
 
-- 镜像标签：`ghcr.io/looplj/axonhub:rust-latest` 与 `ghcr.io/looplj/axonhub:rust-<tag>`
-- Compose 示例：`docker compose -f docker-compose.rust.yml up -d`
+- 镜像标签：
+  - 每次 `master` 推送发布 `ghcr.io/summpot/axonhub:latest`
+  - 当 Git 引用为 tag 时发布 `ghcr.io/summpot/axonhub:<tag>`
+- 架构：同一标签下发布多平台 manifest（`linux/amd64` + `linux/arm64`）
+- 构建缓存：同时使用 GitHub Actions 缓存（`type=gha,mode=max`）与 registry 缓存（`ghcr.io/summpot/axonhub:buildcache`）
+- Compose 示例：`docker compose up -d`
 
 示例：
 
 ```bash
-docker run --rm -p 8090:8090 ghcr.io/looplj/axonhub:rust-latest
+docker run --rm -p 8090:8090 ghcr.io/summpot/axonhub:latest
 ```
 
 Compose 示例会把 Rust 运行时默认的 SQLite 数据以及其他相对路径运行时文件保存在一个具名 Docker volume 中。一次性的 `docker run --rm` 容器则是刻意保持临时性的，除非你自行挂载持久化卷。
@@ -75,13 +79,13 @@ log:
 ### 3. 启动服务
 
 ```bash
-docker compose -f docker-compose.rust.yml up -d
+docker compose up -d
 ```
 
 ### 4. 验证部署
 
 ```bash
-docker compose -f docker-compose.rust.yml ps
+docker compose ps
 ```
 
 访问 `http://localhost:8090`。
@@ -93,7 +97,7 @@ version: '3.8'
 
 services:
   axonhub:
-    image: ghcr.io/looplj/axonhub:rust-latest
+    image: ghcr.io/summpot/axonhub:latest
     ports:
       - "8090:8090"
     volumes:

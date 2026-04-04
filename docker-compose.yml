@@ -1,6 +1,6 @@
 services:
   axonhub:
-    image: looplj/axonhub:latest
+    image: ghcr.io/summpot/axonhub:latest
     container_name: axonhub-app
     ports:
       - "8090:8090"

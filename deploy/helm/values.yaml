@@ -11,7 +11,7 @@ axonhub:
   replicaCount: 1
   
   image:
-    repository: looplj/axonhub
+    repository: ghcr.io/summpot/axonhub
     pullPolicy: IfNotPresent
     tag: "latest"
   

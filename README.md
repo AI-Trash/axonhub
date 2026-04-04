@@ -229,8 +229,9 @@ That's it! Now configure your first AI channel and start calling models through 
 The Rust backend is deployed through the following canonical artifacts:
 
 - Release assets named `axonhub-rust_<tag>_<platform>.(tar.gz|zip)`
-- Docker images `ghcr.io/looplj/axonhub:rust-latest` and `ghcr.io/looplj/axonhub:rust-<tag>`
-- Compose example at `docker-compose.rust.yml`
+- Docker image `ghcr.io/summpot/axonhub:latest` for every push to `master`
+- Docker image `ghcr.io/summpot/axonhub:<tag>` when pushing a Git tag
+- Compose example at `docker-compose.yml`
 
 These artifacts provide the Rust CLI/config contract and ship the verified SQLite- and PostgreSQL-backed surface covered by the Rust test suite: `/health`, admin bootstrap/status, identity/request-context, admin read routes, the full `/admin/graphql` subset (settings, user management, project/role management, quota, operational mutations), OpenAPI GraphQL, and the complete inference families including `/v1/images/generations`, `/v1/images/edits`, `/v1/images/variations`, `/v1/realtime` (JSON POST and WebSocket upgrade with session management), video generation, and all provider-specific routes (Jina, Anthropic, Gemini, Doubao). AiSDK compatibility and provider-edge OAuth are also fully supported.
 
@@ -373,14 +374,14 @@ TiDB and Neon DB examples remain in the legacy Go tree and documentation as refe
 
 **Rust Backend (SQLite):**
 
-Use the provided `docker-compose.rust.yml` file for the Rust backend with SQLite:
+Use the provided `docker-compose.yml` file for the Rust backend with SQLite:
 
 ```bash
 # Start Rust backend with SQLite
-docker-compose -f docker-compose.rust.yml up -d
+docker-compose up -d
 
 # Check status
-docker-compose -f docker-compose.rust.yml ps
+docker-compose ps
 ```
 
 **Historical Reference Only (legacy Go dialect examples):**

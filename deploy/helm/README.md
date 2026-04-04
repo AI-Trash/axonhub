@@ -1,6 +1,6 @@
 # AxonHub Helm Chart
 
-> **Important:** This Helm chart targets the canonical Rust container image. The default image is `looplj/axonhub:latest`, and you can override it to another Rust-published tag or registry mirror such as GHCR. PostgreSQL is the verified production path for this chart; MySQL is outside the Rust target-state support contract in this repository.
+> **Important:** This Helm chart targets the canonical Rust container image. The default image is `ghcr.io/summpot/axonhub:latest`, and you can override it to a version tag such as `ghcr.io/summpot/axonhub:v0.9.27`. PostgreSQL is the verified production path for this chart; MySQL is outside the Rust target-state support contract in this repository.
 
 This Helm chart deploys AxonHub on Kubernetes with PostgreSQL database.
 
@@ -33,7 +33,7 @@ The following table lists the configurable parameters of the AxonHub chart and t
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `axonhub.replicaCount` | Number of AxonHub replicas | `1` |
-| `axonhub.image.repository` | AxonHub canonical Rust image repository | `looplj/axonhub` |
+| `axonhub.image.repository` | AxonHub canonical Rust image repository | `ghcr.io/summpot/axonhub` |
 | `axonhub.image.tag` | AxonHub canonical Rust image tag | `latest` |
 | `axonhub.image.pullPolicy` | Image pull policy | `IfNotPresent` |
 | `axonhub.dbPassword` | Database password | `axonhub_password` |
