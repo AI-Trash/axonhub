@@ -1747,7 +1747,257 @@ struct TestHttpRequest {
             .unwrap();
         assert!(!settings.probe.enabled);
         assert_eq!(settings.probe.frequency, super::admin::ProbeFrequencySetting::OneHour);
+        assert_eq!(
+            settings.auto_sync.frequency,
+            super::admin::AutoSyncFrequencySetting::OneHour
+        );
         assert!(!settings.query_all_channel_models);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_updates_system_channel_auto_sync_frequency() {
+        let db_path = temp_sqlite_path("task9-update-system-channel-auto-sync");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }",
+                            "variables": {
+                                "input": {
+                                    "autoSync": {
+                                        "frequency": "SIX_HOURS"
+                                    }
+                                }
+                           }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["updateSystemChannelSettings"], true);
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"{ systemChannelSettings { probe { enabled frequency } autoSync { frequency } } }"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(
+            query_json["data"]["systemChannelSettings"]["autoSync"]["frequency"],
+            "SIX_HOURS"
+        );
+
+        let settings = SqliteOperationalService::new(foundation.clone())
+            .system_channel_settings()
+            .unwrap();
+        assert_eq!(
+            settings.auto_sync.frequency,
+            super::admin::AutoSyncFrequencySetting::SixHours
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_saves_and_queries_proxy_presets() {
+        let db_path = temp_sqlite_path("task9-proxy-presets");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let save_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation SaveProxyPreset($input: SaveProxyPresetInput!) { saveProxyPreset(input: $input) }",
+                            "variables": {
+                                "input": {
+                                    "name": "Office Proxy",
+                                    "url": "http://proxy.internal",
+                                    "username": "tester",
+                                    "password": "secret"
+                                }
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let save_json = read_json_response(save_response).await;
+        assert_eq!(save_json["data"]["saveProxyPreset"], true);
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"{ proxyPresets { name url username password } }"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["proxyPresets"][0]["name"], "Office Proxy");
+        assert_eq!(query_json["data"]["proxyPresets"][0]["url"], "http://proxy.internal");
+        assert_eq!(query_json["data"]["proxyPresets"][0]["username"], "tester");
+        assert_eq!(query_json["data"]["proxyPresets"][0]["password"], "secret");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_updates_and_queries_user_agent_pass_through_settings() {
+        let db_path = temp_sqlite_path("task9-user-agent-pass-through");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation UpdateUserAgentPassThroughSettings($input: UpdateUserAgentPassThroughSettingsInput!) { updateUserAgentPassThroughSettings(input: $input) }",
+                            "variables": {
+                                "input": {
+                                    "enabled": true
+                                }
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["updateUserAgentPassThroughSettings"], true);
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"{ userAgentPassThroughSettings { enabled } }"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["userAgentPassThroughSettings"]["enabled"], true);
+
+        let enabled = SqliteOperationalService::new(foundation.clone())
+            .user_agent_pass_through()
+            .unwrap();
+        assert!(enabled);
 
         std::fs::remove_file(db_path).ok();
     }
@@ -2740,6 +2990,7 @@ struct TestHttpRequest {
                             status: project.status,
                         },
                         scopes: vec!["read_channels".to_owned()],
+                        profiles_json: None,
                     },
                     api_key_id: Some(777),
                     client_ip: None,
@@ -4165,6 +4416,7 @@ struct TestHttpRequest {
                         key_type: axonhub_http::ApiKeyType::User,
                         project: api_key_project,
                         scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
                     },
                     api_key_id: Some(1),
                     client_ip: Some("127.0.0.1".to_owned()),
@@ -5663,6 +5915,7 @@ struct TestHttpRequest {
                         key_type: axonhub_http::ApiKeyType::User,
                         project: api_key_project,
                         scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
                     },
                     api_key_id: None,
                     client_ip: None,
@@ -6910,6 +7163,7 @@ struct TestHttpRequest {
                             status: "active".to_owned(),
                         },
                         scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
                     },
                     api_key_id: Some(11),
                     client_ip: None,
@@ -7039,6 +7293,7 @@ struct TestHttpRequest {
                             status: "active".to_owned(),
                         },
                         scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
                     },
                     api_key_id: Some(12),
                     client_ip: None,

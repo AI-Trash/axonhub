@@ -6,9 +6,10 @@ use axonhub_http::{
     AuthApiKeyContext, AuthUserContext, CompatibilityRoute, ContextResolveError,
     GeminiModelListResponse, GraphqlExecutionResult, GraphqlRequestPayload,
     InitializeSystemRequest, ModelListResponse, OpenAiV1Error, OpenAiV1ExecutionRequest,
-    OpenAiV1ExecutionResponse, OpenAiV1Route, ProjectContext, RealtimeSessionCreateRequest,
-    RealtimeSessionPatchRequest, RealtimeSessionRecord, SignInError, SignInRequest, SignInSuccess,
-    SystemInitializeError, SystemQueryError, ThreadContext, TraceContext,
+    OpenAiV1ExecutionResponse, OpenAiV1Route, OpenAiModel, ProjectContext,
+    RealtimeSessionCreateRequest, RealtimeSessionPatchRequest, RealtimeSessionRecord,
+    SignInError, SignInRequest, SignInSuccess, SystemInitializeError, SystemQueryError,
+    ThreadContext, TraceContext,
 };
 
 pub(crate) trait SystemBootstrapRepository: Send + Sync {
@@ -60,6 +61,13 @@ pub(crate) trait OpenAiV1Repository: Send + Sync {
         include: Option<&str>,
         api_key: &AuthApiKeyContext,
     ) -> Result<ModelListResponse, OpenAiV1Error>;
+
+    fn retrieve_model(
+        &self,
+        model_id: &str,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<OpenAiModel, OpenAiV1Error>;
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error>;
 

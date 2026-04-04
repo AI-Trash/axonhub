@@ -201,6 +201,7 @@ impl IdentityPort for FakeIdentityService {
                     status: "active".to_owned(),
                 },
                 scopes: vec!["write_requests".to_owned()],
+                profiles_json: None,
             }),
             Some(_) => Err(ApiKeyAuthError::Invalid),
             None => Err(ApiKeyAuthError::Missing),

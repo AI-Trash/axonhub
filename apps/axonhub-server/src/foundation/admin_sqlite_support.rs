@@ -23,8 +23,8 @@ use super::{
         provider_quota_type_for_channel, safe_relative_key_path, CachedFileStorage,
         StoredAutoBackupSettings, StoredBackupApiKey, StoredBackupChannel, StoredBackupModel,
         StoredBackupPayload, StoredChannelProbeData, StoredChannelProbePoint, StoredCleanupOption,
-        StoredGcCleanupSummary, StoredProviderQuotaStatus, StoredStoragePolicy,
-        StoredSystemChannelSettings,
+        StoredGcCleanupSummary, StoredProviderQuotaStatus, StoredProxyPreset,
+        StoredStoragePolicy, StoredSystemChannelSettings,
     },
     authz::{require_user_project_scope, SCOPE_READ_REQUESTS},
     graphql::{
@@ -35,7 +35,8 @@ use super::{
     shared::{
         bool_to_sql, current_rfc3339_timestamp, current_unix_timestamp, SqliteConnectionFactory,
         AUTO_BACKUP_PREFIX, AUTO_BACKUP_SUFFIX, BACKUP_VERSION, SYSTEM_KEY_AUTO_BACKUP_SETTINGS,
-        SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_STORAGE_POLICY,
+        SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_PROXY_PRESETS, SYSTEM_KEY_STORAGE_POLICY,
+        SYSTEM_KEY_USER_AGENT_PASS_THROUGH,
     },
     sqlite_support::SqliteFoundation,
     system::{ensure_all_foundation_tables, ensure_operational_tables, SystemSettingsStore},
@@ -440,11 +441,59 @@ impl SqliteOperationalService {
                 frequency: probe.frequency,
             };
         }
+        if let Some(auto_sync) = input.auto_sync {
+            settings.auto_sync = super::admin::StoredChannelModelAutoSyncSettings {
+                frequency: auto_sync.frequency,
+            };
+        }
         if let Some(query_all_channel_models) = input.query_all_channel_models {
             settings.query_all_channel_models = query_all_channel_models;
         }
         self.store_json_setting(SYSTEM_KEY_CHANNEL_SETTINGS, &settings)?;
         Ok(settings)
+    }
+
+    pub fn proxy_presets(&self) -> Result<Vec<StoredProxyPreset>, String> {
+        load_json_setting(
+            &self.foundation.system_settings(),
+            SYSTEM_KEY_PROXY_PRESETS,
+            Vec::<StoredProxyPreset>::new(),
+        )
+        .map_err(|error| format!("failed to load proxy presets: {error}"))
+    }
+
+    pub fn save_proxy_preset(&self, preset: StoredProxyPreset) -> Result<(), String> {
+        let mut presets = self.proxy_presets()?;
+        if let Some(existing) = presets.iter_mut().find(|item| item.url == preset.url) {
+            *existing = preset;
+        } else {
+            presets.push(preset);
+        }
+        self.store_json_setting(SYSTEM_KEY_PROXY_PRESETS, &presets)
+    }
+
+    pub fn delete_proxy_preset(&self, url: &str) -> Result<(), String> {
+        let presets = self
+            .proxy_presets()?
+            .into_iter()
+            .filter(|item| item.url != url)
+            .collect::<Vec<_>>();
+        self.store_json_setting(SYSTEM_KEY_PROXY_PRESETS, &presets)
+    }
+
+    pub fn user_agent_pass_through(&self) -> Result<bool, String> {
+        load_json_setting(
+            &self.foundation.system_settings(),
+            SYSTEM_KEY_USER_AGENT_PASS_THROUGH,
+            "false".to_owned(),
+        )
+        .map(|raw: String| raw.eq_ignore_ascii_case("true"))
+        .map_err(|error| format!("failed to load user-agent pass-through setting: {error}"))
+    }
+
+    pub fn set_user_agent_pass_through(&self, enabled: bool) -> Result<(), String> {
+        let value = if enabled { "true" } else { "false" };
+        self.store_json_setting(SYSTEM_KEY_USER_AGENT_PASS_THROUGH, &value)
     }
 
     pub fn channel_probe_data(

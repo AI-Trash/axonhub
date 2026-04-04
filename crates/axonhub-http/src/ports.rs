@@ -2,8 +2,8 @@ use crate::models::{
     AdminContentDownload, AnthropicModelListResponse, AuthApiKeyContext, AuthUserContext,
     ExchangeCallbackOAuthRequest, ExchangeOAuthResponse, GeminiModelListResponse,
     GraphqlExecutionResult, GraphqlRequestPayload, InitializeSystemRequest, ModelListResponse,
-    OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Route, PollCopilotOAuthRequest,
-    PollCopilotOAuthResponse, ProjectContext, RealtimeSessionCreateRequest,
+    OpenAiModel, OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Route,
+    PollCopilotOAuthRequest, PollCopilotOAuthResponse, ProjectContext, RealtimeSessionCreateRequest,
     RealtimeSessionPatchRequest, RealtimeSessionRecord, SignInRequest, SignInSuccess,
     StartAntigravityOAuthRequest, StartCopilotOAuthRequest, StartCopilotOAuthResponse,
     StartPkceOAuthRequest, StartPkceOAuthResponse, ThreadContext, TraceContext,
@@ -59,6 +59,13 @@ pub trait OpenAiV1Port: Send + Sync {
         include: Option<&str>,
         api_key: &AuthApiKeyContext,
     ) -> Result<ModelListResponse, OpenAiV1Error>;
+
+    fn retrieve_model(
+        &self,
+        model_id: &str,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<OpenAiModel, OpenAiV1Error>;
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error>;
 

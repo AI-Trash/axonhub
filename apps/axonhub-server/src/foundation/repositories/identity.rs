@@ -349,6 +349,7 @@ fn stored_api_key_from_auth_lookup(api_key: api_keys::AuthLookup) -> StoredApiKe
         status: api_key.status,
         project_id: api_key.project_id,
         scopes: parse_json_string_vec(api_key.scopes),
+        profiles: Some(api_key.profiles),
     }
 }
 

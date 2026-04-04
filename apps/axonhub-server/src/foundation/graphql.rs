@@ -19,9 +19,9 @@ use serde_json::{self, Value};
 use super::{
     admin::{
         default_auto_backup_settings, default_storage_policy, default_system_channel_settings,
-        parse_graphql_resource_id, BackupFrequencySetting, ProbeFrequencySetting,
-        StoredAutoBackupSettings, StoredChannelProbeData, StoredCircuitBreakerStatus,
-        StoredProviderQuotaStatus,
+        parse_graphql_resource_id, AutoSyncFrequencySetting, BackupFrequencySetting,
+        ProbeFrequencySetting, StoredAutoBackupSettings, StoredChannelProbeData,
+        StoredCircuitBreakerStatus, StoredProviderQuotaStatus, StoredProxyPreset,
         StoredStoragePolicy, StoredSystemChannelSettings,
     },
     admin_operational::SeaOrmOperationalService,
@@ -168,7 +168,14 @@ pub(crate) struct AdminGraphqlChannelProbeSetting {
 #[graphql(name = "SystemChannelSettings", rename_fields = "camelCase")]
 pub(crate) struct AdminGraphqlSystemChannelSettings {
     pub(crate) probe: AdminGraphqlChannelProbeSetting,
+    pub(crate) auto_sync: AdminGraphqlChannelModelAutoSyncSetting,
     pub(crate) query_all_channel_models: bool,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "ChannelModelAutoSyncSetting", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlChannelModelAutoSyncSetting {
+    pub(crate) frequency: AutoSyncFrequencySetting,
 }
 
 #[derive(Debug, Clone, Deserialize, InputObject)]
@@ -184,7 +191,40 @@ pub(crate) struct AdminGraphqlUpdateChannelProbeSettingInput {
 #[graphql(name = "UpdateSystemChannelSettingsInput")]
 pub(crate) struct AdminGraphqlUpdateSystemChannelSettingsInput {
     pub(crate) probe: Option<AdminGraphqlUpdateChannelProbeSettingInput>,
+    pub(crate) auto_sync: Option<AdminGraphqlUpdateChannelModelAutoSyncSettingInput>,
     pub(crate) query_all_channel_models: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "UpdateChannelModelAutoSyncSettingInput")]
+pub(crate) struct AdminGraphqlUpdateChannelModelAutoSyncSettingInput {
+    pub(crate) frequency: AutoSyncFrequencySetting,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "ProxyPreset", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlProxyPreset {
+    pub(crate) name: Option<String>,
+    pub(crate) url: String,
+    pub(crate) username: Option<String>,
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "SaveProxyPresetInput")]
+pub(crate) struct AdminGraphqlSaveProxyPresetInput {
+    pub(crate) name: Option<String>,
+    pub(crate) url: String,
+    pub(crate) username: Option<String>,
+    pub(crate) password: Option<String>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "UserAgentPassThroughSettings", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlUserAgentPassThroughSettings {
+    pub(crate) enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, InputObject)]
@@ -569,6 +609,22 @@ async fn execute_admin_graphql_seaorm_request(
         return query_system_channel_settings_seaorm(&repository);
     }
 
+    if query.contains("proxyPresets") {
+        if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
+            return graphql_permission_denied("proxyPresets");
+        }
+
+        return query_proxy_presets_seaorm(&repository);
+    }
+
+    if query.contains("userAgentPassThroughSettings") {
+        if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
+            return graphql_permission_denied("userAgentPassThroughSettings");
+        }
+
+        return query_user_agent_pass_through_settings_seaorm(&repository);
+    }
+
     if query.contains("channels") {
         if authorize_user_system_scope(&user, SCOPE_READ_CHANNELS).is_err() {
             return graphql_permission_denied("channels");
@@ -607,6 +663,30 @@ async fn execute_admin_graphql_seaorm_request(
         }
 
         return update_system_channel_settings_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("saveProxyPreset") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("saveProxyPreset");
+        }
+
+        return save_proxy_preset_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("deleteProxyPreset") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("deleteProxyPreset");
+        }
+
+        return delete_proxy_preset_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateUserAgentPassThroughSettings") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("updateUserAgentPassThroughSettings");
+        }
+
+        return update_user_agent_pass_through_settings_seaorm(&repository, payload.variables);
     }
 
     if query.contains("triggerAutoBackup") {
@@ -945,6 +1025,36 @@ fn query_system_channel_settings_seaorm(
     })
 }
 
+fn query_proxy_presets_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let presets = SeaOrmOperationalService::new(repository.db()).proxy_presets()?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "proxyPresets": presets.into_iter().map(|preset| proxy_preset_json(&preset)).collect::<Vec<_>>(),
+            }
+        }),
+    })
+}
+
+fn query_user_agent_pass_through_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let enabled = SeaOrmOperationalService::new(repository.db()).user_agent_pass_through()?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "userAgentPassThroughSettings": {
+                    "enabled": enabled,
+                },
+            }
+        }),
+    })
+}
+
 fn query_channels_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
     circuit_breaker: &SharedCircuitBreaker,
@@ -1154,6 +1264,15 @@ fn update_system_channel_settings_seaorm(
         )?;
         settings.probe = super::admin::StoredChannelProbeSettings { enabled, frequency };
     }
+    if let Some(auto_sync) = variables.get("input").and_then(|input| input.get("autoSync")) {
+        let frequency = parse_auto_sync_frequency_graphql_value(
+            auto_sync
+                .get("frequency")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "invalid autoSync.frequency: expected string".to_owned())?,
+        )?;
+        settings.auto_sync = super::admin::StoredChannelModelAutoSyncSettings { frequency };
+    }
     if let Some(query_all_channel_models) = variables
         .get("input")
         .and_then(|input| input.get("queryAllChannelModels"))
@@ -1166,6 +1285,65 @@ fn update_system_channel_settings_seaorm(
     Ok(GraphqlExecutionResult {
         status: 200,
         body: json!({"data": {"updateSystemChannelSettings": true}}),
+    })
+}
+
+fn save_proxy_preset_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = variables
+        .get("input")
+        .ok_or_else(|| "input is required".to_owned())?;
+    let url = input
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "invalid url: expected non-empty string".to_owned())?;
+    let preset = StoredProxyPreset {
+        name: input.get("name").and_then(Value::as_str).unwrap_or_default().trim().to_owned(),
+        url: url.to_owned(),
+        username: input.get("username").and_then(Value::as_str).unwrap_or_default().trim().to_owned(),
+        password: input.get("password").and_then(Value::as_str).unwrap_or_default().to_owned(),
+    };
+    SeaOrmOperationalService::new(repository.db()).save_proxy_preset(preset)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"saveProxyPreset": true}}),
+    })
+}
+
+fn delete_proxy_preset_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let url = variables
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "invalid url: expected non-empty string".to_owned())?;
+    SeaOrmOperationalService::new(repository.db()).delete_proxy_preset(url)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"deleteProxyPreset": true}}),
+    })
+}
+
+fn update_user_agent_pass_through_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let enabled = variables
+        .get("input")
+        .and_then(|input| input.get("enabled"))
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "invalid enabled: expected boolean".to_owned())?;
+    SeaOrmOperationalService::new(repository.db()).set_user_agent_pass_through(enabled)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateUserAgentPassThroughSettings": true}}),
     })
 }
 
@@ -2778,6 +2956,9 @@ fn system_channel_settings_json(settings: &StoredSystemChannelSettings) -> Value
             "enabled": settings.probe.enabled,
             "frequency": probe_frequency_graphql_name(settings.probe.frequency),
         },
+        "autoSync": {
+            "frequency": auto_sync_frequency_graphql_name(settings.auto_sync.frequency),
+        },
         "queryAllChannelModels": settings.query_all_channel_models,
     })
 }
@@ -2792,6 +2973,15 @@ fn parse_probe_frequency_graphql_value(value: &str) -> Result<ProbeFrequencySett
     }
 }
 
+fn parse_auto_sync_frequency_graphql_value(value: &str) -> Result<AutoSyncFrequencySetting, String> {
+    match value {
+        "ONE_HOUR" => Ok(AutoSyncFrequencySetting::OneHour),
+        "SIX_HOURS" => Ok(AutoSyncFrequencySetting::SixHours),
+        "ONE_DAY" => Ok(AutoSyncFrequencySetting::OneDay),
+        other => Err(format!("invalid autoSync.frequency: {other}")),
+    }
+}
+
 fn probe_frequency_graphql_name(value: ProbeFrequencySetting) -> &'static str {
     match value {
         ProbeFrequencySetting::OneMinute => "ONE_MINUTE",
@@ -2799,6 +2989,23 @@ fn probe_frequency_graphql_name(value: ProbeFrequencySetting) -> &'static str {
         ProbeFrequencySetting::ThirtyMinutes => "THIRTY_MINUTES",
         ProbeFrequencySetting::OneHour => "ONE_HOUR",
     }
+}
+
+fn auto_sync_frequency_graphql_name(value: AutoSyncFrequencySetting) -> &'static str {
+    match value {
+        AutoSyncFrequencySetting::OneHour => "ONE_HOUR",
+        AutoSyncFrequencySetting::SixHours => "SIX_HOURS",
+        AutoSyncFrequencySetting::OneDay => "ONE_DAY",
+    }
+}
+
+fn proxy_preset_json(preset: &StoredProxyPreset) -> Value {
+    json!({
+        "name": if preset.name.trim().is_empty() { Value::Null } else { Value::String(preset.name.clone()) },
+        "url": preset.url,
+        "username": if preset.username.trim().is_empty() { Value::Null } else { Value::String(preset.username.clone()) },
+        "password": if preset.password.trim().is_empty() { Value::Null } else { Value::String(preset.password.clone()) },
+    })
 }
 
 fn empty_page_info() -> AdminGraphqlPageInfo {
@@ -3174,6 +3381,9 @@ impl From<StoredSystemChannelSettings> for AdminGraphqlSystemChannelSettings {
             probe: AdminGraphqlChannelProbeSetting {
                 enabled: value.probe.enabled,
                 frequency: value.probe.frequency,
+            },
+            auto_sync: AdminGraphqlChannelModelAutoSyncSetting {
+                frequency: value.auto_sync.frequency,
             },
             query_all_channel_models: value.query_all_channel_models,
         }

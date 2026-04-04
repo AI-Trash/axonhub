@@ -554,6 +554,7 @@ mod tests {
                 status: "active".to_owned(),
             },
             scopes: scope_strings(LLM_API_KEY_SCOPES),
+            profiles_json: None,
         };
 
         assert!(api_key_has_scope(&api_key, SCOPE_WRITE_REQUESTS));
@@ -631,6 +632,7 @@ mod tests {
                 status: "active".to_owned(),
             },
             scopes: scope_strings(&[SCOPE_WRITE_API_KEYS]),
+            profiles_json: None,
         };
         assert_eq!(
             require_service_api_key_write_access(&user_key).unwrap_err(),

@@ -342,6 +342,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                         status: "active".to_owned(),
                     },
                     scopes: vec!["write_requests".to_owned()],
+                    profiles_json: None,
                 }),
                 Some("service-key-123") => Ok(AuthApiKeyContext {
                     id: 11,
@@ -354,6 +355,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                         status: "active".to_owned(),
                     },
                     scopes: vec!["write_requests".to_owned()],
+                    profiles_json: None,
                 }),
                 Some("read-only-key-123") => Ok(AuthApiKeyContext {
                     id: 13,
@@ -366,6 +368,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                         status: "active".to_owned(),
                     },
                     scopes: vec!["read_channels".to_owned()],
+                    profiles_json: None,
                 }),
                 Some("AXONHUB_API_KEY_NO_AUTH") => Err(ApiKeyAuthError::Invalid),
                 Some(_) => Err(ApiKeyAuthError::Invalid),
@@ -380,6 +383,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                         status: "active".to_owned(),
                     },
                     scopes: vec!["write_requests".to_owned()],
+                    profiles_json: None,
                 }),
                 None => Err(ApiKeyAuthError::Missing),
             }
@@ -467,6 +471,39 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                     capabilities: None,
                     pricing: None,
                 }],
+            })
+        }
+
+        fn retrieve_model(
+            &self,
+            model_id: &str,
+            include: Option<&str>,
+            api_key: &AuthApiKeyContext,
+        ) -> Result<OpenAiModel, OpenAiV1Error> {
+            if !api_key.has_scope("read_channels") {
+                return Err(OpenAiV1Error::InvalidRequest {
+                    message: "permission denied".to_owned(),
+                });
+            }
+            if model_id != "gpt-4o" {
+                return Err(OpenAiV1Error::InvalidRequest {
+                    message: format!("The model `{model_id}` does not exist or you do not have access to it."),
+                });
+            }
+            let include_all = include == Some("all");
+            Ok(OpenAiModel {
+                id: "gpt-4o".to_owned(),
+                object: "model",
+                created: 1,
+                owned_by: "openai".to_owned(),
+                name: include_all.then(|| "GPT-4o".to_owned()),
+                description: None,
+                icon: None,
+                r#type: include_all.then(|| "chat".to_owned()),
+                context_length: None,
+                max_output_tokens: None,
+                capabilities: None,
+                pricing: None,
             })
         }
 

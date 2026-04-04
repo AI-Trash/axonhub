@@ -1272,6 +1272,26 @@ impl OpenAiV1Port for SqliteOpenAiV1Service {
         })
     }
 
+    fn retrieve_model(
+        &self,
+        model_id: &str,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<OpenAiModel, OpenAiV1Error> {
+        require_api_key_scope(api_key, SCOPE_READ_CHANNELS).map_err(sqlite_authz_openai_error)?;
+        self.foundation
+            .channel_models()
+            .list_enabled_models(include)
+            .map_err(|error| OpenAiV1Error::Internal {
+                message: format!("Failed to list models: {error}"),
+            })?
+            .into_iter()
+            .find(|model| model.id == model_id)
+            .ok_or_else(|| OpenAiV1Error::InvalidRequest {
+                message: format!("The model `{}` does not exist or you do not have access to it.", model_id),
+            })
+    }
+
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
         let models = self
             .foundation
@@ -1645,6 +1665,15 @@ impl OpenAiV1Repository for SqliteOpenAiV1Service {
         api_key: &AuthApiKeyContext,
     ) -> Result<ModelListResponse, OpenAiV1Error> {
         <Self as OpenAiV1Port>::list_models(self, include, api_key)
+    }
+
+    fn retrieve_model(
+        &self,
+        model_id: &str,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<OpenAiModel, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::retrieve_model(self, model_id, include, api_key)
     }
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {

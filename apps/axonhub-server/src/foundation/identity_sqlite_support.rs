@@ -189,7 +189,7 @@ pub(crate) fn query_api_key(
 ) -> Result<StoredApiKey, ApiKeyAuthError> {
     connection
         .query_row(
-            "SELECT id, user_id, key, name, type, status, project_id, scopes
+            "SELECT id, user_id, key, name, type, status, project_id, scopes, profiles
              FROM api_keys WHERE key = ?1 AND deleted_at = 0 LIMIT 1",
             [key],
             |row| {
@@ -202,6 +202,7 @@ pub(crate) fn query_api_key(
                     status: row.get(5)?,
                     project_id: row.get(6)?,
                     scopes: parse_json_string_vec(row.get::<_, String>(7)?),
+                    profiles: Some(row.get(8)?),
                 })
             },
         )

@@ -50,6 +50,32 @@ pub(crate) enum ProbeFrequencySetting {
     OneHour,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Enum)]
+pub(crate) enum AutoSyncFrequencySetting {
+    #[graphql(name = "ONE_HOUR")]
+    OneHour,
+    #[graphql(name = "SIX_HOURS")]
+    SixHours,
+    #[graphql(name = "ONE_DAY")]
+    OneDay,
+}
+
+impl<'de> Deserialize<'de> for AutoSyncFrequencySetting {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.as_str() {
+            "1h" | "ONE_HOUR" => Self::OneHour,
+            "6h" | "SIX_HOURS" => Self::SixHours,
+            "1d" | "ONE_DAY" => Self::OneDay,
+            "1m" | "5m" | "30m" => Self::OneHour,
+            _ => Self::OneHour,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct StoredChannelProbeSettings {
     pub(crate) enabled: bool,
@@ -57,10 +83,24 @@ pub(crate) struct StoredChannelProbeSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct StoredChannelModelAutoSyncSettings {
+    pub(crate) frequency: AutoSyncFrequencySetting,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub(crate) struct StoredSystemChannelSettings {
     pub(crate) probe: StoredChannelProbeSettings,
+    pub(crate) auto_sync: StoredChannelModelAutoSyncSettings,
     pub(crate) query_all_channel_models: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) struct StoredProxyPreset {
+    pub(crate) name: String,
+    pub(crate) url: String,
+    pub(crate) username: String,
+    pub(crate) password: String,
 }
 
 impl Default for StoredSystemChannelSettings {
@@ -399,6 +439,9 @@ pub(crate) fn default_system_channel_settings() -> StoredSystemChannelSettings {
         probe: StoredChannelProbeSettings {
             enabled: true,
             frequency: ProbeFrequencySetting::FiveMinutes,
+        },
+        auto_sync: StoredChannelModelAutoSyncSettings {
+            frequency: AutoSyncFrequencySetting::OneHour,
         },
         query_all_channel_models: true,
     }

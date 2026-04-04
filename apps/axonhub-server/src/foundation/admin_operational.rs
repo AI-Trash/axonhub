@@ -19,14 +19,15 @@ use super::{
         generate_probe_timestamps, provider_quota_type_for_channel, CachedFileStorage,
         StoredAutoBackupSettings, StoredBackupApiKey, StoredBackupChannel, StoredBackupModel,
         StoredBackupPayload, StoredChannelProbeData, StoredChannelProbePoint,
-        StoredGcCleanupSummary, StoredProviderQuotaStatus, StoredStoragePolicy,
-        StoredSystemChannelSettings,
+        StoredGcCleanupSummary, StoredProviderQuotaStatus, StoredProxyPreset,
+        StoredStoragePolicy, StoredSystemChannelSettings,
     },
     seaorm::SeaOrmConnectionFactory,
     shared::{
         current_rfc3339_timestamp, current_unix_timestamp, format_unix_timestamp,
         AUTO_BACKUP_PREFIX, AUTO_BACKUP_SUFFIX, BACKUP_VERSION,
-        SYSTEM_KEY_AUTO_BACKUP_SETTINGS, SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_STORAGE_POLICY,
+        SYSTEM_KEY_AUTO_BACKUP_SETTINGS, SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_PROXY_PRESETS,
+        SYSTEM_KEY_STORAGE_POLICY, SYSTEM_KEY_USER_AGENT_PASS_THROUGH,
     },
 };
 
@@ -154,6 +155,60 @@ impl SeaOrmOperationalService {
             let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
             store_json_setting(&connection, SYSTEM_KEY_CHANNEL_SETTINGS, &settings_to_store).await?;
             Ok(settings_to_store)
+        })
+    }
+
+    pub(crate) fn proxy_presets(&self) -> Result<Vec<StoredProxyPreset>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            load_json_setting(&connection, SYSTEM_KEY_PROXY_PRESETS, Vec::<StoredProxyPreset>::new()).await
+        })
+    }
+
+    pub(crate) fn save_proxy_preset(&self, preset: StoredProxyPreset) -> Result<(), String> {
+        let db = self.db.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            let mut presets: Vec<StoredProxyPreset> =
+                load_json_setting(&connection, SYSTEM_KEY_PROXY_PRESETS, Vec::new()).await?;
+            if let Some(existing) = presets.iter_mut().find(|item| item.url == preset.url) {
+                *existing = preset;
+            } else {
+                presets.push(preset);
+            }
+            store_json_setting(&connection, SYSTEM_KEY_PROXY_PRESETS, &presets).await
+        })
+    }
+
+    pub(crate) fn delete_proxy_preset(&self, url: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let url = url.to_owned();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            let presets: Vec<StoredProxyPreset> =
+                load_json_setting(&connection, SYSTEM_KEY_PROXY_PRESETS, Vec::new()).await?;
+            let filtered = presets.into_iter().filter(|item| item.url != url).collect::<Vec<_>>();
+            store_json_setting(&connection, SYSTEM_KEY_PROXY_PRESETS, &filtered).await
+        })
+    }
+
+    pub(crate) fn user_agent_pass_through(&self) -> Result<bool, String> {
+        let db = self.db.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            let raw: String =
+                load_json_setting(&connection, SYSTEM_KEY_USER_AGENT_PASS_THROUGH, "false".to_owned()).await?;
+            Ok(raw.eq_ignore_ascii_case("true"))
+        })
+    }
+
+    pub(crate) fn set_user_agent_pass_through(&self, enabled: bool) -> Result<(), String> {
+        let db = self.db.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            let value = if enabled { "true" } else { "false" };
+            store_json_setting(&connection, SYSTEM_KEY_USER_AGENT_PASS_THROUGH, &value).await
         })
     }
 

@@ -44,6 +44,7 @@ pub struct StoredApiKey {
     pub status: String,
     pub project_id: i64,
     pub scopes: Vec<String>,
+    pub profiles: Option<String>,
 }
 
 #[derive(Debug)]

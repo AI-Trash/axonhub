@@ -114,6 +114,7 @@ pub struct AuthApiKeyContext {
     pub key_type: ApiKeyType,
     pub project: ProjectContext,
     pub scopes: Vec<String>,
+    pub profiles_json: Option<String>,
 }
 
 impl AuthApiKeyContext {

@@ -96,6 +96,41 @@ AxonHub is an all-in-one AI development platform that serves as a unified API ga
 - `frontend/src/config/` — App configuration
 - `frontend/src/context/` — React context providers
 
+## Upstream Sync Notes
+
+When syncing changes from upstream into this fork, follow these repository-specific rules:
+
+1. **Rust remains canonical**
+   - Do not treat upstream Go backend changes as the final target implementation.
+   - First identify the user-visible behavior changed in legacy Go (`internal/server/**`, `internal/server/biz/**`, `internal/server/gql/**`, `llm/**`), then migrate that behavior into the Rust canonical path:
+     - `apps/axonhub-server`
+     - `crates/axonhub-http`
+     - other Rust workspace crates as needed
+   - Only keep Go-side merges as reference/oracle material unless the user explicitly asks to preserve legacy-only behavior there.
+
+2. **Do not restore removed frontend locale files**
+   - This fork uses **Paraglide** as the active i18n system.
+   - Do **not** reintroduce or keep upstream `frontend/src/locales/**` files when resolving merge conflicts if they were removed in this fork.
+   - Treat upstream locale JSON changes as a source of new messages, not as files to restore.
+
+3. **Translate upstream i18n additions into Paraglide**
+   - The canonical message source is:
+     - `frontend/messages/en.json`
+     - `frontend/messages/zh-CN.json`
+   - If upstream adds or changes translation keys in legacy locale JSON files, migrate the relevant keys into Paraglide message files using the existing flat key format (for example `apikeys.profiles.title`).
+   - Prefer migrating only keys that are actually referenced by merged frontend code or required by the feature being synced; do not blindly bulk-restore the legacy locale tree.
+
+4. **Conflict resolution priority during upstream sync**
+   - Preserve this fork's architecture changes first:
+     - Rust backend canonicalization
+     - Paraglide-based frontend i18n
+   - Then port upstream feature additions into those architectures.
+   - In practice:
+     - keep this fork's Paraglide-based TS/TSX implementation style
+     - keep `frontend/src/locales/**` deleted if they were removed here
+     - add missing Paraglide message keys for upstream-added UI copy
+     - migrate upstream API/backend semantics into Rust endpoints/services instead of stopping at legacy Go merges
+
 ## Rules Index
 
 All detailed rules are in `.agent/rules/`:

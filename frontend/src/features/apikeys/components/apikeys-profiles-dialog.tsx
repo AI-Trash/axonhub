@@ -242,6 +242,7 @@ export function ApiKeyProfilesDialog({ open, onOpenChange, onSubmit, loading = f
       modelMappings: [],
       channelIDs: [],
       channelTags: [],
+      channelTagsMatchMode: 'any',
       modelIDs: [],
       loadBalanceStrategy: null,
     });
@@ -934,8 +935,33 @@ function ProfileCard({
 
           {/* Channel Tags Restrictions Section */}
           <div className='border-t pt-6'>
-            <h4 className='mb-3 text-sm font-medium'>{m["apikeys.profiles.allowedChannelTags"]()}</h4>
-            <p className='text-muted-foreground mb-3 text-xs'>{m["apikeys.profiles.allowedChannelTagsDescription"]()}</p>
+            <div className='mb-3 flex items-start justify-between gap-3'>
+              <div>
+                <h4 className='text-sm font-medium'>{m["apikeys.profiles.allowedChannelTags"]()}</h4>
+                <p className='text-muted-foreground mt-1 text-xs'>{m["apikeys.profiles.allowedChannelTagsDescription"]()}</p>
+              </div>
+              <FormField
+                control={form.control}
+                name={`profiles.${profileIndex}.channelTagsMatchMode`}
+                render={({ field }) => (
+                  <FormItem className='w-[180px]'>
+                    <FormLabel>{m["apikeys.profiles.allowedChannelTagsMatchMode"]()}</FormLabel>
+                    <FormControl>
+                      <Select value={field.value || 'any'} onValueChange={field.onChange}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value='any'>{m["apikeys.profiles.allowedChannelTagsMatchModeAny"]()}</SelectItem>
+                          <SelectItem value='all'>{m["apikeys.profiles.allowedChannelTagsMatchModeAll"]()}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
             <FormField
               control={form.control}
               name={`profiles.${profileIndex}.channelTags`}

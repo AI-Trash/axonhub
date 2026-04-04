@@ -140,6 +140,7 @@ impl IdentityAuthService {
             key_type: map_api_key_type(api_key.key_type.as_str()),
             project: project_context(project),
             scopes: api_key.scopes,
+            profiles_json: api_key.profiles,
         })
     }
 
@@ -324,6 +325,7 @@ impl IdentityPort for SeaOrmIdentityService {
             key_type: map_api_key_type(api_key.key_type.as_str()),
             project: project_context(project),
             scopes: api_key.scopes,
+            profiles_json: api_key.profiles,
         })
     }
 

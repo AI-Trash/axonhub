@@ -79,6 +79,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 &connection,
                 db.backend(),
                 settings.query_all_channel_models,
+                api_key.profiles_json.as_deref(),
             )
                 .await?
                 .into_iter()
@@ -90,6 +91,36 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         Ok(ModelListResponse { object: "list", data: models })
     }
 
+    fn retrieve_model(
+        &self,
+        model_id: &str,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<OpenAiModel, OpenAiV1Error> {
+        require_api_key_scope(api_key, SCOPE_READ_CHANNELS).map_err(authz_openai_error)?;
+        let db = self.db.clone();
+        let model_id = model_id.to_owned();
+        let include_owned = include.map(ToOwned::to_owned);
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            let include = ModelInclude::parse(include_owned.as_deref());
+            let settings = query_system_channel_settings_seaorm(&connection).await?;
+            let model = list_enabled_model_records_seaorm(
+                &connection,
+                db.backend(),
+                settings.query_all_channel_models,
+                api_key.profiles_json.as_deref(),
+            )
+            .await?
+            .into_iter()
+            .find(|record| record.model_id == model_id)
+            .ok_or_else(|| OpenAiV1Error::InvalidRequest {
+                message: format!("The model `{}` does not exist or you do not have access to it.", model_id),
+            })?;
+            Ok(model.into_openai_model(&include))
+        })
+    }
+
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
         let db = self.db.clone();
         let models = db.run_sync(move |db| async move {
@@ -99,6 +130,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 &connection,
                 db.backend(),
                 settings.query_all_channel_models,
+                api_key.profiles_json.as_deref(),
             )
             .await
         })?;
@@ -141,6 +173,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 &connection,
                 db.backend(),
                 settings.query_all_channel_models,
+                api_key.profiles_json.as_deref(),
             )
             .await
         })?;
@@ -182,6 +215,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 &request,
                 route,
                 &circuit_breaker,
+                request.api_key.profiles_json.as_deref(),
             )
             .await?;
             let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
@@ -317,6 +351,15 @@ impl OpenAiV1Repository for SeaOrmOpenAiV1Service {
         api_key: &AuthApiKeyContext,
     ) -> Result<ModelListResponse, OpenAiV1Error> {
         <Self as OpenAiV1Port>::list_models(self, include, api_key)
+    }
+
+    fn retrieve_model(
+        &self,
+        model_id: &str,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<OpenAiModel, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::retrieve_model(self, model_id, include, api_key)
     }
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {

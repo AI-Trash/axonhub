@@ -43,6 +43,14 @@ struct ParsedApiKeyProfiles {
 #[serde(default)]
 struct ParsedApiKeyProfile {
     name: String,
+    #[serde(rename = "channelIDs")]
+    channel_ids: Vec<i64>,
+    #[serde(rename = "channelTags")]
+    channel_tags: Vec<String>,
+    #[serde(rename = "channelTagsMatchMode")]
+    channel_tags_match_mode: String,
+    #[serde(rename = "modelIDs")]
+    model_ids: Vec<String>,
     quota: Option<ParsedApiKeyQuota>,
 }
 
@@ -235,11 +243,13 @@ pub(crate) async fn list_enabled_model_records_seaorm(
     db: &impl ConnectionTrait,
     backend: DatabaseBackend,
     query_all_channel_models: bool,
+    profiles_json: Option<&str>,
 ) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
+    let active_profile = active_api_key_profile(profiles_json);
     if query_all_channel_models {
-        list_routable_model_records_seaorm(db, backend).await
+        list_routable_model_records_seaorm(db, backend, active_profile.as_ref()).await
     } else {
-        list_explicit_enabled_model_records_seaorm(db).await
+        list_explicit_enabled_model_records_seaorm(db, active_profile.as_ref()).await
     }
 }
 
@@ -248,8 +258,9 @@ pub(crate) async fn list_enabled_models_seaorm(
     backend: DatabaseBackend,
     include: &ModelInclude,
     query_all_channel_models: bool,
+    profiles_json: Option<&str>,
 ) -> Result<Vec<OpenAiModel>, OpenAiV1Error> {
-    list_enabled_model_records_seaorm(db, backend, query_all_channel_models)
+    list_enabled_model_records_seaorm(db, backend, query_all_channel_models, profiles_json)
         .await
         .map(|records| {
             records
@@ -265,8 +276,20 @@ pub(crate) async fn select_target_channels_seaorm(
     request: &OpenAiV1ExecutionRequest,
     route: OpenAiV1Route,
     circuit_breaker: &SharedCircuitBreaker,
+    profiles_json: Option<&str>,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
     let request_model = request_model_id(&request.body)?;
+    let active_profile = active_api_key_profile(profiles_json);
+
+    if active_profile.as_ref().is_some_and(|profile| {
+        !profile.model_ids.is_empty()
+            && !profile
+                .model_ids
+                .iter()
+                .any(|candidate| candidate == request_model.as_str())
+    }) {
+        return Ok(Vec::new());
+    }
 
     let mut targets = select_openai_route_targets_seaorm(
         db,
@@ -277,6 +300,7 @@ pub(crate) async fn select_target_channels_seaorm(
         openai_route_model_type(route),
         request.channel_hint_id,
         circuit_breaker,
+        active_profile.as_ref(),
     )
     .await?;
 
@@ -305,6 +329,7 @@ async fn select_openai_route_targets_seaorm(
     model_type: &str,
     preferred_channel_id: Option<i64>,
     circuit_breaker: &SharedCircuitBreaker,
+    active_profile: Option<&ParsedApiKeyProfile>,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
     let mut targets = Vec::new();
     for channel_type in ["openai", "codex", "claudecode"] {
@@ -319,6 +344,7 @@ async fn select_openai_route_targets_seaorm(
                 model_type,
                 preferred_channel_id,
                 circuit_breaker,
+                active_profile,
             )
             .await?,
         );
@@ -358,6 +384,7 @@ pub(crate) async fn select_inference_targets_seaorm(
     model_type: &str,
     preferred_channel_id: Option<i64>,
     circuit_breaker: &SharedCircuitBreaker,
+    active_profile: Option<&ParsedApiKeyProfile>,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
     let preferred_trace_channel_id = match trace_id {
         Some(trace_id) => query_preferred_trace_channel_id_seaorm(db, backend, trace_id, request_model_id).await?,
@@ -378,6 +405,16 @@ pub(crate) async fn select_inference_targets_seaorm(
     let mut resolved_channels = Vec::new();
     let mut actual_model_ids = BTreeSet::new();
     for channel in channel_candidates {
+        if let Some(profile) = active_profile {
+            if !profile.channel_ids.is_empty() && !profile.channel_ids.contains(&channel.id) {
+                continue;
+            }
+            if !profile.channel_tags.is_empty()
+                && !profile_matches_channel_tags(profile, channel.tags.as_str())
+            {
+                continue;
+            }
+        }
         let Some(model_entry) = resolve_channel_model_entry(
             &channel.supported_models,
             &channel.settings,
@@ -916,6 +953,31 @@ fn active_api_key_quota(raw: &str) -> Option<ParsedApiKeyQuota> {
         .and_then(|profile| profile.quota)
 }
 
+fn active_api_key_profile(raw: Option<&str>) -> Option<ParsedApiKeyProfile> {
+    let parsed = serde_json::from_str::<ParsedApiKeyProfiles>(raw?).ok()?;
+    if parsed.active_profile.is_empty() {
+        return None;
+    }
+
+    parsed
+        .profiles
+        .into_iter()
+        .find(|profile| profile.name == parsed.active_profile)
+}
+
+fn profile_matches_channel_tags(profile: &ParsedApiKeyProfile, raw_tags: &str) -> bool {
+    let tags = serde_json::from_str::<Vec<String>>(raw_tags).unwrap_or_default();
+    if profile.channel_tags.is_empty() {
+        return true;
+    }
+
+    if profile.channel_tags_match_mode.eq_ignore_ascii_case("all") {
+        profile.channel_tags.iter().all(|tag| tags.contains(tag))
+    } else {
+        tags.iter().any(|tag| profile.channel_tags.contains(tag))
+    }
+}
+
 fn quota_window_bounds(
     now_epoch_seconds: i64,
     timezone: &str,
@@ -1072,6 +1134,7 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
 async fn list_routable_model_records_seaorm(
     db: &impl ConnectionTrait,
     _backend: DatabaseBackend,
+    active_profile: Option<&ParsedApiKeyProfile>,
 ) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
     let enabled_channels = channels::Entity::find()
         .filter(channels::Column::DeletedAt.eq(0_i64))
@@ -1094,6 +1157,16 @@ async fn list_routable_model_records_seaorm(
 
     let mut routable_model_ids = std::collections::BTreeSet::new();
     for channel in enabled_channels {
+        if let Some(profile) = active_profile {
+            if !profile.channel_ids.is_empty() && !profile.channel_ids.contains(&channel.id) {
+                continue;
+            }
+            if !profile.channel_tags.is_empty()
+                && !profile_matches_channel_tags(profile, channel.tags.as_str())
+            {
+                continue;
+            }
+        }
         let api_key = extract_channel_api_key(&channel.credentials);
         if api_key.is_empty() {
             continue;
@@ -1106,6 +1179,13 @@ async fn list_routable_model_records_seaorm(
 
     Ok(enabled_models
         .into_iter()
+        .filter(|model| {
+            active_profile
+                .map(|profile| {
+                    profile.model_ids.is_empty() || profile.model_ids.contains(&model.model_id)
+                })
+                .unwrap_or(true)
+        })
         .filter(|model| routable_model_ids.contains(&model.model_id))
         .map(stored_model_record_from_enabled_model_record)
         .collect())
@@ -1113,6 +1193,7 @@ async fn list_routable_model_records_seaorm(
 
 async fn list_explicit_enabled_model_records_seaorm(
     db: &impl ConnectionTrait,
+    active_profile: Option<&ParsedApiKeyProfile>,
 ) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
     models::Entity::find()
         .filter(models::Column::DeletedAt.eq(0_i64))
@@ -1124,6 +1205,14 @@ async fn list_explicit_enabled_model_records_seaorm(
         .map_err(map_openai_db_err)
         .map(|rows| {
             rows.into_iter()
+                .filter(|model| {
+                    active_profile
+                        .map(|profile| {
+                            profile.model_ids.is_empty()
+                                || profile.model_ids.contains(&model.model_id)
+                        })
+                        .unwrap_or(true)
+                })
                 .map(stored_model_record_from_enabled_model_record)
                 .collect()
         })

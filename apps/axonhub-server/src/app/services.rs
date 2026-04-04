@@ -4,7 +4,7 @@ use axonhub_http::{
     AdminAuthError, AdminContentDownload, AdminError, AdminGraphqlPort, AdminPort,
     AnthropicModelListResponse, ApiKeyAuthError, AuthApiKeyContext, AuthUserContext,
     ContextResolveError, GeminiModelListResponse, GraphqlExecutionResult, GraphqlRequestPayload,
-    IdentityPort, InitializeSystemRequest, ModelListResponse, OpenAiV1Error,
+    IdentityPort, InitializeSystemRequest, ModelListResponse, OpenAiModel, OpenAiV1Error,
     OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port, OpenAiV1Route,
     OpenApiGraphqlPort, ProjectContext, RealtimeSessionCreateRequest, RealtimeSessionPatchRequest,
     RealtimeSessionRecord, RequestContextPort, SignInError, SignInRequest, SignInSuccess,
@@ -127,6 +127,15 @@ impl OpenAiV1Port for OpenAiV1ApplicationService {
         api_key: &AuthApiKeyContext,
     ) -> Result<ModelListResponse, OpenAiV1Error> {
         self.repository.list_models(include, api_key)
+    }
+
+    fn retrieve_model(
+        &self,
+        model_id: &str,
+        include: Option<&str>,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<OpenAiModel, OpenAiV1Error> {
+        self.repository.retrieve_model(model_id, include, api_key)
     }
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {

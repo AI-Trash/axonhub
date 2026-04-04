@@ -131,6 +131,10 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
     cfg.service(web::resource("/debug/context").route(web::to(handlers::debug_context)))
         .service(web::resource("/models").route(web::get().to(handlers::openai_v1::list_openai_models)))
         .service(
+            web::resource("/models/{model}")
+                .route(web::get().to(handlers::openai_v1::retrieve_openai_model)),
+        )
+        .service(
             web::resource("/chat/completions")
                 .route(web::post().to(handlers::openai_v1::openai_chat_completions)),
         )
