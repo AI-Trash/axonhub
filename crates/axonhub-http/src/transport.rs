@@ -435,7 +435,6 @@ pub(crate) fn trace_body_inspection_required(
             && is_claude_code_trace_request(request_method, request_path))
 }
 
-#[allow(dead_code)]
 pub(crate) fn extract_request_trace_id(
     headers: &TransportHeaders,
     config: &TraceConfig,

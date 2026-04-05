@@ -17,6 +17,20 @@ const INDEX_PATH: &str = "index.html";
 const FAVICON_PATH: &str = "favicon.ico";
 const SPA_CACHE_CONTROL_VALUE: &str = "no-cache, no-store, must-revalidate";
 const FAVICON_CACHE_CONTROL_VALUE: &str = "public, max-age=3600";
+const FALLBACK_INDEX_HTML: &str = r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AxonHub</title>
+    <script type="module" src="/assets/index.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+"#;
+const FALLBACK_FAVICON: &[u8] = &[0x00, 0x00, 0x01, 0x00];
 const API_PREFIXES: &[&str] = &[
     "/admin",
     "/anthropic",
@@ -59,11 +73,11 @@ pub(crate) async fn serve_embedded_or_not_implemented(request: HttpRequest) -> H
 }
 
 fn serve_favicon_response() -> Option<HttpResponse> {
-    FrontendAssets::get(FAVICON_PATH).map(|file| {
+    embedded_asset_bytes(FAVICON_PATH).map(|body| {
         let mut response = HttpResponse::Ok();
         response.insert_header((CONTENT_TYPE, mime_for_path(FAVICON_PATH)));
         response.insert_header((CACHE_CONTROL, HeaderValue::from_static(FAVICON_CACHE_CONTROL_VALUE)));
-        response.body(file.data.into_owned())
+        response.body(body)
     })
 }
 
@@ -73,16 +87,29 @@ fn embedded_response_for_request(path: &str) -> Option<HttpResponse> {
     }
 
     let asset_path = normalize_asset_path(path);
-    if let Some(file) = FrontendAssets::get(&asset_path) {
-        return Some(response_for_asset(&asset_path, file.data.into_owned()));
+    if let Some(body) = embedded_asset_bytes(&asset_path) {
+        return Some(response_for_asset(&asset_path, body));
     }
 
     if should_fallback_to_index(path) {
-        return FrontendAssets::get(INDEX_PATH)
-            .map(|file| response_for_spa(file.data.into_owned()));
+        return embedded_asset_bytes(INDEX_PATH).map(response_for_spa);
     }
 
     None
+}
+
+fn embedded_asset_bytes(path: &str) -> Option<Vec<u8>> {
+    FrontendAssets::get(path)
+        .map(|file| file.data.into_owned())
+        .or_else(|| fallback_asset_bytes(path).map(ToOwned::to_owned))
+}
+
+fn fallback_asset_bytes(path: &str) -> Option<&'static [u8]> {
+    match path {
+        INDEX_PATH => Some(FALLBACK_INDEX_HTML.as_bytes()),
+        FAVICON_PATH => Some(FALLBACK_FAVICON),
+        _ => None,
+    }
 }
 
 fn normalize_asset_path(path: &str) -> String {

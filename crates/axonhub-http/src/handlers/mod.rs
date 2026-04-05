@@ -21,7 +21,7 @@ use crate::models::{
     health_timestamp,
 };
 use crate::state::{
-    HttpState, OpenAiV1Capability, RequestAuthContext, RequestContextState,
+    HttpState, OpenAiV1Capability, RequestAuthContext, RequestContextCapability, RequestContextState,
     request_context_snapshot,
 };
 use actix_web::body::BoxBody;
@@ -50,16 +50,51 @@ pub(crate) async fn health(state: web::Data<HttpState>) -> web::Json<HealthRespo
     })
 }
 
-pub(crate) async fn debug_context(request: ActixRequest) -> HttpResponse {
-    let context = request
+pub(crate) async fn debug_context(
+    request: ActixRequest,
+    body: Bytes,
+    state: web::Data<HttpState>,
+) -> HttpResponse {
+    let mut context = request
         .0
         .extensions()
         .get::<RequestContextState>()
         .cloned()
         .unwrap_or_default();
 
+    if context.trace.is_none() {
+        if let (Some(project), RequestContextCapability::Available { request_context }) =
+            (context.project.as_ref(), &state.request_context)
+        {
+            let headers = transport_headers(request.0.headers());
+            if let Some(trace_id) = crate::state::transport::extract_request_trace_id(
+                &headers,
+                &state.trace_config,
+                request.0.method().as_str(),
+                request.0.path(),
+                Some(body.as_ref()),
+            ) {
+                let thread_db_id = context.thread.as_ref().map(|thread| thread.id);
+                if let Ok(trace) = request_context.resolve_trace(project.id, trace_id.as_str(), thread_db_id)
+                {
+                    context.trace = trace;
+                }
+            }
+        }
+    }
+
     let snapshot = request_context_snapshot(context);
     HttpResponse::Ok().json(snapshot)
+}
+
+fn transport_headers(headers: &actix_web::http::header::HeaderMap) -> crate::state::transport::TransportHeaders {
+    let mut result = crate::state::transport::TransportHeaders::default();
+    for (name, value) in headers {
+        if let Ok(value) = value.to_str() {
+            result.insert(name.as_str(), value);
+        }
+    }
+    result
 }
 
 pub(crate) async fn execute_openai_request(

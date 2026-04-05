@@ -252,17 +252,12 @@ fn configure_doubao(cfg: &mut ServiceConfig) {
                     .route(web::get().to(handlers::doubao::doubao_get_task))
                     .route(web::delete().to(handlers::doubao::doubao_delete_task)),
             )
-            .default_service(web::route().wrap(request_context()).wrap(api_key_auth()).to(
-                |req: HttpRequest| async move {
-                    crate::errors::not_implemented_response(
-                        "/*",
-                        Method::from(req.method().clone()),
-                        req.uri().clone(),
-                        None,
-                    )
-                    .into_response()
-                },
-            )),
+            .default_service(
+                web::route()
+                    .wrap(request_context())
+                    .wrap(api_key_auth())
+                    .to(handlers::not_found),
+            ),
     );
 }
 

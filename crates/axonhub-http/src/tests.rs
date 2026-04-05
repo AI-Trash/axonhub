@@ -2021,7 +2021,7 @@ fn assert_go_duration_shape(value: &str) {
 
     #[tokio::test]
     async fn rest_assertion_helper_reports_boundary_mismatches_clearly() {
-        let app = router(test_state_with_openai(
+        let app = router(test_state(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
             },
@@ -2031,10 +2031,10 @@ fn assert_go_duration_shape(value: &str) {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/v1/images/edits")
+                    .uri("/v1/images/generations")
                     .method(Method::POST)
                     .header("X-API-Key", "api-key-123")
-                    .body(Body::empty())
+                    .body(Body::from(r#"{"model":"gpt-image-1","prompt":"cat"}"#))
                     .unwrap(),
             )
             .await
@@ -2044,13 +2044,13 @@ fn assert_go_duration_shape(value: &str) {
             response,
             StatusCode::NOT_IMPLEMENTED,
             "/v1/*",
-            "/v1/images/edits",
+            "/v1/images/generations",
             "POST",
         )
         .await;
         assert_ne!(
             json["path"],
-            Value::String("/v1/images/variations".to_owned()),
+            Value::String("/v1/images/edits".to_owned()),
             "boundary helper should fail loudly if a later slice points at the wrong unsupported route"
         );
     }
@@ -2864,7 +2864,7 @@ fn assert_go_duration_shape(value: &str) {
                 Request::builder()
                     .uri("/v1/models?include=all")
                     .method(Method::GET)
-                    .header("X-API-Key", "api-key-123")
+                    .header("X-API-Key", "read-only-key-123")
                     .body(Body::empty())
                     .unwrap(),
             )
