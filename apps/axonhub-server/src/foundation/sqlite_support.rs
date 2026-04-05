@@ -336,7 +336,7 @@ impl SystemBootstrapRepository for SqliteBootstrapService {
 pub(crate) async fn seaorm_is_initialized(
     dbf: &SeaOrmDbFactory,
 ) -> Result<bool, sea_orm::DbErr> {
-    let db = dbf.connect_migrated().await?;
+    let db = dbf.connect().await?;
     query_is_initialized_seaorm(&db, dbf.backend()).await
 }
 
@@ -388,17 +388,28 @@ pub(crate) async fn query_is_initialized_seaorm<C>(
 where
     C: ConnectionTrait,
 {
-    let value = systems::Entity::find()
+    let value = match systems::Entity::find()
         .filter(systems::Column::Key.eq(SYSTEM_KEY_INITIALIZED))
         .filter(systems::Column::DeletedAt.eq(0_i64))
         .into_partial_model::<systems::KeyValue>()
         .one(db)
-        .await?
-        .map(|row| row.value);
+        .await
+    {
+        Ok(value) => value.map(|row| row.value),
+        Err(error) if is_missing_systems_table_error(&error) => return Ok(false),
+        Err(error) => return Err(error),
+    };
 
     Ok(value
         .map(|current| current.eq_ignore_ascii_case("true"))
         .unwrap_or(false))
+}
+
+fn is_missing_systems_table_error(error: &sea_orm::DbErr) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("no such table: systems")
+        || message.contains("relation \"systems\" does not exist")
+        || message.contains("table \"systems\" does not exist")
 }
 
 pub(crate) async fn upsert_system_value_seaorm<C>(
