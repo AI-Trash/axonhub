@@ -53,6 +53,8 @@ impl SeaOrmConnectionFactory {
             Self::Sqlite { dsn, .. } => {
                 if dsn == ":memory:" {
                     "sqlite::memory:".to_owned()
+                } else if dsn.starts_with("file:") {
+                    normalize_sqlite_file_dsn(dsn)
                 } else if dsn.starts_with("sqlite:") {
                     dsn.clone()
                 } else {
@@ -105,6 +107,37 @@ impl SeaOrmConnectionFactory {
                 .expect("create runtime for SeaORM sync bridge")
                 .block_on(build(factory))
         }
+    }
+}
+
+fn normalize_sqlite_file_dsn(dsn: &str) -> String {
+    let raw = dsn.strip_prefix("file:").unwrap_or(dsn);
+    let (path, query) = raw.split_once('?').unwrap_or((raw, ""));
+
+    let mut params = Vec::new();
+    let mut has_mode = false;
+
+    if !query.is_empty() {
+        for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+            let key = pair.split('=').next().unwrap_or_default();
+            if key.starts_with('_') {
+                continue;
+            }
+            if key.eq_ignore_ascii_case("mode") {
+                has_mode = true;
+            }
+            params.push(pair.to_owned());
+        }
+    }
+
+    if !has_mode {
+        params.insert(0, "mode=rwc".to_owned());
+    }
+
+    if params.is_empty() {
+        format!("sqlite://{path}")
+    } else {
+        format!("sqlite://{path}?{}", params.join("&"))
     }
 }
 
