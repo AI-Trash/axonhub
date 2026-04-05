@@ -1,5 +1,6 @@
-use crate::errors::not_implemented_response;
+use crate::errors::{error_response, not_implemented_response};
 use actix_web::http::header::{CACHE_CONTROL, CONTENT_TYPE, EXPIRES, HeaderValue, PRAGMA};
+use actix_web::http::StatusCode;
 use actix_web::{web, HttpRequest, HttpResponse};
 use rust_embed::RustEmbed;
 
@@ -68,6 +69,14 @@ pub(crate) async fn serve_embedded_or_not_implemented(request: HttpRequest) -> H
         return response;
     }
 
+    if is_static_asset_path(request_path) {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            "Not Found",
+            "The requested static asset does not exist",
+        );
+    }
+
     not_implemented_response("/*", request.method().clone(), request.uri().clone(), None)
         .into_response()
 }
@@ -121,13 +130,27 @@ fn normalize_asset_path(path: &str) -> String {
 
 fn should_fallback_to_index(path: &str) -> bool {
     let trimmed = path.trim_start_matches('/');
-    !trimmed.is_empty() && !is_api_like_path(path)
+    !trimmed.is_empty() && !is_api_like_path(path) && !is_static_asset_path(path)
 }
 
 fn is_api_like_path(path: &str) -> bool {
     API_PREFIXES
         .iter()
         .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
+}
+
+fn is_static_asset_path(path: &str) -> bool {
+    path.starts_with("/assets/")
+        || path.starts_with("/images/")
+        || path == "/favicon.ico"
+        || path.ends_with(".js")
+        || path.ends_with(".css")
+        || path.ends_with(".png")
+        || path.ends_with(".jpg")
+        || path.ends_with(".jpeg")
+        || path.ends_with(".gif")
+        || path.ends_with(".svg")
+        || path.ends_with(".webp")
 }
 
 fn strip_base_path<'a>(path: &'a str, base_path: &str) -> &'a str {
@@ -178,4 +201,30 @@ fn mime_for_path(path: &str) -> HeaderValue {
     };
 
     HeaderValue::from_static(mime)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_static_asset_path, should_fallback_to_index};
+
+    #[test]
+    fn missing_asset_paths_do_not_fallback_to_spa_index() {
+        assert!(!should_fallback_to_index("/assets/definitely-missing.js"));
+        assert!(!should_fallback_to_index("/images/logo-missing.png"));
+        assert!(!should_fallback_to_index("/favicon.ico"));
+    }
+
+    #[test]
+    fn non_asset_frontend_routes_still_fallback_to_spa_index() {
+        assert!(should_fallback_to_index("/workspace/settings"));
+        assert!(should_fallback_to_index("/totally-unported-surface.json"));
+    }
+
+    #[test]
+    fn static_asset_path_detection_matches_expected_prefixes_and_suffixes() {
+        assert!(is_static_asset_path("/assets/index-CQ1.js"));
+        assert!(is_static_asset_path("/images/logo.svg"));
+        assert!(is_static_asset_path("/style.css"));
+        assert!(!is_static_asset_path("/workspace/settings"));
+    }
 }

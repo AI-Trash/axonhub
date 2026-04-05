@@ -332,7 +332,6 @@ export function useRequestExecutions(
   }
 ) {
   const { handleError } = useErrorHandler();
-  const { t } = useTranslation();
   const permissions = useRequestPermissions();
   const selectedProjectId = useSelectedProjectId();
 
@@ -349,7 +348,7 @@ export function useRequestExecutions(
         const data = await graphqlRequest<{ node: { executions: RequestExecutionConnection } }>(query, finalVariables, headers);
         return requestExecutionConnectionSchema.parse(data?.node?.executions);
       } catch (error) {
-        handleError(error, t('requests.errors.loadRequestDetailFailed'));
+        handleError(error, m["requests.errors.loadRequestDetailFailed"]());
         throw error;
       }
     },

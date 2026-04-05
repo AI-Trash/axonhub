@@ -127,9 +127,17 @@ When syncing changes from upstream into this fork, follow these repository-speci
    - Then port upstream feature additions into those architectures.
    - In practice:
      - keep this fork's Paraglide-based TS/TSX implementation style
-     - keep `frontend/src/locales/**` deleted if they were removed here
-     - add missing Paraglide message keys for upstream-added UI copy
-     - migrate upstream API/backend semantics into Rust endpoints/services instead of stopping at legacy Go merges
+    - keep `frontend/src/locales/**` deleted if they were removed here
+    - add missing Paraglide message keys for upstream-added UI copy
+    - migrate upstream API/backend semantics into Rust endpoints/services instead of stopping at legacy Go merges
+
+5. **Mandatory i18n regression scan after every upstream merge**
+   - After resolving merge conflicts (and before finishing the sync), scan for accidental reintroduction of i18next/react-i18next APIs in active frontend code.
+   - At minimum, search `frontend/src/**` for these patterns:
+     - imports: `react-i18next`, `i18next`
+     - APIs/symbols: `useTranslation`, `<Trans`, `I18nextProvider`, `initReactI18next`
+   - Treat any hit in active app code as a merge regression unless the user explicitly requested i18next usage.
+   - Required remediation: replace i18next usage with Paraglide (`import * as m from '@/paraglide/messages'` and `m["key"]()` / dynamicTranslation helpers) and keep dependencies Paraglide-only.
 
 ## Rules Index
 

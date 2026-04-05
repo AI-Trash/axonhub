@@ -602,14 +602,14 @@ export default function RequestDetailPage() {
                     <div className='py-16 text-center'>
                       <div className='space-y-4'>
                         <div className='border-primary mx-auto h-12 w-12 animate-spin rounded-full border-b-2'></div>
-                        <p className='text-muted-foreground text-lg'>{t('common.loading')}</p>
+                        <p className='text-muted-foreground text-lg'>{m["common.loading"]()}</p>
                       </div>
                     </div>
                   ) : isExecutionsError ? (
                     <div className='py-16 text-center'>
                       <div className='space-y-4'>
                         <FileText className='text-muted-foreground mx-auto h-16 w-16' />
-                        <p className='text-muted-foreground text-lg'>{t('requests.errors.loadRequestDetailFailed')}</p>
+                        <p className='text-muted-foreground text-lg'>{m["requests.errors.loadRequestDetailFailed"]()}</p>
                       </div>
                     </div>
                   ) : executions && executions.edges.length > 0 ? (

@@ -1,6 +1,21 @@
 ARG RUST_MUSL_IMAGE_AMD64=ghcr.io/blackdex/rust-musl:x86_64-musl-stable
 ARG RUST_MUSL_IMAGE_ARM64=ghcr.io/blackdex/rust-musl:aarch64-musl-stable
 
+FROM node:22-alpine AS frontend-builder
+
+WORKDIR /build
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY frontend/package.json ./frontend/package.json
+
+RUN corepack enable \
+    && corepack prepare pnpm@10.33.0 --activate \
+    && pnpm install --frozen-lockfile --filter ./frontend...
+
+COPY frontend ./frontend
+
+RUN pnpm --filter ./frontend build
+
 FROM ${RUST_MUSL_IMAGE_AMD64} AS rust-musl-amd64
 FROM ${RUST_MUSL_IMAGE_ARM64} AS rust-musl-arm64
 
@@ -13,6 +28,8 @@ ARG AXONHUB_BUILD_TIME=""
 ARG AXONHUB_BUILD_RUST_VERSION=""
 
 WORKDIR /build
+
+COPY --from=frontend-builder /build/frontend/dist ./frontend/dist
 
 COPY Cargo.toml Cargo.lock ./
 COPY apps ./apps

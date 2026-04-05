@@ -3990,6 +3990,32 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[tokio::test]
+    async fn missing_static_asset_paths_do_not_serve_spa_html() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/assets/definitely-missing.js")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let json = read_json(response).await;
+        assert_eq!(json["error"]["type"], "Not Found");
+        assert_eq!(json["error"]["message"], "The requested static asset does not exist");
+    }
+
+    #[tokio::test]
     async fn public_favicon_route_serves_embedded_icon_with_cache_headers() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {

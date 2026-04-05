@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
 import { Pencil } from 'lucide-react';
+import * as m from '@/paraglide/messages';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -20,7 +20,6 @@ interface FormValues {
 }
 
 export function ProxyPresetEditDialog({ preset, trigger }: Props) {
-  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const savePreset = useSaveProxyPreset();
 
@@ -70,14 +69,14 @@ export function ProxyPresetEditDialog({ preset, trigger }: Props) {
       )}
       <DialogContent className='sm:max-w-md'>
         <DialogHeader className='text-left'>
-          <DialogTitle>{t('system.proxy.edit.title')}</DialogTitle>
-          <DialogDescription>{t('system.proxy.edit.description')}</DialogDescription>
+          <DialogTitle>{m["system.proxy.title"]()}</DialogTitle>
+          <DialogDescription>{m["system.proxy.description"]()}</DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
           <form className='space-y-4'>
             <FormItem>
-              <FormLabel>{t('system.proxy.columns.url')}</FormLabel>
+              <FormLabel>{m["system.proxy.columns.url"]()}</FormLabel>
               <FormControl>
                 <Input value={preset.url} disabled className='bg-muted' />
               </FormControl>
@@ -88,9 +87,9 @@ export function ProxyPresetEditDialog({ preset, trigger }: Props) {
               name='name'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('system.proxy.edit.nameLabel')}</FormLabel>
+                  <FormLabel>{m["system.proxy.columns.name"]()}</FormLabel>
                   <FormControl>
-                    <Input placeholder={t('system.proxy.edit.namePlaceholder')} {...field} />
+                    <Input placeholder={m["system.proxy.columns.name"]()} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -101,10 +100,10 @@ export function ProxyPresetEditDialog({ preset, trigger }: Props) {
 
         <DialogFooter>
           <Button variant='outline' onClick={() => setOpen(false)}>
-            {t('common.buttons.cancel')}
+            {m["common.buttons.cancel"]()}
           </Button>
           <Button onClick={form.handleSubmit(onSubmit)} disabled={savePreset.isPending}>
-            {savePreset.isPending ? t('common.buttons.saving') : t('common.buttons.save')}
+            {savePreset.isPending ? m["common.buttons.saving"]() : m["common.buttons.save"]()}
           </Button>
         </DialogFooter>
       </DialogContent>
