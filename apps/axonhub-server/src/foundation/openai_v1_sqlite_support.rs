@@ -197,6 +197,7 @@ impl ChannelModelStore {
         let connection = self.connection_factory.open(true)?;
         ensure_channel_model_tables(&connection)?;
         ensure_request_tables(&connection)?;
+        super::sqlite_support::ensure_operational_tables(&connection)?;
 
         let mut statement = connection.prepare(
             "SELECT c.id, c.base_url, c.credentials, c.supported_models, c.ordering_weight,

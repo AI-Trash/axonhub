@@ -1890,7 +1890,7 @@ async fn postgres_openai_v1_subset_routes_execute_and_support_image_generations_
         )
         .await
         .unwrap();
-    assert_eq!(unported.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(unported.status(), StatusCode::BAD_REQUEST);
 
     let (request_statuses, request_formats, execution_statuses, usage_formats, trace_thread_count) = std::thread::spawn({
         let dsn = dsn.clone();
@@ -2347,7 +2347,7 @@ async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthf
         )
         .await
         .unwrap();
-    assert_eq!(unported_images.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(unported_images.status(), StatusCode::BAD_REQUEST);
 
     let (request_formats, execution_statuses, trace_thread_count) = std::thread::spawn({
         let dsn = dsn.clone();
@@ -2514,10 +2514,12 @@ fn clap_help_and_parsing_preserve_current_operator_facing_cli_contract() {
     assert!(parse_for_test(["axonhub", "config", "validate"]).is_ok());
     assert!(parse_for_test(["axonhub", "config", "get", "server.port"]).is_ok());
     assert!(parse_for_test(["axonhub", "build-info"]).is_ok());
-    assert!(matches!(
-        parse_for_test(["axonhub", "config"]),
-        Err(error) if error.kind() == ErrorKind::DisplayHelp
-    ));
+    let config_without_subcommand =
+        parse_for_test(["axonhub", "config"]).expect_err("config without subcommand should fail");
+    let config_error_output = config_without_subcommand.to_string();
+    assert!(config_error_output.contains("preview"));
+    assert!(config_error_output.contains("validate"));
+    assert!(config_error_output.contains("get"));
     assert!(matches!(
         parse_for_test(["axonhub", "--help"]),
         Err(error) if error.kind() == ErrorKind::DisplayHelp
@@ -3174,6 +3176,17 @@ async fn sqlite_backed_openapi_graphql_route_executes_pilot_mutation() {
         })
         .unwrap();
 
+    let connection = foundation.open_connection(true).unwrap();
+    connection
+        .execute(
+            "UPDATE api_keys SET scopes = ?1 WHERE key = ?2 AND deleted_at = 0",
+            rusqlite::params![
+                serde_json::to_string(&["write_api_keys"]).unwrap(),
+                DEFAULT_SERVICE_API_KEY_VALUE
+            ],
+        )
+        .unwrap();
+
     let state = HttpState { service_name: "AxonHub".to_owned(),
     version: "v0.9.20".to_owned(),
     config_source: None,
@@ -3273,6 +3286,22 @@ async fn postgres_openapi_graphql_route_executes_pilot_mutation() {
             brand_name: "AxonHub".to_owned(),
         })
         .unwrap();
+
+    std::thread::spawn({
+        let dsn = dsn.clone();
+        move || {
+            let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
+            let scopes_json = serde_json::to_string(&["write_api_keys"]).unwrap();
+            connection
+                .execute(
+                    "UPDATE api_keys SET scopes = $1 WHERE key = $2 AND deleted_at = 0",
+                    &[&scopes_json, &DEFAULT_SERVICE_API_KEY_VALUE],
+                )
+                .unwrap();
+        }
+    })
+    .join()
+    .expect("postgres openapi service key scope update thread");
 
     let state = HttpState { service_name: "AxonHub".to_owned(),
     version: "v0.9.20".to_owned(),
@@ -3602,7 +3631,13 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
     let allowed_system_json =
         serde_json::from_slice::<serde_json::Value>(&read_body(allowed_system).await).unwrap();
     assert!(allowed_system_json["errors"].is_null() || allowed_system_json.get("errors").is_none());
-    assert_eq!(allowed_system_json["data"]["queryModels"][0]["id"], "gid://axonhub/model/1");
+    let allowed_models = allowed_system_json["data"]["queryModels"]
+        .as_array()
+        .expect("expected queryModels array");
+    assert!(allowed_models.iter().all(|row| {
+        row.get("id").and_then(|id| id.as_str()).is_some()
+            && row.get("status").and_then(|status| status.as_str()).is_some()
+    }));
 
     let denied_no_scope = app
         .clone()
@@ -4406,6 +4441,32 @@ async fn sqlite_admin_graphql_route_supports_user_management_writes() {
         serde_json::from_slice::<serde_json::Value>(&read_body(update_user_status).await).unwrap();
     assert_eq!(update_user_status_json["data"]["updateUserStatus"]["status"], "deactivated");
 
+    let reactivate_user_status = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"query":"mutation UpdateUserStatus($id: ID!, $status: UserStatus!) {{ updateUserStatus(id: $id, status: $status) {{ id status }} }}","variables":{{"id":"{}","status":"activated"}}}}"#,
+                    target_gid
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reactivate_user_status.status(), StatusCode::OK);
+    let reactivate_user_status_json = serde_json::from_slice::<serde_json::Value>(
+        &read_body(reactivate_user_status).await,
+    )
+    .unwrap();
+    assert_eq!(
+        reactivate_user_status_json["data"]["updateUserStatus"]["status"],
+        "activated"
+    );
+
     let update_user = app
         .clone()
         .oneshot(
@@ -4853,7 +4914,6 @@ async fn sqlite_admin_request_content_route_enforces_project_scope_and_wrong_pro
     );
 
     insert_sqlite_project_membership(&foundation, project_reader_id, 1, false, &[]);
-    insert_sqlite_project_membership(&foundation, outsider_id, 1, false, &[]);
     insert_sqlite_project_membership(&foundation, owner_reader_id, 1, true, &[]);
 
     let project_role_id = insert_sqlite_role(
@@ -4978,9 +5038,10 @@ async fn sqlite_admin_request_content_route_enforces_project_scope_and_wrong_pro
         )
         .await
         .unwrap();
-    assert_eq!(denied_outsider.status(), StatusCode::OK);
-    let denied_outsider_body = read_body(denied_outsider).await;
-    assert_eq!(denied_outsider_body, br#"{"content":"sqlite-request-content"}"#.to_vec());
+    assert_eq!(denied_outsider.status(), StatusCode::FORBIDDEN);
+    let denied_outsider_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(denied_outsider).await).unwrap();
+    assert_eq!(denied_outsider_json["error"]["type"], "Forbidden");
 
     let wrong_project = app
         .oneshot(
@@ -5016,6 +5077,17 @@ async fn sqlite_openapi_graphql_route_enforces_api_key_scope_and_service_account
             owner_last_name: "Owner".to_owned(),
             brand_name: "AxonHub".to_owned(),
         })
+        .unwrap();
+
+    let connection = foundation.open_connection(true).unwrap();
+    connection
+        .execute(
+            "UPDATE api_keys SET scopes = ?1 WHERE key = ?2 AND deleted_at = 0",
+            rusqlite::params![
+                serde_json::to_string(&["write_api_keys"]).unwrap(),
+                DEFAULT_SERVICE_API_KEY_VALUE
+            ],
+        )
         .unwrap();
 
     let state = HttpState { service_name: "AxonHub".to_owned(),

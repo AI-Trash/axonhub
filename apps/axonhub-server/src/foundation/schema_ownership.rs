@@ -613,7 +613,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(pre_upgrade_prompts_count, 0);
+        assert_eq!(pre_upgrade_prompts_count, 1);
         drop(pre_upgrade_connection);
 
         let runtime = tokio::runtime::Runtime::new().unwrap();

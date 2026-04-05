@@ -38,7 +38,7 @@ pub(crate) enum BackupFrequencySetting {
     Monthly,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Enum)]
 pub(crate) enum ProbeFrequencySetting {
     #[graphql(name = "ONE_MINUTE")]
     OneMinute,
@@ -50,7 +50,24 @@ pub(crate) enum ProbeFrequencySetting {
     OneHour,
 }
 
+impl<'de> Deserialize<'de> for ProbeFrequencySetting {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.as_str() {
+            "1m" | "ONE_MINUTE" | "OneMinute" => Self::OneMinute,
+            "5m" | "FIVE_MINUTES" | "FiveMinutes" => Self::FiveMinutes,
+            "30m" | "THIRTY_MINUTES" | "ThirtyMinutes" => Self::ThirtyMinutes,
+            "1h" | "ONE_HOUR" | "OneHour" => Self::OneHour,
+            _ => Self::OneHour,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Enum)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub(crate) enum AutoSyncFrequencySetting {
     #[graphql(name = "ONE_HOUR")]
     OneHour,
@@ -67,12 +84,59 @@ impl<'de> Deserialize<'de> for AutoSyncFrequencySetting {
     {
         let raw = String::deserialize(deserializer)?;
         Ok(match raw.as_str() {
-            "1h" | "ONE_HOUR" => Self::OneHour,
-            "6h" | "SIX_HOURS" => Self::SixHours,
-            "1d" | "ONE_DAY" => Self::OneDay,
+            "1h" | "ONE_HOUR" | "OneHour" => Self::OneHour,
+            "6h" | "SIX_HOURS" | "SixHours" => Self::SixHours,
+            "1d" | "ONE_DAY" | "OneDay" => Self::OneDay,
             "1m" | "5m" | "30m" => Self::OneHour,
             _ => Self::OneHour,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AutoSyncFrequencySetting, ProbeFrequencySetting, StoredSystemChannelSettings};
+
+    #[test]
+    fn probe_frequency_accepts_legacy_duration_and_variant_spellings() {
+        let one_minute: ProbeFrequencySetting = serde_json::from_str("\"1m\"").unwrap();
+        assert_eq!(one_minute, ProbeFrequencySetting::OneMinute);
+
+        let five_minutes: ProbeFrequencySetting = serde_json::from_str("\"5m\"").unwrap();
+        assert_eq!(five_minutes, ProbeFrequencySetting::FiveMinutes);
+
+        let thirty_minutes: ProbeFrequencySetting = serde_json::from_str("\"30m\"").unwrap();
+        assert_eq!(thirty_minutes, ProbeFrequencySetting::ThirtyMinutes);
+
+        let one_hour: ProbeFrequencySetting = serde_json::from_str("\"OneHour\"").unwrap();
+        assert_eq!(one_hour, ProbeFrequencySetting::OneHour);
+    }
+
+    #[test]
+    fn auto_sync_frequency_accepts_legacy_variant_spellings() {
+        let one_hour: AutoSyncFrequencySetting = serde_json::from_str("\"OneHour\"").unwrap();
+        assert_eq!(one_hour, AutoSyncFrequencySetting::OneHour);
+
+        let six_hours: AutoSyncFrequencySetting = serde_json::from_str("\"SixHours\"").unwrap();
+        assert_eq!(six_hours, AutoSyncFrequencySetting::SixHours);
+
+        let one_day: AutoSyncFrequencySetting = serde_json::from_str("\"OneDay\"").unwrap();
+        assert_eq!(one_day, AutoSyncFrequencySetting::OneDay);
+    }
+
+    #[test]
+    fn stored_system_channel_settings_accepts_legacy_auto_sync_variants() {
+        let legacy_json = r#"{
+            "probe": {"enabled": true, "frequency": "5m"},
+            "auto_sync": {"frequency": "SixHours"},
+            "query_all_channel_models": true
+        }"#;
+
+        let settings: StoredSystemChannelSettings = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(
+            settings.auto_sync.frequency,
+            AutoSyncFrequencySetting::SixHours
+        );
     }
 }
 

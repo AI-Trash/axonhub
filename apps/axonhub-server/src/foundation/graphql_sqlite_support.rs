@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_graphql::{
-    Context, EmptySubscription, Object, Request as AsyncGraphqlRequest, Schema, Variables,
+    Context, EmptySubscription, InputObject, Object, Request as AsyncGraphqlRequest, Schema,
+    Variables,
 };
 use axonhub_http::{
     AdminGraphqlPort, AuthApiKeyContext, AuthUserContext, GraphqlExecutionResult,
@@ -14,7 +15,7 @@ use axonhub_http::{
 use sea_orm::{ConnectionTrait, DatabaseBackend};
 
 use super::{
-    admin::parse_graphql_resource_id,
+    admin::{parse_graphql_resource_id, StoredProxyPreset},
     admin::SqliteOperationalService,
     authz::{
         authorize_user_system_scope, require_owner_bypass,
@@ -72,6 +73,12 @@ pub(crate) struct OpenApiGraphqlQueryRoot;
 #[derive(Clone)]
 pub(crate) struct OpenApiGraphqlMutationRoot {
     pub(crate) foundation: Arc<SqliteFoundation>,
+}
+
+#[derive(Debug, Clone, InputObject)]
+#[graphql(name = "UpdateUserAgentPassThroughSettingsInput")]
+pub(crate) struct AdminGraphqlUpdateUserAgentPassThroughSettingsInput {
+    pub(crate) enabled: bool,
 }
 
 impl SqliteAdminGraphqlService {
@@ -275,6 +282,50 @@ impl AdminGraphqlQueryRoot {
         self.operational
             .system_channel_settings()
             .map(AdminGraphqlSystemChannelSettings::from)
+            .map_err(async_graphql::Error::new)
+    }
+
+    async fn proxy_presets(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<AdminGraphqlProxyPreset>> {
+        require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
+        self.operational
+            .proxy_presets()
+            .map(|presets| {
+                presets
+                    .into_iter()
+                    .map(|preset| AdminGraphqlProxyPreset {
+                        name: if preset.name.trim().is_empty() {
+                            None
+                        } else {
+                            Some(preset.name)
+                        },
+                        url: preset.url,
+                        username: if preset.username.trim().is_empty() {
+                            None
+                        } else {
+                            Some(preset.username)
+                        },
+                        password: if preset.password.trim().is_empty() {
+                            None
+                        } else {
+                            Some(preset.password)
+                        },
+                    })
+                    .collect()
+            })
+            .map_err(async_graphql::Error::new)
+    }
+
+    async fn user_agent_pass_through_settings(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<AdminGraphqlUserAgentPassThroughSettings> {
+        require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
+        self.operational
+            .user_agent_pass_through()
+            .map(|enabled| AdminGraphqlUserAgentPassThroughSettings { enabled })
             .map_err(async_graphql::Error::new)
     }
 
@@ -765,7 +816,9 @@ impl AdminGraphqlMutationRoot {
         ctx: &Context<'_>,
     ) -> async_graphql::Result<AdminGraphqlTriggerBackupPayload> {
         require_admin_owner(ctx)?;
-        let _ = self.operational.trigger_backup_now();
+        self.operational
+            .trigger_backup_now()
+            .map_err(async_graphql::Error::new)?;
         Ok(AdminGraphqlTriggerBackupPayload {
             success: true,
             message: Some("Backup completed successfully".to_owned()),
@@ -780,6 +833,56 @@ impl AdminGraphqlMutationRoot {
         require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
         self.operational
             .update_system_channel_settings(input)
+            .map(|_| true)
+            .map_err(async_graphql::Error::new)
+    }
+
+    async fn save_proxy_preset(
+        &self,
+        ctx: &Context<'_>,
+        input: AdminGraphqlSaveProxyPresetInput,
+    ) -> async_graphql::Result<bool> {
+        require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
+        let url = input.url.trim();
+        if url.is_empty() {
+            return Err(async_graphql::Error::new("invalid url: expected non-empty string"));
+        }
+        let preset = StoredProxyPreset {
+            name: input.name.unwrap_or_default().trim().to_owned(),
+            url: url.to_owned(),
+            username: input.username.unwrap_or_default().trim().to_owned(),
+            password: input.password.unwrap_or_default(),
+        };
+        self.operational
+            .save_proxy_preset(preset)
+            .map(|_| true)
+            .map_err(async_graphql::Error::new)
+    }
+
+    async fn delete_proxy_preset(
+        &self,
+        ctx: &Context<'_>,
+        url: String,
+    ) -> async_graphql::Result<bool> {
+        require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
+        let url = url.trim();
+        if url.is_empty() {
+            return Err(async_graphql::Error::new("invalid url: expected non-empty string"));
+        }
+        self.operational
+            .delete_proxy_preset(url)
+            .map(|_| true)
+            .map_err(async_graphql::Error::new)
+    }
+
+    async fn update_user_agent_pass_through_settings(
+        &self,
+        ctx: &Context<'_>,
+        input: AdminGraphqlUpdateUserAgentPassThroughSettingsInput,
+    ) -> async_graphql::Result<bool> {
+        require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
+        self.operational
+            .set_user_agent_pass_through(input.enabled)
             .map(|_| true)
             .map_err(async_graphql::Error::new)
     }

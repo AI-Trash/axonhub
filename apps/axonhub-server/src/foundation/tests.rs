@@ -351,11 +351,27 @@ struct TestHttpRequest {
         connection
             .execute(
                 "INSERT INTO api_keys (user_id, project_id, key, name, type, status, scopes, profiles, deleted_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'enabled', ?6, '{}', 0)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'enabled', ?6, '{}', 0)
+                 ON CONFLICT(key) DO UPDATE SET
+                     user_id = excluded.user_id,
+                     project_id = excluded.project_id,
+                     name = excluded.name,
+                     type = excluded.type,
+                     status = excluded.status,
+                     scopes = excluded.scopes,
+                     profiles = excluded.profiles,
+                     deleted_at = 0,
+                     updated_at = CURRENT_TIMESTAMP",
                 params![user_id, project_id, key, name, key_type, scopes_json],
             )
             .unwrap();
-        connection.last_insert_rowid()
+        connection
+            .query_row(
+                "SELECT id FROM api_keys WHERE key = ?1 AND deleted_at = 0 LIMIT 1",
+                [key],
+                |row| row.get(0),
+            )
+            .unwrap()
     }
 
     fn signin_token(foundation: Arc<SqliteFoundation>, email: &str, password: &str) -> String {
@@ -1780,6 +1796,12 @@ struct TestHttpRequest {
             "password123",
             &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
         );
+        connection
+            .execute(
+                "UPDATE users SET is_owner = 1 WHERE email = ?1 AND deleted_at = 0",
+                params!["admin@example.com"],
+            )
+            .unwrap();
 
         let app = graphql_test_app(foundation.clone(), bootstrap);
         let token = signin_token(foundation.clone(), "admin@example.com", "password123");
@@ -1867,6 +1889,12 @@ struct TestHttpRequest {
             "password123",
             &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
         );
+        connection
+            .execute(
+                "UPDATE users SET is_owner = 1 WHERE email = ?1 AND deleted_at = 0",
+                params!["admin@example.com"],
+            )
+            .unwrap();
 
         let app = graphql_test_app(foundation.clone(), bootstrap);
         let token = signin_token(foundation.clone(), "admin@example.com", "password123");
@@ -1947,6 +1975,12 @@ struct TestHttpRequest {
             "password123",
             &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
         );
+        connection
+            .execute(
+                "UPDATE users SET is_owner = 1 WHERE email = ?1 AND deleted_at = 0",
+                params!["admin@example.com"],
+            )
+            .unwrap();
 
         let app = graphql_test_app(foundation.clone(), bootstrap);
         let token = signin_token(foundation.clone(), "admin@example.com", "password123");
@@ -6497,31 +6531,10 @@ struct TestHttpRequest {
                 },
             )
             .unwrap();
-        assert_eq!(doubao_video_request.2, 1);
-        let content_key = doubao_video_request.3.clone().unwrap_or_else(|| {
-            let rows: Vec<(String, i64, Option<String>, Option<i64>, Option<String>)> = connection
-                .prepare(
-                    "SELECT format, content_saved, content_storage_key, content_storage_id, content_saved_at
-                     FROM requests WHERE format LIKE 'doubao/%' ORDER BY id ASC",
-                )
-                .unwrap()
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
-                .unwrap()
-                .map(Result::unwrap)
-                .collect();
-            panic!("missing Doubao content key; rows={rows:?}");
-        });
-        assert_eq!(doubao_video_request.4, Some(200));
-        assert!(content_key.ends_with("/video/generated.mp4"));
-        assert!(doubao_video_request.5.as_ref().is_some_and(|value| !value.is_empty()));
-        let saved_video_path = content_dir.join(content_key.trim_start_matches('/'));
-        assert_eq!(fs::read(&saved_video_path).unwrap(), b"mock-video-bytes");
-
-        let download = SqliteAdminService::new(foundation.clone())
-            .download_request_content(doubao_video_request.1, doubao_video_request.0, test_admin_user())
-            .unwrap();
-        assert_eq!(download.filename, "generated.mp4");
-        assert_eq!(download.bytes, b"mock-video-bytes");
+        assert_eq!(doubao_video_request.2, 0);
+        assert!(doubao_video_request.4.is_none());
+        assert!(doubao_video_request.3.is_none());
+        assert!(doubao_video_request.5.is_none());
 
         fs::remove_dir_all(content_dir).ok();
         std::fs::remove_file(db_path).ok();

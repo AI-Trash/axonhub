@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde_json::Value;
 use axonhub_config::{load_for_cli, PreviewFormat};
 use clap::{
-    error::ErrorKind, Args, Command, CommandFactory, FromArgMatches, Parser, Subcommand,
+    error::ErrorKind, Arg, ArgAction, Args, Command, CommandFactory, FromArgMatches, Parser, Subcommand,
     ValueEnum,
 };
 
@@ -186,8 +186,16 @@ fn config_get(args: ConfigGetArgs) -> Result<()> {
 
 pub(crate) fn axonhub_cli_command() -> Command {
     AxonhubCliContract::command()
+        .disable_version_flag(true)
+        .arg(
+            Arg::new("version")
+                .short('v')
+                .long("version")
+                .action(ArgAction::Version)
+                .help("Print version information"),
+        )
         .version(super::build_info::version())
-        .mut_arg("version", |arg| arg.short('v'))
+        .long_version(super::build_info::version())
 }
 
 pub(crate) fn axonhub_config_cli_command() -> Command {

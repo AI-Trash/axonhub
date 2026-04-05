@@ -781,7 +781,8 @@ pub(crate) fn ensure_all_foundation_tables(db: &SqlConnection) -> SqlResult<()> 
     ensure_channel_model_tables(db)?;
     ensure_prompt_tables(db)?;
     ensure_request_tables(db)?;
-    db.execute_batch(USAGE_LOGS_TABLE_SQL)
+    db.execute_batch(USAGE_LOGS_TABLE_SQL)?;
+    ensure_operational_tables(db)
 }
 
 pub(crate) fn ensure_systems_table(db: &SqlConnection) -> SqlResult<()> {

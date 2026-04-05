@@ -1140,8 +1140,25 @@ async fn restore_backup_into_transaction(
                     ],
                 )
                 .await
+                .map_err(|error| error.to_string())?;
+
+                let inserted = query_one_sql(
+                    txn,
+                    backend,
+                    "SELECT id FROM channels WHERE name = ? AND deleted_at = 0 ORDER BY id DESC LIMIT 1",
+                    "SELECT id FROM channels WHERE name = $1 AND deleted_at = 0 ORDER BY id DESC LIMIT 1",
+                    "SELECT id FROM channels WHERE name = ? AND deleted_at = 0 ORDER BY id DESC LIMIT 1",
+                    vec![channel.name.clone().into()],
+                )
+                .await
                 .map_err(|error| error.to_string())?
-                .last_insert_id() as i64
+                .ok_or_else(|| {
+                    format!("failed to resolve restored channel id for channel {}", channel.name)
+                })?;
+
+                inserted
+                    .try_get_by_index::<i64>(0)
+                    .map_err(|error| error.to_string())?
             };
             channel_name_to_id.insert(channel.name.clone(), restored_id);
         }
