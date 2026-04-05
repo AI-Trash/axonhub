@@ -38,7 +38,18 @@ jobs:
 
   build_and_push_ghcr:
     name: Build & push canonical Rust image (GHCR)
-    runs-on: ubuntu-latest
+    needs: validate_rust_workspace
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Check out
@@ -72,9 +83,6 @@ jobs:
           echo "$VERSION_VALUE" > internal/build/VERSION
           echo "Build version: $VERSION_VALUE"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -94,24 +102,104 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
             type=ref,event=tag
 
-      - name: Build & push multi-arch canonical Rust image
+      - name: Build & push canonical Rust image by digest
         uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.GHCR_IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             AXONHUB_BUILD_COMMIT=${{ github.sha }}
             AXONHUB_BUILD_TIME=${{ env.BUILD_TIME }}
             AXONHUB_BUILD_RUST_VERSION=stable
           cache-from: |
-            type=gha,scope=axonhub-ghcr
-            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
+            type=gha,scope=axonhub-ghcr-${{ matrix.arch }}
+            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache-${{ matrix.arch }}
           cache-to: |
-            type=gha,mode=max,scope=axonhub-ghcr
-            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache,mode=max
+            type=gha,mode=max,scope=axonhub-ghcr-${{ matrix.arch }}
+            type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache-${{ matrix.arch }},mode=max
           provenance: false
           sbom: false
+
+      - name: Export image digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge_ghcr_manifests:
+    name: Merge multi-arch canonical Rust image (GHCR)
+    needs:
+      - validate_rust_workspace
+      - build_and_push_ghcr
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve image metadata
+        run: |
+          OWNER_LC=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          RAW_IMAGE_NAME="${GHCR_IMAGE_NAME:-${REPO_NAME}}"
+          IMAGE_NAME_LC=$(echo "${RAW_IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME_LC="${IMAGE_NAME_LC#ghcr.io/}"
+
+          if [[ "${IMAGE_NAME_LC}" == */* ]]; then
+            GHCR_IMAGE="ghcr.io/${IMAGE_NAME_LC}"
+          else
+            GHCR_IMAGE="ghcr.io/${OWNER_LC}/${IMAGE_NAME_LC}"
+          fi
+
+          echo "GHCR_IMAGE=${GHCR_IMAGE}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.GHCR_IMAGE }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
+            type=ref,event=tag
+
+      - name: Download digest artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create and push multi-arch manifest list
+        run: |
+          tags=$(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+
+          digest_refs=""
+          for digest_path in /tmp/digests/*; do
+            digest="${digest_path##*/}"
+            digest_refs+="${GHCR_IMAGE}@sha256:${digest} "
+          done
+
+          docker buildx imagetools create $tags $digest_refs
+
+      - name: Inspect multi-arch image
+        run: |
+          first_tag=$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          docker buildx imagetools inspect "$first_tag"
