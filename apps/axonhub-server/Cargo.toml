@@ -14,7 +14,7 @@ actix-web.workspace = true
 anyhow.workspace = true
 async-graphql.workspace = true
 bcrypt.workspace = true
-clap = { version = "4.5.39", features = ["derive"] }
+clap.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 humantime.workspace = true
@@ -23,14 +23,15 @@ opentelemetry.workspace = true
 opentelemetry-otlp.workspace = true
 opentelemetry-stdout.workspace = true
 opentelemetry_sdk.workspace = true
-postgres.workspace = true
 reqwest.workspace = true
-regex = "1.11.1"
-rusqlite.workspace = true
+regex.workspace = true
 sea-orm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+tracing-log.workspace = true
+tracing-subscriber.workspace = true
 
 axonhub-db-entity.workspace = true
 axonhub-db-migration.workspace = true
@@ -40,4 +41,6 @@ axonhub-http.workspace = true
 [dev-dependencies]
 axum.workspace = true
 pg-embed.workspace = true
+postgres.workspace = true
+rusqlite.workspace = true
 tower.workspace = true

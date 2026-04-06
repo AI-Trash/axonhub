@@ -58,7 +58,7 @@ use super::{
     shared::{
         format_unix_timestamp, graphql_gid, i64_to_i32,
     },
-    system::hash_password,
+    passwords::hash_password,
 };
 use serde_json::json;
 
@@ -1938,47 +1938,38 @@ fn create_channel_seaorm(
 
     let result = repository.db().run_sync(move |factory| async move {
         let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
-        let backend = connection.get_database_backend();
-        if super::repositories::common::query_one(
-            &connection,
-            backend,
-            "SELECT id FROM channels WHERE name = ? AND deleted_at = 0 LIMIT 1",
-            "SELECT id FROM channels WHERE name = $1 AND deleted_at = 0 LIMIT 1",
-            "SELECT id FROM channels WHERE name = ? AND deleted_at = 0 LIMIT 1",
-            vec![name.clone().into()],
-        )
-        .await
-        .map_err(|error| error.to_string())?
-        .is_some()
+        if channels::Entity::find()
+            .filter(channels::Column::Name.eq(name.clone()))
+            .filter(channels::Column::DeletedAt.eq(0_i64))
+            .one(&connection)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some()
         {
             return Err("channel already exists".to_owned());
         }
 
-        let created = super::repositories::common::execute(
-            &connection,
-            backend,
-            "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-            "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 0)",
-            "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-            vec![
-                channel_type.clone().into(),
-                input.base_url.unwrap_or_default().into(),
-                name.clone().into(),
-                status.into(),
-                credentials_json.into(),
-                supported_models.into(),
-                input.auto_sync_supported_models.unwrap_or(false).into(),
-                input.default_test_model.unwrap_or_default().into(),
-                settings_json.into(),
-                tags.into(),
-                input.ordering_weight.unwrap_or(100).into(),
-                input.error_message.unwrap_or_default().into(),
-                input.remark.unwrap_or_default().into(),
-            ],
-        )
+        let created = channels::Entity::insert(channels::ActiveModel {
+            type_field: Set(channel_type.clone()),
+            base_url: Set(Some(input.base_url.unwrap_or_default())),
+            name: Set(name.clone()),
+            status: Set(status),
+            credentials: Set(credentials_json),
+            supported_models: Set(supported_models),
+            auto_sync_supported_models: Set(input.auto_sync_supported_models.unwrap_or(false)),
+            default_test_model: Set(input.default_test_model.unwrap_or_default()),
+            settings: Set(settings_json),
+            tags: Set(tags),
+            ordering_weight: Set(input.ordering_weight.unwrap_or(100)),
+            error_message: Set(Some(input.error_message.unwrap_or_default())),
+            remark: Set(Some(input.remark.unwrap_or_default())),
+            deleted_at: Set(0_i64),
+            ..Default::default()
+        })
+        .exec(&connection)
         .await
         .map_err(|error| error.to_string())?;
-        load_channel_record(&connection, created.last_insert_id() as i64).await?
+        load_channel_record(&connection, created.last_insert_id).await?
             .ok_or_else(|| "channel not found".to_owned())
     });
 
@@ -2032,21 +2023,15 @@ fn update_channel_seaorm(
         let Some(current) = load_channel_record(&connection, channel_id).await? else {
             return Err("channel not found".to_owned());
         };
-        let backend = connection.get_database_backend();
         if let Some(name) = input.name.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
-            if let Some(other) = super::repositories::common::query_one(
-                &connection,
-                backend,
-                "SELECT id FROM channels WHERE name = ? AND deleted_at = 0 LIMIT 1",
-                "SELECT id FROM channels WHERE name = $1 AND deleted_at = 0 LIMIT 1",
-                "SELECT id FROM channels WHERE name = ? AND deleted_at = 0 LIMIT 1",
-                vec![name.to_owned().into()],
-            )
-            .await
-            .map_err(|error| error.to_string())?
+            if let Some(other) = channels::Entity::find()
+                .filter(channels::Column::Name.eq(name.to_owned()))
+                .filter(channels::Column::DeletedAt.eq(0_i64))
+                .one(&connection)
+                .await
+                .map_err(|error| error.to_string())?
             {
-                let other_id = other.try_get_by_index::<i64>(0).map_err(|error| error.to_string())?;
-                if other_id != channel_id {
+                if other.id != channel_id {
                     return Err("channel already exists".to_owned());
                 }
             }
@@ -2084,29 +2069,25 @@ fn update_channel_seaorm(
         let next_error_message = input.error_message.unwrap_or_default();
         let next_remark = input.remark.unwrap_or_default();
 
-        super::repositories::common::execute(
-            &connection,
-            backend,
-            "UPDATE channels SET type = ?, base_url = ?, name = ?, status = ?, credentials = ?, supported_models = ?, auto_sync_supported_models = ?, default_test_model = ?, settings = ?, tags = ?, ordering_weight = ?, error_message = ?, remark = ?, deleted_at = 0 WHERE id = ?",
-            "UPDATE channels SET type = $1, base_url = $2, name = $3, status = $4, credentials = $5, supported_models = $6, auto_sync_supported_models = $7, default_test_model = $8, settings = $9, tags = $10, ordering_weight = $11, error_message = $12, remark = $13, deleted_at = 0 WHERE id = $14",
-            "UPDATE channels SET type = ?, base_url = ?, name = ?, status = ?, credentials = ?, supported_models = ?, auto_sync_supported_models = ?, default_test_model = ?, settings = ?, tags = ?, ordering_weight = ?, error_message = ?, remark = ?, deleted_at = 0 WHERE id = ?",
-            vec![
-                current.channel_type.into(),
-                next_base_url.into(),
-                next_name.into(),
-                next_status.into(),
-                next_credentials.into(),
-                next_supported_models.into(),
-                next_auto_sync.into(),
-                next_default_test_model.into(),
-                next_settings.into(),
-                next_tags.into(),
-                next_ordering_weight.into(),
-                next_error_message.into(),
-                next_remark.into(),
-                channel_id.into(),
-            ],
-        )
+        channels::Entity::update(channels::ActiveModel {
+            id: Set(channel_id),
+            type_field: Set(current.channel_type),
+            base_url: Set(Some(next_base_url)),
+            name: Set(next_name),
+            status: Set(next_status),
+            credentials: Set(next_credentials),
+            supported_models: Set(next_supported_models),
+            auto_sync_supported_models: Set(next_auto_sync),
+            default_test_model: Set(next_default_test_model),
+            settings: Set(next_settings),
+            tags: Set(next_tags),
+            ordering_weight: Set(next_ordering_weight),
+            error_message: Set(Some(next_error_message)),
+            remark: Set(Some(next_remark)),
+            deleted_at: Set(0_i64),
+            ..Default::default()
+        })
+        .exec(&connection)
         .await
         .map_err(|error| error.to_string())?;
         load_channel_record(&connection, channel_id).await?
@@ -4031,44 +4012,26 @@ async fn load_channel_record(
     connection: &DatabaseConnection,
     channel_id: i64,
 ) -> Result<Option<AdminGraphqlChannel>, String> {
-    let backend = connection.get_database_backend();
-    let sqlite_sql = "SELECT id, name, type, base_url, status, supported_models, ordering_weight FROM channels WHERE id = ? AND deleted_at = 0 LIMIT 1";
-    let postgres_sql = "SELECT id, name, type, base_url, status, supported_models, ordering_weight FROM channels WHERE id = $1 AND deleted_at = 0 LIMIT 1";
-    let mysql_sql = sqlite_sql;
-    let row = super::repositories::common::query_one(
-        connection,
-        backend,
-        sqlite_sql,
-        postgres_sql,
-        mysql_sql,
-        vec![channel_id.into()],
-    )
-    .await
-    .map_err(|error| error.to_string())?;
+    channels::Entity::find_by_id(channel_id)
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .one(connection)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|row| row.map(admin_graphql_channel_from_model))
+}
 
-    let Some(row) = row else {
-        return Ok(None);
-    };
-
-    let id = row.try_get_by_index::<i64>(0).map_err(|error| error.to_string())?;
-    let name = row.try_get_by_index::<String>(1).map_err(|error| error.to_string())?;
-    let channel_type = row.try_get_by_index::<String>(2).map_err(|error| error.to_string())?;
-    let base_url = row.try_get_by_index::<String>(3).map_err(|error| error.to_string())?;
-    let status = row.try_get_by_index::<String>(4).map_err(|error| error.to_string())?;
-    let supported_models_json = row.try_get_by_index::<String>(5).map_err(|error| error.to_string())?;
-    let ordering_weight = row.try_get_by_index::<i32>(6).map_err(|error| error.to_string())?;
-
-    Ok(Some(AdminGraphqlChannel {
-        id: graphql_gid("channel", id),
-        name,
-        channel_type,
-        base_url,
-        status,
-        supported_models: serde_json::from_str(&supported_models_json).unwrap_or_default(),
-        ordering_weight,
+fn admin_graphql_channel_from_model(value: channels::Model) -> AdminGraphqlChannel {
+    AdminGraphqlChannel {
+        id: graphql_gid("channel", value.id),
+        name: value.name,
+        channel_type: value.type_field,
+        base_url: value.base_url.unwrap_or_default(),
+        status: value.status,
+        supported_models: serde_json::from_str(&value.supported_models).unwrap_or_default(),
+        ordering_weight: value.ordering_weight,
         provider_quota_status: None,
         circuit_breaker_status: None,
-    }))
+    }
 }
 
 async fn load_model_record(

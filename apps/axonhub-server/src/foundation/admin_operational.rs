@@ -8,8 +8,8 @@ use axonhub_db_entity::{
     request_executions, requests, systems, threads, traces, usage_logs,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr,
-    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, Set, Statement, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
+    EntityTrait, QueryFilter, QueryOrder, Set, Statement, TransactionTrait,
 };
 use serde_json::{json, Value};
 
@@ -655,58 +655,33 @@ impl SeaOrmOperationalService {
 
 async fn query_channel_quota_candidates(
     connection: &DatabaseConnection,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
 ) -> Result<Vec<(i64, String)>, String> {
-    connection
-        .query_all(Statement::from_string(
-            backend,
-            "SELECT id, type FROM channels WHERE deleted_at = 0 AND status = 'enabled' ORDER BY id ASC"
-                .to_owned(),
-        ))
+    let channels = channels::Entity::find()
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .filter(channels::Column::Status.eq("enabled"))
+        .order_by_asc(channels::Column::Id)
+        .all(connection)
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    channels
         .into_iter()
-        .map(|row| {
-            Ok::<(i64, String), String>(
-                (
-                    row.try_get_by_index(0).map_err(|error| error.to_string())?,
-                    row.try_get_by_index(1).map_err(|error| error.to_string())?,
-                ),
-            )
-        })
+        .map(|channel| Ok::<(i64, String), String>((channel.id, channel.type_field)))
         .collect()
 }
 
 async fn query_next_quota_check_at(
     connection: &DatabaseConnection,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
     channel_id: i64,
 ) -> Result<Option<i64>, String> {
-    let row = query_one_sql(
-        connection,
-        backend,
-        "SELECT next_check_at FROM provider_quota_statuses WHERE channel_id = ? LIMIT 1",
-        "SELECT next_check_at FROM provider_quota_statuses WHERE channel_id = $1 LIMIT 1",
-        "SELECT next_check_at FROM provider_quota_statuses WHERE channel_id = ? LIMIT 1",
-        vec![channel_id.into()],
-    )
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-
-    match backend {
-        DatabaseBackend::Sqlite => {
-            let value: i64 = row.try_get_by_index(0).map_err(|error| error.to_string())?;
-            Ok(Some(value))
-        }
-        DatabaseBackend::Postgres => {
-            let value: String = row.try_get_by_index(0).map_err(|error| error.to_string())?;
-            parse_timestamp_or_unix(value.as_str()).map(Some)
-        }
-        DatabaseBackend::MySql => Err("mysql is unsupported in the Rust slice".to_owned()),
-    }
+    provider_quota_statuses::Entity::find()
+        .filter(provider_quota_statuses::Column::ChannelId.eq(channel_id))
+        .one(connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|model| parse_timestamp_or_unix(model.next_check_at.as_str()))
+        .transpose()
 }
 
 async fn reset_provider_quota_status_row(
@@ -741,24 +716,18 @@ async fn reset_provider_quota_status_row(
 
 async fn query_channel_provider_quota_type(
     connection: &DatabaseConnection,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
     channel_id: i64,
 ) -> Result<Option<String>, String> {
-    let row = query_one_sql(
-        connection,
-        backend,
-        "SELECT type FROM channels WHERE id = ? AND deleted_at = 0 LIMIT 1",
-        "SELECT type FROM channels WHERE id = $1 AND deleted_at = 0 LIMIT 1",
-        "SELECT type FROM channels WHERE id = ? LIMIT 1",
-        vec![channel_id.into()],
-    )
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let channel_type: String = row.try_get_by_index(0).map_err(|error| error.to_string())?;
-    Ok(provider_quota_type_for_channel(channel_type.as_str()).map(str::to_owned))
+    let channel = channels::Entity::find_by_id(channel_id)
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .one(connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(channel
+        .as_ref()
+        .and_then(|channel| provider_quota_type_for_channel(channel.type_field.as_str()))
+        .map(str::to_owned))
 }
 
 pub(crate) async fn persist_provider_quota_status_seaorm(
@@ -1426,40 +1395,24 @@ async fn start_operational_run(
     channel_id: Option<i64>,
     project_id: Option<i64>,
 ) -> Result<OperationalRunRecord, String> {
-    let backend = connection.get_database_backend();
-    let started_at = current_rfc3339_timestamp();
-    execute_sql(
-        connection,
-        backend,
-        "INSERT INTO operational_runs (operation_type, trigger_source, status, result_payload, error_message, initiated_by_user_id, data_storage_id, channel_id, project_id, started_at, finished_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP, NULL)",
-        "INSERT INTO operational_runs (operation_type, trigger_source, status, result_payload, error_message, initiated_by_user_id, data_storage_id, channel_id, project_id, started_at, finished_at) VALUES ($1, $2, $3, NULL, NULL, $4, $5, $6, $7, CURRENT_TIMESTAMP, NULL)",
-        "INSERT INTO operational_runs (operation_type, trigger_source, status, result_payload, error_message, initiated_by_user_id, data_storage_id, channel_id, project_id, started_at, finished_at) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP, NULL)",
-        vec![
-            operation_type.into(),
-            trigger_source.into(),
-            OperationalRunStatus::Running.as_str().into(),
-            initiated_by_user_id.into(),
-            data_storage_id.into(),
-            channel_id.into(),
-            project_id.into(),
-        ],
-    )
+    let created = operational_runs::Entity::insert(operational_runs::ActiveModel {
+        operation_type: Set(operation_type.to_owned()),
+        trigger_source: Set(trigger_source.to_owned()),
+        status: Set(OperationalRunStatus::Running.as_str().to_owned()),
+        result_payload: Set(None),
+        error_message: Set(None),
+        initiated_by_user_id: Set(initiated_by_user_id),
+        data_storage_id: Set(data_storage_id),
+        channel_id: Set(channel_id),
+        project_id: Set(project_id),
+        finished_at: Set(None),
+        ..Default::default()
+    })
+    .exec(connection)
     .await
     .map_err(|error| error.to_string())?;
-    let row = query_one_sql(
-        connection,
-        backend,
-        "SELECT id FROM operational_runs ORDER BY id DESC LIMIT 1",
-        "SELECT id FROM operational_runs ORDER BY id DESC LIMIT 1",
-        "SELECT id FROM operational_runs ORDER BY id DESC LIMIT 1",
-        Vec::new(),
-    )
-    .await
-    .map_err(|error| error.to_string())?
-    .ok_or_else(|| "missing operational run id".to_owned())?;
-    let run_id: i64 = row.try_get_by_index(0).map_err(|error| error.to_string())?;
     Ok(OperationalRunRecord {
-        id: run_id,
+        id: created.last_insert_id,
         status: OperationalRunStatus::Running,
     })
 }
@@ -1471,20 +1424,15 @@ async fn complete_operational_run(
     result_payload: Option<String>,
     error_message: Option<String>,
 ) -> Result<(), String> {
-    let backend = connection.get_database_backend();
-    execute_sql(
-        connection,
-        backend,
-        "UPDATE operational_runs SET status = ?, result_payload = ?, error_message = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?",
-        "UPDATE operational_runs SET status = $1, result_payload = $2, error_message = $3, finished_at = CURRENT_TIMESTAMP WHERE id = $4",
-        "UPDATE operational_runs SET status = ?, result_payload = ?, error_message = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?",
-        vec![
-            status.as_str().into(),
-            result_payload.into(),
-            error_message.into(),
-            run_id.into(),
-        ],
-    )
+    operational_runs::Entity::update(operational_runs::ActiveModel {
+        id: Set(run_id),
+        status: Set(status.as_str().to_owned()),
+        result_payload: Set(result_payload),
+        error_message: Set(error_message),
+        finished_at: Set(Some(current_rfc3339_timestamp())),
+        ..Default::default()
+    })
+    .exec(connection)
     .await
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -1500,50 +1448,44 @@ async fn upsert_provider_quota_status_model(
     next_check_at: i64,
     quota_data_json: String,
 ) -> Result<(), String> {
-    let backend = connection.get_database_backend();
-    match backend {
-        DatabaseBackend::Sqlite => {
-            execute_sql(
-                connection,
-                backend,
-                "INSERT INTO provider_quota_statuses (channel_id, provider_type, status, quota_data, next_reset_at, ready, next_check_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(channel_id) DO UPDATE SET provider_type = excluded.provider_type, status = excluded.status, quota_data = excluded.quota_data, next_reset_at = excluded.next_reset_at, ready = excluded.ready, next_check_at = excluded.next_check_at, updated_at = CURRENT_TIMESTAMP",
-                "",
-                "INSERT INTO provider_quota_statuses (channel_id, provider_type, status, quota_data, next_reset_at, ready, next_check_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(channel_id) DO UPDATE SET provider_type = excluded.provider_type, status = excluded.status, quota_data = excluded.quota_data, next_reset_at = excluded.next_reset_at, ready = excluded.ready, next_check_at = excluded.next_check_at, updated_at = CURRENT_TIMESTAMP",
-                vec![
-                    channel_id.into(),
-                    provider_type.into(),
-                    status.into(),
-                    quota_data_json.into(),
-                    next_reset_at.into(),
-                    ready.into(),
-                    next_check_at.into(),
-                ],
-            )
+    let next_reset_at = next_reset_at.map(format_unix_timestamp);
+    let next_check_at = format_unix_timestamp(next_check_at);
+
+    if let Some(existing) = provider_quota_statuses::Entity::find()
+        .filter(provider_quota_statuses::Column::ChannelId.eq(channel_id))
+        .one(connection)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        let mut active: provider_quota_statuses::ActiveModel = existing.into();
+        active.provider_type = Set(provider_type.to_owned());
+        active.status = Set(status.to_owned());
+        active.quota_data = Set(quota_data_json);
+        active.next_reset_at = Set(next_reset_at);
+        active.ready = Set(ready);
+        active.next_check_at = Set(next_check_at);
+        active.deleted_at = Set(0_i64);
+        active
+            .update(connection)
             .await
             .map_err(|error| error.to_string())?;
-        }
-        DatabaseBackend::Postgres => {
-            execute_sql(
-                connection,
-                backend,
-                "",
-                "INSERT INTO provider_quota_statuses (channel_id, provider_type, status, quota_data, next_reset_at, ready, next_check_at, deleted_at) VALUES ($1, $2, $3, $4, CASE WHEN $5 IS NULL THEN NULL ELSE TO_TIMESTAMP($5) END, $6, TO_TIMESTAMP($7), 0) ON CONFLICT(channel_id) DO UPDATE SET provider_type = EXCLUDED.provider_type, status = EXCLUDED.status, quota_data = EXCLUDED.quota_data, next_reset_at = EXCLUDED.next_reset_at, ready = EXCLUDED.ready, next_check_at = EXCLUDED.next_check_at, deleted_at = 0, updated_at = CURRENT_TIMESTAMP",
-                "",
-                vec![
-                    channel_id.into(),
-                    provider_type.into(),
-                    status.into(),
-                    quota_data_json.into(),
-                    next_reset_at.into(),
-                    ready.into(),
-                    next_check_at.into(),
-                ],
-            )
-            .await
-            .map_err(|error| error.to_string())?;
-        }
-        DatabaseBackend::MySql => return Err("mysql is unsupported in the Rust slice".to_owned()),
+        return Ok(());
     }
+
+    provider_quota_statuses::Entity::insert(provider_quota_statuses::ActiveModel {
+        channel_id: Set(channel_id),
+        provider_type: Set(provider_type.to_owned()),
+        status: Set(status.to_owned()),
+        quota_data: Set(quota_data_json),
+        next_reset_at: Set(next_reset_at),
+        ready: Set(ready),
+        next_check_at: Set(next_check_at),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(connection)
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 

@@ -46,6 +46,10 @@ fn sql_conversion_error(error: impl Into<Box<dyn std::error::Error + Send + Sync
     SqlError::ToSqlConversionFailure(error.into())
 }
 
+fn sql_error_from_seaorm(error: sea_orm::DbErr) -> SqlError {
+    SqlError::ToSqlConversionFailure(Box::new(std::io::Error::other(error.to_string())))
+}
+
 #[derive(Debug, Clone)]
 pub struct SqliteFoundation {
     seaorm_factory: SeaOrmConnectionFactory,
@@ -165,15 +169,27 @@ impl SystemSettingsStore {
     }
 
     pub fn is_initialized(&self) -> SqlResult<bool> {
-        let db = self.connection_factory.open(true)?;
-        ensure_systems_table(&db)?;
-        query_is_initialized(&db)
+        let factory = SeaOrmConnectionFactory::sqlite(self.connection_factory.dsn.as_ref().clone());
+        factory
+            .run_sync(move |db| async move { seaorm_is_initialized(&db).await })
+            .map_err(sql_error_from_seaorm)
     }
 
     pub fn value(&self, key: &str) -> SqlResult<Option<String>> {
-        let db = self.connection_factory.open(true)?;
-        ensure_systems_table(&db)?;
-        query_system_value(&db, key)
+        let key = key.to_owned();
+        let factory = SeaOrmConnectionFactory::sqlite(self.connection_factory.dsn.as_ref().clone());
+        factory
+            .run_sync(move |db| async move {
+                let connection = db.connect_migrated().await?;
+                systems::Entity::find()
+                    .filter(systems::Column::Key.eq(key))
+                    .filter(systems::Column::DeletedAt.eq(0_i64))
+                    .into_partial_model::<systems::KeyValue>()
+                    .one(&connection)
+                    .await
+                    .map(|row| row.map(|row| row.value))
+            })
+            .map_err(sql_error_from_seaorm)
     }
 
     pub fn default_data_storage_id(&self) -> SqlResult<Option<i64>> {
@@ -182,9 +198,15 @@ impl SystemSettingsStore {
     }
 
     pub fn set_value(&self, key: &str, value: &str) -> SqlResult<()> {
-        let db = self.connection_factory.open(true)?;
-        ensure_systems_table(&db)?;
-        upsert_system_value_on_connection(&db, key, value)
+        let key = key.to_owned();
+        let value = value.to_owned();
+        let factory = SeaOrmConnectionFactory::sqlite(self.connection_factory.dsn.as_ref().clone());
+        factory
+            .run_sync(move |db| async move {
+                let connection = db.connect_migrated().await?;
+                upsert_system_value_seaorm(&connection, db.backend(), &key, &value).await
+            })
+            .map_err(sql_error_from_seaorm)
     }
 }
 
@@ -229,26 +251,30 @@ impl DataStorageStore {
     }
 
     pub fn find_storage_by_id(&self, storage_id: i64) -> SqlResult<Option<StoredDataStorage>> {
-        let db = self.connection_factory.open(true)?;
-        db.query_row(
-            "SELECT id, name, description, type, status, settings FROM data_storages WHERE id = ?1 AND deleted_at = 0 LIMIT 1",
-            [storage_id],
-            |row| {
-                Ok(StoredDataStorage {
-                    #[cfg(test)]
-                    id: row.get(0)?,
-                    #[cfg(test)]
-                    name: row.get(1)?,
-                    #[cfg(test)]
-                    description: row.get(2)?,
-                    storage_type: row.get(3)?,
-                    #[cfg(test)]
-                    status: row.get(4)?,
-                    settings_json: row.get(5)?,
-                })
-            },
-        )
-        .optional()
+        let factory = SeaOrmConnectionFactory::sqlite(self.connection_factory.dsn.as_ref().clone());
+        factory
+            .run_sync(move |db| async move {
+                let connection = db.connect_migrated().await?;
+                data_storages::Entity::find_by_id(storage_id)
+                    .filter(data_storages::Column::DeletedAt.eq(0_i64))
+                    .one(&connection)
+                    .await
+                    .map(|row| {
+                        row.map(|row| StoredDataStorage {
+                            #[cfg(test)]
+                            id: row.id,
+                            #[cfg(test)]
+                            name: row.name,
+                            #[cfg(test)]
+                            description: row.description,
+                            storage_type: row.type_field,
+                            #[cfg(test)]
+                            status: row.status,
+                            settings_json: row.settings,
+                        })
+                    })
+            })
+            .map_err(sql_error_from_seaorm)
     }
 }
 
@@ -333,6 +359,7 @@ impl SystemBootstrapRepository for SqliteBootstrapService {
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn seaorm_is_initialized(
     dbf: &SeaOrmDbFactory,
 ) -> Result<bool, sea_orm::DbErr> {
@@ -340,6 +367,7 @@ pub(crate) async fn seaorm_is_initialized(
     query_is_initialized_seaorm(&db, dbf.backend()).await
 }
 
+#[cfg(test)]
 pub(crate) async fn seaorm_initialize(
     dbf: &SeaOrmDbFactory,
     version: &str,
@@ -381,6 +409,7 @@ pub(crate) async fn seaorm_initialize(
     tx.commit().await
 }
 
+#[cfg(test)]
 pub(crate) async fn query_is_initialized_seaorm<C>(
     db: &C,
     _backend: DatabaseBackend,
@@ -405,6 +434,7 @@ where
         .unwrap_or(false))
 }
 
+#[cfg(test)]
 fn is_missing_systems_table_error(error: &sea_orm::DbErr) -> bool {
     let message = error.to_string().to_ascii_lowercase();
     message.contains("no such table: systems")
@@ -412,6 +442,7 @@ fn is_missing_systems_table_error(error: &sea_orm::DbErr) -> bool {
         || message.contains("table \"systems\" does not exist")
 }
 
+#[cfg(test)]
 pub(crate) async fn upsert_system_value_seaorm<C>(
     db: &C,
     _backend: DatabaseBackend,
@@ -452,6 +483,7 @@ where
     .map(|_| ())
 }
 
+#[cfg(test)]
 pub(crate) async fn ensure_primary_data_storage_seaorm<C>(
     db: &C,
     _backend: DatabaseBackend,
@@ -499,12 +531,14 @@ where
         })
 }
 
+#[cfg(test)]
 pub(crate) fn generate_secret_key_seaorm() -> Result<String, sea_orm::DbErr> {
     let mut bytes = [0_u8; 32];
     getrandom(&mut bytes).map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
     Ok(hex_encode(bytes))
 }
 
+#[cfg(test)]
 pub(crate) async fn ensure_owner_user_seaorm<C>(
     db: &C,
     _backend: DatabaseBackend,
@@ -554,6 +588,7 @@ where
         .ok_or_else(|| sea_orm::DbErr::Custom("missing inserted owner user".to_owned()))
 }
 
+#[cfg(test)]
 pub(crate) async fn ensure_default_project_seaorm<C>(
     db: &C,
     _backend: DatabaseBackend,
@@ -597,6 +632,7 @@ where
         .ok_or_else(|| sea_orm::DbErr::Custom("missing inserted default project".to_owned()))
 }
 
+#[cfg(test)]
 pub(crate) async fn ensure_owner_project_membership_seaorm<C>(
     db: &C,
     _backend: DatabaseBackend,
@@ -638,6 +674,7 @@ where
     .map(|_| ())
 }
 
+#[cfg(test)]
 pub(crate) async fn ensure_default_project_roles_seaorm<C>(
     db: &C,
     backend: DatabaseBackend,
@@ -652,6 +689,7 @@ where
     Ok(())
 }
 
+#[cfg(test)]
 async fn ensure_role_with_scopes_seaorm<C>(
     db: &C,
     _backend: DatabaseBackend,
@@ -700,6 +738,7 @@ where
     .map(|_| ())
 }
 
+#[cfg(test)]
 pub(crate) async fn ensure_default_api_keys_seaorm<C>(
     db: &C,
     backend: DatabaseBackend,
@@ -715,6 +754,7 @@ where
     Ok(())
 }
 
+#[cfg(test)]
 async fn ensure_api_key_with_scopes_seaorm<C>(
     db: &C,
     _backend: DatabaseBackend,

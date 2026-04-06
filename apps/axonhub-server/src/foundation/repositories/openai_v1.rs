@@ -1,13 +1,18 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axonhub_db_entity::{api_keys, channels, models, requests, request_executions, systems, usage_logs};
+use axonhub_db_entity::{
+    api_keys, channels, models, provider_quota_statuses, requests, request_executions, systems,
+    usage_logs,
+};
 use axonhub_http::{OpenAiModel, OpenAiV1Error, OpenAiV1ExecutionRequest, OpenAiV1Route};
 use serde::Deserialize;
 use serde_json::Value;
 use sea_orm::ActiveValue::Set;
 use sea_orm::sea_query::{Alias, Expr, Func, SimpleExpr};
-use sea_orm::{ConnectionTrait, DatabaseBackend, PaginatorTrait, QueryResult, QuerySelect, QueryTrait};
+use sea_orm::{
+    ConnectionTrait, DatabaseBackend, PaginatorTrait, QueryResult, QuerySelect, QueryTrait,
+};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::foundation::{
@@ -21,7 +26,6 @@ use crate::foundation::{
         NewUsageLogRecord, PreparedCompatibilityRequest, SelectedOpenAiTarget,
         StoredModelRecord, UpdateRequestExecutionResultRecord, UpdateRequestResultRecord,
     },
-    repositories::common::query_all,
     shared::{SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_MODEL_SETTINGS},
 };
 
@@ -442,22 +446,22 @@ pub(crate) async fn select_inference_targets_seaorm(
     }
 
     let enabled_model_ids = actual_model_ids.into_iter().collect::<BTreeSet<_>>();
-    let enabled_models = query_all(
-        db,
-        backend,
-        "SELECT id, CAST(created_at AS TEXT) AS created_at, developer, model_id, type, name, icon, COALESCE(remark, ''), model_card FROM models WHERE deleted_at = 0 AND status = 'enabled' AND (?1 = '' OR type = ?1) ORDER BY id ASC",
-        "SELECT id, CAST(created_at AS TEXT) AS created_at, developer, model_id, type, name, icon, COALESCE(remark, ''), model_card FROM models WHERE deleted_at = 0 AND status = 'enabled' AND ($1 = '' OR type = $1) ORDER BY id ASC",
-        "SELECT id, CAST(created_at AS CHAR) AS created_at, developer, model_id, type, name, icon, COALESCE(remark, ''), model_card FROM models WHERE deleted_at = 0 AND status = 'enabled' AND (?1 = '' OR type = ?1) ORDER BY id ASC",
-        vec![model_type.into()],
-    )
-    .await
-    .map_err(map_openai_db_err)?
-    .into_iter()
-    .map(stored_model_record_from_seaorm_row)
-    .collect::<Result<Vec<_>, _>>()?
-    .into_iter()
-    .filter(|model| enabled_model_ids.contains(&model.model_id))
-    .collect::<Vec<_>>();
+    let enabled_models = models::Entity::find()
+        .filter(models::Column::DeletedAt.eq(0_i64))
+        .filter(models::Column::Status.eq("enabled"))
+        .apply_if(
+            (!model_type.is_empty()).then_some(model_type),
+            |query, model_type| query.filter(models::Column::TypeField.eq(model_type)),
+        )
+        .order_by_asc(models::Column::Id)
+        .into_partial_model::<models::EnabledModelRecord>()
+        .all(db)
+        .await
+        .map_err(map_openai_db_err)?
+        .into_iter()
+        .map(stored_model_record_from_enabled_model_record)
+        .filter(|model| enabled_model_ids.contains(&model.model_id))
+        .collect::<Vec<_>>();
     let enabled_models_by_id = enabled_models
         .into_iter()
         .map(|model| (model.model_id.clone(), model))
@@ -499,25 +503,18 @@ pub(crate) async fn select_inference_targets_seaorm(
 
 async fn provider_channel_is_blocked_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
+    _backend: DatabaseBackend,
     channel_id: i64,
 ) -> Result<bool, OpenAiV1Error> {
-    let row = query_all(
-        db,
-        backend,
-        "SELECT status, ready, next_reset_at, next_check_at FROM provider_quota_statuses WHERE channel_id = ?1 LIMIT 1",
-        "SELECT status, ready, CAST(next_reset_at AS TEXT), CAST(next_check_at AS TEXT) FROM provider_quota_statuses WHERE channel_id = $1 LIMIT 1",
-        "SELECT status, ready, next_reset_at, next_check_at FROM provider_quota_statuses WHERE channel_id = ?1 LIMIT 1",
-        vec![channel_id.into()],
-    )
-    .await
-    .map_err(map_openai_db_err)?;
-    let Some(row) = row.into_iter().next() else {
+    let Some(row) = provider_quota_statuses::Entity::find()
+        .filter(provider_quota_statuses::Column::ChannelId.eq(channel_id))
+        .one(db)
+        .await
+        .map_err(map_openai_db_err)?
+    else {
         return Ok(false);
     };
-    let status: String = row.try_get_by_index(0).map_err(map_openai_db_err)?;
-    let ready: bool = row.try_get_by_index(1).map_err(map_openai_db_err)?;
-    Ok(!ready || status.eq_ignore_ascii_case("exhausted"))
+    Ok(!row.ready || row.status.eq_ignore_ascii_case("exhausted"))
 }
 
 #[cfg(test)]
@@ -1567,20 +1564,6 @@ fn map_openai_db_err(error: sea_orm::DbErr) -> OpenAiV1Error {
     }
 }
 
-
-fn stored_model_record_from_seaorm_row(row: QueryResult) -> Result<StoredModelRecord, OpenAiV1Error> {
-    Ok(StoredModelRecord {
-        id: row.try_get_by_index(0).map_err(map_openai_db_err)?,
-        created_at: row.try_get_by_index(1).unwrap_or_default(),
-        developer: row.try_get_by_index(2).map_err(map_openai_db_err)?,
-        model_id: row.try_get_by_index(3).map_err(map_openai_db_err)?,
-        model_type: row.try_get_by_index(4).map_err(map_openai_db_err)?,
-        name: row.try_get_by_index(5).map_err(map_openai_db_err)?,
-        icon: row.try_get_by_index(6).map_err(map_openai_db_err)?,
-        remark: row.try_get_by_index(7).map_err(map_openai_db_err)?,
-        model_card_json: row.try_get_by_index(8).map_err(map_openai_db_err)?,
-    })
-}
 
 fn stored_model_record_from_enabled_model_record(record: models::EnabledModelRecord) -> StoredModelRecord {
     StoredModelRecord {

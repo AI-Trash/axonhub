@@ -4,6 +4,7 @@ mod cli;
 mod metrics;
 mod server;
 mod services;
+mod tracing;
 
 use anyhow::Result;
 use std::env;

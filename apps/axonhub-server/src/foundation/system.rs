@@ -1,11 +1,13 @@
 use axonhub_http::{InitializeSystemRequest, SystemBootstrapPort, SystemInitializeError, SystemQueryError};
 
+use super::bootstrap_seaorm::{seaorm_initialize, seaorm_is_initialized, SeaOrmDbFactory};
+pub(crate) use super::passwords::{hash_password, verify_password};
+#[cfg(test)]
 pub(crate) use super::sqlite_support::{
     ensure_all_foundation_tables, ensure_channel_model_tables, ensure_identity_tables,
-    ensure_operational_tables, ensure_prompt_tables, ensure_request_tables, hash_password, verify_password,
-    SeaOrmDbFactory, SqliteBootstrapService, SystemSettingsStore,
+    ensure_operational_tables, ensure_prompt_tables, ensure_request_tables, SqliteBootstrapService,
+    SystemSettingsStore,
 };
-use super::sqlite_support;
 
 pub struct SeaOrmBootstrapService {
     db: SeaOrmDbFactory,
@@ -22,9 +24,7 @@ impl SystemBootstrapPort for SeaOrmBootstrapService {
     fn is_initialized(&self) -> Result<bool, SystemQueryError> {
         let db = self.db.clone();
         db.run_sync(move |db| async move {
-            sqlite_support::seaorm_is_initialized(&db)
-                .await
-                .map_err(map_db_query_error)
+            seaorm_is_initialized(&db).await.map_err(map_db_query_error)
         })
     }
 
@@ -40,7 +40,7 @@ impl SystemBootstrapPort for SeaOrmBootstrapService {
         };
 
         db.run_sync(move |db| async move {
-            sqlite_support::seaorm_initialize(&db, &version, &request)
+            seaorm_initialize(&db, &version, &request)
                 .await
                 .map_err(map_db_init_error)
         })

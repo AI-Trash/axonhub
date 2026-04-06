@@ -1,6 +1,7 @@
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(test)]
 pub(crate) use super::sqlite_support::{SqliteConnectionFactory, SqliteFoundation};
 
 pub(crate) const SYSTEM_KEY_INITIALIZED: &str = "system_initialized";

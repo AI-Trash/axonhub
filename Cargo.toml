@@ -24,6 +24,7 @@ axum = { version = "0.7.9", features = ["json"] }
 bcrypt = "0.17.1"
 base64 = "0.22.1"
 bytes = "1.10.1"
+clap = { version = "4.5.39", features = ["derive"] }
 futures-util = "0.3.31"
 getrandom = "0.2.17"
 hex = "0.4.3"
@@ -38,6 +39,7 @@ opentelemetry_sdk = { version = "0.31", features = ["metrics"] }
 pg-embed = { version = "1.0.0", default-features = false, features = ["rt_tokio"] }
 postgres = "0.19.12"
 reqwest = { version = "0.12.15", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
+regex = "1.11.1"
 rust-embed = "8.8.0"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 sea-orm = { version = "1.1.14", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-mysql", "sqlx-postgres", "sqlx-sqlite"] }
@@ -48,6 +50,9 @@ serde_yaml = "0.9.34"
 sha1 = "0.10.6"
 tokio = { version = "1.43.0", features = ["macros", "net", "rt-multi-thread", "signal"] }
 tower = { version = "0.5.2", features = ["util"] }
+tracing = "0.1.41"
+tracing-log = "0.2.0"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "json"] }
 axonhub-db-entity = { path = "crates/axonhub-db-entity" }
 axonhub-db-migration = { path = "crates/axonhub-db-migration" }
 axonhub-config = { path = "crates/axonhub-config" }

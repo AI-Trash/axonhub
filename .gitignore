@@ -160,3 +160,5 @@ config.schema.json
 *.db-wal
 .worktrees/
 .worktrees/**
+
+.omx

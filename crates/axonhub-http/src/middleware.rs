@@ -3,7 +3,9 @@ use crate::state::transport::{
     authenticate_api_key_request, authenticate_gemini_request,
     authenticate_service_api_key_request, enrich_request_context, resolve_http_metric_path,
 };
-use crate::state::{GeminiQueryKey, HttpMetricsCapability, HttpState, RequestContextState};
+use crate::state::{
+    GeminiQueryKey, HttpMetricsCapability, HttpState, RequestAuthContext, RequestContextState,
+};
 use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
 use actix_web::http::StatusCode;
@@ -13,6 +15,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 use std::time::Instant;
+use tracing::{field, Instrument, Level, Span};
 
 pub(crate) fn request_context() -> RequestContextMiddleware {
     RequestContextMiddleware
@@ -36,6 +39,52 @@ pub(crate) fn gemini_auth() -> GeminiAuthMiddleware {
 
 pub(crate) fn http_metrics(http_metrics: HttpMetricsCapability) -> HttpMetricsMiddleware {
     HttpMetricsMiddleware { http_metrics }
+}
+
+fn request_span(req: &ServiceRequest) -> Span {
+    tracing::span!(
+        Level::INFO,
+        "http.request",
+        http.method = %req.method(),
+        http.route = %req.match_pattern().unwrap_or_else(|| req.path().to_owned()),
+        http.target = %req.uri(),
+        http.status_code = field::Empty,
+        request.id = field::Empty,
+        trace.id = field::Empty,
+        thread.id = field::Empty,
+        project.id = field::Empty,
+        auth.mode = field::Empty,
+        user.id = field::Empty,
+        api_key.id = field::Empty,
+    )
+}
+
+fn record_request_context(span: &Span, context: &RequestContextState) {
+    if let Some(request_id) = context.request_id.as_deref() {
+        span.record("request.id", request_id);
+    }
+    if let Some(project) = context.project.as_ref() {
+        span.record("project.id", project.id);
+    }
+    if let Some(thread) = context.thread.as_ref() {
+        span.record("thread.id", thread.thread_id.as_str());
+    }
+    if let Some(trace) = context.trace.as_ref() {
+        span.record("trace.id", trace.trace_id.as_str());
+    }
+    if let Some(auth) = context.auth.as_ref() {
+        match auth {
+            RequestAuthContext::Admin(user) => {
+                span.record("auth.mode", "jwt");
+                span.record("user.id", user.id);
+            }
+            RequestAuthContext::ApiKey(key) => {
+                span.record("auth.mode", "api_key");
+                span.record("api_key.id", key.id);
+                span.record("project.id", key.project.id);
+            }
+        }
+    }
 }
 
 pub(crate) struct RequestContextMiddleware;
@@ -77,10 +126,12 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = Rc::clone(&self.service);
+        let request_span = Span::current();
         Box::pin(async move {
             let state = match req.app_data::<web::Data<HttpState>>() {
                 Some(state) => state.clone(),
                 None => {
+                    tracing::error!("HTTP state is not configured");
                     return Ok(req.into_response(
                         crate::errors::internal_error_response(
                             "HTTP state is not configured".to_owned(),
@@ -103,9 +154,11 @@ where
             ) {
                 Ok(context) => context,
                 Err(rejection) => {
+                    tracing::warn!(rejection = ?rejection, "request context enrichment rejected");
                     return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
                 }
             };
+            record_request_context(&request_span, &context);
             req.extensions_mut().insert(context);
 
             let response = service.call(req).await?.map_into_boxed_body();
@@ -153,10 +206,12 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = Rc::clone(&self.service);
+        let request_span = Span::current();
         Box::pin(async move {
             let state = match req.app_data::<web::Data<HttpState>>() {
                 Some(state) => state.clone(),
                 None => {
+                    tracing::error!("HTTP state is not configured");
                     return Ok(req.into_response(
                         crate::errors::internal_error_response(
                             "HTTP state is not configured".to_owned(),
@@ -174,9 +229,11 @@ where
             let context = match authenticate_admin_request(&state.identity, &headers, context) {
                 Ok(context) => context,
                 Err(rejection) => {
+                    tracing::warn!(rejection = ?rejection, "admin auth rejected request");
                     return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
                 }
             };
+            record_request_context(&request_span, &context);
             req.extensions_mut().insert(context);
 
             let response = service.call(req).await?.map_into_boxed_body();
@@ -224,10 +281,12 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = Rc::clone(&self.service);
+        let request_span = Span::current();
         Box::pin(async move {
             let state = match req.app_data::<web::Data<HttpState>>() {
                 Some(state) => state.clone(),
                 None => {
+                    tracing::error!("HTTP state is not configured");
                     return Ok(req.into_response(
                         crate::errors::internal_error_response(
                             "HTTP state is not configured".to_owned(),
@@ -250,9 +309,11 @@ where
             ) {
                 Ok(context) => context,
                 Err(rejection) => {
+                    tracing::warn!(rejection = ?rejection, "api key auth rejected request");
                     return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
                 }
             };
+            record_request_context(&request_span, &context);
             req.extensions_mut().insert(context);
 
             let response = service.call(req).await?.map_into_boxed_body();
@@ -300,10 +361,12 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = Rc::clone(&self.service);
+        let request_span = Span::current();
         Box::pin(async move {
             let state = match req.app_data::<web::Data<HttpState>>() {
                 Some(state) => state.clone(),
                 None => {
+                    tracing::error!("HTTP state is not configured");
                     return Ok(req.into_response(
                         crate::errors::internal_error_response(
                             "HTTP state is not configured".to_owned(),
@@ -321,9 +384,11 @@ where
             let context = match authenticate_service_api_key_request(&state.identity, &headers, context) {
                 Ok(context) => context,
                 Err(rejection) => {
+                    tracing::warn!(rejection = ?rejection, "service api key auth rejected request");
                     return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
                 }
             };
+            record_request_context(&request_span, &context);
             req.extensions_mut().insert(context);
 
             let response = service.call(req).await?.map_into_boxed_body();
@@ -371,10 +436,12 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = Rc::clone(&self.service);
+        let request_span = Span::current();
         Box::pin(async move {
             let state = match req.app_data::<web::Data<HttpState>>() {
                 Some(state) => state.clone(),
                 None => {
+                    tracing::error!("HTTP state is not configured");
                     return Ok(req.into_response(
                         crate::errors::internal_error_response(
                             "HTTP state is not configured".to_owned(),
@@ -401,9 +468,11 @@ where
             ) {
                 Ok(context) => context,
                 Err(rejection) => {
+                    tracing::warn!(rejection = ?rejection, "gemini auth rejected request");
                     return Ok(req.into_response(http_rejection_response(rejection).map_into_boxed_body()))
                 }
             };
+            record_request_context(&request_span, &context);
             req.extensions_mut().insert(context);
 
             let response = service.call(req).await?.map_into_boxed_body();
@@ -456,9 +525,18 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = Rc::clone(&self.service);
         let http_metrics = self.http_metrics.clone();
-        Box::pin(async move {
+        let span = request_span(&req);
+        let request_span = span.clone();
+        Box::pin(
+            async move {
             let HttpMetricsCapability::Available { recorder } = http_metrics else {
-                return Ok(service.call(req).await?.map_into_boxed_body());
+                let response = service.call(req).await?.map_into_boxed_body();
+                request_span.record("http.status_code", response.status().as_u16());
+                tracing::info!(
+                    http.status_code = response.status().as_u16(),
+                    "request completed"
+                );
+                return Ok(response);
             };
 
             let method = req.method().clone();
@@ -469,6 +547,7 @@ where
             let started_at = Instant::now();
 
             let response = service.call(req).await?.map_into_boxed_body();
+            request_span.record("http.status_code", response.status().as_u16());
             let metric = HttpMetricRecord::new(method.as_str(), path, response.status().as_u16());
             recorder.record_http_request(
                 &metric.method,
@@ -476,9 +555,16 @@ where
                 metric.status_code,
                 started_at.elapsed(),
             );
+            tracing::info!(
+                http.status_code = metric.status_code,
+                duration_ms = started_at.elapsed().as_millis() as u64,
+                "request completed"
+            );
 
             Ok(response)
-        })
+            }
+            .instrument(span),
+        )
     }
 }
 

@@ -11,6 +11,7 @@ use std::process;
 use super::build_info::version;
 use super::capabilities::build_server_capabilities;
 use super::metrics::MetricsRuntime;
+use super::tracing::init_tracing;
 
 fn runtime_cors_settings(config: &axonhub_config::CorsConfig) -> HttpCorsSettings {
     let max_age_seconds = humantime::parse_duration(&config.max_age)
@@ -34,6 +35,11 @@ pub(crate) async fn start_server() -> Result<()> {
         eprintln!("Failed to load config: {error}");
         process::exit(1);
     });
+    init_tracing(
+        &loaded.config.log,
+        &loaded.config.db,
+        &loaded.config.server.name,
+    )?;
     let port: u16 = loaded
         .config
         .server
@@ -45,6 +51,7 @@ pub(crate) async fn start_server() -> Result<()> {
     let capabilities = build_server_capabilities(
         &loaded.config.db.dialect,
         &loaded.config.db.dsn,
+        loaded.config.db.debug,
         loaded.config.server.api.auth.allow_no_auth,
         version(),
     );
@@ -106,11 +113,12 @@ pub(crate) async fn start_server() -> Result<()> {
         listener_address,
         loaded.config.metrics.enabled,
     ) {
-        println!("{line}");
+        tracing::info!("{line}");
     }
 
     let server = server.run();
     let server_handle = server.handle();
+    tracing::info!(listen.address = %listener_address, "http server started");
     let server_result = run_server_with_shutdown(server, server_handle)
         .await
         .context("HTTP server exited unexpectedly");
@@ -133,6 +141,7 @@ async fn run_server_with_shutdown(
     tokio::select! {
         result = server => result,
         _ = shutdown_signal() => {
+            tracing::info!("shutdown signal received");
             handle.stop(true).await;
             Ok(())
         }

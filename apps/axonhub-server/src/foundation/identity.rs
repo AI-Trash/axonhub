@@ -1,5 +1,6 @@
 #[cfg(test)]
 pub(crate) use super::identity_sqlite_support::query_default_project_for_user;
+#[cfg(test)]
 pub(crate) use super::identity_sqlite_support::{
     build_user_context, query_api_key, query_project, query_user_by_email, query_user_by_id,
     query_user_roles, IdentityStore,

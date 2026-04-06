@@ -10,8 +10,16 @@ use sea_orm::{
 
 #[derive(Debug, Clone)]
 pub(crate) enum SeaOrmConnectionFactory {
-    Sqlite { dsn: String, instance_id: u64 },
-    Postgres { dsn: String, instance_id: u64 },
+    Sqlite {
+        dsn: String,
+        instance_id: u64,
+        sqlx_logging: bool,
+    },
+    Postgres {
+        dsn: String,
+        instance_id: u64,
+        sqlx_logging: bool,
+    },
 }
 
 static NEXT_FACTORY_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -22,16 +30,26 @@ fn next_factory_instance_id() -> u64 {
 
 impl SeaOrmConnectionFactory {
     pub(crate) fn sqlite(dsn: String) -> Self {
+        Self::sqlite_with_debug(dsn, false)
+    }
+
+    pub(crate) fn sqlite_with_debug(dsn: String, sqlx_logging: bool) -> Self {
         Self::Sqlite {
             dsn,
             instance_id: next_factory_instance_id(),
+            sqlx_logging,
         }
     }
 
     pub(crate) fn postgres(dsn: String) -> Self {
+        Self::postgres_with_debug(dsn, false)
+    }
+
+    pub(crate) fn postgres_with_debug(dsn: String, sqlx_logging: bool) -> Self {
         Self::Postgres {
             dsn,
             instance_id: next_factory_instance_id(),
+            sqlx_logging,
         }
     }
 
@@ -45,6 +63,12 @@ impl SeaOrmConnectionFactory {
     pub(crate) fn instance_id(&self) -> u64 {
         match self {
             Self::Sqlite { instance_id, .. } | Self::Postgres { instance_id, .. } => *instance_id,
+        }
+    }
+
+    fn sqlx_logging(&self) -> bool {
+        match self {
+            Self::Sqlite { sqlx_logging, .. } | Self::Postgres { sqlx_logging, .. } => *sqlx_logging,
         }
     }
 
@@ -66,7 +90,16 @@ impl SeaOrmConnectionFactory {
     }
 
     pub(crate) async fn connect(&self) -> Result<DatabaseConnection, DbErr> {
-        let mut options = ConnectOptions::new(self.runtime_dsn());
+        let runtime_dsn = self.runtime_dsn();
+        let backend = self.backend();
+        let instance_id = self.instance_id();
+        tracing::debug!(
+            seaorm.instance_id = instance_id,
+            db.backend = ?backend,
+            db.dsn = %sanitize_runtime_dsn(runtime_dsn.as_str()),
+            "opening SeaORM connection"
+        );
+        let mut options = ConnectOptions::new(runtime_dsn);
         options
             .max_connections(1)
             .min_connections(1)
@@ -74,13 +107,27 @@ impl SeaOrmConnectionFactory {
             .acquire_timeout(Duration::from_secs(8))
             .idle_timeout(Duration::from_secs(8))
             .max_lifetime(Duration::from_secs(30))
-            .sqlx_logging(false);
+            .sqlx_logging(self.sqlx_logging());
 
-        Database::connect(options).await
+        let connection = Database::connect(options).await;
+        if let Err(error) = &connection {
+            tracing::error!(
+                seaorm.instance_id = instance_id,
+                db.backend = ?backend,
+                error = %error,
+                "failed to open SeaORM connection"
+            );
+        }
+        connection
     }
 
     pub(crate) async fn connect_migrated(&self) -> Result<DatabaseConnection, DbErr> {
         let db = self.connect().await?;
+        tracing::debug!(
+            seaorm.instance_id = self.instance_id(),
+            db.backend = ?self.backend(),
+            "running SeaORM migrations"
+        );
         Migrator::up(&db, None).await?;
         Ok(db)
     }
@@ -93,6 +140,11 @@ impl SeaOrmConnectionFactory {
         Build: FnOnce(Self) -> Fut + Send + 'static,
     {
         let factory = self.clone();
+        tracing::debug!(
+            seaorm.instance_id = factory.instance_id(),
+            db.backend = ?factory.backend(),
+            "bridging SeaORM async work through sync runtime"
+        );
 
         if tokio::runtime::Handle::try_current().is_ok() {
             std::thread::spawn(move || {
@@ -108,6 +160,13 @@ impl SeaOrmConnectionFactory {
                 .block_on(build(factory))
         }
     }
+}
+
+fn sanitize_runtime_dsn(dsn: &str) -> String {
+    if let Some((prefix, _)) = dsn.split_once('@') {
+        return format!("{prefix}@***");
+    }
+    dsn.to_owned()
 }
 
 fn normalize_sqlite_file_dsn(dsn: &str) -> String {

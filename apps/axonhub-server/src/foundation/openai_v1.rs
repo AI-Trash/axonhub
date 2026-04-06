@@ -36,6 +36,7 @@ use super::{
     shared::current_unix_timestamp,
 };
 
+#[cfg(test)]
 pub(crate) use super::openai_v1_sqlite_support::*;
 
 pub struct SeaOrmOpenAiV1Service {

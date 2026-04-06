@@ -47,16 +47,16 @@ enum PersistenceProfile {
 }
 
 impl PersistenceProfile {
-    fn resolve(dialect: &str, dsn: &str) -> Self {
+    fn resolve(dialect: &str, dsn: &str, db_debug: bool) -> Self {
         if dialect.eq_ignore_ascii_case("sqlite3") {
             return Self::Sqlite {
-                db: SeaOrmConnectionFactory::sqlite(dsn.to_owned()),
+                db: SeaOrmConnectionFactory::sqlite_with_debug(dsn.to_owned(), db_debug),
             };
         }
 
         if dialect.eq_ignore_ascii_case("postgres") || dialect.eq_ignore_ascii_case("postgresql") {
             return Self::Postgres {
-                db: SeaOrmConnectionFactory::postgres(dsn.to_owned()),
+                db: SeaOrmConnectionFactory::postgres_with_debug(dsn.to_owned(), db_debug),
             };
         }
 
@@ -73,10 +73,11 @@ fn supported_seaorm_dialect_message(surface: &str) -> String {
 pub(crate) fn build_server_capabilities(
     dialect: &str,
     dsn: &str,
+    db_debug: bool,
     allow_no_auth: bool,
     version: &str,
 ) -> ServerCapabilities {
-    let profile = PersistenceProfile::resolve(dialect, dsn);
+    let profile = PersistenceProfile::resolve(dialect, dsn, db_debug);
 
     ServerCapabilities {
         system_bootstrap: build_system_bootstrap_capability_from_profile(&profile, version),
@@ -95,7 +96,7 @@ pub(crate) fn build_system_bootstrap_capability(
     dsn: &str,
     version: &str,
 ) -> SystemBootstrapCapability {
-    let profile = PersistenceProfile::resolve(dialect, dsn);
+    let profile = PersistenceProfile::resolve(dialect, dsn, false);
     build_system_bootstrap_capability_from_profile(&profile, version)
 }
 
@@ -104,7 +105,7 @@ pub(crate) fn build_identity_capability(
     dsn: &str,
     allow_no_auth: bool,
 ) -> IdentityCapability {
-    let profile = PersistenceProfile::resolve(dialect, dsn);
+    let profile = PersistenceProfile::resolve(dialect, dsn, false);
     build_identity_capability_from_profile(&profile, allow_no_auth)
 }
 
@@ -113,22 +114,22 @@ pub(crate) fn build_request_context_capability(
     dsn: &str,
     allow_no_auth: bool,
 ) -> RequestContextCapability {
-    let profile = PersistenceProfile::resolve(dialect, dsn);
+    let profile = PersistenceProfile::resolve(dialect, dsn, false);
     build_request_context_capability_from_profile(&profile, allow_no_auth)
 }
 
 pub(crate) fn build_openai_v1_capability(dialect: &str, dsn: &str) -> OpenAiV1Capability {
-    let profile = PersistenceProfile::resolve(dialect, dsn);
+    let profile = PersistenceProfile::resolve(dialect, dsn, false);
     build_openai_v1_capability_from_profile(&profile)
 }
 
 pub(crate) fn build_admin_capability(dialect: &str, dsn: &str) -> AdminCapability {
-    let profile = PersistenceProfile::resolve(dialect, dsn);
+    let profile = PersistenceProfile::resolve(dialect, dsn, false);
     build_admin_capability_from_profile(&profile)
 }
 
 pub(crate) fn build_admin_graphql_capability(dialect: &str, dsn: &str) -> AdminGraphqlCapability {
-    let profile = PersistenceProfile::resolve(dialect, dsn);
+    let profile = PersistenceProfile::resolve(dialect, dsn, false);
     build_admin_graphql_capability_from_profile(&profile)
 }
 
@@ -136,7 +137,7 @@ pub(crate) fn build_openapi_graphql_capability(
     dialect: &str,
     dsn: &str,
 ) -> OpenApiGraphqlCapability {
-    let profile = PersistenceProfile::resolve(dialect, dsn);
+    let profile = PersistenceProfile::resolve(dialect, dsn, false);
     build_openapi_graphql_capability_from_profile(&profile)
 }
 

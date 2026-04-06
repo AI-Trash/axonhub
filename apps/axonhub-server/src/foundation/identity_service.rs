@@ -6,17 +6,19 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 #[cfg(test)]
 use std::sync::Arc;
 
-#[cfg(test)]
-use super::shared::SqliteFoundation;
 use super::{
-    identity::{IdentityStore, QueryUserError, StoredApiKey, StoredProject},
+    identity::{QueryUserError, StoredApiKey, StoredProject},
+    passwords::verify_password,
     ports::IdentityRepository,
     repositories::identity::{IdentityAuthRepository, SeaOrmIdentityAuthRepository},
     seaorm::SeaOrmConnectionFactory,
     shared::{NO_AUTH_API_KEY_VALUE, SYSTEM_KEY_SECRET_KEY},
-    system::{verify_password, SystemSettingsStore},
 };
 
+#[cfg(test)]
+use super::{identity::IdentityStore, shared::SqliteFoundation, system::SystemSettingsStore};
+
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct IdentityAuthService {
     identities: IdentityStore,
@@ -24,6 +26,7 @@ pub struct IdentityAuthService {
     allow_no_auth: bool,
 }
 
+#[cfg(test)]
 impl IdentityAuthService {
     pub fn new(
         identities: IdentityStore,

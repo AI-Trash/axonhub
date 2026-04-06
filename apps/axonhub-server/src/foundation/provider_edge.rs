@@ -12,8 +12,10 @@ use std::env;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
+use getrandom::getrandom;
+use hex::encode as hex_encode;
 use super::shared::{
-    current_unix_timestamp, format_unix_timestamp, SqliteFoundation,
+    current_unix_timestamp, format_unix_timestamp,
     PROVIDER_EDGE_COPILOT_COMPLETE_MESSAGE, PROVIDER_EDGE_COPILOT_DEVICE_GRANT_TYPE,
     PROVIDER_EDGE_COPILOT_PENDING_MESSAGE, PROVIDER_EDGE_COPILOT_SLOW_DOWN_MESSAGE,
     PROVIDER_EDGE_PKCE_SESSION_TTL_SECONDS,
@@ -986,28 +988,17 @@ pub(crate) fn parse_callback(
 }
 
 pub(crate) fn generate_provider_edge_session_id() -> Result<String, ProviderEdgeAdminError> {
-    let foundation = SqliteFoundation::new(":memory:");
-    let connection = foundation.open_connection(true).map_err(|error| {
-        provider_edge_internal_error(format!("failed to generate oauth state: {error}"))
-    })?;
-    connection
-        .query_row("SELECT lower(hex(randomblob(32)))", [], |row| row.get(0))
-        .map_err(|error| {
-            provider_edge_internal_error(format!("failed to generate oauth state: {error}"))
-        })
+    let mut bytes = [0_u8; 32];
+    getrandom(&mut bytes)
+        .map(|_| hex_encode(bytes))
+        .map_err(|error| provider_edge_internal_error(format!("failed to generate oauth state: {error}")))
 }
 
 pub(crate) fn generate_provider_edge_code_verifier() -> Result<String, ProviderEdgeAdminError> {
-    let foundation = SqliteFoundation::new(":memory:");
-    let connection = foundation.open_connection(true).map_err(|error| {
-        provider_edge_internal_error(format!("failed to generate code verifier: {error}"))
-    })?;
-    let raw: String = connection
-        .query_row("SELECT lower(hex(randomblob(64)))", [], |row| row.get(0))
-        .map_err(|error| {
-            provider_edge_internal_error(format!("failed to generate code verifier: {error}"))
-        })?;
-    Ok(raw)
+    let mut bytes = [0_u8; 64];
+    getrandom(&mut bytes)
+        .map(|_| hex_encode(bytes))
+        .map_err(|error| provider_edge_internal_error(format!("failed to generate code verifier: {error}")))
 }
 
 pub(crate) fn provider_edge_code_challenge(code_verifier: &str) -> String {
