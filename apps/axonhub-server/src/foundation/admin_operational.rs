@@ -31,10 +31,6 @@ use super::{
     },
 };
 
-use super::repositories::common::{
-    execute as execute_sql, query_all, query_one as query_one_sql,
-};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OperationalRunStatus {
     Running,
@@ -823,63 +819,56 @@ async fn build_backup_payload_from_connection(
     connection: &DatabaseConnection,
     settings: &StoredAutoBackupSettings,
 ) -> Result<StoredBackupPayload, String> {
-    let backend = connection.get_database_backend();
     let channels_out = if settings.include_channels {
-        let rows = connection
-            .query_all(Statement::from_string(
-                backend,
-                "SELECT id, name, type, COALESCE(base_url, ''), status, credentials, supported_models, default_test_model, settings, tags, ordering_weight, COALESCE(error_message, ''), COALESCE(remark, '') FROM channels WHERE deleted_at = 0 ORDER BY id ASC".to_owned(),
-            ))
+        channels::Entity::find()
+            .filter(channels::Column::DeletedAt.eq(0_i64))
+            .order_by_asc(channels::Column::Id)
+            .all(connection)
             .await
-            .map_err(|error| error.to_string())?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(StoredBackupChannel {
-                    id: row.try_get_by_index(0).map_err(|error| error.to_string())?,
-                    name: row.try_get_by_index(1).map_err(|error| error.to_string())?,
-                    channel_type: row.try_get_by_index(2).map_err(|error| error.to_string())?,
-                    base_url: row.try_get_by_index(3).map_err(|error| error.to_string())?,
-                    status: row.try_get_by_index(4).map_err(|error| error.to_string())?,
-                    credentials: parse_json_value(&row.try_get_by_index::<String>(5).map_err(|error| error.to_string())?),
-                    supported_models: parse_json_value(&row.try_get_by_index::<String>(6).map_err(|error| error.to_string())?),
-                    default_test_model: row.try_get_by_index(7).map_err(|error| error.to_string())?,
-                    settings: parse_json_value(&row.try_get_by_index::<String>(8).map_err(|error| error.to_string())?),
-                    tags: parse_json_value(&row.try_get_by_index::<String>(9).map_err(|error| error.to_string())?),
-                    ordering_weight: row.try_get_by_index::<i64>(10).map_err(|error| error.to_string())?,
-                    error_message: row.try_get_by_index(11).map_err(|error| error.to_string())?,
-                    remark: row.try_get_by_index(12).map_err(|error| error.to_string())?,
-                })
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|channel| StoredBackupChannel {
+                id: channel.id,
+                name: channel.name,
+                channel_type: channel.type_field,
+                base_url: channel.base_url.unwrap_or_default(),
+                status: channel.status,
+                credentials: parse_json_value(&channel.credentials),
+                supported_models: parse_json_value(&channel.supported_models),
+                default_test_model: channel.default_test_model,
+                settings: parse_json_value(&channel.settings),
+                tags: parse_json_value(&channel.tags),
+                ordering_weight: i64::from(channel.ordering_weight),
+                error_message: channel.error_message.unwrap_or_default(),
+                remark: channel.remark.unwrap_or_default(),
             })
-            .collect::<Result<Vec<_>, String>>()?
+            .collect()
     } else {
         Vec::new()
     };
 
     let models_out = if settings.include_models {
-        let rows = connection
-            .query_all(Statement::from_string(
-                backend,
-                "SELECT id, developer, model_id, type, name, icon, \"group\", model_card, settings, status, COALESCE(remark, '') FROM models WHERE deleted_at = 0 ORDER BY id ASC".to_owned(),
-            ))
+        models::Entity::find()
+            .filter(models::Column::DeletedAt.eq(0_i64))
+            .order_by_asc(models::Column::Id)
+            .all(connection)
             .await
-            .map_err(|error| error.to_string())?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(StoredBackupModel {
-                    id: row.try_get_by_index(0).map_err(|error| error.to_string())?,
-                    developer: row.try_get_by_index(1).map_err(|error| error.to_string())?,
-                    model_id: row.try_get_by_index(2).map_err(|error| error.to_string())?,
-                    model_type: row.try_get_by_index(3).map_err(|error| error.to_string())?,
-                    name: row.try_get_by_index(4).map_err(|error| error.to_string())?,
-                    icon: row.try_get_by_index(5).map_err(|error| error.to_string())?,
-                    group: row.try_get_by_index(6).map_err(|error| error.to_string())?,
-                    model_card: parse_json_value(&row.try_get_by_index::<String>(7).map_err(|error| error.to_string())?),
-                    settings: parse_json_value(&row.try_get_by_index::<String>(8).map_err(|error| error.to_string())?),
-                    status: row.try_get_by_index(9).map_err(|error| error.to_string())?,
-                    remark: row.try_get_by_index(10).map_err(|error| error.to_string())?,
-                })
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|model| StoredBackupModel {
+                id: model.id,
+                developer: model.developer,
+                model_id: model.model_id,
+                model_type: model.type_field,
+                name: model.name,
+                icon: model.icon,
+                group: model.group_name,
+                model_card: parse_json_value(&model.model_card),
+                settings: parse_json_value(&model.settings),
+                status: model.status,
+                remark: model.remark.unwrap_or_default(),
             })
-            .collect::<Result<Vec<_>, String>>()?
+            .collect()
     } else {
         Vec::new()
     };
@@ -1037,17 +1026,11 @@ async fn restore_backup_into_transaction(
 
     if options.include_channels {
         for channel in &backup.channels {
-            let backend = txn.get_database_backend();
-            let existing = query_one_sql(
-                txn,
-                backend,
-                "SELECT id FROM channels WHERE name = ? LIMIT 1",
-                "SELECT id FROM channels WHERE name = $1 LIMIT 1",
-                "SELECT id FROM channels WHERE name = ? LIMIT 1",
-                vec![channel.name.clone().into()],
-            )
-            .await
-            .map_err(|error| error.to_string())?;
+            let existing = channels::Entity::find()
+                .filter(channels::Column::Name.eq(channel.name.clone()))
+                .one(txn)
+                .await
+                .map_err(|error| error.to_string())?;
 
             let credentials = serde_json::to_string(&channel.credentials).map_err(|error| error.to_string())?;
             let supported_models = serde_json::to_string(&channel.supported_models).map_err(|error| error.to_string())?;
@@ -1055,98 +1038,60 @@ async fn restore_backup_into_transaction(
             let tags = serde_json::to_string(&channel.tags).map_err(|error| error.to_string())?;
 
             let restored_id = if let Some(existing) = existing {
-                let existing_id = existing.try_get_by_index::<i64>(0).map_err(|error| error.to_string())?;
+                let existing_id = existing.id;
                 if !options.overwrite_existing {
                     return Err(format!("channel already exists: {}", channel.name));
                 }
-                execute_sql(
-                    txn,
-                    backend,
-                    "UPDATE channels SET type = ?, base_url = ?, name = ?, status = ?, credentials = ?, supported_models = ?, auto_sync_supported_models = ?, default_test_model = ?, settings = ?, tags = ?, ordering_weight = ?, error_message = ?, remark = ?, deleted_at = 0 WHERE id = ?",
-                    "UPDATE channels SET type = $1, base_url = $2, name = $3, status = $4, credentials = $5, supported_models = $6, auto_sync_supported_models = $7, default_test_model = $8, settings = $9, tags = $10, ordering_weight = $11, error_message = $12, remark = $13, deleted_at = 0 WHERE id = $14",
-                    "UPDATE channels SET type = ?, base_url = ?, name = ?, status = ?, credentials = ?, supported_models = ?, auto_sync_supported_models = ?, default_test_model = ?, settings = ?, tags = ?, ordering_weight = ?, error_message = ?, remark = ?, deleted_at = 0 WHERE id = ?",
-                    vec![
-                        channel.channel_type.clone().into(),
-                        channel.base_url.clone().into(),
-                        channel.name.clone().into(),
-                        channel.status.clone().into(),
-                        credentials.clone().into(),
-                        supported_models.clone().into(),
-                        false.into(),
-                        channel.default_test_model.clone().into(),
-                        settings.clone().into(),
-                        tags.clone().into(),
-                        i32::try_from(channel.ordering_weight).unwrap_or(i32::MAX).into(),
-                        channel.error_message.clone().into(),
-                        channel.remark.clone().into(),
-                        existing_id.into(),
-                    ],
-                )
-                .await
-                .map_err(|error| error.to_string())?;
+                let mut active: channels::ActiveModel = existing.into();
+                active.type_field = Set(channel.channel_type.clone());
+                active.base_url = Set(Some(channel.base_url.clone()));
+                active.name = Set(channel.name.clone());
+                active.status = Set(channel.status.clone());
+                active.credentials = Set(credentials.clone());
+                active.supported_models = Set(supported_models.clone());
+                active.auto_sync_supported_models = Set(false);
+                active.default_test_model = Set(channel.default_test_model.clone());
+                active.settings = Set(settings.clone());
+                active.tags = Set(tags.clone());
+                active.ordering_weight = Set(i32::try_from(channel.ordering_weight).unwrap_or(i32::MAX));
+                active.error_message = Set(Some(channel.error_message.clone()));
+                active.remark = Set(Some(channel.remark.clone()));
+                active.deleted_at = Set(0_i64);
+                active.update(txn).await.map_err(|error| error.to_string())?;
                 existing_id
             } else {
-                execute_sql(
-                    txn,
-                    backend,
-                    "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                    "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 0)",
-                    "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                    vec![
-                        channel.channel_type.clone().into(),
-                        channel.base_url.clone().into(),
-                        channel.name.clone().into(),
-                        channel.status.clone().into(),
-                        credentials.clone().into(),
-                        supported_models.clone().into(),
-                        false.into(),
-                        channel.default_test_model.clone().into(),
-                        settings.clone().into(),
-                        tags.clone().into(),
-                        i32::try_from(channel.ordering_weight).unwrap_or(i32::MAX).into(),
-                        channel.error_message.clone().into(),
-                        channel.remark.clone().into(),
-                    ],
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-
-                let inserted = query_one_sql(
-                    txn,
-                    backend,
-                    "SELECT id FROM channels WHERE name = ? AND deleted_at = 0 ORDER BY id DESC LIMIT 1",
-                    "SELECT id FROM channels WHERE name = $1 AND deleted_at = 0 ORDER BY id DESC LIMIT 1",
-                    "SELECT id FROM channels WHERE name = ? AND deleted_at = 0 ORDER BY id DESC LIMIT 1",
-                    vec![channel.name.clone().into()],
-                )
+                channels::Entity::insert(channels::ActiveModel {
+                    type_field: Set(channel.channel_type.clone()),
+                    base_url: Set(Some(channel.base_url.clone())),
+                    name: Set(channel.name.clone()),
+                    status: Set(channel.status.clone()),
+                    credentials: Set(credentials.clone()),
+                    supported_models: Set(supported_models.clone()),
+                    auto_sync_supported_models: Set(false),
+                    default_test_model: Set(channel.default_test_model.clone()),
+                    settings: Set(settings.clone()),
+                    tags: Set(tags.clone()),
+                    ordering_weight: Set(i32::try_from(channel.ordering_weight).unwrap_or(i32::MAX)),
+                    error_message: Set(Some(channel.error_message.clone())),
+                    remark: Set(Some(channel.remark.clone())),
+                    deleted_at: Set(0_i64),
+                    ..Default::default()
+                })
+                .exec(txn)
                 .await
                 .map_err(|error| error.to_string())?
-                .ok_or_else(|| {
-                    format!("failed to resolve restored channel id for channel {}", channel.name)
-                })?;
-
-                inserted
-                    .try_get_by_index::<i64>(0)
-                    .map_err(|error| error.to_string())?
+                .last_insert_id
             };
             channel_name_to_id.insert(channel.name.clone(), restored_id);
         }
     } else {
-        let backend = txn.get_database_backend();
-        let existing_channels = query_all(
-            txn,
-            backend,
-            "SELECT id, name FROM channels WHERE deleted_at = 0",
-            "SELECT id, name FROM channels WHERE deleted_at = 0",
-            "SELECT id, name FROM channels WHERE deleted_at = 0",
-            Vec::new(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-        for channel in existing_channels {
-            let channel_id = channel.try_get_by_index::<i64>(0).map_err(|error| error.to_string())?;
-            let channel_name = channel.try_get_by_index::<String>(1).map_err(|error| error.to_string())?;
-            channel_name_to_id.insert(channel_name, channel_id);
+        for channel in channels::Entity::find()
+            .filter(channels::Column::DeletedAt.eq(0_i64))
+            .all(txn)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            channel_name_to_id.insert(channel.name, channel.id);
         }
     }
 
@@ -1186,17 +1131,18 @@ async fn restore_backup_into_transaction(
                             "channel model price already exists: channel={channel_name} model_id={model_id}"
                         ));
                     }
-                    let backend = txn.get_database_backend();
-                    execute_sql(
-                        txn,
-                        backend,
-                        "UPDATE channel_model_price_versions SET status = ?, effective_end_at = CURRENT_TIMESTAMP WHERE channel_model_price_id = ? AND status = ?",
-                        "UPDATE channel_model_price_versions SET status = $1, effective_end_at = CURRENT_TIMESTAMP WHERE channel_model_price_id = $2 AND status = $3",
-                        "UPDATE channel_model_price_versions SET status = ?, effective_end_at = CURRENT_TIMESTAMP WHERE channel_model_price_id = ? AND status = ?",
-                        vec!["archived".into(), existing.id.into(), "active".into()],
-                    )
-                    .await
-                    .map_err(|error| error.to_string())?;
+                    let active_versions = channel_model_price_versions::Entity::find()
+                        .filter(channel_model_price_versions::Column::ChannelModelPriceId.eq(existing.id))
+                        .filter(channel_model_price_versions::Column::Status.eq("active"))
+                        .all(txn)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    for version in active_versions {
+                        let mut active: channel_model_price_versions::ActiveModel = version.into();
+                        active.status = Set("archived".to_owned());
+                        active.effective_end_at = Set(Some(current_rfc3339_timestamp()));
+                        active.update(txn).await.map_err(|error| error.to_string())?;
+                    }
                     let mut active: channel_model_prices::ActiveModel = existing.into();
                     active.price = Set(price_json.clone());
                     active.reference_id = Set(reference_id.to_owned());
@@ -1217,22 +1163,17 @@ async fn restore_backup_into_transaction(
                 .last_insert_id
             };
 
-            let backend = txn.get_database_backend();
-            execute_sql(
-                txn,
-                backend,
-                "INSERT INTO channel_model_price_versions (channel_id, model_id, channel_model_price_id, price, status, effective_start_at, effective_end_at, reference_id) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, NULL, ?)",
-                "INSERT INTO channel_model_price_versions (channel_id, model_id, channel_model_price_id, price, status, effective_start_at, effective_end_at, reference_id) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, NULL, $6)",
-                "INSERT INTO channel_model_price_versions (channel_id, model_id, channel_model_price_id, price, status, effective_start_at, effective_end_at, reference_id) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, NULL, ?)",
-                vec![
-                    channel_id.into(),
-                    model_id.to_owned().into(),
-                    channel_model_price_id.into(),
-                    price_json.into(),
-                    "active".into(),
-                    reference_id.to_owned().into(),
-                ],
-            )
+            channel_model_price_versions::Entity::insert(channel_model_price_versions::ActiveModel {
+                channel_id: Set(channel_id),
+                model_id: Set(model_id.to_owned()),
+                channel_model_price_id: Set(channel_model_price_id),
+                price: Set(price_json),
+                status: Set("active".to_owned()),
+                effective_end_at: Set(None),
+                reference_id: Set(reference_id.to_owned()),
+                ..Default::default()
+            })
+            .exec(txn)
             .await
             .map_err(|error| error.to_string())?;
         }

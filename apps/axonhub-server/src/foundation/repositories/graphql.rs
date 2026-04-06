@@ -10,7 +10,6 @@ use sea_orm::{
 
 use crate::foundation::seaorm::SeaOrmConnectionFactory;
 
-use super::common::query_all;
 use super::openai_v1::{list_enabled_model_records_seaorm, query_system_channel_settings_seaorm};
 
 #[derive(Debug, Clone)]
@@ -539,19 +538,6 @@ impl OpenApiGraphqlMutationRepository for SeaOrmOpenApiGraphqlMutationRepository
             .await
         })
     }
-}
-
-pub(crate) async fn query_all_graphql(
-    db: &impl sea_orm::ConnectionTrait,
-    backend: sea_orm::DatabaseBackend,
-    sqlite_sql: &str,
-    postgres_sql: &str,
-    mysql_sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> Result<Vec<sea_orm::QueryResult>, String> {
-    query_all(db, backend, sqlite_sql, postgres_sql, mysql_sql, values)
-        .await
-        .map_err(|error| error.to_string())
 }
 
 async fn query_model_statuses_seaorm(

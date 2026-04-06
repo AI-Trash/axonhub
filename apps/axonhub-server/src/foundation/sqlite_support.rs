@@ -228,26 +228,31 @@ impl DataStorageStore {
 
     #[cfg(test)]
     pub fn find_primary_active_storage(&self) -> SqlResult<Option<StoredDataStorage>> {
-        let db = self.connection_factory.open(true)?;
-        db.query_row(
-            "SELECT id, name, description, type, status, settings FROM data_storages WHERE \"primary\" = 1 AND deleted_at = 0 LIMIT 1",
-            [],
-            |row| {
-                Ok(StoredDataStorage {
-                    #[cfg(test)]
-                    id: row.get(0)?,
-                    #[cfg(test)]
-                    name: row.get(1)?,
-                    #[cfg(test)]
-                    description: row.get(2)?,
-                    storage_type: row.get(3)?,
-                    #[cfg(test)]
-                    status: row.get(4)?,
-                    settings_json: row.get(5)?,
-                })
-            },
-        )
-        .optional()
+        let factory = SeaOrmConnectionFactory::sqlite(self.connection_factory.dsn.as_ref().clone());
+        factory
+            .run_sync(move |db| async move {
+                let connection = db.connect_migrated().await?;
+                data_storages::Entity::find()
+                    .filter(data_storages::Column::PrimaryFlag.eq(true))
+                    .filter(data_storages::Column::DeletedAt.eq(0_i64))
+                    .one(&connection)
+                    .await
+                    .map(|row| {
+                        row.map(|row| StoredDataStorage {
+                            #[cfg(test)]
+                            id: row.id,
+                            #[cfg(test)]
+                            name: row.name,
+                            #[cfg(test)]
+                            description: row.description,
+                            storage_type: row.type_field,
+                            #[cfg(test)]
+                            status: row.status,
+                            settings_json: row.settings,
+                        })
+                    })
+            })
+            .map_err(sql_error_from_seaorm)
     }
 
     pub fn find_storage_by_id(&self, storage_id: i64) -> SqlResult<Option<StoredDataStorage>> {

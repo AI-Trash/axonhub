@@ -8,11 +8,16 @@ use async_graphql::{
     Context, EmptySubscription, InputObject, Object, Request as AsyncGraphqlRequest, Schema,
     Variables,
 };
+use axonhub_db_entity::{projects, roles, user_projects, user_roles, users};
 use axonhub_http::{
     AdminGraphqlPort, AuthApiKeyContext, AuthUserContext, GraphqlExecutionResult,
     GraphqlRequestPayload, OpenApiGraphqlPort, TraceContext,
 };
-use sea_orm::{ConnectionTrait, DatabaseBackend};
+use axonhub_db_entity::traces;
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QueryOrder,
+};
 
 use super::{
     admin::{parse_graphql_resource_id, StoredProxyPreset},
@@ -26,7 +31,6 @@ use super::{
     },
     circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
     graphql::*,
-    repositories::graphql::query_all_graphql,
     shared::{graphql_gid, SqliteFoundation},
     system::{ensure_identity_tables, hash_password},
 };
@@ -184,28 +188,25 @@ where
 
 async fn list_traces_by_project_graphql(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     project_id: i64,
 ) -> Result<Vec<TraceContext>, String> {
-    query_all_graphql(
-        db,
-        backend,
-        "SELECT id, trace_id, project_id, thread_id FROM traces WHERE project_id = ? ORDER BY id DESC",
-        "SELECT id, trace_id, project_id, thread_id FROM traces WHERE project_id = $1 ORDER BY id DESC",
-        "SELECT id, trace_id, project_id, thread_id FROM traces WHERE project_id = ? ORDER BY id DESC",
-        vec![project_id.into()],
-    )
-    .await?
-    .into_iter()
-    .map(|row: sea_orm::QueryResult| {
-        Ok::<TraceContext, String>(TraceContext {
-            id: row.try_get_by_index(0).map_err(|error| error.to_string())?,
-            trace_id: row.try_get_by_index(1).map_err(|error| error.to_string())?,
-            project_id: row.try_get_by_index(2).map_err(|error| error.to_string())?,
-            thread_id: row.try_get_by_index(3).map_err(|error| error.to_string())?,
+    traces::Entity::find()
+        .filter(traces::Column::ProjectId.eq(project_id))
+        .order_by_desc(traces::Column::Id)
+        .into_partial_model::<traces::ResolveContext>()
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| TraceContext {
+                    id: row.id,
+                    trace_id: row.trace_id,
+                    project_id: row.project_id,
+                    thread_id: row.thread_id,
+                })
+                .collect()
         })
-    })
-    .collect()
 }
 
 #[Object]
@@ -377,7 +378,7 @@ impl AdminGraphqlQueryRoot {
         let traces = db
             .run_sync(move |db| async move {
                 let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
-                list_traces_by_project_graphql(&connection, db.backend(), project_id).await
+                list_traces_by_project_graphql(&connection, project_id).await
             })
             .map_err(|error| async_graphql::Error::new(format!("failed to list traces: {error}")))?;
 
@@ -387,141 +388,38 @@ impl AdminGraphqlQueryRoot {
     async fn me(&self, ctx: &Context<'_>) -> async_graphql::Result<AdminGraphqlUserInfo> {
         let request_context = ctx.data_unchecked::<AdminGraphqlRequestContext>();
         let user_id = request_context.user.id;
-        let connection = self
-            .foundation
-            .open_connection(true)
-            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
-
-        let user_row = connection
-            .query_row(
-                "SELECT id, email, first_name, last_name, is_owner, prefer_language, avatar, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
-                [user_id],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, i64>(4)?,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, String>(6)?,
-                        row.get::<_, String>(7)?,
-                    ))
-                },
-            )
-            .map_err(|error| async_graphql::Error::new(format!("failed to query user: {error}")))?;
-
-        let (id, email, first_name, last_name, is_owner_i64, prefer_language, avatar, scopes_json) =
-            user_row;
-        let is_owner = is_owner_i64 != 0;
-        let avatar = if avatar.is_empty() { None } else { Some(avatar) };
-        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
-
-        let roles = connection
-            .prepare(
-                "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.deleted_at = 0",
-            )
-            .map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
-            .query_map([user_id], |row| {
-                let role_id: i64 = row.get(0)?;
-                let name: String = row.get(1)?;
-                let role_scopes_json: String = row.get(2)?;
-                let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
-                Ok(AdminGraphqlRoleInfo {
-                    id: graphql_gid("role", role_id),
-                    name,
-                    scopes: role_scopes,
-                })
-            })
-            .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
-
-        let project_rows = connection
-            .prepare(
-                "SELECT p.id, p.name, up.is_owner, up.scopes FROM projects p JOIN user_projects up ON up.project_id = p.id WHERE up.user_id = ?1 AND p.deleted_at = 0",
-            )
-            .map_err(|error| async_graphql::Error::new(format!("failed to prepare projects: {error}")))?
-            .query_map([user_id], |row| {
-                let project_id: i64 = row.get(0)?;
-                let _project_name: String = row.get(1)?;
-                let is_owner = row.get::<_, i64>(2)? != 0;
-                let project_scopes_json: String = row.get(3)?;
-                let project_scopes: Vec<String> = serde_json::from_str(&project_scopes_json).unwrap_or_default();
-                Ok((project_id, is_owner, project_scopes))
-            })
-            .map_err(|error| async_graphql::Error::new(format!("failed to query projects: {error}")))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| async_graphql::Error::new(format!("failed to parse projects: {error}")))?;
-
-        let mut projects = Vec::new();
-        for (project_id, is_owner, scopes) in project_rows {
-            let project_roles = connection
-                .prepare(
-                    "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.project_id = ?2 AND r.deleted_at = 0",
-                )
-                .map_err(|error| async_graphql::Error::new(format!("failed to prepare project roles: {error}")))?
-                .query_map([user_id, project_id], |row| {
-                    let role_id: i64 = row.get(0)?;
-                    let name: String = row.get(1)?;
-                    let role_scopes_json: String = row.get(2)?;
-                    let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
-                    Ok(AdminGraphqlRoleInfo {
-                        id: graphql_gid("role", role_id),
-                        name,
-                        scopes: role_scopes,
-                    })
-                })
-                .map_err(|error| async_graphql::Error::new(format!("failed to query project roles: {error}")))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| async_graphql::Error::new(format!("failed to parse project roles: {error}")))?;
-
-            projects.push(AdminGraphqlUserProjectInfo {
-                project_id: graphql_gid("project", project_id),
-                is_owner,
-                scopes,
-                roles: project_roles,
-            });
-        }
-
-        Ok(AdminGraphqlUserInfo {
-            id: graphql_gid("user", id),
-            email,
-            first_name,
-            last_name,
-            is_owner,
-            prefer_language,
-            avatar,
-            scopes,
-            roles,
-            projects,
+        let db = self.foundation.seaorm();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            load_admin_graphql_user_info(&connection, user_id).await
         })
+        .map_err(async_graphql::Error::new)
     }
 
     async fn roles(&self, ctx: &Context<'_>) -> async_graphql::Result<AdminGraphqlRoleConnection> {
         require_admin_system_scope(ctx, SCOPE_READ_ROLES)?;
-        let connection = self
-            .foundation
-            .open_connection(true)
-            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
-
-        let rows = connection
-            .prepare("SELECT id, name, scopes FROM roles WHERE deleted_at = 0 ORDER BY id ASC")
-            .map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
-            .query_map([], |row| {
-                let id: i64 = row.get(0)?;
-                let name: String = row.get(1)?;
-                let scopes_json: String = row.get(2)?;
-                let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
-                Ok(AdminGraphqlRoleInfo {
-                    id: graphql_gid("role", id),
-                    name,
-                    scopes,
-                })
+        let db = self.foundation.seaorm();
+        let rows = db
+            .run_sync(move |db| async move {
+                let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+                roles::Entity::find()
+                    .filter(roles::Column::DeletedAt.eq(0_i64))
+                    .order_by_asc(roles::Column::Id)
+                    .into_partial_model::<roles::GraphqlRoleSummary>()
+                    .all(&connection)
+                    .await
+                    .map_err(|error| error.to_string())
+                    .map(|rows| {
+                        rows.into_iter()
+                            .map(|row| AdminGraphqlRoleInfo {
+                                id: graphql_gid("role", row.id),
+                                name: row.name,
+                                scopes: parse_scopes_json(&row.scopes),
+                            })
+                            .collect::<Vec<_>>()
+                    })
             })
-            .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
+            .map_err(async_graphql::Error::new)?;
 
         let edges = rows
             .into_iter()
@@ -625,27 +523,25 @@ impl AdminGraphqlQueryRoot {
         _input: AdminGraphqlQueryModelsInput,
     ) -> async_graphql::Result<Vec<AdminGraphqlModelIdentityWithStatus>> {
         require_admin_system_scope(ctx, SCOPE_READ_CHANNELS)?;
-        let connection = self
-            .foundation
-            .open_connection(true)
-            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
-
-        let rows = connection
-            .prepare("SELECT id, status FROM models WHERE deleted_at = 0")
-            .map_err(|error| async_graphql::Error::new(format!("failed to prepare models: {error}")))?
-            .query_map([], |row| {
-                let id: i64 = row.get(0)?;
-                let status: String = row.get(1)?;
-                Ok(AdminGraphqlModelIdentityWithStatus {
-                    id: graphql_gid("model", id),
-                    status,
+        let db = self.foundation.seaorm();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            models::Entity::find()
+                .filter(models::Column::DeletedAt.eq(0_i64))
+                .into_partial_model::<models::GraphqlStatus>()
+                .all(&connection)
+                .await
+                .map_err(|error| error.to_string())
+                .map(|rows| {
+                    rows.into_iter()
+                        .map(|row| AdminGraphqlModelIdentityWithStatus {
+                            id: graphql_gid("model", row.id),
+                            status: row.status,
+                        })
+                        .collect::<Vec<_>>()
                 })
-            })
-            .map_err(|error| async_graphql::Error::new(format!("failed to query models: {error}")))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| async_graphql::Error::new(format!("failed to parse models: {error}")))?;
-
-        Ok(rows)
+        })
+        .map_err(async_graphql::Error::new)
     }
 
     async fn users(&self, ctx: &Context<'_>) -> async_graphql::Result<AdminGraphqlUserConnection> {
@@ -935,162 +831,38 @@ impl AdminGraphqlMutationRoot {
             return Err(async_graphql::Error::new("no fields to update"));
         }
 
-        let foundation = &self.operational.foundation;
-        let connection = foundation
-            .open_connection(true)
-            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
-
-        if let Some(first_name) = &input.first_name {
-            let rows_affected = connection
-                .execute(
-                    "UPDATE users SET first_name = ?1 WHERE id = ?2 AND deleted_at = 0",
-                    (first_name.as_str(), user_id),
-                )
-                .map_err(|error| async_graphql::Error::new(format!("failed to update user: {error}")))?;
-            if rows_affected == 0 {
-                return Err(async_graphql::Error::new("user not found"));
+        let db = self.operational.foundation.seaorm();
+        let first_name = input.first_name.clone();
+        let last_name = input.last_name.clone();
+        let prefer_language = input.prefer_language.clone();
+        let avatar = input.avatar.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            let Some(existing) = users::Entity::find_by_id(user_id)
+                .filter(users::Column::DeletedAt.eq(0_i64))
+                .one(&connection)
+                .await
+                .map_err(|error| error.to_string())?
+            else {
+                return Err("user not found".to_owned());
+            };
+            let mut active: users::ActiveModel = existing.into();
+            if let Some(first_name) = first_name {
+                active.first_name = Set(first_name);
             }
-        }
-        if let Some(last_name) = &input.last_name {
-            let rows_affected = connection
-                .execute(
-                    "UPDATE users SET last_name = ?1 WHERE id = ?2 AND deleted_at = 0",
-                    (last_name.as_str(), user_id),
-                )
-                .map_err(|error| async_graphql::Error::new(format!("failed to update user: {error}")))?;
-            if rows_affected == 0 {
-                return Err(async_graphql::Error::new("user not found"));
+            if let Some(last_name) = last_name {
+                active.last_name = Set(last_name);
             }
-        }
-        if let Some(prefer_language) = &input.prefer_language {
-            let rows_affected = connection
-                .execute(
-                    "UPDATE users SET prefer_language = ?1 WHERE id = ?2 AND deleted_at = 0",
-                    (prefer_language.as_str(), user_id),
-                )
-                .map_err(|error| async_graphql::Error::new(format!("failed to update user: {error}")))?;
-            if rows_affected == 0 {
-                return Err(async_graphql::Error::new("user not found"));
+            if let Some(prefer_language) = prefer_language {
+                active.prefer_language = Set(prefer_language);
             }
-        }
-        if let Some(avatar) = &input.avatar {
-            let rows_affected = connection
-                .execute(
-                    "UPDATE users SET avatar = ?1 WHERE id = ?2 AND deleted_at = 0",
-                    (avatar.as_str(), user_id),
-                )
-                .map_err(|error| async_graphql::Error::new(format!("failed to update user: {error}")))?;
-            if rows_affected == 0 {
-                return Err(async_graphql::Error::new("user not found"));
+            if let Some(avatar) = avatar {
+                active.avatar = Set(Some(avatar));
             }
-        }
-
-        let user_row = connection
-            .query_row(
-                "SELECT id, email, first_name, last_name, is_owner, prefer_language, avatar, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
-                [user_id],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, i64>(4)?,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, String>(6)?,
-                        row.get::<_, String>(7)?,
-                    ))
-                },
-            )
-            .map_err(|error| {
-                async_graphql::Error::new(format!("failed to query updated user: {error}"))
-            })?;
-
-        let (id, email, first_name, last_name, is_owner_i64, prefer_language, avatar, scopes_json) =
-            user_row;
-        let is_owner = is_owner_i64 != 0;
-        let avatar = if avatar.is_empty() { None } else { Some(avatar) };
-        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
-
-        let roles = connection
-            .prepare(
-                "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.deleted_at = 0",
-            )
-            .map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
-            .query_map([user_id], |row| {
-                let role_id: i64 = row.get(0)?;
-                let name: String = row.get(1)?;
-                let role_scopes_json: String = row.get(2)?;
-                let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
-                Ok(AdminGraphqlRoleInfo {
-                    id: graphql_gid("role", role_id),
-                    name,
-                    scopes: role_scopes,
-                })
-            })
-            .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
-
-        let project_rows = connection
-            .prepare(
-                "SELECT p.id, p.name, up.is_owner, up.scopes FROM projects p JOIN user_projects up ON up.project_id = p.id WHERE up.user_id = ?1 AND p.deleted_at = 0",
-            )
-            .map_err(|error| async_graphql::Error::new(format!("failed to prepare projects: {error}")))?
-            .query_map([user_id], |row| {
-                let project_id: i64 = row.get(0)?;
-                let _project_name: String = row.get(1)?;
-                let is_owner = row.get::<_, i64>(2)? != 0;
-                let project_scopes_json: String = row.get(3)?;
-                let project_scopes: Vec<String> = serde_json::from_str(&project_scopes_json).unwrap_or_default();
-                Ok((project_id, is_owner, project_scopes))
-            })
-            .map_err(|error| async_graphql::Error::new(format!("failed to query projects: {error}")))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| async_graphql::Error::new(format!("failed to parse projects: {error}")))?;
-
-        let mut projects = Vec::new();
-        for (project_id, is_owner, scopes) in project_rows {
-            let project_roles = connection
-                .prepare(
-                    "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.project_id = ?2 AND r.deleted_at = 0",
-                )
-                .map_err(|error| async_graphql::Error::new(format!("failed to prepare project roles: {error}")))?
-                .query_map([user_id, project_id], |row| {
-                    let role_id: i64 = row.get(0)?;
-                    let name: String = row.get(1)?;
-                    let role_scopes_json: String = row.get(2)?;
-                    let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
-                    Ok(AdminGraphqlRoleInfo {
-                        id: graphql_gid("role", role_id),
-                        name,
-                        scopes: role_scopes,
-                    })
-                })
-                .map_err(|error| async_graphql::Error::new(format!("failed to query project roles: {error}")))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| async_graphql::Error::new(format!("failed to parse project roles: {error}")))?;
-
-            projects.push(AdminGraphqlUserProjectInfo {
-                project_id: graphql_gid("project", project_id),
-                is_owner,
-                scopes,
-                roles: project_roles,
-            });
-        }
-
-        Ok(AdminGraphqlUserInfo {
-            id: graphql_gid("user", id),
-            email,
-            first_name,
-            last_name,
-            is_owner,
-            prefer_language,
-            avatar,
-            scopes,
-            roles,
-            projects,
+            active.update(&connection).await.map_err(|error| error.to_string())?;
+            load_admin_graphql_user_info(&connection, user_id).await
         })
+        .map_err(async_graphql::Error::new)
     }
 
     async fn update_user_status(
@@ -1109,115 +881,27 @@ impl AdminGraphqlMutationRoot {
             .parse()
             .map_err(|_| async_graphql::Error::new("invalid user id"))?;
 
-        let foundation = &self.operational.foundation;
-        let connection = foundation
-            .open_connection(true)
-            .map_err(|error| async_graphql::Error::new(format!("failed to open database: {error}")))?;
-
         let status_str = match status {
             UserStatus::Activated => "activated",
             UserStatus::Deactivated => "deactivated",
         };
-        let rows_affected = connection
-            .execute(
-                "UPDATE users SET status = ? WHERE id = ? AND deleted_at = 0",
-                (status_str, user_id),
-            )
-            .map_err(|error| {
-                async_graphql::Error::new(format!("failed to update user status: {error}"))
-            })?;
-
-        if rows_affected == 0 {
-            return Err(async_graphql::Error::new("user not found"));
-        }
-
-        let user_row = connection
-            .query_row(
-                "SELECT id, email, first_name, last_name, is_owner, prefer_language, status, created_at, updated_at, scopes FROM users WHERE id = ?1 AND deleted_at = 0",
-                [user_id],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, i64>(4)?,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, String>(6)?,
-                        row.get::<_, String>(7)?,
-                        row.get::<_, String>(8)?,
-                        row.get::<_, String>(9)?,
-                    ))
-                },
-            )
-            .map_err(|error| {
-                async_graphql::Error::new(format!("failed to query updated user: {error}"))
-            })?;
-
-        let (
-            id,
-            email,
-            first_name,
-            last_name,
-            is_owner_i64,
-            prefer_language,
-            status,
-            created_at,
-            updated_at,
-            scopes_json,
-        ) = user_row;
-        let is_owner = is_owner_i64 != 0;
-        let scopes: Vec<String> = serde_json::from_str(&scopes_json).unwrap_or_default();
-
-        let roles_vec = connection
-            .prepare(
-                "SELECT r.id, r.name, r.scopes FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ?1 AND r.deleted_at = 0",
-            )
-            .map_err(|error| async_graphql::Error::new(format!("failed to prepare roles: {error}")))?
-            .query_map([user_id], |row| {
-                let role_id: i64 = row.get(0)?;
-                let name: String = row.get(1)?;
-                let role_scopes_json: String = row.get(2)?;
-                let role_scopes: Vec<String> = serde_json::from_str(&role_scopes_json).unwrap_or_default();
-                Ok(AdminGraphqlRoleInfo {
-                    id: graphql_gid("role", role_id),
-                    name,
-                    scopes: role_scopes,
-                })
-            })
-            .map_err(|error| async_graphql::Error::new(format!("failed to query roles: {error}")))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| async_graphql::Error::new(format!("failed to parse roles: {error}")))?;
-
-        let roles_connection = AdminGraphqlRoleConnection {
-            edges: roles_vec
-                .into_iter()
-                .map(|node| AdminGraphqlRoleEdge {
-                    cursor: None,
-                    node: Some(node),
-                })
-                .collect(),
-            page_info: AdminGraphqlPageInfo {
-                has_next_page: false,
-                has_previous_page: false,
-                start_cursor: None,
-                end_cursor: None,
-            },
-        };
-
-        Ok(AdminGraphqlUser {
-            id: graphql_gid("user", id),
-            created_at,
-            updated_at,
-            email,
-            status,
-            first_name,
-            last_name,
-            is_owner,
-            prefer_language,
-            scopes,
-            roles: roles_connection,
+        let db = self.operational.foundation.seaorm();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            let Some(existing) = users::Entity::find_by_id(user_id)
+                .filter(users::Column::DeletedAt.eq(0_i64))
+                .one(&connection)
+                .await
+                .map_err(|error| error.to_string())?
+            else {
+                return Err("user not found".to_owned());
+            };
+            let mut active: users::ActiveModel = existing.into();
+            active.status = Set(status_str.to_owned());
+            active.update(&connection).await.map_err(|error| error.to_string())?;
+            load_admin_graphql_user(&connection, user_id).await
         })
+        .map_err(async_graphql::Error::new)
     }
 
     async fn create_user(
@@ -1775,5 +1459,157 @@ fn create_llm_api_key_sqlite(
         key: generated_key,
         name: trimmed_name.to_owned(),
         scopes,
+    })
+}
+
+fn parse_scopes_json(raw: &str) -> Vec<String> {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
+async fn load_admin_graphql_user_info(
+    db: &impl ConnectionTrait,
+    user_id: i64,
+) -> Result<AdminGraphqlUserInfo, String> {
+    let user = users::Entity::find_by_id(user_id)
+        .filter(users::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<users::GraphqlProfile>()
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "user not found".to_owned())?;
+
+    let roles = roles::Entity::find()
+        .join(sea_orm::JoinType::InnerJoin, roles::Relation::UserRoles.def())
+        .filter(user_roles::Column::UserId.eq(user_id))
+        .filter(roles::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<roles::GraphqlRoleSummary>()
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|role| AdminGraphqlRoleInfo {
+            id: graphql_gid("role", role.id),
+            name: role.name,
+            scopes: parse_scopes_json(&role.scopes),
+        })
+        .collect::<Vec<_>>();
+
+    let memberships = user_projects::Entity::find()
+        .filter(user_projects::Column::UserId.eq(user_id))
+        .find_also_related(projects::Entity)
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut projects_out = Vec::new();
+    for (membership, project) in memberships {
+        let Some(project) = project else {
+            continue;
+        };
+        if project.deleted_at != 0 {
+            continue;
+        }
+        let project_roles = roles::Entity::find()
+            .join(sea_orm::JoinType::InnerJoin, roles::Relation::UserRoles.def())
+            .filter(user_roles::Column::UserId.eq(user_id))
+            .filter(roles::Column::ProjectId.eq(project.id))
+            .filter(roles::Column::DeletedAt.eq(0_i64))
+            .into_partial_model::<roles::GraphqlRoleSummary>()
+            .all(db)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|role| AdminGraphqlRoleInfo {
+                id: graphql_gid("role", role.id),
+                name: role.name,
+                scopes: parse_scopes_json(&role.scopes),
+            })
+            .collect::<Vec<_>>();
+
+        projects_out.push(AdminGraphqlUserProjectInfo {
+            project_id: graphql_gid("project", project.id),
+            is_owner: membership.is_owner,
+            scopes: parse_scopes_json(&membership.scopes),
+            roles: project_roles,
+        });
+    }
+
+    Ok(AdminGraphqlUserInfo {
+        id: graphql_gid("user", user.id),
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        is_owner: user.is_owner,
+        prefer_language: user.prefer_language,
+        avatar: user.avatar.filter(|value| !value.is_empty()),
+        scopes: parse_scopes_json(&user.scopes),
+        roles,
+        projects: projects_out,
+    })
+}
+
+async fn load_admin_graphql_roles(
+    db: &impl ConnectionTrait,
+    user_id: i64,
+) -> Result<Vec<AdminGraphqlRoleInfo>, String> {
+    roles::Entity::find()
+        .join(sea_orm::JoinType::InnerJoin, roles::Relation::UserRoles.def())
+        .filter(user_roles::Column::UserId.eq(user_id))
+        .filter(roles::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<roles::GraphqlRoleSummary>()
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|rows| {
+            rows.into_iter()
+                .map(|role| AdminGraphqlRoleInfo {
+                    id: graphql_gid("role", role.id),
+                    name: role.name,
+                    scopes: parse_scopes_json(&role.scopes),
+                })
+                .collect()
+        })
+}
+
+async fn load_admin_graphql_user(
+    db: &impl ConnectionTrait,
+    user_id: i64,
+) -> Result<AdminGraphqlUser, String> {
+    let user = users::Entity::find_by_id(user_id)
+        .filter(users::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<users::GraphqlUserListItem>()
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "user not found".to_owned())?;
+    let roles_vec = load_admin_graphql_roles(db, user_id).await?;
+    let roles = AdminGraphqlRoleConnection {
+        edges: roles_vec
+            .into_iter()
+            .map(|node| AdminGraphqlRoleEdge {
+                cursor: None,
+                node: Some(node),
+            })
+            .collect(),
+        page_info: AdminGraphqlPageInfo {
+            has_next_page: false,
+            has_previous_page: false,
+            start_cursor: None,
+            end_cursor: None,
+        },
+    };
+
+    Ok(AdminGraphqlUser {
+        id: graphql_gid("user", user.id),
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        email: user.email,
+        status: user.status,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        is_owner: user.is_owner,
+        prefer_language: user.prefer_language,
+        scopes: parse_scopes_json(&user.scopes),
+        roles,
     })
 }
