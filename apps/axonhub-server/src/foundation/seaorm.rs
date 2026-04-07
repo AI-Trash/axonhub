@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use axonhub_db_migration::{Migrator, MigratorTrait};
 use sea_orm::{
-    ConnectOptions, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, DbErr,
-    Statement, TransactionTrait,
+    ConnectOptions, Database, DatabaseBackend, DatabaseConnection, DbErr, TransactionTrait,
 };
 
 #[derive(Debug, Clone)]
@@ -198,17 +197,6 @@ fn normalize_sqlite_file_dsn(dsn: &str) -> String {
     } else {
         format!("sqlite://{path}?{}", params.join("&"))
     }
-}
-
-pub(crate) async fn query_scalar_string<C>(db: &C, backend: DatabaseBackend, sql: &str) -> Result<String, DbErr>
-where
-    C: ConnectionTrait,
-{
-    let row = db
-        .query_one(Statement::from_string(backend, sql.to_owned()))
-        .await?
-        .ok_or_else(|| DbErr::RecordNotFound(sql.to_owned()))?;
-    row.try_get_by_index(0)
 }
 
 pub(crate) async fn with_transaction<T, F, Fut>(

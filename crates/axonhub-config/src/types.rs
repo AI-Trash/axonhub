@@ -6,6 +6,7 @@ pub struct Config {
     pub log: LogConfig,
     pub server: ServerConfig,
     pub metrics: MetricsConfig,
+    pub traces: TracesConfig,
     pub gc: GcConfig,
     pub cache: CacheConfig,
     pub provider_quota: ProviderQuotaConfig,
@@ -227,6 +228,20 @@ pub struct MetricsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MetricsExporterConfig {
+    #[serde(rename = "type")]
+    pub exporter_type: String,
+    pub endpoint: String,
+    pub insecure: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TracesConfig {
+    pub enabled: bool,
+    pub exporter: TracesExporterConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TracesExporterConfig {
     #[serde(rename = "type")]
     pub exporter_type: String,
     pub endpoint: String,

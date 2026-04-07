@@ -5,13 +5,19 @@ use actix_web::dev::ServiceResponse;
 use actix_web::http::header;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
+use opentelemetry::trace::{SpanId, TracerProvider as _};
+use opentelemetry_sdk::trace::{SdkTracerProvider, SpanData, SpanExporter};
 use serde_json::json;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::convert::Infallible;
+use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use tokio::runtime::Builder as RuntimeBuilder;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Registry;
 
 fn disabled_test_cors() -> HttpCorsSettings {
     HttpCorsSettings::default()
@@ -160,6 +166,50 @@ struct TestHttpRequest {
     uri: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+}
+
+#[derive(Clone, Default)]
+struct RecordingSpanExporter {
+    spans: Arc<Mutex<Vec<SpanData>>>,
+}
+
+impl fmt::Debug for RecordingSpanExporter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RecordingSpanExporter").finish()
+    }
+}
+
+impl SpanExporter for RecordingSpanExporter {
+    async fn export(&self, batch: Vec<SpanData>) -> opentelemetry_sdk::error::OTelSdkResult {
+        self.spans.lock().unwrap().extend(batch);
+        Ok(())
+    }
+}
+
+fn with_recorded_spans<T>(f: impl FnOnce(Arc<Mutex<Vec<SpanData>>>) -> T) -> T {
+    let exporter = RecordingSpanExporter::default();
+    let spans = exporter.spans.clone();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter)
+        .build();
+    let tracer = provider.tracer("axonhub-http-tests");
+    let subscriber = Registry::default().with(tracing_opentelemetry::layer().with_tracer(tracer));
+
+    let result = tracing::subscriber::with_default(subscriber, || f(spans.clone()));
+    let _ = provider.force_flush();
+    let _ = provider.shutdown();
+    result
+}
+
+fn run_with_recorded_spans<T>(f: impl FnOnce(Arc<Mutex<Vec<SpanData>>>) -> T) -> T {
+    with_recorded_spans(f)
+}
+
+fn span_attributes(span: &SpanData) -> std::collections::BTreeMap<String, String> {
+    span.attributes
+        .iter()
+        .map(|kv| (kv.key.as_str().to_owned(), kv.value.to_string()))
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3685,6 +3735,103 @@ fn assert_go_duration_shape(value: &str) {
         assert_eq!(json["status"], "open");
         assert!(json["sessionId"].as_str().unwrap_or_default().starts_with("rtsess_"));
     }
+
+    #[test]
+    pub(crate) fn tracing_inbound_traceparent_links_span() {
+        run_with_recorded_spans(|spans| {
+            let runtime = RuntimeBuilder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(async {
+                let app = router(test_state_with_request_context(
+                    SystemBootstrapCapability::Available {
+                        system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+                    },
+                    false,
+                ).0);
+
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .uri("/v1/debug/context")
+                            .method(Method::GET)
+                            .header("X-API-Key", "api-key-123")
+                            .header(
+                                "traceparent",
+                                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+                            )
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::OK);
+            });
+
+            let http_span = spans
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|span| span.name.as_ref() == "http.request")
+                .cloned()
+                .expect("http request span");
+
+            assert!(http_span.parent_span_is_remote);
+            assert_eq!(http_span.parent_span_id, SpanId::from_hex("b7ad6b7169203331").unwrap());
+            let attrs = span_attributes(&http_span);
+            assert_eq!(attrs.get("trace.remote_parent").map(String::as_str), Some("true"));
+        });
+    }
+
+    #[test]
+    pub(crate) fn tracing_sensitive_fields_not_recorded() {
+        run_with_recorded_spans(|spans| {
+            let runtime = RuntimeBuilder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(async {
+                let app = router(test_state_with_request_context(
+                    SystemBootstrapCapability::Available {
+                        system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+                    },
+                    false,
+                ).0);
+
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .uri("/v1/debug/context")
+                            .method(Method::POST)
+                            .header("X-API-Key", "api-key-123")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::OK);
+            });
+
+            let http_span = spans
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|span| span.name.as_ref() == "http.request")
+                .cloned()
+                .expect("http request span");
+            let attributes = span_attributes(&http_span);
+
+            assert_eq!(attributes.get("auth.mode").map(String::as_str), Some("api_key"));
+            assert_eq!(attributes.get("auth.subject").map(String::as_str), Some("user_api_key"));
+            assert_eq!(attributes.get("project.bound").map(String::as_str), Some("true"));
+            assert!(!attributes.contains_key("thread.bound"));
+            assert!(!attributes.contains_key("trace.bound"));
+            assert!(!attributes.contains_key("request.id"));
+            assert!(!attributes.contains_key("trace.id"));
+            assert_ne!(attributes.get("thread.id").map(String::as_str), Some("thread-1"));
+            assert!(!attributes.contains_key("project.id"));
+            assert!(!attributes.contains_key("user.id"));
+            assert!(!attributes.contains_key("api_key.id"));
+        });
+    }
+
 
     #[tokio::test]
     async fn v1_realtime_session_routes_manage_lifecycle() {

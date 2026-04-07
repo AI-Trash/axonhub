@@ -63,6 +63,21 @@ impl Config {
             }
         }
 
+        if self.traces.enabled {
+            let exporter_type = self
+                .traces
+                .exporter
+                .exporter_type
+                .trim()
+                .to_ascii_lowercase();
+            if !matches!(exporter_type.as_str(), "stdout" | "otlpgrpc" | "otlphttp") {
+                errors.push(
+                    "traces.exporter.type must be one of: stdout, otlpgrpc, otlphttp when traces are enabled"
+                        .to_owned(),
+                );
+            }
+        }
+
         if self.server.cors.enabled && self.server.cors.allowed_origins.is_empty() {
             errors.push(
                 "server.cors.allowed_origins cannot be empty when CORS is enabled".to_owned(),
@@ -117,6 +132,20 @@ impl Config {
             {
                 "stdout" | "otlpgrpc" | "otlphttp" => {}
                 value => return Err(anyhow!("invalid metrics exporter type '{value}'")),
+            }
+        }
+
+        if self.traces.enabled {
+            match self
+                .traces
+                .exporter
+                .exporter_type
+                .trim()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "stdout" | "otlpgrpc" | "otlphttp" => {}
+                value => return Err(anyhow!("invalid traces exporter type '{value}'")),
             }
         }
 

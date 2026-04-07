@@ -35,9 +35,10 @@ pub(crate) async fn start_server() -> Result<()> {
         eprintln!("Failed to load config: {error}");
         process::exit(1);
     });
-    init_tracing(
+    let tracing_runtime = init_tracing(
         &loaded.config.log,
         &loaded.config.db,
+        &loaded.config.traces,
         &loaded.config.server.name,
     )?;
     let port: u16 = loaded
@@ -126,6 +127,8 @@ pub(crate) async fn start_server() -> Result<()> {
     if let Some(metrics_runtime) = metrics_runtime {
         metrics_runtime.shutdown()?;
     }
+
+    tracing_runtime.shutdown()?;
 
     server_result
 }

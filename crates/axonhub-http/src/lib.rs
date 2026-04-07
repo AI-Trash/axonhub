@@ -47,3 +47,15 @@ pub use state::{
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn tracing_inbound_traceparent_links_span() {
+    tests::tracing_inbound_traceparent_links_span();
+}
+
+#[cfg(test)]
+#[test]
+fn tracing_sensitive_fields_not_recorded() {
+    tests::tracing_sensitive_fields_not_recorded();
+}

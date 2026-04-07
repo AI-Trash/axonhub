@@ -19,3 +19,9 @@ mod parity_oracle;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tracing::{
+    trace_exporter_invalid_type_fail_open_inner,
+    trace_exporter_stdout_emits_http_request_span_inner,
+};

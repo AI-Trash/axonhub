@@ -9,6 +9,7 @@ use async_graphql::{
     Variables,
 };
 use axonhub_db_entity::{projects, roles, user_projects, user_roles, users};
+use axonhub_db_entity::models;
 use axonhub_http::{
     AdminGraphqlPort, AuthApiKeyContext, AuthUserContext, GraphqlExecutionResult,
     GraphqlRequestPayload, OpenApiGraphqlPort, TraceContext,
@@ -18,6 +19,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
     QueryOrder,
 };
+use sea_orm::{QuerySelect, RelationTrait};
 
 use super::{
     admin::{parse_graphql_resource_id, StoredProxyPreset},

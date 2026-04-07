@@ -34,3 +34,6 @@ pub(crate) mod schema_ownership;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::openai_v1_runtime_contract_preserved_inner;

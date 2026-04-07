@@ -234,6 +234,22 @@ const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
         description: "Disable TLS verification for metrics exporter",
     },
     SupportedConfigKey {
+        key: "traces.enabled",
+        description: "Enable trace export",
+    },
+    SupportedConfigKey {
+        key: "traces.exporter.type",
+        description: "Trace exporter type (stdout, otlpgrpc, otlphttp)",
+    },
+    SupportedConfigKey {
+        key: "traces.exporter.endpoint",
+        description: "Trace exporter endpoint",
+    },
+    SupportedConfigKey {
+        key: "traces.exporter.insecure",
+        description: "Disable TLS verification for trace exporter",
+    },
+    SupportedConfigKey {
         key: "gc.cron",
         description: "GC cron schedule",
     },

@@ -247,6 +247,46 @@ db:
         loaded.get("cache.cleanup_interval"),
         Some(serde_json::json!("55m"))
     );
+    assert!(!loaded.config.traces.enabled);
+}
+
+#[test]
+fn load_exposes_traces_config_surface_from_yaml_and_env() {
+    let _lock = test_guard();
+    let fixture = TestFixture::new("traces-config-surface");
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+traces:
+  enabled: false
+  exporter:
+    type: "stdout"
+    endpoint: "http://file.example.test:4318/v1/traces"
+    insecure: false
+"#,
+    );
+    fixture.set_env("AXONHUB_TRACES_ENABLED", "true");
+    fixture.set_env("AXONHUB_TRACES_EXPORTER_TYPE", "otlphttp");
+    fixture.set_env(
+        "AXONHUB_TRACES_EXPORTER_ENDPOINT",
+        "http://env.example.test:4318/v1/traces",
+    );
+    fixture.set_env("AXONHUB_TRACES_EXPORTER_INSECURE", "true");
+
+    let loaded = LoadedConfig::load().unwrap();
+
+    assert!(loaded.config.traces.enabled);
+    assert_eq!(loaded.config.traces.exporter.exporter_type, "otlphttp");
+    assert_eq!(
+        loaded.config.traces.exporter.endpoint,
+        "http://env.example.test:4318/v1/traces"
+    );
+    assert!(loaded.config.traces.exporter.insecure);
+    assert_eq!(loaded.get("traces.enabled"), Some(serde_json::json!(true)));
+    assert_eq!(
+        loaded.get("traces.exporter.type"),
+        Some(serde_json::json!("otlphttp"))
+    );
 }
 
 #[test]
@@ -360,6 +400,11 @@ fn preview_parse_get_and_validation_keep_current_contract() {
         config.get("server.trace.request_header"),
         Some(serde_json::json!("AH-Request-Id"))
     );
+    assert_eq!(config.get("traces.enabled"), Some(serde_json::json!(false)));
+    assert_eq!(
+        config.get("traces.exporter.type"),
+        Some(serde_json::json!(""))
+    );
     assert_eq!(
         config.get("cache.default_expiration"),
         Some(serde_json::json!("5m"))
@@ -381,6 +426,8 @@ fn preview_parse_get_and_validation_keep_current_contract() {
     invalid.cache.mode = "disk".to_owned();
     invalid.metrics.enabled = true;
     invalid.metrics.exporter.exporter_type = "bogus".to_owned();
+    invalid.traces.enabled = true;
+    invalid.traces.exporter.exporter_type = "bogus".to_owned();
     invalid.server.cors.enabled = true;
     invalid.server.cors.allowed_origins.clear();
     invalid.server.cors.allowed_methods = vec!["INV@LID".to_owned()];
@@ -398,6 +445,7 @@ fn preview_parse_get_and_validation_keep_current_contract() {
              "log.output must be one of: stdio, file".to_owned(),
              "cache.mode must be one of: memory, redis, two-level".to_owned(),
              "metrics.exporter.type must be one of: stdout, otlpgrpc, otlphttp when metrics are enabled".to_owned(),
+             "traces.exporter.type must be one of: stdout, otlpgrpc, otlphttp when traces are enabled".to_owned(),
              "server.cors.allowed_origins cannot be empty when CORS is enabled".to_owned(),
              "server.cors.allowed_methods contains invalid method 'INV@LID'".to_owned(),
              "server.cors.allowed_headers contains invalid header name 'Invalid@Header'".to_owned(),
@@ -474,6 +522,12 @@ fn supported_key_tables_document_current_config_surface() {
     assert!(supported_config_keys()
         .iter()
         .any(|entry| entry.key == "metrics.exporter.type"));
+    assert!(supported_config_keys()
+        .iter()
+        .any(|entry| entry.key == "traces.enabled"));
+    assert!(supported_config_keys()
+        .iter()
+        .any(|entry| entry.key == "traces.exporter.type"));
     assert!(supported_config_keys()
         .iter()
         .any(|entry| entry.key == "provider_edge.codex.authorize_url"));
@@ -725,6 +779,14 @@ fn ensure_loadable_rejects_invalid_supported_value_shapes() {
         config.ensure_loadable().unwrap_err().to_string(),
         "invalid metrics exporter type 'bogus'"
     );
+
+    let mut config = Config::default();
+    config.traces.enabled = true;
+    config.traces.exporter.exporter_type = "bogus".to_owned();
+    assert_eq!(
+        config.ensure_loadable().unwrap_err().to_string(),
+        "invalid traces exporter type 'bogus'"
+    );
 }
 
 #[test]
@@ -791,6 +853,10 @@ metrics:
   enabled: true
   exporter:
     type: "bogus"
+traces:
+  enabled: true
+  exporter:
+    type: "bogus"
 "#,
     );
 
@@ -804,14 +870,15 @@ metrics:
     assert_eq!(loaded.config.log.output, "stderr");
     assert_eq!(loaded.config.cache.mode, "disk");
     assert_eq!(loaded.config.metrics.exporter.exporter_type, "bogus");
+    assert_eq!(loaded.config.traces.exporter.exporter_type, "bogus");
     assert_eq!(
         loaded.config.validation_errors(),
         vec![
             "log.encoding must be one of: json, console".to_owned(),
             "log.output must be one of: stdio, file".to_owned(),
             "cache.mode must be one of: memory, redis, two-level".to_owned(),
-            "metrics.exporter.type must be one of: stdout, otlpgrpc, otlphttp when metrics are enabled"
-                .to_owned(),
+            "metrics.exporter.type must be one of: stdout, otlpgrpc, otlphttp when metrics are enabled".to_owned(),
+            "traces.exporter.type must be one of: stdout, otlpgrpc, otlphttp when traces are enabled".to_owned(),
         ]
     );
 }

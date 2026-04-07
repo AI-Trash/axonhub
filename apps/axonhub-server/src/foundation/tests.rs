@@ -4839,6 +4839,12 @@ struct TestHttpRequest {
         std::fs::remove_file(db_path).ok();
     }
 
+    pub(crate) fn openai_v1_runtime_contract_preserved_inner() {
+        openai_v1_fails_over_to_backup_channel_when_primary_fails();
+        openai_v1_reuses_same_channel_for_repeated_trace_when_both_healthy();
+        openai_v1_does_not_pin_later_healthy_non_affinity_requests_to_prior_failover_backup();
+    }
+
     #[tokio::test]
     async fn openai_v1_fails_over_to_backup_channel_when_primary_fails() {
         let db_path = temp_sqlite_path("task8-openai-failover");

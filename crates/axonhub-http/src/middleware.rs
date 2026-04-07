@@ -10,12 +10,16 @@ use actix_web::body::{BoxBody, MessageBody};
 use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
 use actix_web::http::StatusCode;
 use actix_web::{Error, FromRequest, HttpMessage, HttpResponse, web};
+use opentelemetry::propagation::{Extractor, TextMapPropagator};
+use opentelemetry::trace::TraceContextExt;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use std::future::{Future, Ready as StdReady, ready};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 use std::time::Instant;
 use tracing::{field, Instrument, Level, Span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 pub(crate) fn request_context() -> RequestContextMiddleware {
     RequestContextMiddleware
@@ -49,41 +53,62 @@ fn request_span(req: &ServiceRequest) -> Span {
         http.route = %req.match_pattern().unwrap_or_else(|| req.path().to_owned()),
         http.target = %req.uri(),
         http.status_code = field::Empty,
-        request.id = field::Empty,
-        trace.id = field::Empty,
-        thread.id = field::Empty,
-        project.id = field::Empty,
         auth.mode = field::Empty,
-        user.id = field::Empty,
-        api_key.id = field::Empty,
+        auth.subject = field::Empty,
+        request.bound = field::Empty,
+        trace.bound = field::Empty,
+        thread.bound = field::Empty,
+        project.bound = field::Empty,
+        trace.remote_parent = field::Empty,
     )
 }
 
 fn record_request_context(span: &Span, context: &RequestContextState) {
-    if let Some(request_id) = context.request_id.as_deref() {
-        span.record("request.id", request_id);
+    if context.request_id.is_some() {
+        span.record("request.bound", true);
     }
-    if let Some(project) = context.project.as_ref() {
-        span.record("project.id", project.id);
+    if context.project.is_some() {
+        span.record("project.bound", true);
     }
-    if let Some(thread) = context.thread.as_ref() {
-        span.record("thread.id", thread.thread_id.as_str());
+    if context.thread.is_some() {
+        span.record("thread.bound", true);
     }
-    if let Some(trace) = context.trace.as_ref() {
-        span.record("trace.id", trace.trace_id.as_str());
+    if context.trace.is_some() {
+        span.record("trace.bound", true);
     }
     if let Some(auth) = context.auth.as_ref() {
         match auth {
-            RequestAuthContext::Admin(user) => {
+            RequestAuthContext::Admin(_) => {
                 span.record("auth.mode", "jwt");
-                span.record("user.id", user.id);
+                span.record("auth.subject", "admin");
             }
             RequestAuthContext::ApiKey(key) => {
-                span.record("auth.mode", "api_key");
-                span.record("api_key.id", key.id);
-                span.record("project.id", key.project.id);
+                span.record(
+                    "auth.mode",
+                    match key.key_type {
+                        crate::models::ApiKeyType::NoAuth => "noauth",
+                        _ => "api_key",
+                    },
+                );
+                span.record(
+                    "auth.subject",
+                    match key.key_type {
+                        crate::models::ApiKeyType::User => "user_api_key",
+                        crate::models::ApiKeyType::ServiceAccount => "service_api_key",
+                        crate::models::ApiKeyType::NoAuth => "system_noauth",
+                    },
+                );
             }
         }
+    }
+}
+
+fn apply_inbound_trace_parent(span: &Span, headers: &TransportHeaders) {
+    let propagator = TraceContextPropagator::new();
+    let parent = propagator.extract(headers);
+    if parent.span().span_context().is_valid() {
+        span.record("trace.remote_parent", true);
+        let _ = span.set_parent(parent);
     }
 }
 
@@ -526,6 +551,8 @@ where
         let service = Rc::clone(&self.service);
         let http_metrics = self.http_metrics.clone();
         let span = request_span(&req);
+        let headers = transport_headers(req.headers());
+        apply_inbound_trace_parent(&span, &headers);
         let request_span = span.clone();
         Box::pin(
             async move {
@@ -565,6 +592,16 @@ where
             }
             .instrument(span),
         )
+    }
+}
+
+impl Extractor for TransportHeaders {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.get(key)
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        Vec::new()
     }
 }
 

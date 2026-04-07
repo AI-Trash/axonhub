@@ -11,10 +11,13 @@ use axonhub_http::{
 };
 use getrandom::getrandom;
 use hex::encode as hex_encode;
+use opentelemetry::propagation::{Injector, TextMapPropagator};
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::{
     admin::provider_quota_type_for_channel,
@@ -1817,7 +1820,24 @@ pub(crate) fn build_upstream_headers(
         }
     }
 
+    let propagator = TraceContextPropagator::new();
+    let current_context = tracing::Span::current().context();
+    propagator.inject_context(&current_context, &mut HeaderInjector(&mut headers));
+
     Ok(headers)
+}
+
+struct HeaderInjector<'a>(&'a mut HeaderMap);
+
+impl Injector for HeaderInjector<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(key.as_bytes()),
+            HeaderValue::from_str(value.as_str()),
+        ) {
+            self.0.insert(name, value);
+        }
+    }
 }
 
 pub(crate) fn apply_upstream_request_body(
@@ -3351,4 +3371,47 @@ pub(crate) fn extract_channel_api_key(credentials_json: &str) -> String {
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opentelemetry::trace::TracerProvider as _;
+    use std::sync::Mutex;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::Registry;
+
+    #[test]
+    pub(crate) fn build_upstream_headers_injects_w3c_trace_headers() {
+        let _guard = OPENAI_TRACE_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let provider = SdkTracerProvider::builder().build();
+        let tracer = provider.tracer("openai-v1-tests");
+        let subscriber = Registry::default().with(tracing_opentelemetry::layer().with_tracer(tracer));
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::span!(tracing::Level::INFO, "upstream-request");
+            let _enter = span.enter();
+
+            let headers = build_upstream_headers(&HashMap::new(), "secret-key").expect("headers");
+
+            assert!(headers.contains_key("traceparent"));
+            assert!(headers
+                .get("traceparent")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.starts_with("00-")));
+        });
+
+        let _ = provider.force_flush();
+        let _ = provider.shutdown();
+    }
+}
+
+#[cfg(test)]
+static OPENAI_TRACE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+#[test]
+fn build_upstream_headers_injects_w3c_trace_headers() {
+    tests::build_upstream_headers_injects_w3c_trace_headers();
 }

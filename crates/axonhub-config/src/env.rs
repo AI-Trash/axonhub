@@ -375,6 +375,26 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
         kind: EnvValueKind::Bool,
     },
     EnvOverride {
+        env: "AXONHUB_TRACES_ENABLED",
+        path: &["traces", "enabled"],
+        kind: EnvValueKind::Bool,
+    },
+    EnvOverride {
+        env: "AXONHUB_TRACES_EXPORTER_TYPE",
+        path: &["traces", "exporter", "type"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_TRACES_EXPORTER_ENDPOINT",
+        path: &["traces", "exporter", "endpoint"],
+        kind: EnvValueKind::String,
+    },
+    EnvOverride {
+        env: "AXONHUB_TRACES_EXPORTER_INSECURE",
+        path: &["traces", "exporter", "insecure"],
+        kind: EnvValueKind::Bool,
+    },
+    EnvOverride {
         env: "AXONHUB_GC_CRON",
         path: &["gc", "cron"],
         kind: EnvValueKind::String,
