@@ -125,9 +125,9 @@ fn sea_value_to_rusqlite(value: &sea_orm::Value) -> SqlResult<rusqlite::types::V
             .map_err(|error| SqlError::ToSqlConversionFailure(Box::new(error))),
         Value::Float(Some(inner)) => Ok(f64::from(*inner).into()),
         Value::Double(Some(inner)) => Ok((*inner).into()),
-        Value::String(Some(inner)) => Ok((**inner).clone().into()),
+        Value::String(Some(inner)) => Ok(inner.to_string().into()),
         Value::Char(Some(inner)) => Ok(inner.to_string().into()),
-        Value::Bytes(Some(inner)) => Ok((**inner).clone().into()),
+        Value::Bytes(Some(inner)) => Ok(inner.to_vec().into()),
         Value::Bool(None)
         | Value::TinyInt(None)
         | Value::SmallInt(None)

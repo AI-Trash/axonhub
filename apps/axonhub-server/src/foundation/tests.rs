@@ -43,7 +43,7 @@ use actix_web::test as actix_test;
 use pg_embed::pg_enums::PgAuthMethod;
 use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
 use pg_embed::postgres::{PgEmbed, PgSettings};
-use postgres::{Client as PostgresClient, NoTls};
+use postgres::{Client as PostgresClient, NoTls, Row};
 use rusqlite::{params, Connection};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -530,6 +530,10 @@ struct TestHttpRequest {
                 ],
             )
             .unwrap();
+    }
+
+    fn postgres_query_one(connection: &mut PostgresClient, sql: &str) -> Result<Row, String> {
+        connection.query_one(sql, &[]).map_err(|error| error.to_string())
     }
 
     fn sqlite_task4_identity_and_request_context_services(
@@ -3236,31 +3240,33 @@ struct TestHttpRequest {
             .unwrap();
         assert_eq!(message, "Restore completed successfully");
 
-        let channel_count: i64 = connection
-            .query_one("SELECT COUNT(*) FROM channels WHERE name = 'Imported Channel'", &[])
-            .unwrap()
-            .get(0);
-        let model_count: i64 = connection
-            .query_one(
-                "SELECT COUNT(*) FROM models WHERE model_id = 'gpt-4o' AND developer = 'openai'",
-                &[],
-            )
-            .unwrap()
-            .get(0);
-        let api_key_count: i64 = connection
-            .query_one("SELECT COUNT(*) FROM api_keys WHERE key = 'sk-task6'", &[])
-            .unwrap()
-            .get(0);
-        let price_count: i64 = connection
-            .query_one("SELECT COUNT(*) FROM channel_model_prices WHERE reference_id = 'ref-task6'", &[])
-            .unwrap()
-            .get(0);
-        let run_row = connection
-            .query_one(
-                "SELECT status, error_message FROM operational_runs WHERE operation_type = 'restore' ORDER BY id DESC LIMIT 1",
-                &[],
-            )
-            .unwrap();
+        let channel_count: i64 = postgres_query_one(
+            &mut connection,
+            "SELECT COUNT(*) FROM channels WHERE name = 'Imported Channel'",
+        )
+        .unwrap()
+        .get(0);
+        let model_count: i64 = postgres_query_one(
+            &mut connection,
+            "SELECT COUNT(*) FROM models WHERE model_id = 'gpt-4o' AND developer = 'openai'",
+        )
+        .unwrap()
+        .get(0);
+        let api_key_count: i64 =
+            postgres_query_one(&mut connection, "SELECT COUNT(*) FROM api_keys WHERE key = 'sk-task6'")
+                .unwrap()
+                .get(0);
+        let price_count: i64 = postgres_query_one(
+            &mut connection,
+            "SELECT COUNT(*) FROM channel_model_prices WHERE reference_id = 'ref-task6'",
+        )
+        .unwrap()
+        .get(0);
+        let run_row = postgres_query_one(
+            &mut connection,
+            "SELECT status, error_message FROM operational_runs WHERE operation_type = 'restore' ORDER BY id DESC LIMIT 1",
+        )
+        .unwrap();
         let run_status: String = run_row.get(0);
         let run_error: Option<String> = run_row.get(1);
         assert_eq!(channel_count, 1);
@@ -3323,12 +3329,11 @@ struct TestHttpRequest {
             .unwrap_err();
         assert!(error.contains("backup version mismatch"));
 
-        let run_row = connection
-            .query_one(
-                "SELECT status, COALESCE(error_message, '') FROM operational_runs WHERE operation_type = 'restore' ORDER BY id DESC LIMIT 1",
-                &[],
-            )
-            .unwrap();
+        let run_row = postgres_query_one(
+            &mut connection,
+            "SELECT status, COALESCE(error_message, '') FROM operational_runs WHERE operation_type = 'restore' ORDER BY id DESC LIMIT 1",
+        )
+        .unwrap();
         let run_status: String = run_row.get(0);
         let run_error: String = run_row.get(1);
         assert_eq!(run_status, "failed");

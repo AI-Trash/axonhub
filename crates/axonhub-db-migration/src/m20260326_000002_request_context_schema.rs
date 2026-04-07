@@ -14,6 +14,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => threads_created_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => threads_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => threads_created_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         threads_created_at
             .not_null()
@@ -24,6 +25,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => threads_updated_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => threads_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => threads_updated_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         threads_updated_at
             .not_null()
@@ -89,6 +91,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => traces_created_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => traces_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => traces_created_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         traces_created_at
             .not_null()
@@ -99,6 +102,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => traces_updated_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => traces_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => traces_updated_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         traces_updated_at
             .not_null()

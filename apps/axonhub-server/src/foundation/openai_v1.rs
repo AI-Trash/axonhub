@@ -9,7 +9,7 @@ use axonhub_http::{
     OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port, OpenAiV1Route,
     RealtimeSessionCreateRequest, RealtimeSessionPatchRequest, RealtimeSessionRecord,
 };
-use getrandom::getrandom;
+use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
 use opentelemetry::propagation::{Injector, TextMapPropagator};
 use opentelemetry_sdk::propagation::TraceContextPropagator;

@@ -33,10 +33,10 @@ use super::{
     },
     ports::AdminRepository,
     shared::{
-        bool_to_sql, current_rfc3339_timestamp, current_unix_timestamp, SqliteConnectionFactory,
-        AUTO_BACKUP_PREFIX, AUTO_BACKUP_SUFFIX, BACKUP_VERSION, SYSTEM_KEY_AUTO_BACKUP_SETTINGS,
-        SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_PROXY_PRESETS, SYSTEM_KEY_STORAGE_POLICY,
-        SYSTEM_KEY_USER_AGENT_PASS_THROUGH,
+        bool_to_sql, current_rfc3339_timestamp, current_unix_timestamp, format_unix_timestamp,
+        SqliteConnectionFactory, AUTO_BACKUP_PREFIX, AUTO_BACKUP_SUFFIX, BACKUP_VERSION,
+        SYSTEM_KEY_AUTO_BACKUP_SETTINGS, SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_PROXY_PRESETS,
+        SYSTEM_KEY_STORAGE_POLICY, SYSTEM_KEY_USER_AGENT_PASS_THROUGH,
     },
     sqlite_support::SqliteFoundation,
     system::{ensure_all_foundation_tables, ensure_operational_tables, SystemSettingsStore},
@@ -173,9 +173,35 @@ impl OperationalStore {
                     provider_type: row.get(2)?,
                     status: row.get(3)?,
                     quota_data_json: row.get(4)?,
-                    next_reset_at: parse_optional_i64_column(row, 5)?,
+                    next_reset_at: match row.get_ref(5)? {
+                        rusqlite::types::ValueRef::Null => None,
+                        rusqlite::types::ValueRef::Integer(value) => Some(value),
+                        rusqlite::types::ValueRef::Text(value) => Some(parse_timestamp_or_unix_sql(
+                            std::str::from_utf8(value).map_err(|error| {
+                                SqlError::FromSqlConversionFailure(5, SqlType::Text, Box::new(error))
+                            })?,
+                            5,
+                        )?),
+                        _ => {
+                            return Err(SqlError::InvalidColumnType(5, "column 5".to_owned(), SqlType::Text))
+                        }
+                    },
                     ready: row.get::<_, i64>(6)? != 0,
-                    next_check_at: parse_required_i64_column(row, 7)?,
+                    next_check_at: match row.get_ref(7)? {
+                        rusqlite::types::ValueRef::Integer(value) => value,
+                        rusqlite::types::ValueRef::Text(value) => parse_timestamp_or_unix_sql(
+                            std::str::from_utf8(value).map_err(|error| {
+                                SqlError::FromSqlConversionFailure(7, SqlType::Text, Box::new(error))
+                            })?,
+                            7,
+                        )?,
+                        rusqlite::types::ValueRef::Null => {
+                            return Err(SqlError::InvalidColumnType(7, "column 7".to_owned(), SqlType::Null))
+                        }
+                        _ => {
+                            return Err(SqlError::InvalidColumnType(7, "column 7".to_owned(), SqlType::Text))
+                        }
+                    },
                 })
             },
         )?;
@@ -243,6 +269,15 @@ fn parse_required_i64_column(row: &rusqlite::Row<'_>, column_index: usize) -> Sq
     })
 }
 
+fn parse_timestamp_or_unix_sql(value: &str, column_index: usize) -> SqlResult<i64> {
+    if let Ok(parsed) = value.parse::<i64>() {
+        return Ok(parsed);
+    }
+    humantime::parse_rfc3339_weak(value)
+        .map(|time| time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
+        .map_err(|error| SqlError::FromSqlConversionFailure(column_index, SqlType::Text, Box::new(error)))
+}
+
 fn rusqlite_values(statement: &sea_orm::Statement) -> SqlResult<Vec<rusqlite::types::Value>> {
     statement
         .values
@@ -275,9 +310,9 @@ fn sea_value_to_rusqlite(value: &sea_orm::Value) -> SqlResult<rusqlite::types::V
             .map_err(|error| SqlError::ToSqlConversionFailure(Box::new(error))),
         Value::Float(Some(inner)) => Ok(f64::from(*inner).into()),
         Value::Double(Some(inner)) => Ok((*inner).into()),
-        Value::String(Some(inner)) => Ok((**inner).clone().into()),
+        Value::String(Some(inner)) => Ok(inner.to_string().into()),
         Value::Char(Some(inner)) => Ok(inner.to_string().into()),
-        Value::Bytes(Some(inner)) => Ok((**inner).clone().into()),
+        Value::Bytes(Some(inner)) => Ok(inner.to_vec().into()),
         Value::Bool(None)
         | Value::TinyInt(None)
         | Value::SmallInt(None)
@@ -969,14 +1004,18 @@ fn json_setting_decode_error(error: serde_json::Error) -> SqlError {
 }
 
 fn quota_check_is_due(connection: &Connection, channel_id: i64, now: i64) -> SqlResult<bool> {
-    let next_check_at: Option<i64> = connection
+    let next_check_at: Option<String> = connection
         .query_row(
             "SELECT next_check_at FROM provider_quota_statuses WHERE channel_id = ?1 LIMIT 1",
             [channel_id],
             |row| row.get(0),
         )
         .optional()?;
-    Ok(next_check_at.is_none_or(|value| value <= now))
+    Ok(next_check_at
+        .as_deref()
+        .map(|value| parse_timestamp_or_unix_sql(value, 0))
+        .transpose()?
+        .is_none_or(|value| value <= now))
 }
 
 fn upsert_provider_quota_status(
@@ -989,6 +1028,8 @@ fn upsert_provider_quota_status(
     next_check_at: i64,
     quota_data_json: &str,
 ) -> SqlResult<()> {
+    let next_reset_at = next_reset_at.map(format_unix_timestamp);
+    let next_check_at = format_unix_timestamp(next_check_at);
     connection.execute(
         "INSERT INTO provider_quota_statuses (channel_id, provider_type, status, quota_data, next_reset_at, ready, next_check_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)

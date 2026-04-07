@@ -12,7 +12,7 @@ use std::env;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
-use getrandom::getrandom;
+use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
 use super::shared::{
     current_unix_timestamp, format_unix_timestamp,

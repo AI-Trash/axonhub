@@ -11,7 +11,8 @@ use serde_json::Value;
 use sea_orm::ActiveValue::Set;
 use sea_orm::sea_query::{Alias, Expr, Func, SimpleExpr};
 use sea_orm::{
-    ConnectionTrait, DatabaseBackend, PaginatorTrait, QueryResult, QuerySelect, QueryTrait,
+    ConnectionTrait, DatabaseBackend, ExprTrait, PaginatorTrait, QueryResult, QuerySelect,
+    QueryTrait,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
@@ -864,7 +865,7 @@ async fn query_usage_request_count_seaorm(
     end: Option<&str>,
 ) -> Result<i64, OpenAiV1Error> {
     let row = db
-        .query_one(
+        .query_one_raw(
             usage_logs::Entity::find()
                 .select_only()
                 .expr(Expr::cust("COUNT(*)"))
@@ -893,17 +894,11 @@ async fn query_usage_aggregate_seaorm(
     end: Option<&str>,
 ) -> Result<QuotaUsageAggregate, OpenAiV1Error> {
     let row = db
-        .query_one(
+        .query_one_raw(
             usage_logs::Entity::find()
                 .select_only()
-                .expr(Func::coalesce([
-                    Func::sum(Expr::col(usage_logs::Column::TotalTokens)).into(),
-                    Expr::value(0_i64).into(),
-                ]))
-                .expr(Func::coalesce([
-                    Func::sum(Expr::col(usage_logs::Column::TotalCost)).into(),
-                    Expr::value(0_f64).into(),
-                ]))
+                .expr(Expr::cust("COALESCE(SUM(total_tokens), 0)"))
+                .expr(Expr::cust("COALESCE(SUM(total_cost), 0)"))
                 .filter(usage_logs::Column::ApiKeyId.eq(api_key_id))
                 .apply_if(start, |query, start| {
                     query.filter(Expr::expr(usage_created_at_expr(backend)).gte(usage_window_bound_expr(backend, start)))
@@ -930,6 +925,7 @@ fn usage_created_at_expr(backend: DatabaseBackend) -> SimpleExpr {
             .arg(Expr::col(usage_logs::Column::CreatedAt))
             .into(),
         DatabaseBackend::Postgres | DatabaseBackend::MySql => Expr::col(usage_logs::Column::CreatedAt).into(),
+        _ => unreachable!("unsupported database backend: {:?}", backend),
     }
 }
 
@@ -940,6 +936,7 @@ fn usage_window_bound_expr(backend: DatabaseBackend, bound: &str) -> SimpleExpr 
             .into(),
         DatabaseBackend::Postgres => Expr::value(bound.to_owned()).cast_as("TIMESTAMPTZ"),
         DatabaseBackend::MySql => Expr::value(bound.to_owned()).cast_as("DATETIME"),
+        _ => unreachable!("unsupported database backend: {:?}", backend),
     }
 }
 

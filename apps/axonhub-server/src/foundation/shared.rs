@@ -188,8 +188,12 @@ CREATE TABLE IF NOT EXISTS channels (
     name TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'enabled',
     credentials TEXT NOT NULL DEFAULT '{}',
+    disabled_api_keys TEXT NOT NULL DEFAULT '[]',
     supported_models TEXT NOT NULL DEFAULT '[]',
+    manual_models TEXT NOT NULL DEFAULT '[]',
     auto_sync_supported_models INTEGER NOT NULL DEFAULT 0,
+    auto_sync_model_pattern TEXT NOT NULL DEFAULT '',
+    policies TEXT NOT NULL DEFAULT '{\"stream\":\"unlimited\"}',
     default_test_model TEXT NOT NULL DEFAULT '',
     settings TEXT NOT NULL DEFAULT '{}',
     tags TEXT NOT NULL DEFAULT '[]',
@@ -378,13 +382,14 @@ CREATE TABLE IF NOT EXISTS provider_quota_statuses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at INTEGER NOT NULL DEFAULT 0,
     channel_id INTEGER NOT NULL UNIQUE,
     provider_type TEXT NOT NULL,
     status TEXT NOT NULL,
     quota_data TEXT NOT NULL DEFAULT '{}',
-    next_reset_at INTEGER,
+    next_reset_at TEXT,
     ready INTEGER NOT NULL DEFAULT 0,
-    next_check_at INTEGER NOT NULL DEFAULT 0
+    next_check_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 ";
 

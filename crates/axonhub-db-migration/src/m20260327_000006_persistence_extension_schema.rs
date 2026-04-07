@@ -292,7 +292,9 @@ impl MigrationTrait for Migration {
             .default(Expr::current_timestamp());
         let mut channel_model_price_versions_effective_start_at =
             timestamp_column(backend, ChannelModelPriceVersions::EffectiveStartAt, false);
-        channel_model_price_versions_effective_start_at.not_null();
+        channel_model_price_versions_effective_start_at
+            .not_null()
+            .default(Expr::current_timestamp());
         let mut channel_model_price_versions_effective_end_at =
             timestamp_column(backend, ChannelModelPriceVersions::EffectiveEndAt, false);
         channel_model_price_versions_effective_end_at.null();
@@ -541,7 +543,7 @@ fn timestamp_column(backend: DatabaseBackend, iden: impl IntoIden, on_update: bo
             column.custom(Alias::new("TEXT"));
         }
         DatabaseBackend::Postgres => {
-            column.timestamp_with_time_zone();
+            column.custom(Alias::new("TEXT"));
         }
         DatabaseBackend::MySql => {
             column.timestamp();
@@ -549,6 +551,7 @@ fn timestamp_column(backend: DatabaseBackend, iden: impl IntoIden, on_update: bo
                 column.extra("ON UPDATE CURRENT_TIMESTAMP");
             }
         }
+        _ => unreachable!("unsupported database backend: {:?}", backend),
     };
     column
 }

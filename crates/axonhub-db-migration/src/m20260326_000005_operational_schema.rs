@@ -82,6 +82,7 @@ impl MigrationTrait for Migration {
                 provider_quota_statuses_created_at.timestamp_with_time_zone()
             }
             DatabaseBackend::MySql => provider_quota_statuses_created_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         provider_quota_statuses_created_at
             .not_null()
@@ -96,6 +97,7 @@ impl MigrationTrait for Migration {
                 provider_quota_statuses_updated_at.timestamp_with_time_zone()
             }
             DatabaseBackend::MySql => provider_quota_statuses_updated_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         provider_quota_statuses_updated_at
             .not_null()
@@ -114,6 +116,7 @@ impl MigrationTrait for Migration {
                 provider_quota_statuses_next_reset_at.timestamp_with_time_zone()
             }
             DatabaseBackend::MySql => provider_quota_statuses_next_reset_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         provider_quota_statuses_next_reset_at.null();
 
@@ -127,6 +130,7 @@ impl MigrationTrait for Migration {
                 provider_quota_statuses_next_check_at.timestamp_with_time_zone()
             }
             DatabaseBackend::MySql => provider_quota_statuses_next_check_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         provider_quota_statuses_next_check_at.not_null();
 

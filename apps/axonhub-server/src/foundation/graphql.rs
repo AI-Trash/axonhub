@@ -7,7 +7,7 @@ use axonhub_http::{
     AdminGraphqlPort, AuthApiKeyContext, AuthUserContext, GraphqlExecutionResult,
     GraphqlRequestPayload, OpenApiGraphqlPort, ProjectContext, TraceContext,
 };
-use getrandom::getrandom;
+use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,

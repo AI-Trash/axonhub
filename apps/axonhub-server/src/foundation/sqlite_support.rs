@@ -3,7 +3,7 @@ use axonhub_http::{
 };
 use axonhub_db_entity::{api_keys, data_storages, projects, roles, systems, user_projects, users};
 use bcrypt::{hash, verify, DEFAULT_COST};
-use getrandom::getrandom;
+use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
 use rusqlite::{
     params, Connection as SqlConnection, Error as SqlError, OpenFlags, OptionalExtension,

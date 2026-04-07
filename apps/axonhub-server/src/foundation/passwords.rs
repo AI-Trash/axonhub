@@ -1,5 +1,5 @@
 use bcrypt::{hash, verify, DEFAULT_COST};
-use getrandom::getrandom;
+use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
 
 pub(crate) fn hash_password(password: &str) -> Result<String, String> {

@@ -479,7 +479,7 @@ impl SeaOrmOperationalService {
 
                 if vacuum_enabled {
                     connection
-                        .execute(Statement::from_string(connection.get_database_backend(), "VACUUM".to_owned()))
+                        .execute_raw(Statement::from_string(connection.get_database_backend(), "VACUUM".to_owned()))
                         .await
                         .map_err(|error| error.to_string())?;
                     summary.vacuum_ran = true;
@@ -1140,7 +1140,7 @@ async fn restore_backup_into_transaction(
                     for version in active_versions {
                         let mut active: channel_model_price_versions::ActiveModel = version.into();
                         active.status = Set("archived".to_owned());
-                        active.effective_end_at = Set(Some(current_rfc3339_timestamp()));
+                        active.effective_end_at = Set(Some(format_unix_timestamp(current_unix_timestamp())));
                         active.update(txn).await.map_err(|error| error.to_string())?;
                     }
                     let mut active: channel_model_prices::ActiveModel = existing.into();
@@ -1365,17 +1365,46 @@ async fn complete_operational_run(
     result_payload: Option<String>,
     error_message: Option<String>,
 ) -> Result<(), String> {
-    operational_runs::Entity::update(operational_runs::ActiveModel {
-        id: Set(run_id),
-        status: Set(status.as_str().to_owned()),
-        result_payload: Set(result_payload),
-        error_message: Set(error_message),
-        finished_at: Set(Some(current_rfc3339_timestamp())),
-        ..Default::default()
-    })
-    .exec(connection)
-    .await
-    .map_err(|error| error.to_string())?;
+    let backend = connection.get_database_backend();
+    if matches!(backend, DatabaseBackend::Postgres) {
+        let finished_at = current_rfc3339_timestamp();
+        connection
+            .execute_raw(Statement::from_sql_and_values(
+                backend,
+                "UPDATE operational_runs SET status = $1, result_payload = $2, error_message = $3, finished_at = $4::timestamptz WHERE id = $5".to_owned(),
+                vec![
+                    status.as_str().into(),
+                    result_payload.into(),
+                    error_message.into(),
+                    finished_at.into(),
+                    run_id.into(),
+                ],
+            ))
+            .await
+            .map_err(|error| error.to_string())?;
+    } else {
+        let quote = |value: &str| format!("'{}'", value.replace('\'', "''"));
+        let nullable = |value: Option<String>| match value {
+            Some(value) => quote(&value),
+            None => "NULL".to_owned(),
+        };
+        let sql = format!(
+            "UPDATE operational_runs SET status = {status}, result_payload = {result_payload}, error_message = {error_message}, finished_at = {finished_at} WHERE id = {run_id}",
+            status = quote(status.as_str()),
+            result_payload = nullable(result_payload),
+            error_message = nullable(error_message),
+            finished_at = match backend {
+                DatabaseBackend::Sqlite => "CURRENT_TIMESTAMP",
+                DatabaseBackend::MySql => "CURRENT_TIMESTAMP",
+                _ => unreachable!("unsupported database backend: {:?}", backend),
+            },
+            run_id = run_id,
+        );
+        connection
+            .execute_unprepared(&sql)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 

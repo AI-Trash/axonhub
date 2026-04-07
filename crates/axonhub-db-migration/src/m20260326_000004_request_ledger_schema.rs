@@ -14,6 +14,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => requests_created_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => requests_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => requests_created_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         requests_created_at
             .not_null()
@@ -24,6 +25,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => requests_updated_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => requests_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => requests_updated_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         requests_updated_at
             .not_null()
@@ -88,6 +90,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => requests_content_saved_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => requests_content_saved_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => requests_content_saved_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         requests_content_saved_at.null();
 
@@ -252,6 +255,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => request_executions_created_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => request_executions_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => request_executions_created_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         request_executions_created_at
             .not_null()
@@ -262,6 +266,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => request_executions_updated_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => request_executions_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => request_executions_updated_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         request_executions_updated_at
             .not_null()
@@ -430,6 +435,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => usage_logs_created_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => usage_logs_created_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => usage_logs_created_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         usage_logs_created_at
             .not_null()
@@ -440,6 +446,7 @@ impl MigrationTrait for Migration {
             DatabaseBackend::Sqlite => usage_logs_updated_at.custom(Alias::new("TEXT")),
             DatabaseBackend::Postgres => usage_logs_updated_at.timestamp_with_time_zone(),
             DatabaseBackend::MySql => usage_logs_updated_at.timestamp(),
+            _ => unreachable!("unsupported database backend: {:?}", backend),
         };
         usage_logs_updated_at
             .not_null()

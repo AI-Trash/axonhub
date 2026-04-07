@@ -194,10 +194,35 @@ pub(crate) fn realtime_sessions_table_statement(
 pub(crate) fn operational_runs_table_statement(
     backend: DatabaseBackend,
 ) -> TableCreateStatement {
-    let mut started_at = timestamp_column(backend, OperationalRuns::StartedAt, false);
-    started_at.not_null().default(Expr::current_timestamp());
+    let mut started_at = ColumnDef::new(OperationalRuns::StartedAt);
+    match backend {
+        DatabaseBackend::Sqlite => {
+            started_at.custom(Alias::new("TEXT"));
+            started_at.not_null().default(Expr::current_timestamp());
+        }
+        DatabaseBackend::Postgres => {
+            started_at.custom(Alias::new("TEXT"));
+            started_at
+                .not_null()
+                .default(Expr::cust("CURRENT_TIMESTAMP::text"));
+        }
+        DatabaseBackend::MySql => {
+            started_at.timestamp();
+            started_at.not_null().default(Expr::current_timestamp());
+        }
+        _ => unreachable!("unsupported database backend: {:?}", backend),
+    };
 
-    let mut finished_at = timestamp_column(backend, OperationalRuns::FinishedAt, false);
+    let mut finished_at = ColumnDef::new(OperationalRuns::FinishedAt);
+    match backend {
+        DatabaseBackend::Sqlite | DatabaseBackend::Postgres => {
+            finished_at.custom(Alias::new("TEXT"));
+        }
+        DatabaseBackend::MySql => {
+            finished_at.timestamp();
+        }
+        _ => unreachable!("unsupported database backend: {:?}", backend),
+    };
     finished_at.null();
 
     Table::create()
@@ -263,6 +288,7 @@ fn timestamp_column(backend: DatabaseBackend, iden: impl IntoIden, on_update: bo
                 column.extra("ON UPDATE CURRENT_TIMESTAMP");
             }
         }
+        _ => unreachable!("unsupported database backend: {:?}", backend),
     };
     column
 }

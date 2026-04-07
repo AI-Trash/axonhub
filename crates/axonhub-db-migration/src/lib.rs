@@ -40,7 +40,7 @@ mod tests {
 
     async fn table_exists(db: &sea_orm::DatabaseConnection, table: &str) -> bool {
         let row = db
-            .query_one(Statement::from_sql_and_values(
+            .query_one_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?".to_owned(),
                 vec!["table".into(), table.into()],
@@ -54,7 +54,7 @@ mod tests {
 
     async fn column_exists(db: &sea_orm::DatabaseConnection, table: &str, column: &str) -> bool {
         let rows = db
-            .query_all(Statement::from_sql_and_values(
+            .query_all_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 format!("PRAGMA table_info({table})"),
                 vec![],

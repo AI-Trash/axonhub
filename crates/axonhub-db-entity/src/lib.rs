@@ -1,5 +1,5 @@
 pub mod api_keys {
-    use sea_orm::{entity::prelude::*, FromQueryResult};
+    use sea_orm::{entity::prelude::*, ExprTrait, FromQueryResult};
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "api_keys")]
@@ -64,7 +64,7 @@ pub mod api_keys {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct AuthLookup {
         pub id: i64,
@@ -79,7 +79,7 @@ pub mod api_keys {
         pub profiles: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct OwnerLookup {
         pub user_id: i64,
@@ -88,7 +88,7 @@ pub mod api_keys {
         pub project_id: i64,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct ProfilesOnly {
         pub profiles: String,
@@ -298,7 +298,7 @@ pub mod channels {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct RoutingCandidate {
         pub id: i64,
@@ -396,7 +396,7 @@ pub mod data_storages {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct StorageConfig {
         pub id: i64,
@@ -406,7 +406,7 @@ pub mod data_storages {
         pub status: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct GraphqlStatus {
         pub id: i64,
@@ -417,7 +417,7 @@ pub mod data_storages {
 }
 
 pub mod models {
-    use sea_orm::{entity::prelude::*, FromQueryResult};
+    use sea_orm::{entity::prelude::*, ExprTrait, FromQueryResult};
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
     #[sea_orm(table_name = "models")]
@@ -444,7 +444,7 @@ pub mod models {
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct EnabledModelRecord {
         pub id: i64,
@@ -460,7 +460,7 @@ pub mod models {
         pub model_card: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct GraphqlStatus {
         pub id: i64,
@@ -578,7 +578,7 @@ pub mod projects {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct ContextSummary {
         pub id: i64,
@@ -586,7 +586,7 @@ pub mod projects {
         pub status: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct MembershipSummary {
         pub id: i64,
@@ -883,7 +883,7 @@ pub mod request_executions {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct StatusOnly {
         pub status: String,
@@ -1014,7 +1014,7 @@ pub mod requests {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct ContentStorageLookup {
         pub id: i64,
@@ -1024,20 +1024,20 @@ pub mod requests {
         pub content_storage_key: Option<String>,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct RouteHint {
         pub channel_id: Option<i64>,
         pub model_id: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct TraceChannelAffinity {
         pub channel_id: Option<i64>,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct ChannelSelectionCount {
         pub id: i64,
@@ -1097,7 +1097,7 @@ pub mod roles {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct Assignment {
         pub id: i64,
@@ -1107,7 +1107,7 @@ pub mod roles {
         pub scopes: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct GraphqlRoleSummary {
         pub id: i64,
@@ -1212,7 +1212,7 @@ pub mod systems {
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct KeyValue {
         pub value: String,
@@ -1267,7 +1267,7 @@ pub mod threads {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct ResolveContext {
         pub id: i64,
@@ -1337,7 +1337,7 @@ pub mod traces {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct ResolveContext {
         pub id: i64,
@@ -1482,7 +1482,7 @@ pub mod user_projects {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct MembershipLink {
         pub project_id: i64,
@@ -1490,7 +1490,7 @@ pub mod user_projects {
         pub scopes: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct GraphqlMembership {
         pub project_id: i64,
@@ -1632,7 +1632,7 @@ pub mod users {
         }
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct AuthLookup {
         pub id: i64,
@@ -1647,7 +1647,7 @@ pub mod users {
         pub scopes: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct GraphqlProfile {
         pub id: i64,
@@ -1660,7 +1660,7 @@ pub mod users {
         pub scopes: String,
     }
 
-    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel, FromQueryResult)]
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
     #[sea_orm(entity = "Entity")]
     pub struct GraphqlUserListItem {
         pub id: i64,
