@@ -25,3 +25,6 @@ pub(crate) use tracing::{
     trace_exporter_invalid_type_fail_open_inner,
     trace_exporter_stdout_emits_http_request_span_inner,
 };
+
+#[cfg(test)]
+pub(crate) use parity_oracle::parity_oracle_helpers_preserve_contract_inner;

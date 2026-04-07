@@ -668,6 +668,11 @@ async fn emit_openapi_graphql_create_llm_api_key(
     output
 }
 
+#[cfg(test)]
+pub(crate) fn parity_oracle_helpers_preserve_contract_inner() {
+    provider_edge_start_invalid_json_parity_fixtures_cover_all_supported_providers();
+}
+
 async fn response_to_output(
     suite: &str,
     response: ServiceResponse<BoxBody>,

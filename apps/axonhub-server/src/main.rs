@@ -36,3 +36,9 @@ fn openai_v1_runtime_contract_preserved() {
 fn runtime_query_semantics_preserved_after_rewrite() {
     foundation::openai_v1_runtime_contract_preserved_inner();
 }
+
+#[cfg(test)]
+#[test]
+fn parity_oracle_helpers_preserve_contract() {
+    app::parity_oracle_helpers_preserve_contract_inner();
+}

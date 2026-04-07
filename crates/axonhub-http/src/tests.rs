@@ -212,6 +212,30 @@ fn span_attributes(span: &SpanData) -> std::collections::BTreeMap<String, String
         .collect()
 }
 
+fn recorded_http_request_span(spans: &Arc<Mutex<Vec<SpanData>>>) -> SpanData {
+    spans
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|span| span.name.as_ref() == "http.request")
+        .cloned()
+        .expect("http request span")
+}
+
+fn assert_http_request_correlation_fields(
+    attributes: &std::collections::BTreeMap<String, String>,
+    expected_status_code: &str,
+) {
+    assert_eq!(attributes.get("http.status_code").map(String::as_str), Some(expected_status_code));
+    assert_eq!(attributes.get("auth.mode").map(String::as_str), Some("api_key"));
+    assert_eq!(attributes.get("auth.subject").map(String::as_str), Some("user_api_key"));
+    assert_eq!(attributes.get("request.bound").map(String::as_str), Some("true"));
+    assert_eq!(attributes.get("project.bound").map(String::as_str), Some("true"));
+    assert_eq!(attributes.get("thread.bound").map(String::as_str), Some("true"));
+    assert_eq!(attributes.get("trace.bound").map(String::as_str), Some("true"));
+    assert_eq!(attributes.get("trace.remote_parent").map(String::as_str), Some("true"));
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RecordedHttpMetric {
     method: String,
@@ -3737,6 +3761,105 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[test]
+    pub(crate) fn tracing_successful_requests_record_correlation_fields() {
+        run_with_recorded_spans(|spans| {
+            let runtime = RuntimeBuilder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(async {
+                let app = router(test_state_with_openai(
+                    SystemBootstrapCapability::Available {
+                        system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+                    },
+                    false,
+                ));
+
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .uri("/v1/debug/context")
+                            .method(Method::POST)
+                            .header("X-API-Key", "api-key-123")
+                            .header("X-Project-ID", "gid://axonhub/project/1")
+                            .header("AH-Thread-Id", "thread-1")
+                            .header("AH-Trace-Id", "trace-1")
+                            .header("X-Request-Id", "req-correlation-success")
+                            .header(
+                                "traceparent",
+                                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+                            )
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::OK);
+                let json = read_json(response).await;
+                assert_eq!(json["requestId"], "req-correlation-success");
+                assert_eq!(json["project"]["id"], 1);
+                assert_eq!(json["thread"]["threadId"], "thread-1");
+                assert_eq!(json["trace"]["traceId"], "trace-1");
+            });
+
+            let http_span = recorded_http_request_span(&spans);
+            assert!(http_span.parent_span_is_remote);
+            assert_eq!(http_span.parent_span_id, SpanId::from_hex("b7ad6b7169203331").unwrap());
+
+            let attributes = span_attributes(&http_span);
+            assert_http_request_correlation_fields(&attributes, "200");
+        });
+    }
+
+    #[test]
+    pub(crate) fn tracing_failed_requests_preserve_correlation_fields() {
+        run_with_recorded_spans(|spans| {
+            let runtime = RuntimeBuilder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(async {
+                let app = router(test_state_with_openai(
+                    SystemBootstrapCapability::Available {
+                        system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+                    },
+                    false,
+                ));
+
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .uri("/v1/realtime")
+                            .method(Method::GET)
+                            .header("X-API-Key", "api-key-123")
+                            .header("X-Project-ID", "gid://axonhub/project/1")
+                            .header("AH-Thread-Id", "thread-1")
+                            .header("AH-Trace-Id", "trace-1")
+                            .header("X-Request-Id", "req-correlation-failure")
+                            .header(
+                                "traceparent",
+                                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+                            )
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+
+                let json = assert_rest_error_response(
+                    response,
+                    StatusCode::BAD_REQUEST,
+                    "Request body is empty",
+                )
+                .await;
+                assert_eq!(json["error"]["message"], "Request body is empty");
+            });
+
+            let http_span = recorded_http_request_span(&spans);
+            assert!(http_span.parent_span_is_remote);
+            assert_eq!(http_span.parent_span_id, SpanId::from_hex("b7ad6b7169203331").unwrap());
+
+            let attributes = span_attributes(&http_span);
+            assert_http_request_correlation_fields(&attributes, "400");
+        });
+    }
+
+    #[test]
     pub(crate) fn tracing_inbound_traceparent_links_span() {
         run_with_recorded_spans(|spans| {
             let runtime = RuntimeBuilder::new_current_thread().enable_all().build().unwrap();
@@ -3767,13 +3890,7 @@ fn assert_go_duration_shape(value: &str) {
                 assert_eq!(response.status(), StatusCode::OK);
             });
 
-            let http_span = spans
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|span| span.name.as_ref() == "http.request")
-                .cloned()
-                .expect("http request span");
+            let http_span = recorded_http_request_span(&spans);
 
             assert!(http_span.parent_span_is_remote);
             assert_eq!(http_span.parent_span_id, SpanId::from_hex("b7ad6b7169203331").unwrap());
@@ -3809,13 +3926,7 @@ fn assert_go_duration_shape(value: &str) {
                 assert_eq!(response.status(), StatusCode::OK);
             });
 
-            let http_span = spans
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|span| span.name.as_ref() == "http.request")
-                .cloned()
-                .expect("http request span");
+            let http_span = recorded_http_request_span(&spans);
             let attributes = span_attributes(&http_span);
 
             assert_eq!(attributes.get("auth.mode").map(String::as_str), Some("api_key"));

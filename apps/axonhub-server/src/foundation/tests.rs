@@ -20,7 +20,7 @@ use super::{
     seaorm::SeaOrmConnectionFactory,
     shared::{
         SqliteFoundation, DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE,
-        PRIMARY_DATA_STORAGE_NAME, SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_ONBOARDED, graphql_gid,
+        PRIMARY_DATA_STORAGE_NAME, SYSTEM_KEY_ONBOARDED, graphql_gid,
     },
     sqlite_support::ensure_operational_tables,
     system::{ensure_identity_tables, hash_password, SeaOrmBootstrapService, SqliteBootstrapService},
@@ -372,6 +372,49 @@ struct TestHttpRequest {
                 |row| row.get(0),
             )
             .unwrap()
+    }
+
+    fn ensure_provider_quota_status_deleted_at_compat(connection: &Connection) {
+        let columns = connection
+            .prepare("PRAGMA table_info(provider_quota_statuses)")
+            .unwrap()
+            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        let has_deleted_at = columns.iter().any(|(name, _)| name == "deleted_at");
+        let next_check_is_text = columns
+            .iter()
+            .find(|(name, _)| name == "next_check_at")
+            .is_some_and(|(_, ty)| ty.eq_ignore_ascii_case("TEXT"));
+        let next_reset_is_text = columns
+            .iter()
+            .find(|(name, _)| name == "next_reset_at")
+            .is_some_and(|(_, ty)| ty.eq_ignore_ascii_case("TEXT"));
+
+        if has_deleted_at && next_check_is_text && next_reset_is_text {
+            return;
+        }
+
+        connection
+            .execute_batch(
+                "DROP TABLE IF EXISTS provider_quota_statuses;
+                 CREATE TABLE provider_quota_statuses (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                     deleted_at INTEGER NOT NULL DEFAULT 0,
+                     channel_id INTEGER NOT NULL UNIQUE,
+                     provider_type TEXT NOT NULL,
+                     status TEXT NOT NULL,
+                     quota_data TEXT NOT NULL DEFAULT '{}',
+                     next_reset_at TEXT,
+                     ready INTEGER NOT NULL DEFAULT 0,
+                     next_check_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                 );",
+            )
+            .unwrap();
     }
 
     fn signin_token(foundation: Arc<SqliteFoundation>, email: &str, password: &str) -> String {
@@ -2056,6 +2099,7 @@ struct TestHttpRequest {
         {
             let connection = foundation.open_connection(true).unwrap();
             ensure_operational_tables(&connection).unwrap();
+            ensure_provider_quota_status_deleted_at_compat(&connection);
             insert_api_key(
                 &connection,
                 1,
@@ -2368,8 +2412,16 @@ struct TestHttpRequest {
             );
             connection.execute(
                 "INSERT INTO provider_quota_statuses (channel_id, provider_type, status, quota_data, next_reset_at, ready, next_check_at)
-                 VALUES (1, 'codex', 'available', '{\"message\":\"manually ready\"}', NULL, 1, 0)",
-                [],
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    1,
+                    "codex",
+                    "available",
+                    r#"{"message":"manually ready"}"#,
+                    Option::<String>::None,
+                    1,
+                    super::shared::format_unix_timestamp(0),
+                ],
             ).unwrap();
         }
 
@@ -2427,7 +2479,9 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        let response_status = response.status();
+        let response_json = read_json_response(response).await;
+        assert_eq!(response_status, StatusCode::OK, "{response_json:?}");
 
         let quota_status = SqliteOperationalService::new(foundation.clone())
             .provider_quota_statuses()
@@ -2494,6 +2548,7 @@ struct TestHttpRequest {
         {
             let connection = foundation.open_connection(true).unwrap();
             ensure_operational_tables(&connection).unwrap();
+            ensure_provider_quota_status_deleted_at_compat(&connection);
             ensure_identity_tables(&connection).unwrap();
             let _admin_id = insert_test_user(
                 &connection,
@@ -2512,8 +2567,16 @@ struct TestHttpRequest {
             );
             connection.execute(
                 "INSERT INTO provider_quota_statuses (channel_id, provider_type, status, quota_data, next_reset_at, ready, next_check_at)
-                 VALUES (1, 'codex', 'exhausted', '{\"message\":\"quota exhausted\"}', NULL, 0, 0)",
-                [],
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    1,
+                    "codex",
+                    "exhausted",
+                    r#"{"message":"quota exhausted"}"#,
+                    Option::<String>::None,
+                    0,
+                    super::shared::format_unix_timestamp(0),
+                ],
             ).unwrap();
         }
 
@@ -2608,7 +2671,9 @@ struct TestHttpRequest {
             )
             .await
             .unwrap();
-        assert_eq!(ready_response.status(), StatusCode::OK);
+        let ready_status = ready_response.status();
+        let ready_json = read_json_response(ready_response).await;
+        assert_eq!(ready_status, StatusCode::OK, "{ready_json:?}");
 
         std::fs::remove_file(db_path).ok();
     }
