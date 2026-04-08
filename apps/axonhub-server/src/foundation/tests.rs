@@ -1,5 +1,8 @@
 use super::{
-    admin::{SqliteAdminService, SqliteOperationalService, StoredBackupApiKey, StoredBackupChannel, StoredBackupModel, StoredBackupPayload},
+    admin::{
+        SeaOrmAdminService, StoredAutoBackupSettings, StoredBackupApiKey, StoredBackupChannel,
+        StoredBackupModel, StoredBackupPayload,
+    },
     admin_operational::{RestoreOptions, SeaOrmOperationalService},
     authz::{
         scope_strings, serialize_scope_slugs, ScopeLevel, ScopeSlug, ROLE_LEVEL_PROJECT,
@@ -260,6 +263,14 @@ struct TestHttpRequest {
         (pg, dsn, data_dir)
     }
 
+    fn seaorm_admin_service(foundation: &Arc<SqliteFoundation>) -> SeaOrmAdminService {
+        SeaOrmAdminService::new(foundation.seaorm())
+    }
+
+    fn seaorm_operational_service(foundation: &Arc<SqliteFoundation>) -> SeaOrmOperationalService {
+        SeaOrmOperationalService::new(foundation.seaorm())
+    }
+
     fn test_admin_user() -> AuthUserContext {
         AuthUserContext {
             id: 1,
@@ -454,7 +465,7 @@ struct TestHttpRequest {
                 message: "test-only unsupported openai".to_owned(),
             },
             admin: AdminCapability::Available {
-                admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+                admin: Arc::new(seaorm_admin_service(&foundation)),
             },
             admin_graphql: AdminGraphqlCapability::Available {
                 graphql: Arc::new(SqliteAdminGraphqlService::new(foundation.clone())),
@@ -941,7 +952,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -1729,7 +1740,7 @@ struct TestHttpRequest {
         let json = read_json_response(response).await;
         assert_eq!(json["data"]["updateStoragePolicy"], true);
 
-        let policy = SqliteOperationalService::new(foundation.clone())
+        let policy = seaorm_operational_service(&foundation)
             .storage_policy()
             .unwrap();
         assert!(policy.store_chunks);
@@ -1801,7 +1812,7 @@ struct TestHttpRequest {
         let json = read_json_response(response).await;
         assert_eq!(json["data"]["updateSystemChannelSettings"], true);
 
-        let settings = SqliteOperationalService::new(foundation.clone())
+        let settings = seaorm_operational_service(&foundation)
             .system_channel_settings()
             .unwrap();
         assert!(!settings.probe.enabled);
@@ -1897,7 +1908,7 @@ struct TestHttpRequest {
             "SIX_HOURS"
         );
 
-        let settings = SqliteOperationalService::new(foundation.clone())
+        let settings = seaorm_operational_service(&foundation)
             .system_channel_settings()
             .unwrap();
         assert_eq!(
@@ -1905,6 +1916,100 @@ struct TestHttpRequest {
             super::admin::AutoSyncFrequencySetting::SixHours
         );
 
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn seaorm_admin_service_reads_request_content_from_sqlite_runtime_path() {
+        let db_path = temp_sqlite_path("task7-seaorm-admin-request-content");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let admin = seaorm_admin_service(&foundation);
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let project_id = 1;
+        let content_dir = std::env::temp_dir().join(format!(
+            "axonhub-task7-seaorm-admin-content-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&content_dir).unwrap();
+
+        let storage_id = foundation
+            .data_storages()
+            .find_primary_active_storage()
+            .unwrap()
+            .unwrap()
+            .id
+            + 100;
+        let connection = foundation.open_connection(true).unwrap();
+        connection
+            .execute(
+                "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at)
+                 VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+                params![
+                    storage_id,
+                    "Task7 SeaORM FS",
+                    "task7 seaorm admin",
+                    serde_json::json!({"directory": content_dir.to_string_lossy()}).to_string(),
+                ],
+            )
+            .unwrap();
+
+        let request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id,
+                trace_id: None,
+                data_storage_id: Some(storage_id),
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: None,
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: true,
+                content_storage_id: Some(storage_id),
+                content_storage_key: Some("/placeholder"),
+                content_saved_at: Some("2026-03-23T00:00:00Z"),
+            })
+            .unwrap();
+
+        let real_key = format!("/{project_id}/requests/{request_id}/response.json");
+        connection
+            .execute(
+                "UPDATE requests SET content_storage_key = ?2 WHERE id = ?1",
+                params![request_id, real_key],
+            )
+            .unwrap();
+        let full_path = content_dir.join(format!("{project_id}/requests/{request_id}/response.json"));
+        fs::create_dir_all(full_path.parent().unwrap()).unwrap();
+        fs::write(&full_path, br#"{\"content\":\"seaorm-admin\"}"#).unwrap();
+
+        let downloaded = admin
+            .download_request_content(project_id, request_id, test_admin_user())
+            .unwrap();
+        assert_eq!(downloaded.filename, "response.json");
+        assert_eq!(downloaded.bytes, br#"{\"content\":\"seaorm-admin\"}"#);
+
+        fs::remove_dir_all(content_dir).ok();
         std::fs::remove_file(db_path).ok();
     }
 
@@ -2071,7 +2176,7 @@ struct TestHttpRequest {
         let query_json = read_json_response(query_response).await;
         assert_eq!(query_json["data"]["userAgentPassThroughSettings"]["enabled"], true);
 
-        let enabled = SqliteOperationalService::new(foundation.clone())
+        let enabled = seaorm_operational_service(&foundation)
             .user_agent_pass_through()
             .unwrap();
         assert!(enabled);
@@ -2179,7 +2284,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -2317,7 +2422,7 @@ struct TestHttpRequest {
         let json = read_json_response(response).await;
         assert_eq!(json["data"]["checkProviderQuotas"], true);
 
-        let quota_status = SqliteOperationalService::new(foundation.clone())
+        let quota_status = seaorm_operational_service(&foundation)
             .provider_quota_statuses()
             .unwrap();
         assert_eq!(quota_status.len(), 1);
@@ -2444,7 +2549,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -2483,7 +2588,7 @@ struct TestHttpRequest {
         let response_json = read_json_response(response).await;
         assert_eq!(response_status, StatusCode::OK, "{response_json:?}");
 
-        let quota_status = SqliteOperationalService::new(foundation.clone())
+        let quota_status = seaorm_operational_service(&foundation)
             .provider_quota_statuses()
             .unwrap();
         assert_eq!(quota_status.len(), 1);
@@ -2599,7 +2704,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Available {
             graphql: Arc::new(SqliteAdminGraphqlService::new(foundation.clone())),
@@ -2841,7 +2946,7 @@ struct TestHttpRequest {
         let update_json = read_json_response(update_response).await;
         assert_eq!(update_json["data"]["updateAutoBackupSettings"], true);
 
-        let settings = SqliteOperationalService::new(foundation.clone())
+        let settings = seaorm_operational_service(&foundation)
             .auto_backup_settings()
             .unwrap();
         assert!(settings.enabled);
@@ -2948,7 +3053,7 @@ struct TestHttpRequest {
             "permission denied: owner access required",
         );
 
-        let default_settings = SqliteOperationalService::new(foundation.clone())
+        let default_settings = seaorm_operational_service(&foundation)
             .auto_backup_settings()
             .unwrap();
         assert!(!default_settings.enabled);
@@ -3394,6 +3499,134 @@ struct TestHttpRequest {
         std::fs::remove_file(db_path).ok();
     }
 
+    #[test]
+    fn seaorm_operational_service_handles_sqlite_admin_runtime_flows() {
+        let db_path = temp_sqlite_path("task7-seaorm-operational-sqlite-flows");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
+        );
+        connection
+            .execute("UPDATE users SET is_owner = 1 WHERE id = ?1", [admin_id])
+            .unwrap();
+
+        let backup_root = std::env::temp_dir().join(format!(
+            "axonhub-task7-seaorm-operational-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&backup_root).unwrap();
+
+        let storage_id = foundation
+            .data_storages()
+            .find_primary_active_storage()
+            .unwrap()
+            .unwrap()
+            .id
+            + 100;
+        connection
+            .execute(
+                "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at)
+                 VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+                params![
+                    storage_id,
+                    "Task7 Backup FS",
+                    "task7 seaorm backup",
+                    serde_json::json!({"directory": backup_root.to_string_lossy()}).to_string(),
+                ],
+            )
+            .unwrap();
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task7 Backup Channel",
+                channel_type: "codex",
+                base_url: "https://example.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[]",
+                auto_sync_supported_models: false,
+                default_test_model: "",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task7 seaorm backup",
+            })
+            .unwrap();
+        drop(connection);
+
+        let operational = seaorm_operational_service(&foundation);
+        let settings = operational
+            .update_auto_backup_settings(StoredAutoBackupSettings {
+                enabled: true,
+                frequency: super::admin::BackupFrequencySetting::Daily,
+                data_storage_id: storage_id,
+                include_channels: true,
+                include_models: false,
+                include_api_keys: false,
+                include_model_prices: false,
+                retention_days: 2,
+                last_backup_at: None,
+                last_backup_error: String::new(),
+            })
+            .unwrap();
+        assert!(settings.enabled);
+        assert_eq!(settings.data_storage_id, storage_id);
+
+        let quota_updates = operational
+            .run_provider_quota_check_tick(true, std::time::Duration::from_secs(20 * 60), Some(admin_id))
+            .unwrap();
+        assert_eq!(quota_updates, 1);
+
+        let quota_statuses = operational.provider_quota_statuses().unwrap();
+        assert_eq!(quota_statuses.len(), 1);
+        assert_eq!(quota_statuses[0].provider_type, "codex");
+        assert!(quota_statuses[0].ready);
+
+        let backup_message = operational.trigger_backup_now(Some(admin_id)).unwrap();
+        assert_eq!(backup_message, "Backup completed successfully");
+
+        let gc_summary = operational.run_gc_cleanup_now(false, Some(admin_id)).unwrap();
+        assert!(!gc_summary.vacuum_ran);
+
+        let backup_files = fs::read_dir(&backup_root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        assert!(!backup_files.is_empty());
+
+        let verification = foundation.open_connection(true).unwrap();
+        let completed_runs: i64 = verification
+            .query_row(
+                "SELECT COUNT(*) FROM operational_runs WHERE operation_type IN ('auto_backup', 'quota_check', 'gc_cleanup') AND status = 'completed' AND finished_at IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(completed_runs, 3);
+
+        fs::remove_dir_all(backup_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
     #[tokio::test]
     async fn admin_graphql_rolls_back_create_user_when_role_assignment_fails() {
         let db_path = temp_sqlite_path("task9-create-user-rollback");
@@ -3618,7 +3851,7 @@ struct TestHttpRequest {
         let db_path = temp_sqlite_path("task13-request-content");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
         let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
-        let admin = SqliteAdminService::new(foundation.clone());
+        let admin = seaorm_admin_service(&foundation);
 
         bootstrap
             .initialize(&InitializeSystemRequest {
@@ -3728,7 +3961,7 @@ struct TestHttpRequest {
         let db_path = temp_sqlite_path("task13-request-content-noscope");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
         let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
-        let admin = SqliteAdminService::new(foundation.clone());
+        let admin = seaorm_admin_service(&foundation);
 
         bootstrap
             .initialize(&InitializeSystemRequest {
@@ -3952,7 +4185,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -4364,7 +4597,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -4761,7 +4994,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -4906,7 +5139,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -5068,7 +5301,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -5247,7 +5480,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -5448,7 +5681,7 @@ struct TestHttpRequest {
             )),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -5613,7 +5846,7 @@ struct TestHttpRequest {
         },
         openai_v1: OpenAiV1Capability::Available { openai },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Available {
             graphql: Arc::new(SqliteAdminGraphqlService::new(foundation.clone())),
@@ -5750,7 +5983,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -5916,7 +6149,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -6238,7 +6471,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -6465,7 +6698,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),
@@ -8030,7 +8263,7 @@ struct TestHttpRequest {
             openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
         },
         admin: AdminCapability::Available {
-            admin: Arc::new(SqliteAdminService::new(foundation.clone())),
+            admin: Arc::new(seaorm_admin_service(&foundation)),
         },
         admin_graphql: AdminGraphqlCapability::Unsupported {
             message: "test-only unsupported admin graphql".to_owned(),

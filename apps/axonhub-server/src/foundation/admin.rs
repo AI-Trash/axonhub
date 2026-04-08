@@ -270,12 +270,6 @@ pub(crate) struct StoredGcCleanupSummary {
     pub(crate) vacuum_ran: bool,
 }
 
-#[derive(Debug, Clone)]
-struct DataStorageRecord {
-    storage_type: String,
-    settings_json: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StoredBackupPayload {
     pub(crate) version: String,

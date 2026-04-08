@@ -1,5 +1,5 @@
 use axonhub_db_entity::{
-    api_keys, channels, data_storages, projects, provider_quota_statuses, roles, systems,
+    api_keys, channels, data_storages, models, projects, provider_quota_statuses, roles, systems,
     user_projects, user_roles, users,
 };
 use axonhub_http::AuthApiKeyContext;
@@ -99,7 +99,59 @@ pub(crate) struct GraphqlUserRecord {
     pub(crate) scopes: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlProjectRecord {
+    pub(crate) id: i64,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) status: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlRoleRecord {
+    pub(crate) id: i64,
+    pub(crate) name: String,
+    pub(crate) level: String,
+    pub(crate) project_id: i64,
+    pub(crate) scopes: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlApiKeyRecord {
+    pub(crate) id: i64,
+    pub(crate) project_id: i64,
+    pub(crate) key: String,
+    pub(crate) name: String,
+    pub(crate) key_type: String,
+    pub(crate) status: String,
+    pub(crate) scopes: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlChannelRecord {
+    pub(crate) id: i64,
+    pub(crate) name: String,
+    pub(crate) channel_type: String,
+    pub(crate) base_url: String,
+    pub(crate) status: String,
+    pub(crate) supported_models: String,
+    pub(crate) ordering_weight: i32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlModelRecord {
+    pub(crate) id: i64,
+    pub(crate) developer: String,
+    pub(crate) model_id: String,
+    pub(crate) model_type: String,
+    pub(crate) name: String,
+    pub(crate) icon: String,
+    pub(crate) remark: String,
+    pub(crate) model_card_json: String,
+}
+
 pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
+    fn query_channels(&self) -> Result<Vec<GraphqlChannelRecord>, String>;
     fn query_model_statuses(&self) -> Result<Vec<GraphqlModelStatusRecord>, String>;
     fn query_default_data_storage(&self) -> Result<Option<GraphqlDefaultDataStorageRecord>, String>;
     fn upsert_default_data_storage(&self, value: &str) -> Result<(), String>;
@@ -123,6 +175,8 @@ pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
     ) -> Result<Vec<GraphqlRoleSummaryRecord>, String>;
     fn query_user(&self, user_id: i64) -> Result<Option<GraphqlUserRecord>, String>;
     fn query_user_roles(&self, user_id: i64) -> Result<Vec<GraphqlRoleSummaryRecord>, String>;
+    fn query_role(&self, role_id: i64) -> Result<Option<GraphqlRoleRecord>, String>;
+    fn query_api_key(&self, api_key_id: i64) -> Result<Option<GraphqlApiKeyRecord>, String>;
     fn create_user(
         &self,
         email: &str,
@@ -156,6 +210,127 @@ pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
         scopes_json: Option<&str>,
         role_ids: Option<&[i64]>,
     ) -> Result<bool, String>;
+    fn create_project(&self, name: &str, description: &str, status: &str) -> Result<GraphqlProjectRecord, String>;
+    fn update_project(
+        &self,
+        project_id: i64,
+        name: Option<&str>,
+        description: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<GraphqlProjectRecord, String>;
+    fn create_role(
+        &self,
+        name: &str,
+        level: &str,
+        project_id: i64,
+        scopes_json: &str,
+    ) -> Result<GraphqlRoleRecord, String>;
+    fn update_role(
+        &self,
+        role_id: i64,
+        name: Option<&str>,
+        level: &str,
+        project_id: i64,
+        scopes_json: Option<&str>,
+    ) -> Result<GraphqlRoleRecord, String>;
+    fn create_api_key(
+        &self,
+        owner_user_id: i64,
+        project_id: i64,
+        key: &str,
+        name: &str,
+        key_type: &str,
+        status: &str,
+        scopes_json: &str,
+        profiles_json: &str,
+    ) -> Result<GraphqlApiKeyRecord, String>;
+    fn update_api_key(
+        &self,
+        api_key_id: i64,
+        name: Option<&str>,
+        status: Option<&str>,
+        scopes_json: Option<&str>,
+    ) -> Result<GraphqlApiKeyRecord, String>;
+    fn create_channel(
+        &self,
+        channel_type: &str,
+        base_url: &str,
+        name: &str,
+        status: &str,
+        credentials_json: &str,
+        supported_models: &str,
+        auto_sync_supported_models: bool,
+        default_test_model: &str,
+        settings_json: &str,
+        tags: &str,
+        ordering_weight: i32,
+        error_message: &str,
+        remark: &str,
+    ) -> Result<GraphqlChannelRecord, String>;
+    fn update_channel(
+        &self,
+        channel_id: i64,
+        name: Option<&str>,
+        base_url: Option<&str>,
+        status: Option<&str>,
+        supported_models: Option<&str>,
+        auto_sync_supported_models: Option<bool>,
+        default_test_model: Option<&str>,
+        credentials_json: Option<&str>,
+        settings_json: Option<&str>,
+        tags: Option<&str>,
+        ordering_weight: Option<i32>,
+        error_message: Option<&str>,
+        remark: Option<&str>,
+    ) -> Result<GraphqlChannelRecord, String>;
+    fn create_model(
+        &self,
+        developer: &str,
+        model_id: &str,
+        model_type: &str,
+        name: &str,
+        icon: &str,
+        group: &str,
+        model_card_json: &str,
+        settings_json: &str,
+        status: &str,
+        remark: Option<&str>,
+    ) -> Result<GraphqlModelRecord, String>;
+    fn update_model(
+        &self,
+        model_id: i64,
+        name: Option<&str>,
+        icon: Option<&str>,
+        group: Option<&str>,
+        model_card_json: Option<&str>,
+        settings_json: Option<&str>,
+        status: Option<&str>,
+        remark: Option<Option<&str>>,
+    ) -> Result<GraphqlModelRecord, String>;
+    fn query_prompt_protection_rules(
+        &self,
+    ) -> Result<Vec<super::prompt_protection::StoredPromptProtectionRuleRecord>, String>;
+    fn create_prompt_protection_rule(
+        &self,
+        name: &str,
+        description: &str,
+        pattern: &str,
+        status: &str,
+        settings_json: &str,
+    ) -> Result<Option<super::prompt_protection::StoredPromptProtectionRuleRecord>, String>;
+    fn update_prompt_protection_rule(
+        &self,
+        id: i64,
+        name: Option<&str>,
+        description: Option<&str>,
+        pattern: Option<&str>,
+        status: Option<&str>,
+        settings_json: Option<&str>,
+    ) -> Result<Option<super::prompt_protection::StoredPromptProtectionRuleRecord>, String>;
+    fn set_prompt_protection_rule_status(&self, id: i64, status: &str) -> Result<bool, String>;
+    fn delete_prompt_protection_rule(&self, id: i64) -> Result<bool, String>;
+    fn bulk_delete_prompt_protection_rules(&self, ids: &[i64]) -> Result<(), String>;
+    fn bulk_set_prompt_protection_rules_status(&self, ids: &[i64], status: &str) -> Result<(), String>;
     fn upsert_provider_quota_statuses(
         &self,
         next_check_at: &str,
@@ -202,6 +377,14 @@ impl SeaOrmOpenApiGraphqlMutationRepository {
 }
 
 impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
+    fn query_channels(&self) -> Result<Vec<GraphqlChannelRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_channels_seaorm(&connection).await
+        })
+    }
+
     fn query_model_statuses(&self) -> Result<Vec<GraphqlModelStatusRecord>, String> {
         let db = self.db.clone();
         db.run_sync(move |db| async move {
@@ -368,6 +551,22 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         })
     }
 
+    fn query_role(&self, role_id: i64) -> Result<Option<GraphqlRoleRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            load_role_record_seaorm(&connection, role_id).await
+        })
+    }
+
+    fn query_api_key(&self, api_key_id: i64) -> Result<Option<GraphqlApiKeyRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            load_api_key_record_seaorm(&connection, api_key_id).await
+        })
+    }
+
     fn create_user(
         &self,
         email: &str,
@@ -482,6 +681,442 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         })
     }
 
+    fn create_project(&self, name: &str, description: &str, status: &str) -> Result<GraphqlProjectRecord, String> {
+        let db = self.db.clone();
+        let name = name.to_owned();
+        let description = description.to_owned();
+        let status = status.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            create_project_seaorm(&connection, &name, &description, &status).await
+        })
+    }
+
+    fn update_project(
+        &self,
+        project_id: i64,
+        name: Option<&str>,
+        description: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<GraphqlProjectRecord, String> {
+        let db = self.db.clone();
+        let name = name.map(ToOwned::to_owned);
+        let description = description.map(ToOwned::to_owned);
+        let status = status.map(ToOwned::to_owned);
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            update_project_seaorm(
+                &connection,
+                project_id,
+                name.as_deref(),
+                description.as_deref(),
+                status.as_deref(),
+            )
+            .await
+        })
+    }
+
+    fn create_role(
+        &self,
+        name: &str,
+        level: &str,
+        project_id: i64,
+        scopes_json: &str,
+    ) -> Result<GraphqlRoleRecord, String> {
+        let db = self.db.clone();
+        let name = name.to_owned();
+        let level = level.to_owned();
+        let scopes_json = scopes_json.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            create_role_seaorm(&connection, &name, &level, project_id, &scopes_json).await
+        })
+    }
+
+    fn update_role(
+        &self,
+        role_id: i64,
+        name: Option<&str>,
+        level: &str,
+        project_id: i64,
+        scopes_json: Option<&str>,
+    ) -> Result<GraphqlRoleRecord, String> {
+        let db = self.db.clone();
+        let name = name.map(ToOwned::to_owned);
+        let level = level.to_owned();
+        let scopes_json = scopes_json.map(ToOwned::to_owned);
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            update_role_seaorm(
+                &connection,
+                role_id,
+                name.as_deref(),
+                &level,
+                project_id,
+                scopes_json.as_deref(),
+            )
+            .await
+        })
+    }
+
+    fn create_api_key(
+        &self,
+        owner_user_id: i64,
+        project_id: i64,
+        key: &str,
+        name: &str,
+        key_type: &str,
+        status: &str,
+        scopes_json: &str,
+        profiles_json: &str,
+    ) -> Result<GraphqlApiKeyRecord, String> {
+        let db = self.db.clone();
+        let key = key.to_owned();
+        let name = name.to_owned();
+        let key_type = key_type.to_owned();
+        let status = status.to_owned();
+        let scopes_json = scopes_json.to_owned();
+        let profiles_json = profiles_json.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            create_api_key_seaorm(
+                &connection,
+                owner_user_id,
+                project_id,
+                &key,
+                &name,
+                &key_type,
+                &status,
+                &scopes_json,
+                &profiles_json,
+            )
+            .await
+        })
+    }
+
+    fn update_api_key(
+        &self,
+        api_key_id: i64,
+        name: Option<&str>,
+        status: Option<&str>,
+        scopes_json: Option<&str>,
+    ) -> Result<GraphqlApiKeyRecord, String> {
+        let db = self.db.clone();
+        let name = name.map(ToOwned::to_owned);
+        let status = status.map(ToOwned::to_owned);
+        let scopes_json = scopes_json.map(ToOwned::to_owned);
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            update_api_key_seaorm(
+                &connection,
+                api_key_id,
+                name.as_deref(),
+                status.as_deref(),
+                scopes_json.as_deref(),
+            )
+            .await
+        })
+    }
+
+    fn create_channel(
+        &self,
+        channel_type: &str,
+        base_url: &str,
+        name: &str,
+        status: &str,
+        credentials_json: &str,
+        supported_models: &str,
+        auto_sync_supported_models: bool,
+        default_test_model: &str,
+        settings_json: &str,
+        tags: &str,
+        ordering_weight: i32,
+        error_message: &str,
+        remark: &str,
+    ) -> Result<GraphqlChannelRecord, String> {
+        let db = self.db.clone();
+        let channel_type = channel_type.to_owned();
+        let base_url = base_url.to_owned();
+        let name = name.to_owned();
+        let status = status.to_owned();
+        let credentials_json = credentials_json.to_owned();
+        let supported_models = supported_models.to_owned();
+        let default_test_model = default_test_model.to_owned();
+        let settings_json = settings_json.to_owned();
+        let tags = tags.to_owned();
+        let error_message = error_message.to_owned();
+        let remark = remark.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            create_channel_seaorm(
+                &connection,
+                &channel_type,
+                &base_url,
+                &name,
+                &status,
+                &credentials_json,
+                &supported_models,
+                auto_sync_supported_models,
+                &default_test_model,
+                &settings_json,
+                &tags,
+                ordering_weight,
+                &error_message,
+                &remark,
+            )
+            .await
+        })
+    }
+
+    fn update_channel(
+        &self,
+        channel_id: i64,
+        name: Option<&str>,
+        base_url: Option<&str>,
+        status: Option<&str>,
+        supported_models: Option<&str>,
+        auto_sync_supported_models: Option<bool>,
+        default_test_model: Option<&str>,
+        credentials_json: Option<&str>,
+        settings_json: Option<&str>,
+        tags: Option<&str>,
+        ordering_weight: Option<i32>,
+        error_message: Option<&str>,
+        remark: Option<&str>,
+    ) -> Result<GraphqlChannelRecord, String> {
+        let db = self.db.clone();
+        let name = name.map(ToOwned::to_owned);
+        let base_url = base_url.map(ToOwned::to_owned);
+        let status = status.map(ToOwned::to_owned);
+        let supported_models = supported_models.map(ToOwned::to_owned);
+        let default_test_model = default_test_model.map(ToOwned::to_owned);
+        let credentials_json = credentials_json.map(ToOwned::to_owned);
+        let settings_json = settings_json.map(ToOwned::to_owned);
+        let tags = tags.map(ToOwned::to_owned);
+        let error_message = error_message.map(ToOwned::to_owned);
+        let remark = remark.map(ToOwned::to_owned);
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            update_channel_seaorm(
+                &connection,
+                channel_id,
+                name.as_deref(),
+                base_url.as_deref(),
+                status.as_deref(),
+                supported_models.as_deref(),
+                auto_sync_supported_models,
+                default_test_model.as_deref(),
+                credentials_json.as_deref(),
+                settings_json.as_deref(),
+                tags.as_deref(),
+                ordering_weight,
+                error_message.as_deref(),
+                remark.as_deref(),
+            )
+            .await
+        })
+    }
+
+    fn create_model(
+        &self,
+        developer: &str,
+        model_id: &str,
+        model_type: &str,
+        name: &str,
+        icon: &str,
+        group: &str,
+        model_card_json: &str,
+        settings_json: &str,
+        status: &str,
+        remark: Option<&str>,
+    ) -> Result<GraphqlModelRecord, String> {
+        let db = self.db.clone();
+        let developer = developer.to_owned();
+        let model_id = model_id.to_owned();
+        let model_type = model_type.to_owned();
+        let name = name.to_owned();
+        let icon = icon.to_owned();
+        let group = group.to_owned();
+        let model_card_json = model_card_json.to_owned();
+        let settings_json = settings_json.to_owned();
+        let status = status.to_owned();
+        let remark = remark.map(ToOwned::to_owned);
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            create_model_seaorm(
+                &connection,
+                &developer,
+                &model_id,
+                &model_type,
+                &name,
+                &icon,
+                &group,
+                &model_card_json,
+                &settings_json,
+                &status,
+                remark.as_deref(),
+            )
+            .await
+        })
+    }
+
+    fn update_model(
+        &self,
+        model_id: i64,
+        name: Option<&str>,
+        icon: Option<&str>,
+        group: Option<&str>,
+        model_card_json: Option<&str>,
+        settings_json: Option<&str>,
+        status: Option<&str>,
+        remark: Option<Option<&str>>,
+    ) -> Result<GraphqlModelRecord, String> {
+        let db = self.db.clone();
+        let name = name.map(ToOwned::to_owned);
+        let icon = icon.map(ToOwned::to_owned);
+        let group = group.map(ToOwned::to_owned);
+        let model_card_json = model_card_json.map(ToOwned::to_owned);
+        let settings_json = settings_json.map(ToOwned::to_owned);
+        let status = status.map(ToOwned::to_owned);
+        let remark = remark.map(|value| value.map(ToOwned::to_owned));
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            update_model_seaorm(
+                &connection,
+                model_id,
+                name.as_deref(),
+                icon.as_deref(),
+                group.as_deref(),
+                model_card_json.as_deref(),
+                settings_json.as_deref(),
+                status.as_deref(),
+                remark.as_ref().map(|value| value.as_deref()),
+            )
+            .await
+        })
+    }
+
+    fn query_prompt_protection_rules(
+        &self,
+    ) -> Result<Vec<super::prompt_protection::StoredPromptProtectionRuleRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            super::prompt_protection::list_prompt_protection_rules_seaorm(&connection).await
+        })
+    }
+
+    fn create_prompt_protection_rule(
+        &self,
+        name: &str,
+        description: &str,
+        pattern: &str,
+        status: &str,
+        settings_json: &str,
+    ) -> Result<Option<super::prompt_protection::StoredPromptProtectionRuleRecord>, String> {
+        let db = self.db.clone();
+        let name = name.to_owned();
+        let description = description.to_owned();
+        let pattern = pattern.to_owned();
+        let status = status.to_owned();
+        let settings_json = settings_json.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            if super::prompt_protection::prompt_protection_rule_name_exists_seaorm(&connection, &name, None).await? {
+                return Err("prompt protection rule already exists".to_owned());
+            }
+            let id = super::prompt_protection::create_prompt_protection_rule_seaorm(
+                &connection,
+                &name,
+                &description,
+                &pattern,
+                &status,
+                &settings_json,
+            )
+            .await?;
+            super::prompt_protection::load_prompt_protection_rule_seaorm(&connection, id).await
+        })
+    }
+
+    fn update_prompt_protection_rule(
+        &self,
+        id: i64,
+        name: Option<&str>,
+        description: Option<&str>,
+        pattern: Option<&str>,
+        status: Option<&str>,
+        settings_json: Option<&str>,
+    ) -> Result<Option<super::prompt_protection::StoredPromptProtectionRuleRecord>, String> {
+        let db = self.db.clone();
+        let name = name.map(ToOwned::to_owned);
+        let description = description.map(ToOwned::to_owned);
+        let pattern = pattern.map(ToOwned::to_owned);
+        let status = status.map(ToOwned::to_owned);
+        let settings_json = settings_json.map(ToOwned::to_owned);
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            if let Some(ref name) = name {
+                if super::prompt_protection::prompt_protection_rule_name_exists_seaorm(&connection, name, Some(id)).await? {
+                    return Err("prompt protection rule already exists".to_owned());
+                }
+            }
+            let updated = super::prompt_protection::update_prompt_protection_rule_seaorm(
+                &connection,
+                id,
+                name.as_deref(),
+                description.as_deref(),
+                pattern.as_deref(),
+                status.as_deref(),
+                settings_json.as_deref(),
+            )
+            .await?;
+            if !updated {
+                return Ok(None);
+            }
+            super::prompt_protection::load_prompt_protection_rule_seaorm(&connection, id).await
+        })
+    }
+
+    fn set_prompt_protection_rule_status(&self, id: i64, status: &str) -> Result<bool, String> {
+        let db = self.db.clone();
+        let status = status.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            super::prompt_protection::set_prompt_protection_rule_status_seaorm(&connection, id, &status).await
+        })
+    }
+
+    fn delete_prompt_protection_rule(&self, id: i64) -> Result<bool, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            super::prompt_protection::soft_delete_prompt_protection_rule_seaorm(&connection, id).await
+        })
+    }
+
+    fn bulk_delete_prompt_protection_rules(&self, ids: &[i64]) -> Result<(), String> {
+        let db = self.db.clone();
+        let ids = ids.to_vec();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            super::prompt_protection::bulk_soft_delete_prompt_protection_rules_seaorm(&connection, &ids)
+                .await
+                .map(|_| ())
+        })
+    }
+
+    fn bulk_set_prompt_protection_rules_status(&self, ids: &[i64], status: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let ids = ids.to_vec();
+        let status = status.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            super::prompt_protection::bulk_set_prompt_protection_rule_status_seaorm(&connection, &ids, &status)
+                .await
+                .map(|_| ())
+        })
+    }
+
     fn upsert_provider_quota_statuses(
         &self,
         next_check_at: &str,
@@ -575,6 +1210,17 @@ async fn query_model_statuses_seaorm(
             format!("unexpected upstream error while listing models: {status} {body}")
         }
     })
+}
+
+async fn query_channels_seaorm(
+    db: &DatabaseConnection,
+) -> Result<Vec<GraphqlChannelRecord>, String> {
+    channels::Entity::find()
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|rows| rows.into_iter().map(graphql_channel_record_from_model).collect())
 }
 
 async fn query_data_storage_status_seaorm(
@@ -1080,6 +1726,583 @@ async fn upsert_provider_quota_statuses_seaorm(
     }
 
     Ok(updated)
+}
+
+async fn create_project_seaorm(
+    db: &DatabaseConnection,
+    name: &str,
+    description: &str,
+    status: &str,
+) -> Result<GraphqlProjectRecord, String> {
+    if projects::Entity::find()
+        .filter(projects::Column::Name.eq(name))
+        .filter(projects::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("project already exists".to_owned());
+    }
+    let created = projects::Entity::insert(projects::ActiveModel {
+        name: Set(name.to_owned()),
+        description: Set(description.to_owned()),
+        status: Set(status.to_owned()),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    load_project_record_seaorm(db, created.last_insert_id)
+        .await?
+        .ok_or_else(|| "project not found".to_owned())
+}
+
+async fn update_project_seaorm(
+    db: &DatabaseConnection,
+    project_id: i64,
+    name: Option<&str>,
+    description: Option<&str>,
+    status: Option<&str>,
+) -> Result<GraphqlProjectRecord, String> {
+    let existing = projects::Entity::find_by_id(project_id)
+        .filter(projects::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(existing) = existing else {
+        return Err("project not found".to_owned());
+    };
+
+    if let Some(name) = name {
+        if let Some(other) = projects::Entity::find()
+            .filter(projects::Column::Name.eq(name))
+            .filter(projects::Column::DeletedAt.eq(0_i64))
+            .one(db)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            if other.id != project_id {
+                return Err("project already exists".to_owned());
+            }
+        }
+    }
+
+    let mut active: projects::ActiveModel = existing.into();
+    if let Some(name) = name {
+        active.name = Set(name.to_owned());
+    }
+    if let Some(description) = description {
+        active.description = Set(description.to_owned());
+    }
+    if let Some(status) = status {
+        active.status = Set(status.to_owned());
+    }
+    active.deleted_at = Set(0_i64);
+    active.update(db).await.map_err(|error| error.to_string())?;
+    load_project_record_seaorm(db, project_id)
+        .await?
+        .ok_or_else(|| "project not found".to_owned())
+}
+
+async fn create_role_seaorm(
+    db: &DatabaseConnection,
+    name: &str,
+    level: &str,
+    project_id: i64,
+    scopes_json: &str,
+) -> Result<GraphqlRoleRecord, String> {
+    if roles::Entity::find()
+        .filter(roles::Column::Name.eq(name))
+        .filter(roles::Column::ProjectId.eq(project_id))
+        .filter(roles::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("role already exists".to_owned());
+    }
+    let created = roles::Entity::insert(roles::ActiveModel {
+        name: Set(name.to_owned()),
+        level: Set(level.to_owned()),
+        project_id: Set(project_id),
+        scopes: Set(scopes_json.to_owned()),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    load_role_record_seaorm(db, created.last_insert_id)
+        .await?
+        .ok_or_else(|| "role not found".to_owned())
+}
+
+async fn update_role_seaorm(
+    db: &DatabaseConnection,
+    role_id: i64,
+    name: Option<&str>,
+    level: &str,
+    project_id: i64,
+    scopes_json: Option<&str>,
+) -> Result<GraphqlRoleRecord, String> {
+    let existing = roles::Entity::find_by_id(role_id)
+        .filter(roles::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(existing) = existing else {
+        return Err("role not found".to_owned());
+    };
+
+    if let Some(name) = name {
+        if let Some(other) = roles::Entity::find()
+            .filter(roles::Column::Name.eq(name))
+            .filter(roles::Column::ProjectId.eq(project_id))
+            .filter(roles::Column::DeletedAt.eq(0_i64))
+            .one(db)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            if other.id != role_id {
+                return Err("role already exists".to_owned());
+            }
+        }
+    }
+
+    let mut active: roles::ActiveModel = existing.into();
+    if let Some(name) = name {
+        active.name = Set(name.to_owned());
+    }
+    active.level = Set(level.to_owned());
+    active.project_id = Set(project_id);
+    if let Some(scopes_json) = scopes_json {
+        active.scopes = Set(scopes_json.to_owned());
+    }
+    active.deleted_at = Set(0_i64);
+    active.update(db).await.map_err(|error| error.to_string())?;
+    load_role_record_seaorm(db, role_id)
+        .await?
+        .ok_or_else(|| "role not found".to_owned())
+}
+
+async fn create_api_key_seaorm(
+    db: &DatabaseConnection,
+    owner_user_id: i64,
+    project_id: i64,
+    key: &str,
+    name: &str,
+    key_type: &str,
+    status: &str,
+    scopes_json: &str,
+    profiles_json: &str,
+) -> Result<GraphqlApiKeyRecord, String> {
+    if projects::Entity::find_by_id(project_id)
+        .filter(projects::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_none()
+    {
+        return Err("project not found".to_owned());
+    }
+    if api_keys::Entity::find()
+        .filter(api_keys::Column::Key.eq(key))
+        .filter(api_keys::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("api key already exists".to_owned());
+    }
+    let created = api_keys::Entity::insert(api_keys::ActiveModel {
+        user_id: Set(owner_user_id),
+        project_id: Set(project_id),
+        key: Set(key.to_owned()),
+        name: Set(name.to_owned()),
+        type_field: Set(key_type.to_owned()),
+        status: Set(status.to_owned()),
+        scopes: Set(scopes_json.to_owned()),
+        profiles: Set(profiles_json.to_owned()),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    load_api_key_record_seaorm(db, created.last_insert_id)
+        .await?
+        .ok_or_else(|| "api key not found".to_owned())
+}
+
+async fn update_api_key_seaorm(
+    db: &DatabaseConnection,
+    api_key_id: i64,
+    name: Option<&str>,
+    status: Option<&str>,
+    scopes_json: Option<&str>,
+) -> Result<GraphqlApiKeyRecord, String> {
+    let existing = api_keys::Entity::find_by_id(api_key_id)
+        .filter(api_keys::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(existing) = existing else {
+        return Err("api key not found".to_owned());
+    };
+    let mut active: api_keys::ActiveModel = existing.into();
+    if let Some(name) = name {
+        active.name = Set(name.to_owned());
+    }
+    if let Some(status) = status {
+        active.status = Set(status.to_owned());
+    }
+    if let Some(scopes_json) = scopes_json {
+        active.scopes = Set(scopes_json.to_owned());
+    }
+    active.deleted_at = Set(0_i64);
+    active.update(db).await.map_err(|error| error.to_string())?;
+    load_api_key_record_seaorm(db, api_key_id)
+        .await?
+        .ok_or_else(|| "api key not found".to_owned())
+}
+
+async fn create_channel_seaorm(
+    db: &DatabaseConnection,
+    channel_type: &str,
+    base_url: &str,
+    name: &str,
+    status: &str,
+    credentials_json: &str,
+    supported_models: &str,
+    auto_sync_supported_models: bool,
+    default_test_model: &str,
+    settings_json: &str,
+    tags: &str,
+    ordering_weight: i32,
+    error_message: &str,
+    remark: &str,
+) -> Result<GraphqlChannelRecord, String> {
+    if channels::Entity::find()
+        .filter(channels::Column::Name.eq(name))
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("channel already exists".to_owned());
+    }
+    let created = channels::Entity::insert(channels::ActiveModel {
+        type_field: Set(channel_type.to_owned()),
+        base_url: Set(Some(base_url.to_owned())),
+        name: Set(name.to_owned()),
+        status: Set(status.to_owned()),
+        credentials: Set(credentials_json.to_owned()),
+        supported_models: Set(supported_models.to_owned()),
+        auto_sync_supported_models: Set(auto_sync_supported_models),
+        default_test_model: Set(default_test_model.to_owned()),
+        settings: Set(settings_json.to_owned()),
+        tags: Set(tags.to_owned()),
+        ordering_weight: Set(ordering_weight),
+        error_message: Set(Some(error_message.to_owned())),
+        remark: Set(Some(remark.to_owned())),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    load_channel_record_seaorm(db, created.last_insert_id)
+        .await?
+        .ok_or_else(|| "channel not found".to_owned())
+}
+
+async fn update_channel_seaorm(
+    db: &DatabaseConnection,
+    channel_id: i64,
+    name: Option<&str>,
+    base_url: Option<&str>,
+    status: Option<&str>,
+    supported_models: Option<&str>,
+    auto_sync_supported_models: Option<bool>,
+    default_test_model: Option<&str>,
+    credentials_json: Option<&str>,
+    settings_json: Option<&str>,
+    tags: Option<&str>,
+    ordering_weight: Option<i32>,
+    error_message: Option<&str>,
+    remark: Option<&str>,
+) -> Result<GraphqlChannelRecord, String> {
+    let existing = channels::Entity::find_by_id(channel_id)
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(existing) = existing else {
+        return Err("channel not found".to_owned());
+    };
+    if let Some(name) = name {
+        if let Some(other) = channels::Entity::find()
+            .filter(channels::Column::Name.eq(name))
+            .filter(channels::Column::DeletedAt.eq(0_i64))
+            .one(db)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            if other.id != channel_id {
+                return Err("channel already exists".to_owned());
+            }
+        }
+    }
+    let mut active: channels::ActiveModel = existing.into();
+    if let Some(name) = name {
+        active.name = Set(name.to_owned());
+    }
+    if let Some(base_url) = base_url {
+        active.base_url = Set(Some(base_url.to_owned()));
+    }
+    if let Some(status) = status {
+        active.status = Set(status.to_owned());
+    }
+    if let Some(supported_models) = supported_models {
+        active.supported_models = Set(supported_models.to_owned());
+    }
+    if let Some(auto_sync_supported_models) = auto_sync_supported_models {
+        active.auto_sync_supported_models = Set(auto_sync_supported_models);
+    }
+    if let Some(default_test_model) = default_test_model {
+        active.default_test_model = Set(default_test_model.to_owned());
+    }
+    if let Some(credentials_json) = credentials_json {
+        active.credentials = Set(credentials_json.to_owned());
+    }
+    if let Some(settings_json) = settings_json {
+        active.settings = Set(settings_json.to_owned());
+    }
+    if let Some(tags) = tags {
+        active.tags = Set(tags.to_owned());
+    }
+    if let Some(ordering_weight) = ordering_weight {
+        active.ordering_weight = Set(ordering_weight);
+    }
+    if let Some(error_message) = error_message {
+        active.error_message = Set(Some(error_message.to_owned()));
+    }
+    if let Some(remark) = remark {
+        active.remark = Set(Some(remark.to_owned()));
+    }
+    active.deleted_at = Set(0_i64);
+    active.update(db).await.map_err(|error| error.to_string())?;
+    load_channel_record_seaorm(db, channel_id)
+        .await?
+        .ok_or_else(|| "channel not found".to_owned())
+}
+
+async fn create_model_seaorm(
+    db: &DatabaseConnection,
+    developer: &str,
+    model_id: &str,
+    model_type: &str,
+    name: &str,
+    icon: &str,
+    group: &str,
+    model_card_json: &str,
+    settings_json: &str,
+    status: &str,
+    remark: Option<&str>,
+) -> Result<GraphqlModelRecord, String> {
+    if models::Entity::find()
+        .filter(models::Column::Developer.eq(developer))
+        .filter(models::Column::ModelId.eq(model_id))
+        .filter(models::Column::TypeField.eq(model_type))
+        .filter(models::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("model already exists".to_owned());
+    }
+    let created = models::Entity::insert(models::ActiveModel {
+        developer: Set(developer.to_owned()),
+        model_id: Set(model_id.to_owned()),
+        type_field: Set(model_type.to_owned()),
+        name: Set(name.to_owned()),
+        icon: Set(icon.to_owned()),
+        group_name: Set(group.to_owned()),
+        model_card: Set(model_card_json.to_owned()),
+        settings: Set(settings_json.to_owned()),
+        status: Set(status.to_owned()),
+        remark: Set(remark.map(ToOwned::to_owned)),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    load_model_record_seaorm(db, created.last_insert_id)
+        .await?
+        .ok_or_else(|| "model not found".to_owned())
+}
+
+async fn update_model_seaorm(
+    db: &DatabaseConnection,
+    model_id: i64,
+    name: Option<&str>,
+    icon: Option<&str>,
+    group: Option<&str>,
+    model_card_json: Option<&str>,
+    settings_json: Option<&str>,
+    status: Option<&str>,
+    remark: Option<Option<&str>>,
+) -> Result<GraphqlModelRecord, String> {
+    let existing = models::Entity::find_by_id(model_id)
+        .filter(models::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(existing) = existing else {
+        return Err("model not found".to_owned());
+    };
+    let mut active: models::ActiveModel = existing.into();
+    if let Some(name) = name {
+        active.name = Set(name.to_owned());
+    }
+    if let Some(icon) = icon {
+        active.icon = Set(icon.to_owned());
+    }
+    if let Some(group) = group {
+        active.group_name = Set(group.to_owned());
+    }
+    if let Some(model_card_json) = model_card_json {
+        active.model_card = Set(model_card_json.to_owned());
+    }
+    if let Some(settings_json) = settings_json {
+        active.settings = Set(settings_json.to_owned());
+    }
+    if let Some(status) = status {
+        active.status = Set(status.to_owned());
+    }
+    if let Some(remark) = remark {
+        active.remark = Set(remark.map(ToOwned::to_owned));
+    }
+    active.deleted_at = Set(0_i64);
+    active.update(db).await.map_err(|error| error.to_string())?;
+    load_model_record_seaorm(db, model_id)
+        .await?
+        .ok_or_else(|| "model not found".to_owned())
+}
+
+async fn load_project_record_seaorm(
+    db: &DatabaseConnection,
+    project_id: i64,
+) -> Result<Option<GraphqlProjectRecord>, String> {
+    projects::Entity::find_by_id(project_id)
+        .filter(projects::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|row| row.map(graphql_project_record_from_model))
+}
+
+async fn load_role_record_seaorm(db: &DatabaseConnection, role_id: i64) -> Result<Option<GraphqlRoleRecord>, String> {
+    roles::Entity::find_by_id(role_id)
+        .filter(roles::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|row| row.map(graphql_role_record_from_model))
+}
+
+async fn load_api_key_record_seaorm(
+    db: &DatabaseConnection,
+    api_key_id: i64,
+) -> Result<Option<GraphqlApiKeyRecord>, String> {
+    api_keys::Entity::find_by_id(api_key_id)
+        .filter(api_keys::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|row| row.map(graphql_api_key_record_from_model))
+}
+
+async fn load_channel_record_seaorm(
+    db: &DatabaseConnection,
+    channel_id: i64,
+) -> Result<Option<GraphqlChannelRecord>, String> {
+    channels::Entity::find_by_id(channel_id)
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|row| row.map(graphql_channel_record_from_model))
+}
+
+async fn load_model_record_seaorm(
+    db: &DatabaseConnection,
+    model_id: i64,
+) -> Result<Option<GraphqlModelRecord>, String> {
+    models::Entity::find_by_id(model_id)
+        .filter(models::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|row| row.map(graphql_model_record_from_model))
+}
+
+fn graphql_project_record_from_model(value: projects::Model) -> GraphqlProjectRecord {
+    GraphqlProjectRecord { id: value.id, name: value.name, description: value.description, status: value.status }
+}
+
+fn graphql_role_record_from_model(value: roles::Model) -> GraphqlRoleRecord {
+    GraphqlRoleRecord {
+        id: value.id,
+        name: value.name,
+        level: value.level,
+        project_id: value.project_id,
+        scopes: value.scopes,
+    }
+}
+
+fn graphql_api_key_record_from_model(value: api_keys::Model) -> GraphqlApiKeyRecord {
+    GraphqlApiKeyRecord {
+        id: value.id,
+        project_id: value.project_id,
+        key: value.key,
+        name: value.name,
+        key_type: value.type_field,
+        status: value.status,
+        scopes: value.scopes,
+    }
+}
+
+fn graphql_channel_record_from_model(value: channels::Model) -> GraphqlChannelRecord {
+    GraphqlChannelRecord {
+        id: value.id,
+        name: value.name,
+        channel_type: value.type_field,
+        base_url: value.base_url.unwrap_or_default(),
+        status: value.status,
+        supported_models: value.supported_models,
+        ordering_weight: value.ordering_weight,
+    }
+}
+
+fn graphql_model_record_from_model(value: models::Model) -> GraphqlModelRecord {
+    GraphqlModelRecord {
+        id: value.id,
+        developer: value.developer,
+        model_id: value.model_id,
+        model_type: value.type_field,
+        name: value.name,
+        icon: value.icon,
+        remark: value.remark.unwrap_or_default(),
+        model_card_json: value.model_card,
+    }
 }
 
 async fn roles_for_user_seaorm(
