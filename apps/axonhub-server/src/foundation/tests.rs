@@ -3339,6 +3339,61 @@ struct TestHttpRequest {
         std::fs::remove_dir_all(data_dir).ok();
     }
 
+    #[test]
+    fn seaorm_admin_operational_service_updates_finished_operational_runs_without_runtime_raw_sql() {
+        let db_path = temp_sqlite_path("task7-seaorm-operational-run-update");
+        let factory = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(factory.connect_migrated()).unwrap();
+
+        let bootstrap = SeaOrmBootstrapService::new(factory.clone(), "v0.9.20".to_owned());
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute(
+                "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at)
+                 VALUES ('codex', 'https://example.test/v1', 'Task7 Quota Channel', 'enabled', '{}', '[]', 0, '', '{}', '[]', 100, '', 'task7 quota', 0)",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let service = SeaOrmOperationalService::new(factory.clone());
+        let updated = service
+            .run_provider_quota_check_tick(true, std::time::Duration::from_secs(20 * 60), Some(1))
+            .unwrap();
+        assert_eq!(updated, 1);
+
+        let verification = Connection::open(&db_path).unwrap();
+        let run_row = verification
+            .query_row(
+                "SELECT status, COALESCE(result_payload, ''), finished_at FROM operational_runs WHERE operation_type = 'quota_check' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(run_row.0, "completed");
+        assert!(run_row.1.contains("\"updated\":1"));
+        assert!(run_row.2.is_some_and(|value| !value.trim().is_empty()));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
     #[tokio::test]
     async fn admin_graphql_rolls_back_create_user_when_role_assignment_fails() {
         let db_path = temp_sqlite_path("task9-create-user-rollback");

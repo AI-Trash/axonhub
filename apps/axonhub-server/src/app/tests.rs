@@ -4198,10 +4198,22 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         .query_row("SELECT COUNT(*) FROM provider_quota_statuses", [], |row| row.get(0))
         .unwrap();
     assert_eq!(quota_status_count, 1);
-    let operational_run_count: i64 = status_connection
-        .query_row("SELECT COUNT(*) FROM operational_runs", [], |row| row.get(0))
+    let completed_operational_runs: i64 = status_connection
+        .query_row(
+            "SELECT COUNT(*) FROM operational_runs WHERE operation_type IN ('auto_backup', 'quota_check', 'gc_cleanup') AND status = 'completed' AND finished_at IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
-    assert!(operational_run_count >= 3);
+    let failed_operational_runs: i64 = status_connection
+        .query_row(
+            "SELECT COUNT(*) FROM operational_runs WHERE operation_type IN ('auto_backup', 'quota_check', 'gc_cleanup') AND status = 'failed'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(completed_operational_runs, 3);
+    assert_eq!(failed_operational_runs, 0);
     drop(status_connection);
 
     let systems_connection = foundation.open_connection(true).unwrap();

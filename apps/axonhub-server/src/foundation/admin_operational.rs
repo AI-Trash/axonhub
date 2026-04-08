@@ -1365,46 +1365,17 @@ async fn complete_operational_run(
     result_payload: Option<String>,
     error_message: Option<String>,
 ) -> Result<(), String> {
-    let backend = connection.get_database_backend();
-    if matches!(backend, DatabaseBackend::Postgres) {
-        let finished_at = current_rfc3339_timestamp();
-        connection
-            .execute_raw(Statement::from_sql_and_values(
-                backend,
-                "UPDATE operational_runs SET status = $1, result_payload = $2, error_message = $3, finished_at = $4::timestamptz WHERE id = $5".to_owned(),
-                vec![
-                    status.as_str().into(),
-                    result_payload.into(),
-                    error_message.into(),
-                    finished_at.into(),
-                    run_id.into(),
-                ],
-            ))
-            .await
-            .map_err(|error| error.to_string())?;
-    } else {
-        let quote = |value: &str| format!("'{}'", value.replace('\'', "''"));
-        let nullable = |value: Option<String>| match value {
-            Some(value) => quote(&value),
-            None => "NULL".to_owned(),
-        };
-        let sql = format!(
-            "UPDATE operational_runs SET status = {status}, result_payload = {result_payload}, error_message = {error_message}, finished_at = {finished_at} WHERE id = {run_id}",
-            status = quote(status.as_str()),
-            result_payload = nullable(result_payload),
-            error_message = nullable(error_message),
-            finished_at = match backend {
-                DatabaseBackend::Sqlite => "CURRENT_TIMESTAMP",
-                DatabaseBackend::MySql => "CURRENT_TIMESTAMP",
-                _ => unreachable!("unsupported database backend: {:?}", backend),
-            },
-            run_id = run_id,
-        );
-        connection
-            .execute_unprepared(&sql)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
+    let run = operational_runs::Entity::find_by_id(run_id)
+        .one(connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("operational run {run_id} not found"))?;
+    let mut active: operational_runs::ActiveModel = run.into();
+    active.status = Set(status.as_str().to_owned());
+    active.result_payload = Set(result_payload);
+    active.error_message = Set(error_message);
+    active.finished_at = Set(Some(current_rfc3339_timestamp()));
+    active.update(connection).await.map_err(|error| error.to_string())?;
     Ok(())
 }
 
