@@ -13,13 +13,11 @@ use crate::foundation::{
     request_context::parse_onboarding_record,
     provider_edge::PROVIDER_EDGE_REQUIRED_ENV_VARS,
     shared::{
-        SqliteFoundation, DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE,
-        PRIMARY_DATA_STORAGE_NAME, graphql_gid,
+        DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
         SYSTEM_KEY_BRAND_NAME, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_ONBOARDED,
-        SYSTEM_KEY_VERSION,
+        SYSTEM_KEY_VERSION, graphql_gid,
     },
-    sqlite_support::hash_password,
-    system::SqliteBootstrapService,
+    sqlite_support::{hash_password, SqliteBootstrapService, SqliteFoundation},
 };
 use axonhub_http::{
     HttpCorsSettings, HttpState, InitializeSystemRequest, ProviderEdgeAdminCapability,

@@ -8,8 +8,7 @@ use super::{
     identity::{
         parse_json_string_vec, QueryUserError, StoredApiKey, StoredProject, StoredRole, StoredUser,
     },
-    sqlite_support::SqliteConnectionFactory,
-    system::ensure_identity_tables,
+    sqlite_support::{ensure_identity_tables, SqliteConnectionFactory},
 };
 
 #[derive(Debug, Clone)]

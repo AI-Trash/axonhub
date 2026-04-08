@@ -2,8 +2,6 @@ use axonhub_http::{
     ContextResolveError, ProjectContext, RequestContextPort, ThreadContext, TraceContext,
 };
 
-#[cfg(test)]
-pub(crate) use super::request_context_sqlite_support::SqliteRequestContextService;
 use super::{
     ports::RequestContextRepository,
     repositories::request_context::{

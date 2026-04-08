@@ -112,7 +112,8 @@ fn issue_admin_token_for_fixture(state: &HttpState) -> String {
 
             match identity.admin_signin(&request) {
                 Ok(success) => success.token,
-                Err(axonhub_http::SignInError::InvalidCredentials) => {
+                Err(axonhub_http::SignInError::InvalidCredentials)
+                | Err(axonhub_http::SignInError::Internal) => {
                     bootstrap_state_for_admin_signin(state);
                     identity
                         .admin_signin(&request)

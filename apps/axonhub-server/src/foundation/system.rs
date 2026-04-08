@@ -2,12 +2,6 @@ use axonhub_http::{InitializeSystemRequest, SystemBootstrapPort, SystemInitializ
 
 use super::bootstrap_seaorm::{seaorm_initialize, seaorm_is_initialized, SeaOrmDbFactory};
 pub(crate) use super::passwords::{hash_password, verify_password};
-#[cfg(test)]
-pub(crate) use super::sqlite_support::{
-    ensure_all_foundation_tables, ensure_channel_model_tables, ensure_identity_tables,
-    ensure_operational_tables, ensure_prompt_tables, ensure_request_tables, SqliteBootstrapService,
-    SystemSettingsStore,
-};
 
 pub struct SeaOrmBootstrapService {
     db: SeaOrmDbFactory,

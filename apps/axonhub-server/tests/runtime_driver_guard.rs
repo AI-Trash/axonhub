@@ -2,6 +2,24 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const TASK_11_RUNTIME_SCOPE_FILES: [&str; 5] = [
+    "src/foundation/identity.rs",
+    "src/foundation/request_context.rs",
+    "src/foundation/graphql.rs",
+    "src/foundation/admin_operational.rs",
+    "src/foundation/openai_v1.rs",
+];
+
+const TASK_11_RUNTIME_REPOSITORY_FILES: [&str; 7] = [
+    "src/foundation/repositories/mod.rs",
+    "src/foundation/repositories/admin.rs",
+    "src/foundation/repositories/graphql.rs",
+    "src/foundation/repositories/identity.rs",
+    "src/foundation/repositories/openai_v1.rs",
+    "src/foundation/repositories/prompt_protection.rs",
+    "src/foundation/repositories/request_context.rs",
+];
+
 #[test]
 fn runtime_driver_guard_allows_test_only_usage() {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -17,6 +35,43 @@ fn runtime_driver_guard_allows_test_only_usage() {
 #[test]
 fn seaorm_runtime_policy_guard_passes() {
     runtime_driver_guard_allows_test_only_usage();
+}
+
+#[test]
+fn task_11_runtime_scope_remains_rusqlite_free() {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let scope_files = collect_task_11_runtime_scope_files(&repo_root);
+    let violations = scan_files_for_forbidden_token(&scope_files, "rusqlite");
+
+    assert!(
+        violations.is_empty(),
+        "Task 11 runtime scope must stay rusqlite-free:\n{}",
+        violations.join("\n")
+    );
+
+    let covered_files = scope_files
+        .iter()
+        .map(|path| {
+            path.strip_prefix(&repo_root)
+                .unwrap_or(path)
+                .display()
+                .to_string()
+        })
+        .collect::<BTreeSet<_>>();
+    assert!(
+        TASK_11_RUNTIME_SCOPE_FILES
+            .iter()
+            .all(|relative| covered_files.contains(*relative)),
+        "Task 11 runtime scope did not include the required production files: {:?}",
+        TASK_11_RUNTIME_SCOPE_FILES
+    );
+    assert!(
+        TASK_11_RUNTIME_REPOSITORY_FILES
+            .iter()
+            .all(|relative| covered_files.contains(*relative)),
+        "Task 11 runtime scope did not include the required repository files: {:?}",
+        TASK_11_RUNTIME_REPOSITORY_FILES
+    );
 }
 
 #[test]
@@ -149,6 +204,54 @@ fn scan_runtime_driver_usage(repo_root: &Path) -> Vec<String> {
             }
         }
     });
+
+    violations
+}
+
+fn collect_task_11_runtime_scope_files(repo_root: &Path) -> Vec<PathBuf> {
+    let mut files = TASK_11_RUNTIME_SCOPE_FILES
+        .iter()
+        .map(|relative| repo_root.join(relative))
+        .collect::<Vec<_>>();
+
+    files.extend(
+        TASK_11_RUNTIME_REPOSITORY_FILES
+            .iter()
+            .map(|relative| repo_root.join(relative)),
+    );
+
+    files.sort();
+    files.dedup();
+    files
+}
+
+fn scan_files_for_forbidden_token(paths: &[PathBuf], forbidden: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    for path in paths {
+        let Ok(contents) = fs::read_to_string(path) else {
+            continue;
+        };
+
+        let inline_test_ranges = inline_cfg_test_module_ranges(&contents);
+
+        for (index, line) in contents.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if line_is_in_ranges(index + 1, &inline_test_ranges)
+                || trimmed.starts_with("//")
+                || !trimmed.contains(forbidden)
+            {
+                continue;
+            }
+
+            violations.push(format!(
+                "{}:{}: runtime file references forbidden `{}`",
+                path.display(),
+                index + 1,
+                forbidden
+            ));
+        }
+    }
 
     violations
 }

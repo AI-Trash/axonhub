@@ -12,9 +12,6 @@ use super::{
     seaorm::SeaOrmConnectionFactory,
 };
 
-#[cfg(test)]
-pub(crate) use super::admin_sqlite_support::*;
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct StoredCleanupOption {
     pub(crate) resource_type: String,

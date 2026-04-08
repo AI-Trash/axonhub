@@ -23,8 +23,8 @@ use super::{
         provider_quota_type_for_channel, safe_relative_key_path, CachedFileStorage,
         StoredAutoBackupSettings, StoredBackupApiKey, StoredBackupChannel, StoredBackupModel,
         StoredBackupPayload, StoredChannelProbeData, StoredChannelProbePoint, StoredCleanupOption,
-        StoredGcCleanupSummary, StoredProviderQuotaStatus, StoredProxyPreset,
-        StoredStoragePolicy, StoredSystemChannelSettings,
+        StoredGcCleanupSummary, StoredProviderQuotaStatus, StoredProxyPreset, StoredStoragePolicy,
+        StoredSystemChannelSettings,
     },
     authz::{require_user_project_scope, SCOPE_READ_REQUESTS},
     graphql::{
@@ -34,12 +34,14 @@ use super::{
     ports::AdminRepository,
     shared::{
         bool_to_sql, current_rfc3339_timestamp, current_unix_timestamp, format_unix_timestamp,
-        SqliteConnectionFactory, AUTO_BACKUP_PREFIX, AUTO_BACKUP_SUFFIX, BACKUP_VERSION,
-        SYSTEM_KEY_AUTO_BACKUP_SETTINGS, SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_PROXY_PRESETS,
-        SYSTEM_KEY_STORAGE_POLICY, SYSTEM_KEY_USER_AGENT_PASS_THROUGH,
+        AUTO_BACKUP_PREFIX, AUTO_BACKUP_SUFFIX, BACKUP_VERSION, SYSTEM_KEY_AUTO_BACKUP_SETTINGS,
+        SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_PROXY_PRESETS, SYSTEM_KEY_STORAGE_POLICY,
+        SYSTEM_KEY_USER_AGENT_PASS_THROUGH,
     },
-    sqlite_support::SqliteFoundation,
-    system::{ensure_all_foundation_tables, ensure_operational_tables, SystemSettingsStore},
+    sqlite_support::{
+        ensure_all_foundation_tables, ensure_operational_tables, SqliteConnectionFactory,
+        SqliteFoundation, SystemSettingsStore,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -176,14 +178,24 @@ impl OperationalStore {
                     next_reset_at: match row.get_ref(5)? {
                         rusqlite::types::ValueRef::Null => None,
                         rusqlite::types::ValueRef::Integer(value) => Some(value),
-                        rusqlite::types::ValueRef::Text(value) => Some(parse_timestamp_or_unix_sql(
-                            std::str::from_utf8(value).map_err(|error| {
-                                SqlError::FromSqlConversionFailure(5, SqlType::Text, Box::new(error))
-                            })?,
-                            5,
-                        )?),
+                        rusqlite::types::ValueRef::Text(value) => {
+                            Some(parse_timestamp_or_unix_sql(
+                                std::str::from_utf8(value).map_err(|error| {
+                                    SqlError::FromSqlConversionFailure(
+                                        5,
+                                        SqlType::Text,
+                                        Box::new(error),
+                                    )
+                                })?,
+                                5,
+                            )?)
+                        }
                         _ => {
-                            return Err(SqlError::InvalidColumnType(5, "column 5".to_owned(), SqlType::Text))
+                            return Err(SqlError::InvalidColumnType(
+                                5,
+                                "column 5".to_owned(),
+                                SqlType::Text,
+                            ))
                         }
                     },
                     ready: row.get::<_, i64>(6)? != 0,
@@ -191,15 +203,27 @@ impl OperationalStore {
                         rusqlite::types::ValueRef::Integer(value) => value,
                         rusqlite::types::ValueRef::Text(value) => parse_timestamp_or_unix_sql(
                             std::str::from_utf8(value).map_err(|error| {
-                                SqlError::FromSqlConversionFailure(7, SqlType::Text, Box::new(error))
+                                SqlError::FromSqlConversionFailure(
+                                    7,
+                                    SqlType::Text,
+                                    Box::new(error),
+                                )
                             })?,
                             7,
                         )?,
                         rusqlite::types::ValueRef::Null => {
-                            return Err(SqlError::InvalidColumnType(7, "column 7".to_owned(), SqlType::Null))
+                            return Err(SqlError::InvalidColumnType(
+                                7,
+                                "column 7".to_owned(),
+                                SqlType::Null,
+                            ))
                         }
                         _ => {
-                            return Err(SqlError::InvalidColumnType(7, "column 7".to_owned(), SqlType::Text))
+                            return Err(SqlError::InvalidColumnType(
+                                7,
+                                "column 7".to_owned(),
+                                SqlType::Text,
+                            ))
                         }
                     },
                 })
@@ -274,8 +298,14 @@ fn parse_timestamp_or_unix_sql(value: &str, column_index: usize) -> SqlResult<i6
         return Ok(parsed);
     }
     humantime::parse_rfc3339_weak(value)
-        .map(|time| time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
-        .map_err(|error| SqlError::FromSqlConversionFailure(column_index, SqlType::Text, Box::new(error)))
+        .map(|time| {
+            time.duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+        })
+        .map_err(|error| {
+            SqlError::FromSqlConversionFailure(column_index, SqlType::Text, Box::new(error))
+        })
 }
 
 fn rusqlite_values(statement: &sea_orm::Statement) -> SqlResult<Vec<rusqlite::types::Value>> {

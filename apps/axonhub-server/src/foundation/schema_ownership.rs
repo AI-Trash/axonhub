@@ -300,8 +300,8 @@ mod tests {
     use crate::foundation::{
         authz::scope_strings,
         seaorm::SeaOrmConnectionFactory,
-        shared::{SqliteFoundation, SYSTEM_KEY_INITIALIZED},
-        system::SqliteBootstrapService,
+        shared::SYSTEM_KEY_INITIALIZED,
+        sqlite_support::{SqliteBootstrapService, SqliteFoundation},
     };
     use axonhub_http::{InitializeSystemRequest, SystemBootstrapPort};
     use rusqlite::{params, OptionalExtension};

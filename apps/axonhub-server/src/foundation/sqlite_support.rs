@@ -82,8 +82,8 @@ impl SqliteFoundation {
     }
 
     #[cfg(test)]
-    pub fn identities(&self) -> super::identity::IdentityStore {
-        super::identity::IdentityStore::new(self.connection_factory.clone())
+    pub fn identities(&self) -> super::identity_sqlite_support::IdentityStore {
+        super::identity_sqlite_support::IdentityStore::new(self.connection_factory.clone())
     }
 
     #[cfg(test)]
@@ -110,20 +110,20 @@ impl SqliteFoundation {
         )
     }
 
-    pub fn channel_models(&self) -> super::openai_v1::ChannelModelStore {
-        super::openai_v1::ChannelModelStore::new(self.connection_factory.clone())
+    pub fn channel_models(&self) -> super::openai_v1_sqlite_support::ChannelModelStore {
+        super::openai_v1_sqlite_support::ChannelModelStore::new(self.connection_factory.clone())
     }
 
-    pub fn requests(&self) -> super::openai_v1::RequestStore {
-        super::openai_v1::RequestStore::new(self.connection_factory.clone())
+    pub fn requests(&self) -> super::openai_v1_sqlite_support::RequestStore {
+        super::openai_v1_sqlite_support::RequestStore::new(self.connection_factory.clone())
     }
 
-    pub fn usage_costs(&self) -> super::openai_v1::UsageCostStore {
-        super::openai_v1::UsageCostStore::new(self.connection_factory.clone())
+    pub fn usage_costs(&self) -> super::openai_v1_sqlite_support::UsageCostStore {
+        super::openai_v1_sqlite_support::UsageCostStore::new(self.connection_factory.clone())
     }
 
-    pub fn operational(&self) -> super::admin::OperationalStore {
-        super::admin::OperationalStore::new(self.connection_factory.clone())
+    pub fn operational(&self) -> super::admin_sqlite_support::OperationalStore {
+        super::admin_sqlite_support::OperationalStore::new(self.connection_factory.clone())
     }
 }
 

@@ -21,10 +21,9 @@ use tracing::{field, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::{
-    admin::provider_quota_type_for_channel,
     admin_operational::{persist_provider_quota_status_seaorm, quota_exhausted_details, quota_ready_details},
     authz::{require_api_key_scope, AuthzFailure, SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS},
-    circuit_breaker::{ChannelBreakerStatus, CircuitBreakerPolicy, CircuitBreakerSnapshot, CircuitBreakerState, SharedCircuitBreaker},
+    circuit_breaker::{ChannelBreakerStatus, CircuitBreakerSnapshot, CircuitBreakerState, SharedCircuitBreaker},
     ports::OpenAiV1Repository,
     prompt_protection::{apply_prompt_protection, load_enabled_prompt_protection_rules_seaorm},
     repositories::openai_v1::{
@@ -41,7 +40,7 @@ use super::{
 };
 
 #[cfg(test)]
-pub(crate) use super::openai_v1_sqlite_support::*;
+use super::circuit_breaker::CircuitBreakerPolicy;
 
 pub struct SeaOrmOpenAiV1Service {
     db: SeaOrmConnectionFactory,

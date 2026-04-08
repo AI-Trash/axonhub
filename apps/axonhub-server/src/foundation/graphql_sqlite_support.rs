@@ -23,7 +23,7 @@ use sea_orm::{QuerySelect, RelationTrait};
 
 use super::{
     admin::{parse_graphql_resource_id, StoredProxyPreset},
-    admin::SqliteOperationalService,
+    admin_sqlite_support::SqliteOperationalService,
     authz::{
         authorize_user_system_scope, require_owner_bypass,
         require_service_api_key_write_access, require_user_project_scope, scope_strings,
@@ -33,8 +33,9 @@ use super::{
     },
     circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
     graphql::*,
-    shared::{graphql_gid, SqliteFoundation},
-    system::{ensure_identity_tables, hash_password},
+    shared::graphql_gid,
+    sqlite_support::{ensure_identity_tables, SqliteFoundation},
+    system::hash_password,
 };
 
 pub(crate) struct SqliteAdminGraphqlService {

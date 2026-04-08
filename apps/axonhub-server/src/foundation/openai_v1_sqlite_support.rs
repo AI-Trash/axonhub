@@ -37,8 +37,11 @@ use super::{
     },
     ports::OpenAiV1Repository,
     repositories::openai_v1::enforce_api_key_quota_seaorm,
-    shared::{bool_to_sql, SqliteConnectionFactory, SqliteFoundation, USAGE_LOGS_TABLE_SQL},
-    system::{ensure_channel_model_tables, ensure_prompt_tables, ensure_request_tables, SystemSettingsStore},
+    shared::{bool_to_sql, USAGE_LOGS_TABLE_SQL},
+    sqlite_support::{
+        ensure_channel_model_tables, ensure_prompt_tables, ensure_request_tables,
+        SqliteConnectionFactory, SqliteFoundation, SystemSettingsStore,
+    },
 };
 
 #[cfg(test)]

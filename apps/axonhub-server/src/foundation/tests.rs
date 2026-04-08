@@ -16,17 +16,22 @@ use super::{
     identity_service::{SeaOrmIdentityService, SqliteIdentityService},
     openai_v1::{
         NewChannelRecord, NewModelRecord, NewRequestExecutionRecord, NewRequestRecord,
-        NewUsageLogRecord, SeaOrmOpenAiV1Service, SqliteOpenAiV1Service,
+        NewUsageLogRecord, SeaOrmOpenAiV1Service,
     },
+    openai_v1_sqlite_support::SqliteOpenAiV1Service,
     request_context::parse_onboarding_record,
-    request_context_service::{SeaOrmRequestContextService, SqliteRequestContextService},
+    request_context_service::SeaOrmRequestContextService,
+    request_context_sqlite_support::SqliteRequestContextService,
     seaorm::SeaOrmConnectionFactory,
     shared::{
-        SqliteFoundation, DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE,
-        PRIMARY_DATA_STORAGE_NAME, SYSTEM_KEY_ONBOARDED, graphql_gid,
+        DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
+        SYSTEM_KEY_ONBOARDED, graphql_gid,
     },
-    sqlite_support::ensure_operational_tables,
-    system::{ensure_identity_tables, hash_password, SeaOrmBootstrapService, SqliteBootstrapService},
+    sqlite_support::{
+        ensure_identity_tables, ensure_operational_tables, SqliteBootstrapService,
+        SqliteFoundation,
+    },
+    system::{hash_password, SeaOrmBootstrapService},
 };
 use super::identity_sqlite_support::{
     build_user_context, query_default_project_for_user, query_project, query_user_by_id,
