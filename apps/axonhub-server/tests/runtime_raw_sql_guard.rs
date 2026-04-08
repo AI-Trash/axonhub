@@ -140,6 +140,59 @@ fn runtime_raw_sql_guard_rejects_new_occurrence() {
     );
 }
 
+#[test]
+fn runtime_raw_sql_guard_rejects_duplicate_allowlisted_boundary() {
+    let repo_root = unique_temp_dir("runtime-raw-sql-guard-duplicate");
+    let package_root = repo_root.join(PACKAGE_PATH_PREFIX);
+    let foundation_root = package_root.join(FOUNDATION_RUNTIME_ROOT);
+
+    fs::create_dir_all(&foundation_root).expect("create foundation dir");
+
+    fs::write(
+        foundation_root.join("mod.rs"),
+        "pub(crate) mod admin_operational;\n",
+    )
+    .expect("write foundation mod");
+    fs::write(
+        foundation_root.join("admin_operational.rs"),
+        "fn run_gc_cleanup_now(connection: &Db) {\n    let _ = connection.execute(Statement::from_string(connection.get_database_backend(), \"VACUUM\".to_owned()));\n    let _ = connection.execute(Statement::from_string(connection.get_database_backend(), \"VACUUM\".to_owned()));\n}\n",
+    )
+    .expect("write duplicate allowed boundary");
+
+    let report = scan_runtime_raw_sql_usage(&package_root, PACKAGE_PATH_PREFIX);
+    let failure = std::panic::catch_unwind(|| assert_no_runtime_raw_sql_violations(&report))
+        .expect_err("guard should panic for duplicate approved runtime raw SQL");
+    let failure_message = panic_message(&failure);
+
+    assert_eq!(
+        report.approved_boundary_ids,
+        APPROVED_RUNTIME_RAW_SQL_BOUNDARIES
+            .iter()
+            .map(|boundary| boundary.id)
+            .collect::<BTreeSet<_>>(),
+        "expected duplicate fixture to discover the approved boundary before rejecting the duplicate"
+    );
+    assert_eq!(
+        report.violations.len(),
+        1,
+        "expected exactly one duplicate allowlist violation, found:\n{}",
+        report.violations.join("\n")
+    );
+    assert!(
+        report.violations[0].contains(
+            "duplicate approved runtime raw-SQL boundary `OperationalMaintenanceCommand`"
+        ),
+        "unexpected violation: {}",
+        report.violations[0]
+    );
+    assert!(
+        failure_message.contains(
+            "duplicate approved runtime raw-SQL boundary `OperationalMaintenanceCommand`"
+        ),
+        "unexpected failure message: {failure_message}"
+    );
+}
+
 fn assert_no_runtime_raw_sql_violations(report: &RawSqlScanReport) {
     assert!(
         report.violations.is_empty(),

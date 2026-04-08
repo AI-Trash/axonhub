@@ -2454,7 +2454,7 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[tokio::test]
-    async fn trace_resolution_internal_failure_is_fail_open() {
+    pub(crate) async fn trace_resolution_internal_failure_is_fail_open() {
         let (state, request_context) = test_state_with_request_context(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
@@ -2471,7 +2471,12 @@ fn assert_go_duration_shape(value: &str) {
                     .method(Method::POST)
                     .header("X-API-Key", "api-key-123")
                     .header("X-Project-ID", "gid://axonhub/project/1")
+                    .header("X-Request-Id", "req-trace-fail-open")
                     .header("AH-Trace-Id", "trace-1")
+                    .header(
+                        "traceparent",
+                        "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+                    )
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -2481,6 +2486,7 @@ fn assert_go_duration_shape(value: &str) {
         assert_eq!(response.status(), StatusCode::OK);
         let json = read_json(response).await;
         assert_eq!(json["auth"]["mode"], "api_key");
+        assert_eq!(json["requestId"], "req-trace-fail-open");
         assert_eq!(json["project"]["id"], 1);
         assert_eq!(json["thread"], Value::Null);
         assert_eq!(json["trace"], Value::Null);
@@ -3877,6 +3883,8 @@ fn assert_go_duration_shape(value: &str) {
                             .uri("/v1/debug/context")
                             .method(Method::GET)
                             .header("X-API-Key", "api-key-123")
+                            .header("X-Project-ID", "gid://axonhub/project/1")
+                            .header("AH-Trace-Id", "trace-1")
                             .header(
                                 "traceparent",
                                 "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
@@ -3888,6 +3896,9 @@ fn assert_go_duration_shape(value: &str) {
                     .unwrap();
 
                 assert_eq!(response.status(), StatusCode::OK);
+                let json = read_json(response).await;
+                assert_eq!(json["project"]["id"], 1);
+                assert_eq!(json["trace"]["traceId"], "trace-1");
             });
 
             let http_span = recorded_http_request_span(&spans);

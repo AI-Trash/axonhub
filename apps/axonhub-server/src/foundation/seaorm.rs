@@ -28,6 +28,7 @@ fn next_factory_instance_id() -> u64 {
 }
 
 impl SeaOrmConnectionFactory {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn sqlite(dsn: String) -> Self {
         Self::sqlite_with_debug(dsn, false)
     }
@@ -40,6 +41,7 @@ impl SeaOrmConnectionFactory {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn postgres(dsn: String) -> Self {
         Self::postgres_with_debug(dsn, false)
     }
@@ -146,10 +148,15 @@ impl SeaOrmConnectionFactory {
         );
 
         if tokio::runtime::Handle::try_current().is_ok() {
+            let dispatch = tracing::dispatcher::get_default(|dispatch| dispatch.clone());
+            let span = tracing::Span::current();
             std::thread::spawn(move || {
-                tokio::runtime::Runtime::new()
-                    .expect("create runtime for SeaORM sync bridge")
-                    .block_on(build(factory))
+                tracing::dispatcher::with_default(&dispatch, || {
+                    let _enter = span.enter();
+                    tokio::runtime::Runtime::new()
+                        .expect("create runtime for SeaORM sync bridge")
+                        .block_on(build(factory))
+                })
             })
             .join()
             .unwrap_or_else(|_| panic!("SeaORM worker thread panicked"))
@@ -199,6 +206,7 @@ fn normalize_sqlite_file_dsn(dsn: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) async fn with_transaction<T, F, Fut>(
     db: &DatabaseConnection,
     build: F,
@@ -211,4 +219,70 @@ where
     let result = build(&txn).await?;
     txn.commit().await?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opentelemetry::trace::{TraceContextExt as _, TracerProvider as _};
+    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use std::convert::Infallible;
+    use std::sync::Mutex;
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::Registry;
+
+    #[test]
+    pub(crate) fn seaorm_run_sync_preserves_trace_context_across_bridge() {
+        let _guard = SEAORM_TRACE_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let provider = SdkTracerProvider::builder().build();
+        let tracer = provider.tracer("seaorm-tests");
+        let subscriber = Registry::default().with(tracing_opentelemetry::layer().with_tracer(tracer));
+
+        tracing::subscriber::with_default(subscriber, || {
+            let parent_span = tracing::span!(tracing::Level::INFO, "seaorm-sync-bridge-parent");
+            let _enter = parent_span.enter();
+            let expected_trace_id = tracing::Span::current()
+                .context()
+                .span()
+                .span_context()
+                .trace_id()
+                .to_string();
+
+            let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+            let bridged_trace_id = tokio::runtime::Runtime::new()
+                .expect("create runtime for SeaORM trace bridge test")
+                .block_on(async move {
+                    factory.run_sync(move |_| async move {
+                        Ok::<_, Infallible>(
+                            tracing::Span::current()
+                                .context()
+                                .span()
+                                .span_context()
+                                .trace_id()
+                                .to_string(),
+                        )
+                    })
+                })
+                .expect("run sync through tracing bridge");
+
+            assert_ne!(
+                expected_trace_id,
+                "00000000000000000000000000000000",
+                "expected parent span to carry a valid trace id"
+            );
+            assert_eq!(bridged_trace_id, expected_trace_id);
+        });
+
+        let _ = provider.force_flush();
+        let _ = provider.shutdown();
+    }
+}
+
+#[cfg(test)]
+static SEAORM_TRACE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn seaorm_run_sync_preserves_trace_context_across_bridge_inner() {
+    tests::seaorm_run_sync_preserves_trace_context_across_bridge();
 }

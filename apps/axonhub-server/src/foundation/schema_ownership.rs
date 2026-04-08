@@ -431,8 +431,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn schema_ownership_contract_limits_raw_sql_usage() {
+    pub(crate) fn schema_ownership_contract_limits_raw_sql_usage_inner() {
         let contract = current_schema_ownership_contract();
 
         assert_eq!(contract.raw_sql_boundaries.len(), 3);
@@ -451,6 +450,11 @@ mod tests {
             contract.raw_sql_boundaries[2].location,
             "runtime schema sync"
         );
+    }
+
+    #[test]
+    fn schema_ownership_contract_limits_raw_sql_usage() {
+        schema_ownership_contract_limits_raw_sql_usage_inner();
     }
 
     #[test]
@@ -661,4 +665,9 @@ mod tests {
 
         std::fs::remove_file(db_path).ok();
     }
+}
+
+#[cfg(test)]
+pub(crate) fn schema_ownership_contract_limits_raw_sql_usage_inner() {
+    tests::schema_ownership_contract_limits_raw_sql_usage_inner();
 }

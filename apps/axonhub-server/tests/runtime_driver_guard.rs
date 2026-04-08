@@ -71,6 +71,49 @@ fn runtime_driver_guard_rejects_runtime_imports() {
     );
 }
 
+#[test]
+fn runtime_driver_guard_rejects_runtime_driver_paths() {
+    let root = unique_temp_dir("runtime-driver-guard-path-violation");
+    let src_dir = root.join("src");
+    let app_dir = src_dir.join("app");
+    let foundation_dir = src_dir.join("foundation");
+
+    fs::create_dir_all(&app_dir).expect("create app dir");
+    fs::create_dir_all(&foundation_dir).expect("create foundation dir");
+
+    fs::write(app_dir.join("mod.rs"), "pub(crate) mod runtime;\n").expect("write app mod");
+    fs::write(foundation_dir.join("mod.rs"), "pub(crate) mod runtime;\n")
+        .expect("write foundation mod");
+    fs::write(
+        app_dir.join("runtime.rs"),
+        "fn bind(value: &(dyn postgres::types::ToSql + Sync)) {\n    let _ = value;\n}\n",
+    )
+    .expect("write violating runtime path file");
+    fs::write(
+        foundation_dir.join("runtime.rs"),
+        "fn ok() {\n    let _ = 1;\n}\n",
+    )
+    .expect("write non-violating foundation runtime file");
+
+    let violations = scan_runtime_driver_usage(&root);
+
+    assert_eq!(
+        violations.len(),
+        1,
+        "expected exactly one runtime path-fragment violation"
+    );
+    assert!(
+        violations[0].contains("src/app/runtime.rs"),
+        "unexpected violation: {}",
+        violations[0]
+    );
+    assert!(
+        violations[0].contains("postgres"),
+        "unexpected violation: {}",
+        violations[0]
+    );
+}
+
 fn scan_runtime_driver_usage(repo_root: &Path) -> Vec<String> {
     let src_root = repo_root.join("src");
     let mut test_only_files = BTreeSet::new();

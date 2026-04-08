@@ -42,3 +42,21 @@ fn runtime_query_semantics_preserved_after_rewrite() {
 fn parity_oracle_helpers_preserve_contract() {
     app::parity_oracle_helpers_preserve_contract_inner();
 }
+
+#[cfg(test)]
+#[test]
+fn build_upstream_headers_injects_w3c_trace_headers() {
+    foundation::openai_v1::build_upstream_headers_injects_w3c_trace_headers_inner();
+}
+
+#[cfg(test)]
+#[test]
+fn seaorm_run_sync_preserves_trace_context_across_bridge() {
+    foundation::seaorm::seaorm_run_sync_preserves_trace_context_across_bridge_inner();
+}
+
+#[cfg(test)]
+#[test]
+fn schema_ownership_contract_limits_raw_sql_usage() {
+    foundation::schema_ownership::schema_ownership_contract_limits_raw_sql_usage_inner();
+}

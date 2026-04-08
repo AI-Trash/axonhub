@@ -59,3 +59,9 @@ fn tracing_inbound_traceparent_links_span() {
 fn tracing_sensitive_fields_not_recorded() {
     tests::tracing_sensitive_fields_not_recorded();
 }
+
+#[cfg(test)]
+#[test]
+fn trace_resolution_internal_failure_is_fail_open() {
+    tests::trace_resolution_internal_failure_is_fail_open();
+}

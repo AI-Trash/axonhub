@@ -3393,13 +3393,33 @@ mod tests {
             let span = tracing::span!(tracing::Level::INFO, "upstream-request");
             let _enter = span.enter();
 
-            let headers = build_upstream_headers(&HashMap::new(), "secret-key").expect("headers");
+            let headers = build_upstream_headers(
+                &HashMap::from([
+                    ("AH-Trace-Id".to_owned(), "trace-1".to_owned()),
+                    ("AH-Thread-Id".to_owned(), "thread-1".to_owned()),
+                    ("X-Request-Id".to_owned(), "req-1".to_owned()),
+                ]),
+                "secret-key",
+            )
+            .expect("headers");
 
             assert!(headers.contains_key("traceparent"));
             assert!(headers
                 .get("traceparent")
                 .and_then(|value| value.to_str().ok())
                 .is_some_and(|value| value.starts_with("00-")));
+            assert_eq!(
+                headers.get("AH-Trace-Id").and_then(|value| value.to_str().ok()),
+                Some("trace-1")
+            );
+            assert_eq!(
+                headers.get("AH-Thread-Id").and_then(|value| value.to_str().ok()),
+                Some("thread-1")
+            );
+            assert_eq!(
+                headers.get("X-Request-Id").and_then(|value| value.to_str().ok()),
+                Some("req-1")
+            );
         });
 
         let _ = provider.force_flush();
@@ -3411,7 +3431,12 @@ mod tests {
 static OPENAI_TRACE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
 
 #[cfg(test)]
+pub(crate) fn build_upstream_headers_injects_w3c_trace_headers_inner() {
+    tests::build_upstream_headers_injects_w3c_trace_headers();
+}
+
+#[cfg(test)]
 #[test]
 fn build_upstream_headers_injects_w3c_trace_headers() {
-    tests::build_upstream_headers_injects_w3c_trace_headers();
+    build_upstream_headers_injects_w3c_trace_headers_inner();
 }
