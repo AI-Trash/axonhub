@@ -7,7 +7,7 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use std::sync::Arc;
 
 use super::{
-    identity::{QueryUserError, StoredApiKey, StoredProject},
+    identity::{QueryUserError, StoredApiKey, StoredProject, StoredUser},
     passwords::verify_password,
     ports::IdentityRepository,
     repositories::identity::{IdentityAuthRepository, SeaOrmIdentityAuthRepository},
@@ -16,164 +16,11 @@ use super::{
 };
 
 #[cfg(test)]
-use super::{identity::IdentityStore, shared::SqliteFoundation, system::SystemSettingsStore};
-
-#[cfg(test)]
-#[derive(Debug, Clone)]
-pub struct IdentityAuthService {
-    identities: IdentityStore,
-    system_settings: SystemSettingsStore,
-    allow_no_auth: bool,
-}
-
-#[cfg(test)]
-impl IdentityAuthService {
-    pub fn new(
-        identities: IdentityStore,
-        system_settings: SystemSettingsStore,
-        allow_no_auth: bool,
-    ) -> Self {
-        Self {
-            identities,
-            system_settings,
-            allow_no_auth,
-        }
-    }
-
-    pub fn admin_signin(&self, request: &SignInRequest) -> Result<SignInSuccess, SignInError> {
-        let user = self
-            .identities
-            .find_user_by_email(request.email.trim())
-            .map_err(map_sign_in_query_error)?;
-
-        if !verify_password(&user.password, &request.password) {
-            return Err(SignInError::InvalidCredentials);
-        }
-
-        let token = self.generate_jwt_token(user.id)?;
-        let user = self
-            .identities
-            .build_user_context(user)
-            .map_err(|_| SignInError::Internal)?;
-        Ok(SignInSuccess { user, token })
-    }
-
-    pub fn authenticate_admin_jwt(&self, token: &str) -> Result<AuthUserContext, AdminAuthError> {
-        let secret = self
-            .system_settings
-            .value(SYSTEM_KEY_SECRET_KEY)
-            .map_err(|_| AdminAuthError::Internal)?
-            .ok_or(AdminAuthError::InvalidToken)?;
-
-        let decoded = decode::<JwtClaims>(
-            token,
-            &DecodingKey::from_secret(secret.as_bytes()),
-            &Validation::new(Algorithm::HS256),
-        )
-        .map_err(|_| AdminAuthError::InvalidToken)?;
-
-        let user = self
-            .identities
-            .find_user_by_id(decoded.claims.user_id)
-            .map_err(map_admin_auth_query_error)?;
-        self.identities
-            .build_user_context(user)
-            .map_err(|_| AdminAuthError::Internal)
-    }
-
-    pub fn authenticate_api_key(
-        &self,
-        key: Option<&str>,
-        allow_no_auth: bool,
-    ) -> Result<AuthApiKeyContext, ApiKeyAuthError> {
-        let lookup_key = match key.map(str::trim).filter(|value| !value.is_empty()) {
-            Some(NO_AUTH_API_KEY_VALUE) => return Err(ApiKeyAuthError::Invalid),
-            Some(value) => value,
-            None if allow_no_auth && self.allow_no_auth => NO_AUTH_API_KEY_VALUE,
-            None => return Err(ApiKeyAuthError::Missing),
-        };
-
-        let api_key = self.identities.find_api_key_by_value(lookup_key)?;
-        self.authorize_api_key(api_key, allow_no_auth)
-    }
-
-    pub fn authenticate_gemini_key(
-        &self,
-        query_key: Option<&str>,
-        header_key: Option<&str>,
-    ) -> Result<AuthApiKeyContext, ApiKeyAuthError> {
-        self.authenticate_api_key(query_key.or(header_key), false)
-    }
-
-    pub fn resolve_project(
-        &self,
-        project_id: i64,
-    ) -> Result<Option<ProjectContext>, ContextResolveError> {
-        match self.identities.find_project_by_id(project_id) {
-            Ok(project) if project.status == "active" => Ok(Some(project_context(project))),
-            Ok(_) => Ok(None),
-            Err(ApiKeyAuthError::Invalid) => Ok(None),
-            Err(ApiKeyAuthError::Internal) | Err(ApiKeyAuthError::Missing) => {
-                Err(ContextResolveError::Internal)
-            }
-        }
-    }
-
-    fn authorize_api_key(
-        &self,
-        api_key: StoredApiKey,
-        allow_no_auth: bool,
-    ) -> Result<AuthApiKeyContext, ApiKeyAuthError> {
-        if api_key.status != "enabled" {
-            return Err(ApiKeyAuthError::Invalid);
-        }
-        if api_key.key_type == "noauth" && !(allow_no_auth && self.allow_no_auth) {
-            return Err(ApiKeyAuthError::Invalid);
-        }
-
-        let project = self.identities.find_project_by_id(api_key.project_id)?;
-        if project.status != "active" {
-            return Err(ApiKeyAuthError::Invalid);
-        }
-
-        Ok(AuthApiKeyContext {
-            id: api_key.id,
-            key: api_key.key,
-            name: api_key.name,
-            key_type: map_api_key_type(api_key.key_type.as_str()),
-            project: project_context(project),
-            scopes: api_key.scopes,
-            profiles_json: api_key.profiles,
-        })
-    }
-
-    fn generate_jwt_token(&self, user_id: i64) -> Result<String, SignInError> {
-        let secret = self
-            .system_settings
-            .value(SYSTEM_KEY_SECRET_KEY)
-            .map_err(|_| SignInError::Internal)?
-            .ok_or(SignInError::Internal)?;
-        let claims = JwtClaims {
-            user_id,
-            exp: (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + 60 * 60 * 24 * 7) as usize,
-        };
-
-        encode(
-            &Header::new(Algorithm::HS256),
-            &claims,
-            &EncodingKey::from_secret(secret.as_bytes()),
-        )
-        .map_err(|_| SignInError::Internal)
-    }
-}
+use super::sqlite_support::SqliteFoundation;
 
 #[cfg(test)]
 pub struct SqliteIdentityService {
-    identity_auth: IdentityAuthService,
+    identity_auth: SeaOrmIdentityService,
 }
 
 #[cfg(test)]
@@ -188,11 +35,11 @@ impl SqliteIdentityService {
 #[cfg(test)]
 impl IdentityPort for SqliteIdentityService {
     fn admin_signin(&self, request: &SignInRequest) -> Result<SignInSuccess, SignInError> {
-        self.identity_auth.admin_signin(request)
+        <SeaOrmIdentityService as IdentityPort>::admin_signin(&self.identity_auth, request)
     }
 
     fn authenticate_admin_jwt(&self, token: &str) -> Result<AuthUserContext, AdminAuthError> {
-        self.identity_auth.authenticate_admin_jwt(token)
+        <SeaOrmIdentityService as IdentityPort>::authenticate_admin_jwt(&self.identity_auth, token)
     }
 
     fn authenticate_api_key(
@@ -200,7 +47,11 @@ impl IdentityPort for SqliteIdentityService {
         key: Option<&str>,
         allow_no_auth: bool,
     ) -> Result<AuthApiKeyContext, ApiKeyAuthError> {
-        self.identity_auth.authenticate_api_key(key, allow_no_auth)
+        <SeaOrmIdentityService as IdentityPort>::authenticate_api_key(
+            &self.identity_auth,
+            key,
+            allow_no_auth,
+        )
     }
 
     fn authenticate_gemini_key(
@@ -208,8 +59,11 @@ impl IdentityPort for SqliteIdentityService {
         query_key: Option<&str>,
         header_key: Option<&str>,
     ) -> Result<AuthApiKeyContext, ApiKeyAuthError> {
-        self.identity_auth
-            .authenticate_gemini_key(query_key, header_key)
+        <SeaOrmIdentityService as IdentityPort>::authenticate_gemini_key(
+            &self.identity_auth,
+            query_key,
+            header_key,
+        )
     }
 }
 
@@ -240,6 +94,7 @@ impl IdentityRepository for SqliteIdentityService {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SeaOrmIdentityService {
     repository: SeaOrmIdentityAuthRepository,
     allow_no_auth: bool,
@@ -252,20 +107,45 @@ impl SeaOrmIdentityService {
             allow_no_auth,
         }
     }
-}
 
-impl IdentityPort for SeaOrmIdentityService {
-    fn admin_signin(&self, request: &SignInRequest) -> Result<SignInSuccess, SignInError> {
+    fn jwt_secret_for_signin(&self) -> Result<String, SignInError> {
+        self.repository
+            .query_system_value(SYSTEM_KEY_SECRET_KEY)
+            .map_err(|_| SignInError::Internal)?
+            .ok_or(SignInError::Internal)
+    }
+
+    fn jwt_secret_for_admin_auth(&self) -> Result<String, AdminAuthError> {
+        self.repository
+            .query_system_value(SYSTEM_KEY_SECRET_KEY)
+            .map_err(|_| AdminAuthError::Internal)?
+            .ok_or(AdminAuthError::InvalidToken)
+    }
+
+    fn build_signin_success(
+        &self,
+        request: &SignInRequest,
+        secret: &str,
+    ) -> Result<SignInSuccess, SignInError> {
         let user = self
             .repository
             .query_user_by_email(request.email.trim())
             .map_err(map_sign_in_query_error)?;
 
-        if !verify_password(&user.password, &request.password) {
+        self.verify_password_and_sign_in(user, &request.password, secret)
+    }
+
+    fn verify_password_and_sign_in(
+        &self,
+        user: StoredUser,
+        password: &str,
+        secret: &str,
+    ) -> Result<SignInSuccess, SignInError> {
+        if !verify_password(&user.password, password) {
             return Err(SignInError::InvalidCredentials);
         }
 
-        let token = self.repository.generate_jwt_token(user.id)?;
+        let token = encode_jwt_token(user.id, secret)?;
         let user = self
             .repository
             .build_user_context(user)
@@ -273,27 +153,46 @@ impl IdentityPort for SeaOrmIdentityService {
         Ok(SignInSuccess { user, token })
     }
 
-    fn authenticate_admin_jwt(&self, token: &str) -> Result<AuthUserContext, AdminAuthError> {
-        let secret = self
-            .repository
-            .query_system_value(SYSTEM_KEY_SECRET_KEY)
-            .map_err(|_| AdminAuthError::Internal)?
-            .ok_or(AdminAuthError::InvalidToken)?;
-
-        let decoded = decode::<JwtClaims>(
-            token,
-            &DecodingKey::from_secret(secret.as_bytes()),
-            &Validation::new(Algorithm::HS256),
-        )
-        .map_err(|_| AdminAuthError::InvalidToken)?;
+    fn authenticate_admin_jwt_with_secret(
+        &self,
+        token: &str,
+        secret: &str,
+    ) -> Result<AuthUserContext, AdminAuthError> {
+        let decoded = decode_jwt_claims(token, secret).map_err(|_| AdminAuthError::InvalidToken)?;
 
         let user = self
             .repository
-            .query_user_by_id(decoded.claims.user_id)
+            .query_user_by_id(decoded.user_id)
             .map_err(map_admin_auth_query_error)?;
         self.repository
             .build_user_context(user)
             .map_err(|_| AdminAuthError::Internal)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve_project(
+        &self,
+        project_id: i64,
+    ) -> Result<Option<ProjectContext>, ContextResolveError> {
+        match self.repository.project_context(project_id) {
+            Ok(project) => Ok(project),
+            Err(ApiKeyAuthError::Invalid) => Ok(None),
+            Err(ApiKeyAuthError::Internal) | Err(ApiKeyAuthError::Missing) => {
+                Err(ContextResolveError::Internal)
+            }
+        }
+    }
+}
+
+impl IdentityPort for SeaOrmIdentityService {
+    fn admin_signin(&self, request: &SignInRequest) -> Result<SignInSuccess, SignInError> {
+        let secret = self.jwt_secret_for_signin()?;
+        self.build_signin_success(request, &secret)
+    }
+
+    fn authenticate_admin_jwt(&self, token: &str) -> Result<AuthUserContext, AdminAuthError> {
+        let secret = self.jwt_secret_for_admin_auth()?;
+        self.authenticate_admin_jwt_with_secret(token, &secret)
     }
 
     fn authenticate_api_key(
@@ -403,4 +302,31 @@ pub(crate) fn project_context(project: StoredProject) -> ProjectContext {
         name: project.name,
         status: project.status,
     }
+}
+
+fn encode_jwt_token(user_id: i64, secret: &str) -> Result<String, SignInError> {
+    let claims = JwtClaims {
+        user_id,
+        exp: (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 60 * 60 * 24 * 7) as usize,
+    };
+
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|_| SignInError::Internal)
+}
+
+fn decode_jwt_claims(token: &str, secret: &str) -> Result<JwtClaims, jsonwebtoken::errors::Error> {
+    decode::<JwtClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &Validation::new(Algorithm::HS256),
+    )
+    .map(|decoded| decoded.claims)
 }

@@ -15,6 +15,7 @@ use sea_orm::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
+use tracing::{field, Instrument, Span};
 
 use super::{
     admin::{
@@ -500,6 +501,14 @@ impl AdminGraphqlPort for SeaOrmAdminGraphqlService {
     ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
         let repository = self.repository.clone();
         let circuit_breaker = self.circuit_breaker.clone();
+        let span = graphql_execution_span(
+            "admin",
+            graphql_request_kind(request.query.as_str()),
+            graphql_variables_present(&request.variables),
+            "jwt",
+            "admin",
+            project_id.is_some(),
+        );
         Box::pin(async move {
             let payload = request;
             match execute_admin_graphql_seaorm_request(
@@ -511,16 +520,24 @@ impl AdminGraphqlPort for SeaOrmAdminGraphqlService {
             )
             .await
             {
-                Ok(result) => result,
-                Err(message) => GraphqlExecutionResult {
-                    status: 200,
-                    body: serde_json::json!({
-                        "data": null,
-                        "errors": [{"message": format!("Failed to execute GraphQL request: {message}")}],
-                    }),
-                },
+                Ok(result) => {
+                    record_graphql_execution_outcome(&Span::current(), &result);
+                    result
+                }
+                Err(message) => {
+                    let result = GraphqlExecutionResult {
+                        status: 200,
+                        body: serde_json::json!({
+                            "data": null,
+                            "errors": [{"message": format!("Failed to execute GraphQL request: {message}")}],
+                        }),
+                    };
+                    record_graphql_internal_failure(&Span::current(), result.status);
+                    result
+                }
             }
-        })
+        }
+        .instrument(span))
     }
 }
 
@@ -542,19 +559,35 @@ impl OpenApiGraphqlPort for SeaOrmOpenApiGraphqlService {
         owner_api_key: AuthApiKeyContext,
     ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
         let repository = self.repository.clone();
+        let span = graphql_execution_span(
+            "openapi",
+            graphql_request_kind(request.query.as_str()),
+            graphql_variables_present(&request.variables),
+            graphql_api_key_auth_mode(&owner_api_key),
+            graphql_api_key_auth_subject(&owner_api_key),
+            true,
+        );
         Box::pin(async move {
             let payload = request;
             match execute_openapi_graphql_seaorm_request(repository, payload, owner_api_key).await {
-                Ok(result) => result,
-                Err(message) => GraphqlExecutionResult {
-                    status: 200,
-                    body: serde_json::json!({
-                        "data": null,
-                        "errors": [{"message": format!("Failed to execute GraphQL request: {message}")}],
-                    }),
-                },
+                Ok(result) => {
+                    record_graphql_execution_outcome(&Span::current(), &result);
+                    result
+                }
+                Err(message) => {
+                    let result = GraphqlExecutionResult {
+                        status: 200,
+                        body: serde_json::json!({
+                            "data": null,
+                            "errors": [{"message": format!("Failed to execute GraphQL request: {message}")}],
+                        }),
+                    };
+                    record_graphql_internal_failure(&Span::current(), result.status);
+                    result
+                }
             }
-        })
+        }
+        .instrument(span))
     }
 }
 
@@ -566,6 +599,87 @@ impl OpenApiGraphqlRepository for SeaOrmOpenApiGraphqlService {
     ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
         <Self as OpenApiGraphqlPort>::execute_graphql(self, request, owner_api_key)
     }
+}
+
+fn graphql_execution_span(
+    surface: &'static str,
+    kind: &'static str,
+    variables_bound: bool,
+    auth_mode: &'static str,
+    auth_subject: &'static str,
+    project_bound: bool,
+) -> Span {
+    tracing::span!(
+        tracing::Level::INFO,
+        "graphql.execution",
+        operation.name = "graphql.execute",
+        graphql.surface = surface,
+        graphql.kind = kind,
+        graphql.variables.bound = variables_bound,
+        auth.mode = auth_mode,
+        auth.subject = auth_subject,
+        project.bound = project_bound,
+        request.outcome = field::Empty,
+        http.status_code = field::Empty,
+    )
+}
+
+fn graphql_request_kind(query: &str) -> &'static str {
+    let trimmed = query.trim_start();
+    if trimmed.starts_with("mutation") {
+        "mutation"
+    } else if trimmed.starts_with("query") || trimmed.starts_with('{') {
+        "query"
+    } else {
+        "unknown"
+    }
+}
+
+fn graphql_variables_present(variables: &Value) -> bool {
+    match variables {
+        Value::Null => false,
+        Value::Object(values) => !values.is_empty(),
+        _ => true,
+    }
+}
+
+fn graphql_api_key_auth_mode(api_key: &AuthApiKeyContext) -> &'static str {
+    match api_key.key_type {
+        axonhub_http::ApiKeyType::NoAuth => "noauth",
+        _ => "api_key",
+    }
+}
+
+fn graphql_api_key_auth_subject(api_key: &AuthApiKeyContext) -> &'static str {
+    match api_key.key_type {
+        axonhub_http::ApiKeyType::User => "user_api_key",
+        axonhub_http::ApiKeyType::ServiceAccount => "service_api_key",
+        axonhub_http::ApiKeyType::NoAuth => "system_noauth",
+    }
+}
+
+fn record_graphql_execution_outcome(span: &Span, result: &GraphqlExecutionResult) {
+    span.record("http.status_code", i64::from(result.status));
+    let outcome = if result.status >= 500 {
+        "internal_error"
+    } else if graphql_response_has_error(&result.body) {
+        "graphql_error"
+    } else {
+        "success"
+    };
+    span.record("request.outcome", outcome);
+}
+
+fn record_graphql_internal_failure(span: &Span, status_code: u16) {
+    span.record("http.status_code", i64::from(status_code));
+    span.record("request.outcome", "internal_error");
+}
+
+fn graphql_response_has_error(body: &Value) -> bool {
+    body.get("errors")
+        .and_then(Value::as_array)
+        .is_some_and(|errors| !errors.is_empty())
+        || body.get("error").is_some()
 }
 
 async fn execute_admin_graphql_seaorm_request(

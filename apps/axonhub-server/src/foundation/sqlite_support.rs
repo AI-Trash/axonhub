@@ -81,19 +81,17 @@ impl SqliteFoundation {
         DataStorageStore::new(self.connection_factory.clone())
     }
 
+    #[cfg(test)]
     pub fn identities(&self) -> super::identity::IdentityStore {
         super::identity::IdentityStore::new(self.connection_factory.clone())
     }
 
+    #[cfg(test)]
     pub fn identity_auth(
         &self,
         allow_no_auth: bool,
-    ) -> super::identity_service::IdentityAuthService {
-        super::identity_service::IdentityAuthService::new(
-            self.identities(),
-            self.system_settings(),
-            allow_no_auth,
-        )
+    ) -> super::identity_service::SeaOrmIdentityService {
+        super::identity_service::SeaOrmIdentityService::new(self.seaorm(), allow_no_auth)
     }
 
     #[cfg(test)]

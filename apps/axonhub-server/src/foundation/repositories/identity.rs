@@ -1,20 +1,20 @@
 use axonhub_http::{ApiKeyAuthError, AuthUserContext, ProjectContext};
 use axonhub_db_entity::{api_keys, projects, roles, systems, user_projects, user_roles, users};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 
 use crate::foundation::{
     authz::{is_project_role_assignment, is_system_role_assignment},
-    identity::{parse_json_string_vec, QueryUserError, StoredApiKey, StoredProject, StoredRole, StoredUser},
+    identity::{
+        parse_json_string_vec, QueryUserError, StoredApiKey, StoredProject, StoredRole,
+        StoredUser,
+    },
     seaorm::SeaOrmConnectionFactory,
-    shared::SYSTEM_KEY_SECRET_KEY,
 };
 
 pub(crate) trait IdentityAuthRepository: Send + Sync {
     fn query_user_by_email(&self, email: &str) -> Result<StoredUser, QueryUserError>;
     fn query_user_by_id(&self, user_id: i64) -> Result<StoredUser, QueryUserError>;
     fn query_system_value(&self, key: &str) -> Result<Option<String>, sea_orm::DbErr>;
-    fn generate_jwt_token(&self, user_id: i64) -> Result<String, axonhub_http::SignInError>;
     fn query_api_key(&self, key: &str) -> Result<StoredApiKey, ApiKeyAuthError>;
     fn query_project(&self, project_id: i64) -> Result<StoredProject, ApiKeyAuthError>;
     fn build_user_context(&self, user: StoredUser) -> Result<AuthUserContext, ()>;
@@ -57,28 +57,6 @@ impl IdentityAuthRepository for SeaOrmIdentityAuthRepository {
             let connection = db.connect_migrated().await?;
             query_system_value_seaorm(&connection, &key).await
         })
-    }
-
-    fn generate_jwt_token(&self, user_id: i64) -> Result<String, axonhub_http::SignInError> {
-        let secret = self
-            .query_system_value(SYSTEM_KEY_SECRET_KEY)
-            .map_err(|_| axonhub_http::SignInError::Internal)?
-            .ok_or(axonhub_http::SignInError::Internal)?;
-        let claims = JwtClaims {
-            user_id,
-            exp: (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + 60 * 60 * 24 * 7) as usize,
-        };
-
-        encode(
-            &Header::new(Algorithm::HS256),
-            &claims,
-            &EncodingKey::from_secret(secret.as_bytes()),
-        )
-        .map_err(|_| axonhub_http::SignInError::Internal)
     }
 
     fn query_api_key(&self, key: &str) -> Result<StoredApiKey, ApiKeyAuthError> {
@@ -360,10 +338,4 @@ fn stored_role_from_assignment(role: roles::Assignment) -> Result<StoredRole, ()
         project_id: role.project_id,
         scopes: parse_json_string_vec(role.scopes),
     })
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct JwtClaims {
-    user_id: i64,
-    exp: usize,
 }

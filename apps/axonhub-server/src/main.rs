@@ -51,6 +51,12 @@ fn build_upstream_headers_injects_w3c_trace_headers() {
 
 #[cfg(test)]
 #[test]
+fn openai_v1_execution_span_avoids_sensitive_fields() {
+    foundation::openai_v1::openai_v1_execution_span_avoids_sensitive_fields_inner();
+}
+
+#[cfg(test)]
+#[test]
 fn seaorm_run_sync_preserves_trace_context_across_bridge() {
     foundation::seaorm::seaorm_run_sync_preserves_trace_context_across_bridge_inner();
 }

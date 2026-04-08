@@ -17,6 +17,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::{field, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::{
@@ -205,44 +206,58 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         route: OpenAiV1Route,
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-        require_api_key_scope(&request.api_key, SCOPE_WRITE_REQUESTS).map_err(authz_openai_error)?;
-        validate_openai_request(route, &request.body)?;
-        let route_format = route.format().to_owned();
-        let request_model_id = request_model_id(&request.body)?;
-        let db = self.db.clone();
-        let circuit_breaker = self.circuit_breaker.clone();
+        let span = openai_execution_span(
+            "openai_v1.execute",
+            "openai_v1",
+            route.format(),
+            &request,
+        );
+        let _enter = span.enter();
 
-        db.run_sync(move |db| async move {
-            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
-            let backend = db.backend();
-            let targets = select_target_channels_seaorm(
-                &connection,
-                backend,
-                &request,
-                route,
-                &circuit_breaker,
-                request.api_key.profiles_json.as_deref(),
-            )
-            .await?;
-            let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
-            execute_shared_route_seaorm(
-                &connection,
-                backend,
-                &request,
-                request_model_id.as_str(),
-                route_format.as_str(),
-                reqwest::Method::POST,
-                targets,
-                &request.body,
-                &request.headers,
-                data_storage_id,
-                &circuit_breaker,
-                |target| target.upstream_url(route),
-                Ok,
-                |response_body| extract_usage(route, response_body),
-            )
-            .await
-        })
+        let result = (|| {
+            require_api_key_scope(&request.api_key, SCOPE_WRITE_REQUESTS).map_err(authz_openai_error)?;
+            validate_openai_request(route, &request.body)?;
+            let route_format = route.format().to_owned();
+            let request_model_id = request_model_id(&request.body)?;
+            let db = self.db.clone();
+            let circuit_breaker = self.circuit_breaker.clone();
+
+            db.run_sync(move |db| async move {
+                let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+                let backend = db.backend();
+                let targets = select_target_channels_seaorm(
+                    &connection,
+                    backend,
+                    &request,
+                    route,
+                    &circuit_breaker,
+                    request.api_key.profiles_json.as_deref(),
+                )
+                .await?;
+                Span::current().record("target.selected_count", targets.len() as i64);
+                let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
+                execute_shared_route_seaorm(
+                    &connection,
+                    backend,
+                    &request,
+                    request_model_id.as_str(),
+                    route_format.as_str(),
+                    reqwest::Method::POST,
+                    targets,
+                    &request.body,
+                    &request.headers,
+                    data_storage_id,
+                    &circuit_breaker,
+                    |target| target.upstream_url(route),
+                    Ok,
+                    |response_body| extract_usage(route, response_body),
+                )
+                .await
+            })
+        })();
+
+        record_openai_execution_outcome(&span, &result);
+        result
     }
 
     fn execute_compatibility(
@@ -250,62 +265,76 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         route: CompatibilityRoute,
         request: OpenAiV1ExecutionRequest,
     ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
-        let db = self.db.clone();
-        let circuit_breaker = self.circuit_breaker.clone();
-        db.run_sync(move |db| async move {
-            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
-            let backend = db.backend();
-            let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
-            let prepared = prepare_compatibility_request(route, &request)?;
-            let targets = if matches!(
-                route,
-                CompatibilityRoute::DoubaoGetTask | CompatibilityRoute::DoubaoDeleteTask
-            ) {
-                select_doubao_task_targets_seaorm(&connection, backend, &request, &prepared).await?
-            } else {
-                select_inference_targets_seaorm(
+        let span = openai_execution_span(
+            "openai_v1.execute_compatibility",
+            "compatibility",
+            route.format(),
+            &request,
+        );
+        let _enter = span.enter();
+
+        let result = (|| {
+            let db = self.db.clone();
+            let circuit_breaker = self.circuit_breaker.clone();
+            db.run_sync(move |db| async move {
+                let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+                let backend = db.backend();
+                let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
+                let prepared = prepare_compatibility_request(route, &request)?;
+                let targets = if matches!(
+                    route,
+                    CompatibilityRoute::DoubaoGetTask | CompatibilityRoute::DoubaoDeleteTask
+                ) {
+                    select_doubao_task_targets_seaorm(&connection, backend, &request, &prepared).await?
+                } else {
+                    select_inference_targets_seaorm(
+                        &connection,
+                        backend,
+                        prepared.request_model_id.as_str(),
+                        request.trace.as_ref().map(|trace| trace.id),
+                        DEFAULT_MAX_CHANNEL_RETRIES,
+                        prepared.channel_type,
+                        prepared.model_type,
+                        None,
+                        &circuit_breaker,
+                        None,
+                    )
+                    .await?
+                };
+                Span::current().record("target.selected_count", targets.len() as i64);
+
+                if targets.is_empty() {
+                    return Err(OpenAiV1Error::InvalidRequest {
+                        message: format!(
+                            "No enabled {} channel is configured for the requested model",
+                            prepared.channel_type
+                        ),
+                    });
+                }
+
+                let route_task_id = prepared.task_id.clone();
+                execute_shared_route_seaorm(
                     &connection,
                     backend,
+                    &request,
                     prepared.request_model_id.as_str(),
-                    request.trace.as_ref().map(|trace| trace.id),
-                    DEFAULT_MAX_CHANNEL_RETRIES,
-                    prepared.channel_type,
-                    prepared.model_type,
-                    None,
+                    route.format(),
+                    compatibility_upstream_method(route),
+                    targets,
+                    &OpenAiRequestBody::Json(prepared.upstream_body.clone()),
+                    &request.headers,
+                    data_storage_id,
                     &circuit_breaker,
-                    None,
+                    move |target| compatibility_upstream_url(target, route, route_task_id.as_deref()),
+                    |response_body| map_compatibility_response(route, response_body),
+                    |response_body| compatibility_usage(route, response_body),
                 )
-                .await?
-            };
+                .await
+            })
+        })();
 
-            if targets.is_empty() {
-                return Err(OpenAiV1Error::InvalidRequest {
-                    message: format!(
-                        "No enabled {} channel is configured for the requested model",
-                        prepared.channel_type
-                    ),
-                });
-            }
-
-            let route_task_id = prepared.task_id.clone();
-            execute_shared_route_seaorm(
-                &connection,
-                backend,
-                &request,
-                prepared.request_model_id.as_str(),
-                route.format(),
-                compatibility_upstream_method(route),
-                targets,
-                &OpenAiRequestBody::Json(prepared.upstream_body.clone()),
-                &request.headers,
-                data_storage_id,
-                &circuit_breaker,
-                move |target| compatibility_upstream_url(target, route, route_task_id.as_deref()),
-                |response_body| map_compatibility_response(route, response_body),
-                |response_body| compatibility_usage(route, response_body),
-            )
-            .await
-        })
+        record_openai_execution_outcome(&span, &result);
+        result
     }
 
     fn create_realtime_session(
@@ -415,6 +444,76 @@ impl OpenAiV1Repository for SeaOrmOpenAiV1Service {
     fn delete_realtime_session(&self, session_id: &str) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
         <Self as OpenAiV1Port>::delete_realtime_session(self, session_id)
     }
+}
+
+fn openai_execution_span(
+    operation_name: &'static str,
+    route_family: &'static str,
+    route_name: &str,
+    request: &OpenAiV1ExecutionRequest,
+) -> Span {
+    let span = tracing::span!(
+        tracing::Level::INFO,
+        "openai.v1.execution",
+        operation.name = operation_name,
+        route.family = route_family,
+        route.name = %route_name,
+        auth.mode = openai_auth_mode(&request.api_key),
+        auth.subject = openai_auth_subject(&request.api_key),
+        request.stream = request.body.stream_flag(),
+        request.bound = header_present(request.headers.get("X-Request-Id")),
+        trace.bound = request.trace.is_some(),
+        thread.bound = header_present(request.headers.get("AH-Thread-Id")),
+        channel.hint = request.channel_hint_id.is_some(),
+        target.selected_count = field::Empty,
+        retry.count = field::Empty,
+        request.outcome = field::Empty,
+        http.status_code = field::Empty,
+    );
+    span.record("target.selected_count", 0_i64);
+    span.record("retry.count", 0_i64);
+    span
+}
+
+fn record_openai_execution_outcome(
+    span: &Span,
+    result: &Result<OpenAiV1ExecutionResponse, OpenAiV1Error>,
+) {
+    match result {
+        Ok(response) => {
+            span.record("request.outcome", "success");
+            span.record("http.status_code", i64::from(response.status));
+        }
+        Err(OpenAiV1Error::Upstream { status, .. }) => {
+            span.record("request.outcome", "upstream_error");
+            span.record("http.status_code", i64::from(*status));
+        }
+        Err(OpenAiV1Error::InvalidRequest { .. }) => {
+            span.record("request.outcome", "invalid_request");
+        }
+        Err(OpenAiV1Error::Internal { .. }) => {
+            span.record("request.outcome", "internal_error");
+        }
+    }
+}
+
+fn openai_auth_mode(api_key: &AuthApiKeyContext) -> &'static str {
+    match api_key.key_type {
+        axonhub_http::ApiKeyType::NoAuth => "noauth",
+        _ => "api_key",
+    }
+}
+
+fn openai_auth_subject(api_key: &AuthApiKeyContext) -> &'static str {
+    match api_key.key_type {
+        axonhub_http::ApiKeyType::User => "user_api_key",
+        axonhub_http::ApiKeyType::ServiceAccount => "service_api_key",
+        axonhub_http::ApiKeyType::NoAuth => "system_noauth",
+    }
+}
+
+fn header_present(value: Option<&String>) -> bool {
+    value.is_some_and(|current| !current.trim().is_empty())
 }
 
 fn authz_openai_error(error: AuthzFailure) -> OpenAiV1Error {
@@ -774,6 +873,7 @@ where
     UsageExtractor: Fn(&Value) -> Option<ExtractedUsage>,
 {
     enforce_api_key_quota_seaorm(db, backend, request.api_key_id).await?;
+    let span = Span::current();
 
     let masked_request_headers = sanitize_headers_json(upstream_headers);
     let request_body_json = serde_json::to_string(&request.body).map_err(|error| OpenAiV1Error::Internal {
@@ -812,6 +912,7 @@ where
     .await?;
 
     let mut last_error = None;
+    let mut retry_count = 0_i64;
     for (index, target) in targets.iter().enumerate() {
         let mut same_channel_attempts = 0;
         loop {
@@ -947,11 +1048,15 @@ where
                     let retryable = should_retry_openai_error(&error);
                     if retryable && same_channel_attempts < DEFAULT_MAX_SAME_CHANNEL_RETRIES {
                         same_channel_attempts += 1;
+                        retry_count += 1;
+                        span.record("retry.count", retry_count);
                         continue;
                     }
 
                     let is_last = index + 1 == targets.len();
                     if retryable && !is_last {
+                        retry_count += 1;
+                        span.record("retry.count", retry_count);
                         last_error = Some(error);
                         break;
                     }
@@ -3377,14 +3482,72 @@ pub(crate) fn extract_channel_api_key(credentials_json: &str) -> String {
 mod tests {
     use super::*;
     use opentelemetry::trace::TracerProvider as _;
-    use std::sync::Mutex;
-    use opentelemetry_sdk::trace::SdkTracerProvider;
+    use opentelemetry_sdk::trace::{SdkTracerProvider, SpanData, SpanExporter};
+    use serde_json::json;
+    use std::fmt;
+    use std::sync::{Arc, Mutex};
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::Registry;
 
+    #[derive(Clone, Default)]
+    struct RecordingSpanExporter {
+        spans: Arc<Mutex<Vec<SpanData>>>,
+    }
+
+    impl fmt::Debug for RecordingSpanExporter {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("RecordingSpanExporter").finish()
+        }
+    }
+
+    impl SpanExporter for RecordingSpanExporter {
+        async fn export(&self, batch: Vec<SpanData>) -> opentelemetry_sdk::error::OTelSdkResult {
+            self.spans
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .extend(batch);
+            Ok(())
+        }
+    }
+
+    fn with_recorded_spans<T>(f: impl FnOnce(Arc<Mutex<Vec<SpanData>>>) -> T) -> T {
+        let exporter = RecordingSpanExporter::default();
+        let spans = exporter.spans.clone();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter)
+            .build();
+        let tracer = provider.tracer("openai-v1-tests");
+        let subscriber = Registry::default().with(tracing_opentelemetry::layer().with_tracer(tracer));
+
+        let result = tracing::subscriber::with_default(subscriber, || f(spans.clone()));
+        let _ = provider.force_flush();
+        let _ = provider.shutdown();
+        result
+    }
+
+    fn span_attributes(span: &SpanData) -> BTreeMap<String, String> {
+        span.attributes
+            .iter()
+            .map(|kv| (kv.key.as_str().to_owned(), kv.value.to_string()))
+            .collect()
+    }
+
+    fn recorded_openai_execution_span(spans: &Arc<Mutex<Vec<SpanData>>>) -> SpanData {
+        spans
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .find(|span| span.name.as_ref() == "openai.v1.execution")
+            .cloned()
+            .expect("openai execution span")
+    }
+
     #[test]
     pub(crate) fn build_upstream_headers_injects_w3c_trace_headers() {
-        let _guard = OPENAI_TRACE_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let _guard = OPENAI_TRACE_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let provider = SdkTracerProvider::builder().build();
         let tracer = provider.tracer("openai-v1-tests");
         let subscriber = Registry::default().with(tracing_opentelemetry::layer().with_tracer(tracer));
@@ -3425,6 +3588,152 @@ mod tests {
         let _ = provider.force_flush();
         let _ = provider.shutdown();
     }
+
+    #[test]
+    pub(crate) fn openai_v1_execution_span_avoids_sensitive_fields() {
+        let _guard = OPENAI_TRACE_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        with_recorded_spans(|spans| {
+            let request = OpenAiV1ExecutionRequest {
+                headers: HashMap::from([
+                    (
+                        "Authorization".to_owned(),
+                        "Bearer inbound-secret-token".to_owned(),
+                    ),
+                    ("X-API-Key".to_owned(), "api-key-secret-header".to_owned()),
+                    ("AH-Thread-Id".to_owned(), "thread-secret-42".to_owned()),
+                    ("X-Request-Id".to_owned(), "req-secret-7".to_owned()),
+                ]),
+                body: OpenAiRequestBody::Json(json!({
+                    "model": "gpt-4o",
+                    "stream": true,
+                    "messages": [{"role": "user", "content": "password=hunter2"}]
+                })),
+                path: "/v1/chat/completions".to_owned(),
+                path_params: HashMap::new(),
+                query: HashMap::new(),
+                project: axonhub_http::ProjectContext {
+                    id: 1,
+                    name: "Default Project".to_owned(),
+                    status: "active".to_owned(),
+                },
+                trace: Some(axonhub_http::TraceContext {
+                    id: 8,
+                    trace_id: "trace-secret-99".to_owned(),
+                    project_id: 1,
+                    thread_id: None,
+                }),
+                api_key: axonhub_http::AuthApiKeyContext {
+                    id: 11,
+                    key: "sk-secret-runtime-key".to_owned(),
+                    name: "runtime key".to_owned(),
+                    key_type: axonhub_http::ApiKeyType::User,
+                    project: axonhub_http::ProjectContext {
+                        id: 1,
+                        name: "Default Project".to_owned(),
+                        status: "active".to_owned(),
+                    },
+                    scopes: vec![SCOPE_WRITE_REQUESTS.as_str().to_owned()],
+                    profiles_json: Some(r#"{"token":"nested-secret"}"#.to_owned()),
+                },
+                api_key_id: Some(11),
+                client_ip: Some("127.0.0.1".to_owned()),
+                channel_hint_id: Some(7),
+            };
+            let result = Err(OpenAiV1Error::Upstream {
+                status: 503,
+                body: json!({
+                    "id": "upstream-secret-id",
+                    "error": {"message": "response-secret-body"}
+                }),
+            });
+
+            let span = openai_execution_span(
+                "openai_v1.execute",
+                "openai_v1",
+                OpenAiV1Route::ChatCompletions.format(),
+                &request,
+            );
+            {
+                let _enter = span.enter();
+                Span::current().record("target.selected_count", 1_i64);
+                Span::current().record("retry.count", 2_i64);
+                record_openai_execution_outcome(&span, &result);
+            }
+            drop(span);
+
+            let span = recorded_openai_execution_span(&spans);
+            let attributes = span_attributes(&span);
+            assert_eq!(
+                attributes.get("operation.name").map(String::as_str),
+                Some("openai_v1.execute")
+            );
+            assert_eq!(attributes.get("route.family").map(String::as_str), Some("openai_v1"));
+            assert_eq!(
+                attributes.get("route.name").map(String::as_str),
+                Some("openai/chat_completions")
+            );
+            assert_eq!(attributes.get("auth.mode").map(String::as_str), Some("api_key"));
+            assert_eq!(
+                attributes.get("auth.subject").map(String::as_str),
+                Some("user_api_key")
+            );
+            assert_eq!(attributes.get("request.stream").map(String::as_str), Some("true"));
+            assert_eq!(attributes.get("request.bound").map(String::as_str), Some("true"));
+            assert_eq!(attributes.get("trace.bound").map(String::as_str), Some("true"));
+            assert_eq!(attributes.get("thread.bound").map(String::as_str), Some("true"));
+            assert_eq!(attributes.get("channel.hint").map(String::as_str), Some("true"));
+            assert_eq!(
+                attributes.get("target.selected_count").map(String::as_str),
+                Some("1")
+            );
+            assert_eq!(attributes.get("retry.count").map(String::as_str), Some("2"));
+            assert_eq!(
+                attributes.get("request.outcome").map(String::as_str),
+                Some("upstream_error")
+            );
+            assert_eq!(attributes.get("http.status_code").map(String::as_str), Some("503"));
+
+            let rendered_attributes = attributes.values().cloned().collect::<Vec<_>>().join(" ");
+            for forbidden_value in [
+                "sk-secret-runtime-key",
+                "Bearer inbound-secret-token",
+                "api-key-secret-header",
+                "password=hunter2",
+                "response-secret-body",
+                "upstream-secret-id",
+                "thread-secret-42",
+                "trace-secret-99",
+                "req-secret-7",
+                "nested-secret",
+            ] {
+                assert!(
+                    !rendered_attributes.contains(forbidden_value),
+                    "forbidden tracing value recorded: {forbidden_value}"
+                );
+            }
+
+            for forbidden_key_fragment in [
+                "authorization",
+                "api_key",
+                "request.body",
+                "response.body",
+                "request.headers",
+                "credentials",
+                "password",
+                "password_hash",
+            ] {
+                assert!(
+                    !attributes
+                        .keys()
+                        .any(|key| key.contains(forbidden_key_fragment)),
+                    "forbidden tracing field recorded: {forbidden_key_fragment}"
+                );
+            }
+        });
+    }
 }
 
 #[cfg(test)]
@@ -3436,7 +3745,18 @@ pub(crate) fn build_upstream_headers_injects_w3c_trace_headers_inner() {
 }
 
 #[cfg(test)]
+pub(crate) fn openai_v1_execution_span_avoids_sensitive_fields_inner() {
+    tests::openai_v1_execution_span_avoids_sensitive_fields();
+}
+
+#[cfg(test)]
 #[test]
 fn build_upstream_headers_injects_w3c_trace_headers() {
     build_upstream_headers_injects_w3c_trace_headers_inner();
+}
+
+#[cfg(test)]
+#[test]
+fn openai_v1_execution_span_avoids_sensitive_fields() {
+    openai_v1_execution_span_avoids_sensitive_fields_inner();
 }

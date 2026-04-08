@@ -13,7 +13,7 @@ use sea_orm::{
 use super::sqlite_support::{ensure_trace_tables, SqliteConnectionFactory};
 #[cfg(test)]
 use super::{
-    identity_service::IdentityAuthService,
+    identity_service::SeaOrmIdentityService,
     ports::RequestContextRepository,
     repositories::request_context::validate_trace_thread_association,
     request_context::{normalize_context_key, thread_belongs_to_project},
@@ -259,13 +259,13 @@ pub(crate) fn get_or_create_trace(
 #[cfg(test)]
 #[derive(Debug, Clone)]
 pub struct RequestContextService {
-    identity_auth: IdentityAuthService,
+    identity_auth: SeaOrmIdentityService,
     trace_contexts: TraceContextStore,
 }
 
 #[cfg(test)]
 impl RequestContextService {
-    pub fn new(identity_auth: IdentityAuthService, trace_contexts: TraceContextStore) -> Self {
+    pub fn new(identity_auth: SeaOrmIdentityService, trace_contexts: TraceContextStore) -> Self {
         Self {
             identity_auth,
             trace_contexts,

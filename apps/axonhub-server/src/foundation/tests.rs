@@ -25,6 +25,9 @@ use super::{
     sqlite_support::ensure_operational_tables,
     system::{ensure_identity_tables, hash_password, SeaOrmBootstrapService, SqliteBootstrapService},
 };
+use super::identity_sqlite_support::{
+    build_user_context, query_default_project_for_user, query_project, query_user_by_id,
+};
 use axonhub_http::{
     AdminCapability, AdminError, AdminGraphqlCapability, AdminGraphqlPort, AdminPort,
     AuthUserContext, GraphqlRequestPayload, HttpCorsSettings, HttpState, IdentityCapability,
@@ -1011,7 +1014,6 @@ struct TestHttpRequest {
 
         foundation.system_settings().ensure_schema().unwrap();
         foundation.data_storages().ensure_schema().unwrap();
-        foundation.identities().ensure_schema().unwrap();
         foundation.trace_contexts().ensure_schema().unwrap();
         foundation.channel_models().ensure_schema().unwrap();
         foundation.requests().ensure_schema().unwrap();
@@ -1062,7 +1064,7 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let project_id = 1;
         let connection = foundation.open_connection(true).unwrap();
         let api_key_id = insert_api_key(
             &connection,
@@ -1073,10 +1075,7 @@ struct TestHttpRequest {
             "user",
             &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
         );
-        let default_project = foundation
-            .identities()
-            .find_default_project_for_user(1)
-            .unwrap();
+        let default_project = query_default_project_for_user(&connection, 1).unwrap();
         let data_storage_id = foundation
             .system_settings()
             .default_data_storage_id()
@@ -1092,10 +1091,7 @@ struct TestHttpRequest {
             .get_or_create_trace(project_id, "trace-foundation-1", None)
             .unwrap()
             .id;
-        let user_context = foundation
-            .identities()
-            .build_user_context(foundation.identities().find_user_by_id(1).unwrap())
-            .unwrap();
+        let user_context = build_user_context(&connection, query_user_by_id(&connection, 1).unwrap()).unwrap();
 
         let request_id = foundation
             .requests()
@@ -1349,7 +1345,7 @@ struct TestHttpRequest {
         );
 
         // Create a role to assign to the new user
-        let _project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let _project_id = 1;
         let role_id = insert_role(&connection, "Test Role", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_SETTINGS]);
 
         let app = graphql_test_app(foundation.clone(), bootstrap);
@@ -1616,7 +1612,7 @@ struct TestHttpRequest {
             "password123",
             &[SCOPE_READ_SETTINGS],
         );
-        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let project_id = 1;
         insert_project_membership(&connection, user_id, project_id, false, &[SCOPE_READ_REQUESTS]);
 
         let app = graphql_test_app(foundation.clone(), bootstrap);
@@ -3063,7 +3059,7 @@ struct TestHttpRequest {
             .unwrap();
 
         let runtime_service = SqliteOpenAiV1Service::new(foundation.clone());
-        let project = foundation.identities().find_project_by_id(1).unwrap();
+        let project = query_project(&foundation.open_connection(true).unwrap(), 1).unwrap();
         let runtime_error = runtime_service
             .execute(
                 OpenAiV1Route::ChatCompletions,
@@ -3579,7 +3575,7 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let project_id = 1;
         let content_dir = std::env::temp_dir().join(format!(
             "axonhub-task13-content-{}",
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
@@ -3689,7 +3685,7 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let project_id = 1;
         let content_dir = std::env::temp_dir().join(format!(
             "axonhub-task13-content-noscope-{}",
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
@@ -4664,7 +4660,7 @@ struct TestHttpRequest {
                 )
                 .unwrap();
 
-            let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+            let project_id = 1;
             connection
                 .execute(
                     "INSERT INTO usage_logs (
@@ -5992,7 +5988,7 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let project = foundation.identities().find_project_by_id(1).unwrap();
+        let project = query_project(&foundation.open_connection(true).unwrap(), 1).unwrap();
         let service = SqliteOpenAiV1Service::new(foundation.clone());
         let request_project = ProjectContext {
             id: project.id,
@@ -6752,7 +6748,7 @@ struct TestHttpRequest {
 
         let connection = foundation.open_connection(true).unwrap();
         ensure_identity_tables(&connection).unwrap();
-        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let project_id = 1;
 
         foundation
             .channel_models()
@@ -7617,7 +7613,7 @@ struct TestHttpRequest {
 
         let connection = foundation.open_connection(true).unwrap();
         ensure_identity_tables(&connection).unwrap();
-        let project_id = foundation.identities().find_project_by_id(1).unwrap().id;
+        let project_id = 1;
 
         // Create a test user with scopes and project membership
         let user_id = insert_test_user(

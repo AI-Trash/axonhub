@@ -1,5 +1,7 @@
 use axonhub_http::{ApiKeyAuthError, AuthUserContext, GlobalId, RoleInfo, UserProjectInfo};
-use rusqlite::{Connection as SqlConnection, Error as SqlError, Result as SqlResult};
+use rusqlite::{
+    Connection as SqlConnection, Error as SqlError, OptionalExtension, Result as SqlResult,
+};
 
 use super::{
     authz::{is_project_role_assignment, is_system_role_assignment},
