@@ -13,8 +13,6 @@ pub(crate) mod identity;
 pub(crate) mod identity_sqlite_support;
 pub(crate) mod identity_service;
 pub(crate) mod request_context;
-#[cfg(test)]
-pub(crate) mod request_context_sqlite_support;
 pub(crate) mod request_context_service;
 pub(crate) mod openai_v1;
 #[cfg(test)]

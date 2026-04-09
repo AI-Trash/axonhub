@@ -16,7 +16,7 @@ use super::{
 };
 
 #[cfg(test)]
-use super::sqlite_support::SqliteFoundation;
+use super::system::sqlite_test_support::SqliteFoundation;
 
 #[cfg(test)]
 pub struct SqliteIdentityService {
@@ -301,6 +301,180 @@ pub(crate) fn project_context(project: StoredProject) -> ProjectContext {
         id: project.id,
         name: project.name,
         status: project.status,
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod sqlite_test_support {
+    use axonhub_http::{ApiKeyAuthError, AuthUserContext, GlobalId, RoleInfo, UserProjectInfo};
+    use rusqlite::{Connection as SqlConnection, Error as SqlError, Result as SqlResult};
+
+    use super::super::{
+        authz::{is_project_role_assignment, is_system_role_assignment},
+        identity::{
+            sqlite_test_support::query_default_project_for_user, QueryUserError, StoredApiKey,
+            StoredProject, StoredUser,
+        },
+        repositories::identity::sqlite_test_support::{
+            query_api_key, query_project, query_user_by_email, query_user_by_id, query_user_roles,
+        },
+        system::sqlite_test_support::{ensure_identity_tables, SqliteConnectionFactory},
+    };
+
+    #[derive(Debug, Clone)]
+    pub(crate) struct IdentityStore {
+        connection_factory: SqliteConnectionFactory,
+    }
+
+    impl IdentityStore {
+        pub(crate) fn new(connection_factory: SqliteConnectionFactory) -> Self {
+            Self { connection_factory }
+        }
+
+        pub(crate) fn ensure_schema(&self) -> SqlResult<()> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_identity_tables(&connection)
+        }
+
+        pub(crate) fn find_user_by_email(&self, email: &str) -> Result<StoredUser, QueryUserError> {
+            let connection = self
+                .connection_factory
+                .open(true)
+                .map_err(|_| QueryUserError::Internal)?;
+            ensure_identity_tables(&connection).map_err(|_| QueryUserError::Internal)?;
+            query_user_by_email(&connection, email)
+        }
+
+        pub(crate) fn find_user_by_id(&self, user_id: i64) -> Result<StoredUser, QueryUserError> {
+            let connection = self
+                .connection_factory
+                .open(true)
+                .map_err(|_| QueryUserError::Internal)?;
+            ensure_identity_tables(&connection).map_err(|_| QueryUserError::Internal)?;
+            query_user_by_id(&connection, user_id)
+        }
+
+        pub(crate) fn find_default_project_for_user(
+            &self,
+            user_id: i64,
+        ) -> SqlResult<StoredProject> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_identity_tables(&connection)?;
+            query_default_project_for_user(&connection, user_id)
+        }
+
+        pub(crate) fn find_project_by_id(
+            &self,
+            project_id: i64,
+        ) -> Result<StoredProject, ApiKeyAuthError> {
+            let connection = self
+                .connection_factory
+                .open(true)
+                .map_err(|_| ApiKeyAuthError::Internal)?;
+            ensure_identity_tables(&connection).map_err(|_| ApiKeyAuthError::Internal)?;
+            query_project(&connection, project_id)
+        }
+
+        pub(crate) fn find_api_key_by_value(
+            &self,
+            key: &str,
+        ) -> Result<StoredApiKey, ApiKeyAuthError> {
+            let connection = self
+                .connection_factory
+                .open(true)
+                .map_err(|_| ApiKeyAuthError::Internal)?;
+            ensure_identity_tables(&connection).map_err(|_| ApiKeyAuthError::Internal)?;
+            query_api_key(&connection, key)
+        }
+
+        pub(crate) fn build_user_context(&self, user: StoredUser) -> SqlResult<AuthUserContext> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_identity_tables(&connection)?;
+            build_user_context(&connection, user)
+        }
+    }
+
+    pub(crate) fn build_user_context(
+        connection: &SqlConnection,
+        user: StoredUser,
+    ) -> SqlResult<AuthUserContext> {
+        let roles = query_user_roles(connection, user.id)?;
+
+        let system_roles = roles
+            .iter()
+            .filter(|role| is_system_role_assignment(role.project_id, role.level.as_str()))
+            .map(|role| RoleInfo {
+                name: role.name.clone(),
+                scopes: role.scopes.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let mut all_scopes = user.scopes.clone();
+        for role in &roles {
+            if is_system_role_assignment(role.project_id, role.level.as_str()) {
+                for scope in &role.scopes {
+                    if !all_scopes.iter().any(|current| current == scope) {
+                        all_scopes.push(scope.clone());
+                    }
+                }
+            }
+        }
+
+        let mut statement = connection.prepare(
+            "SELECT project_id, is_owner, scopes FROM user_projects WHERE user_id = ?1 ORDER BY project_id ASC",
+        )?;
+        let rows = statement.query_map([user.id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)? != 0,
+                super::super::identity::parse_json_string_vec(row.get::<_, String>(2)?),
+            ))
+        })?;
+        let memberships = rows.collect::<SqlResult<Vec<_>>>()?;
+
+        let projects = memberships
+            .into_iter()
+            .map(|(project_id, is_owner, scopes)| {
+                let project =
+                    query_project(connection, project_id).map_err(|error| match error {
+                        ApiKeyAuthError::Internal => SqlError::InvalidQuery,
+                        _ => SqlError::QueryReturnedNoRows,
+                    })?;
+                let project_roles = roles
+                    .iter()
+                    .filter(|role| {
+                        is_project_role_assignment(role.project_id, role.level.as_str(), project_id)
+                    })
+                    .map(|role| RoleInfo {
+                        name: role.name.clone(),
+                        scopes: role.scopes.clone(),
+                    })
+                    .collect::<Vec<_>>();
+
+                Ok(UserProjectInfo {
+                    project_id: GlobalId {
+                        resource_type: "project".to_owned(),
+                        id: project.id,
+                    },
+                    is_owner,
+                    scopes,
+                    roles: project_roles,
+                })
+            })
+            .collect::<SqlResult<Vec<_>>>()?;
+
+        Ok(AuthUserContext {
+            id: user.id,
+            email: user.email,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            is_owner: user.is_owner,
+            prefer_language: user.prefer_language,
+            avatar: Some(user.avatar),
+            scopes: all_scopes,
+            roles: system_roles,
+            projects,
+        })
     }
 }
 

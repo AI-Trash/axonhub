@@ -4,60 +4,105 @@ use std::path::{Path, PathBuf};
 
 const PACKAGE_PATH_PREFIX: &str = "apps/axonhub-server";
 const FOUNDATION_RUNTIME_ROOT: &str = "src/foundation";
+const RUNTIME_SCAN_ROOTS: [&str; 2] = ["src/app", FOUNDATION_RUNTIME_ROOT];
 const RAW_SQL_ENTRY_POINT: &str = "Statement::from_string(";
+const SQLITE_SUPPORT_SUFFIX: &str = "sqlite_support.rs";
+const TARGET_RUNTIME_RAW_SQL_EXCEPTION_COUNT: usize = 0;
+const TARGET_SQLITE_SUPPORT_SUFFIX_FILE_COUNT: usize = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct ApprovedRawSqlBoundary {
+struct TrackedRuntimeRawSqlDebt {
     id: &'static str,
     path: &'static str,
     line_fragment: &'static str,
-    purpose: &'static str,
+    removal_target: &'static str,
 }
 
-const APPROVED_RUNTIME_RAW_SQL_BOUNDARIES: [ApprovedRawSqlBoundary; 1] = [ApprovedRawSqlBoundary {
-    id: "OperationalMaintenanceCommand",
+const TRACKED_RUNTIME_RAW_SQL_DEBT: [TrackedRuntimeRawSqlDebt; 1] = [TrackedRuntimeRawSqlDebt {
+    id: "OperationalMaintenanceCommandVacuumDebt",
     path: "apps/axonhub-server/src/foundation/admin_operational.rs",
     line_fragment:
         "Statement::from_string(connection.get_database_backend(), \"VACUUM\".to_owned())",
-    purpose: "runtime VACUUM maintenance exception",
+    removal_target: "Task 11 removes the runtime VACUUM execution path entirely",
 }];
+
+const TRACKED_SQLITE_SUPPORT_SUFFIX_FILES: [&str; 6] = [
+    "apps/axonhub-server/src/foundation/admin_sqlite_support.rs",
+    "apps/axonhub-server/src/foundation/graphql_sqlite_support.rs",
+    "apps/axonhub-server/src/foundation/identity_sqlite_support.rs",
+    "apps/axonhub-server/src/foundation/openai_v1_sqlite_support.rs",
+    "apps/axonhub-server/src/foundation/request_context_sqlite_support.rs",
+    "apps/axonhub-server/src/foundation/sqlite_support.rs",
+];
 
 #[derive(Debug, Default)]
 struct RawSqlScanReport {
-    approved_boundary_ids: BTreeSet<&'static str>,
-    approved_occurrences: Vec<String>,
+    tracked_debt_ids: BTreeSet<&'static str>,
+    tracked_debt_occurrences: Vec<String>,
     violations: Vec<String>,
 }
 
 #[test]
-fn runtime_raw_sql_guard_allowlist_passes() {
+fn runtime_raw_sql_target_contract_requires_zero_exceptions() {
+    assert_runtime_raw_sql_target_contract();
+}
+
+#[test]
+fn runtime_raw_sql_guard_tracks_remaining_debt_until_zero_exception_target() {
+    assert_runtime_raw_sql_target_contract();
+
     let package_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let report = scan_runtime_raw_sql_usage(&package_root, PACKAGE_PATH_PREFIX);
-    let expected = APPROVED_RUNTIME_RAW_SQL_BOUNDARIES
+    let expected = TRACKED_RUNTIME_RAW_SQL_DEBT
         .iter()
-        .map(|boundary| boundary.id)
+        .map(|debt| debt.id)
         .collect::<BTreeSet<_>>();
 
-    assert_no_runtime_raw_sql_violations(&report);
+    assert_no_untracked_runtime_raw_sql_violations(&report);
     assert_eq!(
-        report.approved_boundary_ids,
+        report.tracked_debt_ids,
         expected,
-        "runtime raw-SQL allowlist drifted\napproved occurrences:\n{}",
-        report.approved_occurrences.join("\n")
+        "zero-runtime-raw-SQL target drifted: the tracked transition debt snapshot changed\ntracked debt occurrences:\n{}",
+        report.tracked_debt_occurrences.join("\n")
     );
     assert_eq!(
-        report.approved_occurrences.len(),
-        APPROVED_RUNTIME_RAW_SQL_BOUNDARIES.len(),
-        "expected exactly {} approved runtime raw-SQL boundaries, found {}\napproved occurrences:\n{}",
-        APPROVED_RUNTIME_RAW_SQL_BOUNDARIES.len(),
-        report.approved_occurrences.len(),
-        report.approved_occurrences.join("\n")
+        report.tracked_debt_occurrences.len(),
+        TRACKED_RUNTIME_RAW_SQL_DEBT.len(),
+        "zero-runtime-raw-SQL target still allows no exceptions; expected exactly {} tracked transition debt occurrence(s), found {}\ntracked debt occurrences:\n{}",
+        TRACKED_RUNTIME_RAW_SQL_DEBT.len(),
+        report.tracked_debt_occurrences.len(),
+        report.tracked_debt_occurrences.join("\n")
     );
 }
 
 #[test]
-fn runtime_raw_sql_count_reduced_or_allowlisted() {
-    runtime_raw_sql_guard_allowlist_passes();
+fn runtime_raw_sql_count_reduced_or_removed() {
+    runtime_raw_sql_guard_tracks_remaining_debt_until_zero_exception_target();
+}
+
+#[test]
+fn sqlite_support_suffix_target_contract_requires_zero_files() {
+    assert_sqlite_support_suffix_target_contract();
+}
+
+#[test]
+fn sqlite_support_suffix_guard_tracks_remaining_files_until_zero_file_target() {
+    assert_sqlite_support_suffix_target_contract();
+
+    let package_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let found_files = scan_sqlite_support_suffix_files(&package_root, PACKAGE_PATH_PREFIX);
+    let mut expected_files = TRACKED_SQLITE_SUPPORT_SUFFIX_FILES
+        .iter()
+        .map(|path| (*path).to_owned())
+        .collect::<Vec<_>>();
+    expected_files.sort();
+
+    assert_eq!(
+        found_files,
+        expected_files,
+        "zero-suffix target drifted: expected only the tracked transition files to remain before deletion work begins\nfound files:\n{}",
+        found_files.join("\n")
+    );
 }
 
 #[test]
@@ -102,17 +147,18 @@ fn runtime_raw_sql_guard_rejects_new_occurrence() {
     .expect("write allowed tests subdir file");
 
     let report = scan_runtime_raw_sql_usage(&package_root, PACKAGE_PATH_PREFIX);
-    let failure = std::panic::catch_unwind(|| assert_no_runtime_raw_sql_violations(&report))
-        .expect_err("guard should panic for undocumented runtime raw SQL");
+    let failure =
+        std::panic::catch_unwind(|| assert_no_untracked_runtime_raw_sql_violations(&report))
+            .expect_err("guard should panic for undocumented runtime raw SQL");
     let failure_message = panic_message(&failure);
 
     assert_eq!(
-        report.approved_boundary_ids,
-        APPROVED_RUNTIME_RAW_SQL_BOUNDARIES
+        report.tracked_debt_ids,
+        TRACKED_RUNTIME_RAW_SQL_DEBT
             .iter()
-            .map(|boundary| boundary.id)
+            .map(|debt| debt.id)
             .collect::<BTreeSet<_>>(),
-        "expected approved allowlist fixtures to be discovered"
+        "expected tracked transition debt fixtures to be discovered"
     );
     assert_eq!(
         report.violations.len(),
@@ -141,7 +187,7 @@ fn runtime_raw_sql_guard_rejects_new_occurrence() {
 }
 
 #[test]
-fn runtime_raw_sql_guard_rejects_duplicate_allowlisted_boundary() {
+fn runtime_raw_sql_guard_rejects_duplicate_tracked_debt_occurrence() {
     let repo_root = unique_temp_dir("runtime-raw-sql-guard-duplicate");
     let package_root = repo_root.join(PACKAGE_PATH_PREFIX);
     let foundation_root = package_root.join(FOUNDATION_RUNTIME_ROOT);
@@ -160,43 +206,58 @@ fn runtime_raw_sql_guard_rejects_duplicate_allowlisted_boundary() {
     .expect("write duplicate allowed boundary");
 
     let report = scan_runtime_raw_sql_usage(&package_root, PACKAGE_PATH_PREFIX);
-    let failure = std::panic::catch_unwind(|| assert_no_runtime_raw_sql_violations(&report))
-        .expect_err("guard should panic for duplicate approved runtime raw SQL");
+    let failure =
+        std::panic::catch_unwind(|| assert_no_untracked_runtime_raw_sql_violations(&report))
+            .expect_err("guard should panic for duplicated tracked runtime raw SQL debt");
     let failure_message = panic_message(&failure);
 
     assert_eq!(
-        report.approved_boundary_ids,
-        APPROVED_RUNTIME_RAW_SQL_BOUNDARIES
+        report.tracked_debt_ids,
+        TRACKED_RUNTIME_RAW_SQL_DEBT
             .iter()
-            .map(|boundary| boundary.id)
+            .map(|debt| debt.id)
             .collect::<BTreeSet<_>>(),
-        "expected duplicate fixture to discover the approved boundary before rejecting the duplicate"
+        "expected duplicate fixture to discover the tracked debt boundary before rejecting the duplicate"
     );
     assert_eq!(
         report.violations.len(),
         1,
-        "expected exactly one duplicate allowlist violation, found:\n{}",
+        "expected exactly one duplicate tracked-debt violation, found:\n{}",
         report.violations.join("\n")
     );
     assert!(
         report.violations[0].contains(
-            "duplicate approved runtime raw-SQL boundary `OperationalMaintenanceCommand`"
+            "duplicate tracked runtime raw-SQL debt `OperationalMaintenanceCommandVacuumDebt`"
         ),
         "unexpected violation: {}",
         report.violations[0]
     );
     assert!(
         failure_message.contains(
-            "duplicate approved runtime raw-SQL boundary `OperationalMaintenanceCommand`"
+            "duplicate tracked runtime raw-SQL debt `OperationalMaintenanceCommandVacuumDebt`"
         ),
         "unexpected failure message: {failure_message}"
     );
 }
 
-fn assert_no_runtime_raw_sql_violations(report: &RawSqlScanReport) {
+fn assert_runtime_raw_sql_target_contract() {
+    assert_eq!(
+        TARGET_RUNTIME_RAW_SQL_EXCEPTION_COUNT, 0,
+        "final target contract drifted: runtime raw-SQL exceptions must stay at zero"
+    );
+}
+
+fn assert_sqlite_support_suffix_target_contract() {
+    assert_eq!(
+        TARGET_SQLITE_SUPPORT_SUFFIX_FILE_COUNT, 0,
+        "final target contract drifted: *sqlite_support.rs files must stay at zero"
+    );
+}
+
+fn assert_no_untracked_runtime_raw_sql_violations(report: &RawSqlScanReport) {
     assert!(
         report.violations.is_empty(),
-        "unexpected undocumented runtime raw SQL entry points:\n{}",
+        "zero-runtime-raw-SQL target rejected runtime raw SQL outside the tracked transition snapshot:\n{}",
         report.violations.join("\n")
     );
 }
@@ -212,62 +273,83 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 }
 
 fn scan_runtime_raw_sql_usage(package_root: &Path, display_prefix: &str) -> RawSqlScanReport {
-    let foundation_root = package_root.join(FOUNDATION_RUNTIME_ROOT);
-    let test_only_modules = collect_test_only_modules(&foundation_root);
     let mut report = RawSqlScanReport::default();
 
-    collect_rust_files(&foundation_root, &mut |path| {
-        if is_explicit_test_file(path) || is_test_only_module_file(path, &test_only_modules) {
-            return;
-        }
+    for runtime_root in RUNTIME_SCAN_ROOTS.map(|relative| package_root.join(relative)) {
+        let test_only_modules = collect_test_only_modules(&runtime_root);
 
-        let Ok(contents) = fs::read_to_string(path) else {
-            return;
-        };
-
-        let inline_test_ranges = inline_cfg_test_module_ranges(&contents);
-        for (index, line) in contents.lines().enumerate() {
-            if line_is_in_ranges(index + 1, &inline_test_ranges) {
-                continue;
+        collect_rust_files(&runtime_root, &mut |path| {
+            if is_explicit_test_file(path) || is_test_only_module_file(path, &test_only_modules) {
+                return;
             }
 
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") || !trimmed.contains(RAW_SQL_ENTRY_POINT) {
-                continue;
-            }
+            let Ok(contents) = fs::read_to_string(path) else {
+                return;
+            };
 
-            let display_path = display_path(package_root, display_prefix, path);
-            if let Some(boundary) = APPROVED_RUNTIME_RAW_SQL_BOUNDARIES.iter().find(|boundary| {
-                boundary.path == display_path && trimmed.contains(boundary.line_fragment)
-            }) {
-                if report.approved_boundary_ids.insert(boundary.id) {
-                    report.approved_occurrences.push(format!(
-                        "{}:{}: approved `{}` ({})",
-                        display_path,
-                        index + 1,
-                        boundary.id,
-                        boundary.purpose
-                    ));
+            let inline_test_ranges = inline_cfg_test_module_ranges(&contents);
+            for (index, line) in contents.lines().enumerate() {
+                if line_is_in_ranges(index + 1, &inline_test_ranges) {
+                    continue;
+                }
+
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//") || !trimmed.contains(RAW_SQL_ENTRY_POINT) {
+                    continue;
+                }
+
+                let display_path = display_path(package_root, display_prefix, path);
+                if let Some(debt) = TRACKED_RUNTIME_RAW_SQL_DEBT
+                    .iter()
+                    .find(|debt| debt.path == display_path && trimmed.contains(debt.line_fragment))
+                {
+                    if report.tracked_debt_ids.insert(debt.id) {
+                        report.tracked_debt_occurrences.push(format!(
+                            "{}:{}: tracked `{}` ({})",
+                            display_path,
+                            index + 1,
+                            debt.id,
+                            debt.removal_target
+                        ));
+                    } else {
+                        report.violations.push(format!(
+                            "{}:{}: duplicate tracked runtime raw-SQL debt `{}`",
+                            display_path,
+                            index + 1,
+                            debt.id
+                        ));
+                    }
                 } else {
                     report.violations.push(format!(
-                        "{}:{}: duplicate approved runtime raw-SQL boundary `{}`",
+                        "{}:{}: undocumented runtime raw SQL entry point -> {}",
                         display_path,
                         index + 1,
-                        boundary.id
+                        trimmed
                     ));
                 }
-            } else {
-                report.violations.push(format!(
-                    "{}:{}: undocumented runtime raw SQL entry point -> {}",
-                    display_path,
-                    index + 1,
-                    trimmed
-                ));
             }
+        });
+    }
+
+    report
+}
+
+fn scan_sqlite_support_suffix_files(package_root: &Path, display_prefix: &str) -> Vec<String> {
+    let foundation_root = package_root.join(FOUNDATION_RUNTIME_ROOT);
+    let mut files = Vec::new();
+
+    collect_rust_files(&foundation_root, &mut |path| {
+        if path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|file_name| file_name.ends_with(SQLITE_SUPPORT_SUFFIX))
+        {
+            files.push(display_path(package_root, display_prefix, path));
         }
     });
 
-    report
+    files.sort();
+    files
 }
 
 fn display_path(package_root: &Path, display_prefix: &str, path: &Path) -> String {

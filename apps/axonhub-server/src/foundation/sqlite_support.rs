@@ -82,8 +82,10 @@ impl SqliteFoundation {
     }
 
     #[cfg(test)]
-    pub fn identities(&self) -> super::identity_sqlite_support::IdentityStore {
-        super::identity_sqlite_support::IdentityStore::new(self.connection_factory.clone())
+    pub fn identities(&self) -> super::identity_service::sqlite_test_support::IdentityStore {
+        super::identity_service::sqlite_test_support::IdentityStore::new(
+            self.connection_factory.clone(),
+        )
     }
 
     #[cfg(test)]
@@ -95,16 +97,18 @@ impl SqliteFoundation {
     }
 
     #[cfg(test)]
-    pub fn trace_contexts(&self) -> super::request_context_sqlite_support::TraceContextStore {
-        super::request_context_sqlite_support::TraceContextStore::new(self.connection_factory.clone())
+    pub fn trace_contexts(&self) -> super::request_context::sqlite_test_support::TraceContextStore {
+        super::request_context::sqlite_test_support::TraceContextStore::new(
+            self.connection_factory.clone(),
+        )
     }
 
     #[cfg(test)]
     pub fn request_context_service(
         &self,
         allow_no_auth: bool,
-    ) -> super::request_context_sqlite_support::RequestContextService {
-        super::request_context_sqlite_support::RequestContextService::new(
+    ) -> super::request_context_service::RequestContextService {
+        super::request_context_service::RequestContextService::new(
             self.identity_auth(allow_no_auth),
             self.trace_contexts(),
         )

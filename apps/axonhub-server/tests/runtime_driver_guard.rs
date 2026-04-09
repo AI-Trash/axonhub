@@ -127,6 +127,31 @@ fn runtime_driver_guard_rejects_runtime_imports() {
 }
 
 #[test]
+fn runtime_driver_guard_allows_inline_cfg_test_support_module() {
+    let root = unique_temp_dir("runtime-driver-guard-inline-test-support");
+    let src_dir = root.join("src");
+    let foundation_dir = src_dir.join("foundation");
+
+    fs::create_dir_all(&foundation_dir).expect("create foundation dir");
+
+    fs::write(foundation_dir.join("mod.rs"), "pub(crate) mod system;\n")
+        .expect("write foundation mod");
+    fs::write(
+        foundation_dir.join("system.rs"),
+        "fn runtime_ok() {}\n\n#[cfg(test)]\npub(crate) mod sqlite_test_support {\n    use rusqlite::Connection;\n\n    pub(crate) fn open() -> Connection {\n        unimplemented!()\n    }\n}\n",
+    )
+    .expect("write inline test-support module");
+
+    let violations = scan_runtime_driver_usage(&root);
+
+    assert!(
+        violations.is_empty(),
+        "inline cfg(test) test-support module should be ignored by runtime guard:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn runtime_driver_guard_rejects_runtime_driver_paths() {
     let root = unique_temp_dir("runtime-driver-guard-path-violation");
     let src_dir = root.join("src");

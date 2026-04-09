@@ -13,15 +13,17 @@ use super::{
     circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
     graphql::SeaOrmAdminGraphqlService,
     graphql_sqlite_support::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
+    identity::sqlite_test_support::query_default_project_for_user,
     identity_service::{SeaOrmIdentityService, SqliteIdentityService},
+    identity_service::sqlite_test_support::build_user_context,
     openai_v1::{
         NewChannelRecord, NewModelRecord, NewRequestExecutionRecord, NewRequestRecord,
         NewUsageLogRecord, SeaOrmOpenAiV1Service,
     },
     openai_v1_sqlite_support::SqliteOpenAiV1Service,
     request_context::parse_onboarding_record,
-    request_context_service::SeaOrmRequestContextService,
-    request_context_sqlite_support::SqliteRequestContextService,
+    request_context_service::{SeaOrmRequestContextService, SqliteRequestContextService},
+    repositories::identity::sqlite_test_support::{query_project, query_user_by_id},
     seaorm::SeaOrmConnectionFactory,
     shared::{
         DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
@@ -32,9 +34,6 @@ use super::{
         SqliteFoundation,
     },
     system::{hash_password, SeaOrmBootstrapService},
-};
-use super::identity_sqlite_support::{
-    build_user_context, query_default_project_for_user, query_project, query_user_by_id,
 };
 use axonhub_http::{
     AdminCapability, AdminError, AdminGraphqlCapability, AdminGraphqlPort, AdminPort,

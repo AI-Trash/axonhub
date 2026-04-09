@@ -5,8 +5,8 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use crate::foundation::{
     authz::{is_project_role_assignment, is_system_role_assignment},
     identity::{
-        parse_json_string_vec, QueryUserError, StoredApiKey, StoredProject, StoredRole,
-        StoredUser,
+        parse_json_string_vec, require_activated_user, QueryUserError, StoredApiKey,
+        StoredProject, StoredRole, StoredUser,
     },
     seaorm::SeaOrmConnectionFactory,
 };
@@ -125,13 +125,7 @@ async fn query_user_by_email_seaorm(
         .map_err(|_| QueryUserError::Internal)?
         .map(stored_user_from_auth_lookup)
         .ok_or(QueryUserError::NotFound)
-    .and_then(|user| {
-        if user.status != "activated" {
-            Err(QueryUserError::InvalidPassword)
-        } else {
-            Ok(user)
-        }
-    })
+        .and_then(require_activated_user)
 }
 
 async fn query_user_by_id_seaorm(
@@ -146,13 +140,7 @@ async fn query_user_by_id_seaorm(
         .map_err(|_| QueryUserError::Internal)?
         .map(stored_user_from_auth_lookup)
         .ok_or(QueryUserError::NotFound)
-    .and_then(|user| {
-        if user.status != "activated" {
-            Err(QueryUserError::InvalidPassword)
-        } else {
-            Ok(user)
-        }
-    })
+        .and_then(require_activated_user)
 }
 
 pub(crate) async fn query_project_seaorm(
@@ -292,6 +280,152 @@ async fn build_user_context_seaorm(
         roles: system_roles,
         projects,
     })
+}
+
+#[cfg(test)]
+pub(crate) mod sqlite_test_support {
+    use axonhub_http::ApiKeyAuthError;
+    use rusqlite::{Connection as SqlConnection, Error as SqlError, Result as SqlResult};
+
+    use super::super::super::identity::{
+        parse_json_string_vec, require_activated_user, QueryUserError, StoredApiKey,
+        StoredProject, StoredRole, StoredUser,
+    };
+
+    pub(crate) fn query_user_by_email(
+        connection: &SqlConnection,
+        email: &str,
+    ) -> Result<StoredUser, QueryUserError> {
+        connection
+            .query_row(
+                "SELECT id, email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes
+                 FROM users WHERE email = ?1 AND deleted_at = 0 LIMIT 1",
+                [email],
+                |row| {
+                    Ok(StoredUser {
+                        id: row.get(0)?,
+                        email: row.get(1)?,
+                        status: row.get(2)?,
+                        prefer_language: row.get(3)?,
+                        password: row.get(4)?,
+                        first_name: row.get(5)?,
+                        last_name: row.get(6)?,
+                        avatar: row.get(7)?,
+                        is_owner: row.get::<_, i64>(8)? != 0,
+                        scopes: parse_json_string_vec(row.get::<_, String>(9)?),
+                    })
+                },
+            )
+            .map_err(|error| match error {
+                SqlError::QueryReturnedNoRows => QueryUserError::NotFound,
+                _ => QueryUserError::Internal,
+            })
+            .and_then(require_activated_user)
+    }
+
+    pub(crate) fn query_user_by_id(
+        connection: &SqlConnection,
+        user_id: i64,
+    ) -> Result<StoredUser, QueryUserError> {
+        connection
+            .query_row(
+                "SELECT id, email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes
+                 FROM users WHERE id = ?1 AND deleted_at = 0 LIMIT 1",
+                [user_id],
+                |row| {
+                    Ok(StoredUser {
+                        id: row.get(0)?,
+                        email: row.get(1)?,
+                        status: row.get(2)?,
+                        prefer_language: row.get(3)?,
+                        password: row.get(4)?,
+                        first_name: row.get(5)?,
+                        last_name: row.get(6)?,
+                        avatar: row.get(7)?,
+                        is_owner: row.get::<_, i64>(8)? != 0,
+                        scopes: parse_json_string_vec(row.get::<_, String>(9)?),
+                    })
+                },
+            )
+            .map_err(|error| match error {
+                SqlError::QueryReturnedNoRows => QueryUserError::NotFound,
+                _ => QueryUserError::Internal,
+            })
+            .and_then(require_activated_user)
+    }
+
+    pub(crate) fn query_project(
+        connection: &SqlConnection,
+        project_id: i64,
+    ) -> Result<StoredProject, ApiKeyAuthError> {
+        connection
+            .query_row(
+                "SELECT id, name, status FROM projects WHERE id = ?1 AND deleted_at = 0 LIMIT 1",
+                [project_id],
+                |row| {
+                    Ok(StoredProject {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        status: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(|error| match error {
+                SqlError::QueryReturnedNoRows => ApiKeyAuthError::Invalid,
+                _ => ApiKeyAuthError::Internal,
+            })
+    }
+
+    pub(crate) fn query_api_key(
+        connection: &SqlConnection,
+        key: &str,
+    ) -> Result<StoredApiKey, ApiKeyAuthError> {
+        connection
+            .query_row(
+                "SELECT id, user_id, key, name, type, status, project_id, scopes, profiles
+                 FROM api_keys WHERE key = ?1 AND deleted_at = 0 LIMIT 1",
+                [key],
+                |row| {
+                    Ok(StoredApiKey {
+                        id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        key: row.get(2)?,
+                        name: row.get(3)?,
+                        key_type: row.get(4)?,
+                        status: row.get(5)?,
+                        project_id: row.get(6)?,
+                        scopes: parse_json_string_vec(row.get::<_, String>(7)?),
+                        profiles: Some(row.get(8)?),
+                    })
+                },
+            )
+            .map_err(|error| match error {
+                SqlError::QueryReturnedNoRows => ApiKeyAuthError::Invalid,
+                _ => ApiKeyAuthError::Internal,
+            })
+    }
+
+    pub(crate) fn query_user_roles(
+        connection: &SqlConnection,
+        user_id: i64,
+    ) -> SqlResult<Vec<StoredRole>> {
+        let mut statement = connection.prepare(
+            "SELECT r.name, r.level, r.project_id, r.scopes
+             FROM roles r
+             JOIN user_roles ur ON ur.role_id = r.id
+             WHERE ur.user_id = ?1 AND r.deleted_at = 0
+             ORDER BY r.id ASC",
+        )?;
+        let rows = statement.query_map([user_id], |row| {
+            Ok(StoredRole {
+                name: row.get(0)?,
+                level: row.get(1)?,
+                project_id: row.get(2)?,
+                scopes: parse_json_string_vec(row.get::<_, String>(3)?),
+            })
+        })?;
+        rows.collect()
+    }
 }
 
 fn stored_user_from_auth_lookup(user: users::AuthLookup) -> StoredUser {

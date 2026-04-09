@@ -66,3 +66,17 @@ fn map_db_query_error(_: sea_orm::DbErr) -> SystemQueryError {
 fn map_db_init_error(error: sea_orm::DbErr) -> SystemInitializeError {
     SystemInitializeError::InitializeFailed(error.to_string())
 }
+
+#[cfg(test)]
+pub(crate) mod sqlite_test_support {
+    pub(crate) use super::super::sqlite_support::{
+        seaorm_initialize, seaorm_is_initialized, DataStorageStore, SeaOrmDbFactory,
+        SqliteBootstrapService, SqliteConnectionFactory, SqliteFoundation, SystemSettingsStore,
+        ensure_all_foundation_tables, ensure_api_key_with_scopes, ensure_channel_model_tables,
+        ensure_default_api_keys, ensure_default_project, ensure_default_project_roles,
+        ensure_identity_tables, ensure_operational_tables, ensure_owner_project_membership,
+        ensure_owner_user, ensure_primary_data_storage, ensure_prompt_tables,
+        ensure_request_tables, ensure_role_with_scopes, ensure_systems_table,
+        ensure_trace_tables,
+    };
+}

@@ -17,6 +17,11 @@ pub(crate) fn trace_matches_project_and_thread(
     trace.project_id == project_id && (thread_db_id.is_none() || trace.thread_id == thread_db_id)
 }
 
+#[cfg(test)]
+pub(crate) mod sqlite_test_support {
+    pub(crate) use super::super::repositories::request_context::sqlite_test_support::TraceContextStore;
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct OnboardingModule {
     pub onboarded: bool,
