@@ -11,29 +11,35 @@ use super::{
         SCOPE_WRITE_PROMPTS, SCOPE_WRITE_SETTINGS, SCOPE_WRITE_REQUESTS, SCOPE_WRITE_USERS,
     },
     circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
-    graphql::SeaOrmAdminGraphqlService,
-    graphql_sqlite_support::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
+    graphql::{
+        sqlite_test_support::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
+        SeaOrmAdminGraphqlService,
+    },
     identity::sqlite_test_support::query_default_project_for_user,
-    identity_service::{SeaOrmIdentityService, SqliteIdentityService},
-    identity_service::sqlite_test_support::build_user_context,
+    identity_service::SeaOrmIdentityService,
+    identity_service::sqlite_test_support::{build_user_context, SqliteIdentityService},
     openai_v1::{
         NewChannelRecord, NewModelRecord, NewRequestExecutionRecord, NewRequestRecord,
         NewUsageLogRecord, SeaOrmOpenAiV1Service,
     },
-    openai_v1_sqlite_support::SqliteOpenAiV1Service,
+    openai_v1::sqlite_test_support::SqliteOpenAiV1Service,
     request_context::parse_onboarding_record,
-    request_context_service::{SeaOrmRequestContextService, SqliteRequestContextService},
+    request_context_service::SeaOrmRequestContextService,
+    request_context_service::sqlite_test_support::SqliteRequestContextService,
     repositories::identity::sqlite_test_support::{query_project, query_user_by_id},
     seaorm::SeaOrmConnectionFactory,
     shared::{
         DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
         SYSTEM_KEY_ONBOARDED, graphql_gid,
     },
-    sqlite_support::{
-        ensure_identity_tables, ensure_operational_tables, SqliteBootstrapService,
-        SqliteFoundation,
+    system::{
+        hash_password,
+        sqlite_test_support::{
+            ensure_identity_tables, ensure_operational_tables, SqliteBootstrapService,
+            SqliteFoundation,
+        },
+        SeaOrmBootstrapService,
     },
-    system::{hash_password, SeaOrmBootstrapService},
 };
 use axonhub_http::{
     AdminCapability, AdminError, AdminGraphqlCapability, AdminGraphqlPort, AdminPort,
@@ -2787,8 +2793,7 @@ struct TestHttpRequest {
         std::fs::remove_file(db_path).ok();
     }
 
-    #[tokio::test]
-    async fn admin_graphql_allows_trigger_gc_cleanup_mutation() {
+    pub(crate) async fn admin_graphql_allows_trigger_gc_cleanup_mutation_inner() {
         let db_path = temp_sqlite_path("task9-trigger-gc-cleanup");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
         let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
@@ -2833,6 +2838,11 @@ struct TestHttpRequest {
         assert_eq!(json["data"]["triggerGcCleanup"], true);
 
         std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_trigger_gc_cleanup_mutation() {
+        admin_graphql_allows_trigger_gc_cleanup_mutation_inner().await;
     }
 
     #[tokio::test]

@@ -137,6 +137,11 @@ impl RequestContextRepository for SqliteRequestContextService {
     }
 }
 
+#[cfg(test)]
+pub(crate) mod sqlite_test_support {
+    pub(crate) use super::SqliteRequestContextService;
+}
+
 pub struct SeaOrmRequestContextService {
     repository: SeaOrmTraceContextRepository,
 }

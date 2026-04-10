@@ -5,41 +5,29 @@ use std::path::{Path, PathBuf};
 const PACKAGE_PATH_PREFIX: &str = "apps/axonhub-server";
 const FOUNDATION_RUNTIME_ROOT: &str = "src/foundation";
 const RUNTIME_SCAN_ROOTS: [&str; 2] = ["src/app", FOUNDATION_RUNTIME_ROOT];
-const RAW_SQL_ENTRY_POINT: &str = "Statement::from_string(";
+const RAW_SQL_ENTRY_PATTERNS: [&str; 2] =
+    ["Statement::from_string(", "Statement::from_sql_and_values("];
 const SQLITE_SUPPORT_SUFFIX: &str = "sqlite_support.rs";
 const TARGET_RUNTIME_RAW_SQL_EXCEPTION_COUNT: usize = 0;
 const TARGET_SQLITE_SUPPORT_SUFFIX_FILE_COUNT: usize = 0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct TrackedRuntimeRawSqlDebt {
-    id: &'static str,
-    path: &'static str,
-    line_fragment: &'static str,
-    removal_target: &'static str,
-}
-
-const TRACKED_RUNTIME_RAW_SQL_DEBT: [TrackedRuntimeRawSqlDebt; 1] = [TrackedRuntimeRawSqlDebt {
-    id: "OperationalMaintenanceCommandVacuumDebt",
-    path: "apps/axonhub-server/src/foundation/admin_operational.rs",
-    line_fragment:
-        "Statement::from_string(connection.get_database_backend(), \"VACUUM\".to_owned())",
-    removal_target: "Task 11 removes the runtime VACUUM execution path entirely",
-}];
-
-const TRACKED_SQLITE_SUPPORT_SUFFIX_FILES: [&str; 6] = [
-    "apps/axonhub-server/src/foundation/admin_sqlite_support.rs",
-    "apps/axonhub-server/src/foundation/graphql_sqlite_support.rs",
-    "apps/axonhub-server/src/foundation/identity_sqlite_support.rs",
-    "apps/axonhub-server/src/foundation/openai_v1_sqlite_support.rs",
-    "apps/axonhub-server/src/foundation/request_context_sqlite_support.rs",
-    "apps/axonhub-server/src/foundation/sqlite_support.rs",
-];
-
 #[derive(Debug, Default)]
 struct RawSqlScanReport {
-    tracked_debt_ids: BTreeSet<&'static str>,
-    tracked_debt_occurrences: Vec<String>,
     violations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawSqlOccurrence {
+    entry_point: &'static str,
+    line: usize,
+    normalized_offset: usize,
+    fragment: String,
+}
+
+#[derive(Debug, Default)]
+struct NormalizedRuntimeSource {
+    text: String,
+    byte_lines: Vec<usize>,
 }
 
 #[test]
@@ -48,36 +36,18 @@ fn runtime_raw_sql_target_contract_requires_zero_exceptions() {
 }
 
 #[test]
-fn runtime_raw_sql_guard_tracks_remaining_debt_until_zero_exception_target() {
+fn runtime_raw_sql_guard_enforces_zero_exception_policy() {
     assert_runtime_raw_sql_target_contract();
 
     let package_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let report = scan_runtime_raw_sql_usage(&package_root, PACKAGE_PATH_PREFIX);
-    let expected = TRACKED_RUNTIME_RAW_SQL_DEBT
-        .iter()
-        .map(|debt| debt.id)
-        .collect::<BTreeSet<_>>();
 
-    assert_no_untracked_runtime_raw_sql_violations(&report);
-    assert_eq!(
-        report.tracked_debt_ids,
-        expected,
-        "zero-runtime-raw-SQL target drifted: the tracked transition debt snapshot changed\ntracked debt occurrences:\n{}",
-        report.tracked_debt_occurrences.join("\n")
-    );
-    assert_eq!(
-        report.tracked_debt_occurrences.len(),
-        TRACKED_RUNTIME_RAW_SQL_DEBT.len(),
-        "zero-runtime-raw-SQL target still allows no exceptions; expected exactly {} tracked transition debt occurrence(s), found {}\ntracked debt occurrences:\n{}",
-        TRACKED_RUNTIME_RAW_SQL_DEBT.len(),
-        report.tracked_debt_occurrences.len(),
-        report.tracked_debt_occurrences.join("\n")
-    );
+    assert_no_runtime_raw_sql_violations(&report);
 }
 
 #[test]
-fn runtime_raw_sql_count_reduced_or_removed() {
-    runtime_raw_sql_guard_tracks_remaining_debt_until_zero_exception_target();
+fn runtime_raw_sql_count_is_zero() {
+    runtime_raw_sql_guard_enforces_zero_exception_policy();
 }
 
 #[test]
@@ -91,17 +61,33 @@ fn sqlite_support_suffix_guard_tracks_remaining_files_until_zero_file_target() {
 
     let package_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let found_files = scan_sqlite_support_suffix_files(&package_root, PACKAGE_PATH_PREFIX);
-    let mut expected_files = TRACKED_SQLITE_SUPPORT_SUFFIX_FILES
-        .iter()
-        .map(|path| (*path).to_owned())
-        .collect::<Vec<_>>();
-    expected_files.sort();
+    assert_no_sqlite_support_suffix_files(&found_files);
+}
+
+#[test]
+fn sqlite_support_suffix_guard_rejects_reintroduced_suffix_file() {
+    let repo_root = unique_temp_dir("sqlite-support-suffix-guard-violation");
+    let package_root = repo_root.join(PACKAGE_PATH_PREFIX);
+    let foundation_root = package_root.join(FOUNDATION_RUNTIME_ROOT);
+
+    fs::create_dir_all(&foundation_root).expect("create foundation dir");
+    fs::write(
+        foundation_root.join("mod.rs"),
+        "pub(crate) mod system;\n#[cfg(test)]\npub(crate) mod sqlite_test_support;\n",
+    )
+    .expect("write foundation mod");
+    fs::write(
+        foundation_root.join("future_sqlite_support.rs"),
+        "#[cfg(test)]\npub(crate) use super::system::sqlite_test_support::SqliteFoundation;\n",
+    )
+    .expect("write forbidden suffix file");
+
+    let found_files = scan_sqlite_support_suffix_files(&package_root, PACKAGE_PATH_PREFIX);
 
     assert_eq!(
         found_files,
-        expected_files,
-        "zero-suffix target drifted: expected only the tracked transition files to remain before deletion work begins\nfound files:\n{}",
-        found_files.join("\n")
+        vec!["apps/axonhub-server/src/foundation/future_sqlite_support.rs".to_owned()],
+        "suffix-file guard should report any reintroduced *sqlite_support.rs file"
     );
 }
 
@@ -117,21 +103,21 @@ fn runtime_raw_sql_guard_rejects_new_occurrence() {
 
     fs::write(
         foundation_root.join("mod.rs"),
-        "pub(crate) mod seaorm;\npub(crate) mod admin_operational;\npub(crate) mod runtime_violation;\n#[cfg(test)]\npub(crate) mod sqlite_support;\n",
+        "pub(crate) mod seaorm;\npub(crate) mod admin_operational;\npub(crate) mod runtime_violation;\n#[cfg(test)]\npub(crate) mod sqlite_test_support;\n",
     )
     .expect("write foundation mod");
     fs::write(
         foundation_root.join("admin_operational.rs"),
-        "fn run_gc_cleanup_now(connection: &Db) {\n    let _ = connection.execute(Statement::from_string(connection.get_database_backend(), \"VACUUM\".to_owned()));\n}\n",
+        "fn run_gc_cleanup_now(connection: &Db) {\n    let _ = connection.execute(\n        Statement ::\n            from_string(\n                connection.get_database_backend(),\n                \"VACUUM\".to_owned(),\n            ),\n    );\n}\n",
     )
-    .expect("write allowed operational vacuum");
+    .expect("write violating operational raw SQL");
     fs::write(
         foundation_root.join("runtime_violation.rs"),
-        "fn undocumented(connection: &Db, backend: DatabaseBackend) {\n    let _ = connection.execute(Statement::from_string(backend, \"DELETE FROM systems\".to_owned()));\n}\n\n#[cfg(test)]\nmod tests {\n    fn allowed_only_in_cfg_test(connection: &Db, backend: DatabaseBackend) {\n        let _ = connection.execute(Statement::from_string(backend, \"SELECT 1\".to_owned()));\n    }\n}\n",
+        "fn undocumented(connection: &Db, backend: DatabaseBackend) {\n    let _ = connection.execute(\n        Statement::from_sql_and_values(\n            backend,\n            \"DELETE FROM systems WHERE id = $1\",\n            [1_i64.into()],\n        ),\n    );\n}\n\n#[cfg(test)]\nmod tests {\n    fn allowed_only_in_cfg_test(connection: &Db, backend: DatabaseBackend) {\n        let _ = connection.execute(Statement::from_string(backend, \"SELECT 1\".to_owned()));\n    }\n}\n",
     )
     .expect("write violating runtime file");
     fs::write(
-        foundation_root.join("sqlite_support.rs"),
+        foundation_root.join("sqlite_test_support.rs"),
         "fn allowed_test_only_module(connection: &Db, backend: DatabaseBackend) {\n    let _ = connection.execute(Statement::from_string(backend, \"SELECT 1\".to_owned()));\n}\n",
     )
     .expect("write allowed test-only module");
@@ -147,47 +133,88 @@ fn runtime_raw_sql_guard_rejects_new_occurrence() {
     .expect("write allowed tests subdir file");
 
     let report = scan_runtime_raw_sql_usage(&package_root, PACKAGE_PATH_PREFIX);
-    let failure =
-        std::panic::catch_unwind(|| assert_no_untracked_runtime_raw_sql_violations(&report))
-            .expect_err("guard should panic for undocumented runtime raw SQL");
+    let failure = std::panic::catch_unwind(|| assert_no_runtime_raw_sql_violations(&report))
+        .expect_err("guard should panic for undocumented runtime raw SQL");
     let failure_message = panic_message(&failure);
 
     assert_eq!(
-        report.tracked_debt_ids,
-        TRACKED_RUNTIME_RAW_SQL_DEBT
-            .iter()
-            .map(|debt| debt.id)
-            .collect::<BTreeSet<_>>(),
-        "expected tracked transition debt fixtures to be discovered"
-    );
-    assert_eq!(
         report.violations.len(),
-        1,
-        "expected exactly one undocumented runtime raw-SQL occurrence, found:\n{}",
+        2,
+        "expected both injected runtime raw-SQL occurrences to be rejected, found:\n{}",
         report.violations.join("\n")
     );
     assert!(
-        report.violations[0].contains("apps/axonhub-server/src/foundation/runtime_violation.rs"),
-        "unexpected violation: {}",
-        report.violations[0]
+        report.violations.iter().any(|violation| violation
+            .contains("apps/axonhub-server/src/foundation/admin_operational.rs")),
+        "missing admin_operational violation: {}",
+        report.violations.join("\n")
     );
     assert!(
-        report.violations[0].contains("DELETE FROM systems"),
-        "unexpected violation: {}",
-        report.violations[0]
+        report
+            .violations
+            .iter()
+            .any(|violation| violation.contains("Statement::from_string(")),
+        "missing from_string entry-point detail: {}",
+        report.violations.join("\n")
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|violation| violation.contains("VACUUM")),
+        "missing VACUUM violation: {}",
+        report.violations.join("\n")
+    );
+    assert!(
+        report.violations.iter().any(|violation| violation
+            .contains("apps/axonhub-server/src/foundation/runtime_violation.rs")),
+        "missing runtime_violation violation: {}",
+        report.violations.join("\n")
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|violation| violation.contains("Statement::from_sql_and_values(")),
+        "missing from_sql_and_values entry-point detail: {}",
+        report.violations.join("\n")
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|violation| violation.contains("DELETE FROM systems WHERE id = $1")),
+        "missing DELETE violation: {}",
+        report.violations.join("\n")
+    );
+    assert!(
+        failure_message.contains("apps/axonhub-server/src/foundation/admin_operational.rs"),
+        "unexpected failure message: {failure_message}"
+    );
+    assert!(
+        failure_message.contains("VACUUM"),
+        "unexpected failure message: {failure_message}"
+    );
+    assert!(
+        failure_message.contains("Statement::from_string("),
+        "unexpected failure message: {failure_message}"
     );
     assert!(
         failure_message.contains("apps/axonhub-server/src/foundation/runtime_violation.rs"),
         "unexpected failure message: {failure_message}"
     );
     assert!(
-        failure_message.contains("DELETE FROM systems"),
+        failure_message.contains("Statement::from_sql_and_values("),
+        "unexpected failure message: {failure_message}"
+    );
+    assert!(
+        failure_message.contains("DELETE FROM systems WHERE id = $1"),
         "unexpected failure message: {failure_message}"
     );
 }
 
 #[test]
-fn runtime_raw_sql_guard_rejects_duplicate_tracked_debt_occurrence() {
+fn runtime_raw_sql_guard_rejects_multiple_occurrences_in_same_runtime_file() {
     let repo_root = unique_temp_dir("runtime-raw-sql-guard-duplicate");
     let package_root = repo_root.join(PACKAGE_PATH_PREFIX);
     let foundation_root = package_root.join(FOUNDATION_RUNTIME_ROOT);
@@ -201,42 +228,86 @@ fn runtime_raw_sql_guard_rejects_duplicate_tracked_debt_occurrence() {
     .expect("write foundation mod");
     fs::write(
         foundation_root.join("admin_operational.rs"),
-        "fn run_gc_cleanup_now(connection: &Db) {\n    let _ = connection.execute(Statement::from_string(connection.get_database_backend(), \"VACUUM\".to_owned()));\n    let _ = connection.execute(Statement::from_string(connection.get_database_backend(), \"VACUUM\".to_owned()));\n}\n",
+        "fn run_gc_cleanup_now(connection: &Db) {\n    let _ = connection.execute(\n        Statement::from_string(\n            connection.get_database_backend(),\n            \"VACUUM\".to_owned(),\n        ),\n    );\n    let _ = connection.execute(\n        Statement::from_string(\n            connection.get_database_backend(),\n            \"VACUUM\".to_owned(),\n        ),\n    );\n}\n",
     )
-    .expect("write duplicate allowed boundary");
+    .expect("write duplicate violating runtime file");
 
     let report = scan_runtime_raw_sql_usage(&package_root, PACKAGE_PATH_PREFIX);
-    let failure =
-        std::panic::catch_unwind(|| assert_no_untracked_runtime_raw_sql_violations(&report))
-            .expect_err("guard should panic for duplicated tracked runtime raw SQL debt");
+    let failure = std::panic::catch_unwind(|| assert_no_runtime_raw_sql_violations(&report))
+        .expect_err("guard should panic for duplicated runtime raw SQL");
     let failure_message = panic_message(&failure);
 
     assert_eq!(
-        report.tracked_debt_ids,
-        TRACKED_RUNTIME_RAW_SQL_DEBT
-            .iter()
-            .map(|debt| debt.id)
-            .collect::<BTreeSet<_>>(),
-        "expected duplicate fixture to discover the tracked debt boundary before rejecting the duplicate"
-    );
-    assert_eq!(
         report.violations.len(),
-        1,
-        "expected exactly one duplicate tracked-debt violation, found:\n{}",
+        2,
+        "expected both duplicate runtime raw-SQL occurrences to be rejected, found:\n{}",
         report.violations.join("\n")
     );
     assert!(
-        report.violations[0].contains(
-            "duplicate tracked runtime raw-SQL debt `OperationalMaintenanceCommandVacuumDebt`"
-        ),
-        "unexpected violation: {}",
-        report.violations[0]
+        report.violations.iter().all(|violation| violation
+            .contains("apps/axonhub-server/src/foundation/admin_operational.rs")),
+        "unexpected violations: {}",
+        report.violations.join("\n")
     );
     assert!(
-        failure_message.contains(
-            "duplicate tracked runtime raw-SQL debt `OperationalMaintenanceCommandVacuumDebt`"
-        ),
+        report
+            .violations
+            .iter()
+            .all(|violation| violation.contains("Statement::from_string(")),
+        "unexpected violations: {}",
+        report.violations.join("\n")
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .all(|violation| violation.contains("VACUUM")),
+        "unexpected violations: {}",
+        report.violations.join("\n")
+    );
+    assert!(
+        failure_message.contains("apps/axonhub-server/src/foundation/admin_operational.rs"),
         "unexpected failure message: {failure_message}"
+    );
+    assert!(
+        failure_message.contains("VACUUM"),
+        "unexpected failure message: {failure_message}"
+    );
+    assert!(
+        failure_message.contains("Statement::from_string("),
+        "unexpected failure message: {failure_message}"
+    );
+}
+
+#[test]
+fn runtime_raw_sql_guard_ignores_nested_cfg_test_module_files() {
+    let repo_root = unique_temp_dir("runtime-raw-sql-guard-nested-test-module");
+    let package_root = repo_root.join(PACKAGE_PATH_PREFIX);
+    let foundation_root = package_root.join(FOUNDATION_RUNTIME_ROOT);
+    let system_test_support_root = foundation_root.join("system");
+
+    fs::create_dir_all(&foundation_root).expect("create foundation dir");
+    fs::create_dir_all(&system_test_support_root).expect("create nested system dir");
+
+    fs::write(foundation_root.join("mod.rs"), "pub(crate) mod system;\n")
+        .expect("write foundation mod");
+    fs::write(
+        foundation_root.join("system.rs"),
+        "fn runtime_ok() {}\n\n#[cfg(test)]\npub(crate) mod sqlite_test_support;\n",
+    )
+    .expect("write runtime system module");
+    fs::write(
+        system_test_support_root.join("sqlite_test_support.rs"),
+        "fn allowed_nested_test_support(connection: &Db, backend: DatabaseBackend) {\n    let _ = connection.execute(Statement::from_string(backend, \"SELECT 1\".to_owned()));\n}\n",
+    )
+    .expect("write nested cfg(test) module file");
+
+    let report = scan_runtime_raw_sql_usage(&package_root, PACKAGE_PATH_PREFIX);
+
+    assert!(
+        report.violations.is_empty(),
+        "nested cfg(test) module file should be ignored by runtime raw-SQL guard:\n{}",
+        report.violations.join("\n")
     );
 }
 
@@ -254,11 +325,19 @@ fn assert_sqlite_support_suffix_target_contract() {
     );
 }
 
-fn assert_no_untracked_runtime_raw_sql_violations(report: &RawSqlScanReport) {
+fn assert_no_runtime_raw_sql_violations(report: &RawSqlScanReport) {
     assert!(
         report.violations.is_empty(),
-        "zero-runtime-raw-SQL target rejected runtime raw SQL outside the tracked transition snapshot:\n{}",
+        "zero-runtime-raw-SQL policy rejected runtime raw SQL in production runtime paths:\n{}",
         report.violations.join("\n")
+    );
+}
+
+fn assert_no_sqlite_support_suffix_files(found_files: &[String]) {
+    assert!(
+        found_files.is_empty(),
+        "zero-suffix target drifted: *sqlite_support.rs files must stay deleted\nfound files:\n{}",
+        found_files.join("\n")
     );
 }
 
@@ -276,10 +355,12 @@ fn scan_runtime_raw_sql_usage(package_root: &Path, display_prefix: &str) -> RawS
     let mut report = RawSqlScanReport::default();
 
     for runtime_root in RUNTIME_SCAN_ROOTS.map(|relative| package_root.join(relative)) {
-        let test_only_modules = collect_test_only_modules(&runtime_root);
+        let test_only_module_files = collect_test_only_module_files(&runtime_root);
 
         collect_rust_files(&runtime_root, &mut |path| {
-            if is_explicit_test_file(path) || is_test_only_module_file(path, &test_only_modules) {
+            if is_explicit_test_file(path)
+                || is_test_only_module_file(path, &test_only_module_files)
+            {
                 return;
             }
 
@@ -288,45 +369,12 @@ fn scan_runtime_raw_sql_usage(package_root: &Path, display_prefix: &str) -> RawS
             };
 
             let inline_test_ranges = inline_cfg_test_module_ranges(&contents);
-            for (index, line) in contents.lines().enumerate() {
-                if line_is_in_ranges(index + 1, &inline_test_ranges) {
-                    continue;
-                }
-
-                let trimmed = line.trim_start();
-                if trimmed.starts_with("//") || !trimmed.contains(RAW_SQL_ENTRY_POINT) {
-                    continue;
-                }
-
-                let display_path = display_path(package_root, display_prefix, path);
-                if let Some(debt) = TRACKED_RUNTIME_RAW_SQL_DEBT
-                    .iter()
-                    .find(|debt| debt.path == display_path && trimmed.contains(debt.line_fragment))
-                {
-                    if report.tracked_debt_ids.insert(debt.id) {
-                        report.tracked_debt_occurrences.push(format!(
-                            "{}:{}: tracked `{}` ({})",
-                            display_path,
-                            index + 1,
-                            debt.id,
-                            debt.removal_target
-                        ));
-                    } else {
-                        report.violations.push(format!(
-                            "{}:{}: duplicate tracked runtime raw-SQL debt `{}`",
-                            display_path,
-                            index + 1,
-                            debt.id
-                        ));
-                    }
-                } else {
-                    report.violations.push(format!(
-                        "{}:{}: undocumented runtime raw SQL entry point -> {}",
-                        display_path,
-                        index + 1,
-                        trimmed
-                    ));
-                }
+            let display_path = display_path(package_root, display_prefix, path);
+            for occurrence in find_runtime_raw_sql_occurrences(&contents, &inline_test_ranges) {
+                report.violations.push(format!(
+                    "{}:{}: runtime raw SQL via {} -> {}",
+                    display_path, occurrence.line, occurrence.entry_point, occurrence.fragment
+                ));
             }
         });
     }
@@ -361,28 +409,40 @@ fn display_path(package_root: &Path, display_prefix: &str, path: &Path) -> Strin
     }
 }
 
-fn collect_test_only_modules(foundation_root: &Path) -> BTreeSet<String> {
+fn collect_test_only_module_files(runtime_root: &Path) -> BTreeSet<PathBuf> {
     let mut modules = BTreeSet::new();
-    let mod_rs = foundation_root.join("mod.rs");
-    let Ok(contents) = fs::read_to_string(&mod_rs) else {
-        return modules;
-    };
 
-    let mut pending_cfg_test = false;
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("#[cfg(test)]") {
-            pending_cfg_test = true;
-            continue;
-        }
+    collect_rust_files(runtime_root, &mut |path| {
+        let Ok(contents) = fs::read_to_string(path) else {
+            return;
+        };
 
-        if pending_cfg_test {
-            if let Some(module_name) = parse_module_decl(trimmed) {
-                modules.insert(module_name);
+        let inline_test_ranges = inline_cfg_test_module_ranges(&contents);
+        let mut pending_cfg_test = false;
+
+        for (index, line) in contents.lines().enumerate() {
+            if line_is_in_ranges(index + 1, &inline_test_ranges) {
+                continue;
             }
-            pending_cfg_test = false;
+
+            let trimmed = line.trim();
+            if trimmed.starts_with("#[cfg(test)]") {
+                pending_cfg_test = true;
+                continue;
+            }
+
+            if pending_cfg_test {
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                if let Some(module_name) = parse_module_decl(trimmed) {
+                    modules.extend(resolve_cfg_test_module_files(path, module_name.as_str()));
+                }
+                pending_cfg_test = false;
+            }
         }
-    }
+    });
 
     modules
 }
@@ -426,19 +486,105 @@ fn is_explicit_test_file(path: &Path) -> bool {
         .any(|component| component.as_os_str() == "tests")
 }
 
-fn is_test_only_module_file(path: &Path, test_only_modules: &BTreeSet<String>) -> bool {
-    if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
-        if test_only_modules.contains(stem) {
-            return true;
+fn is_test_only_module_file(path: &Path, test_only_module_files: &BTreeSet<PathBuf>) -> bool {
+    test_only_module_files.contains(path)
+}
+
+fn resolve_cfg_test_module_files(source_path: &Path, module_name: &str) -> Vec<PathBuf> {
+    let parent_dir = source_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let base_dir = if source_path.file_name().and_then(|value| value.to_str()) == Some("mod.rs") {
+        parent_dir
+    } else {
+        parent_dir.join(
+            source_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default(),
+        )
+    };
+
+    vec![
+        base_dir.join(format!("{module_name}.rs")),
+        base_dir.join(module_name).join("mod.rs"),
+    ]
+}
+
+fn find_runtime_raw_sql_occurrences(
+    contents: &str,
+    inline_test_ranges: &[(usize, usize)],
+) -> Vec<RawSqlOccurrence> {
+    let normalized = normalized_runtime_source(contents, inline_test_ranges);
+    let mut occurrences = Vec::new();
+
+    for entry_point in RAW_SQL_ENTRY_PATTERNS {
+        let mut search_start = 0;
+        while let Some(relative_offset) = normalized.text[search_start..].find(entry_point) {
+            let normalized_offset = search_start + relative_offset;
+            let line = normalized.byte_lines[normalized_offset];
+            occurrences.push(RawSqlOccurrence {
+                entry_point,
+                line,
+                normalized_offset,
+                fragment: snippet_from_line(contents, line),
+            });
+            search_start = normalized_offset + entry_point.len();
         }
     }
 
-    path.file_name().and_then(|value| value.to_str()) == Some("mod.rs")
-        && path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|value| value.to_str())
-            .is_some_and(|module_name| test_only_modules.contains(module_name))
+    occurrences.sort_by_key(|occurrence| occurrence.normalized_offset);
+    occurrences
+}
+
+fn normalized_runtime_source(
+    contents: &str,
+    inline_test_ranges: &[(usize, usize)],
+) -> NormalizedRuntimeSource {
+    let mut normalized = NormalizedRuntimeSource::default();
+
+    for (index, line) in contents.lines().enumerate() {
+        let line_number = index + 1;
+        let trimmed = line.trim_start();
+        if line_is_in_ranges(line_number, inline_test_ranges) || trimmed.starts_with("//") {
+            continue;
+        }
+
+        for ch in line.chars() {
+            if ch.is_whitespace() {
+                continue;
+            }
+
+            normalized.text.push(ch);
+            normalized
+                .byte_lines
+                .extend(std::iter::repeat(line_number).take(ch.len_utf8()));
+        }
+    }
+
+    normalized
+}
+
+fn snippet_from_line(contents: &str, start_line: usize) -> String {
+    const MAX_LINES: usize = 5;
+    const MAX_CHARS: usize = 200;
+
+    let mut fragment = contents
+        .lines()
+        .skip(start_line.saturating_sub(1))
+        .take(MAX_LINES)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if fragment.len() > MAX_CHARS {
+        fragment.truncate(MAX_CHARS.saturating_sub(3));
+        fragment.push_str("...");
+    }
+
+    fragment
 }
 
 fn inline_cfg_test_module_ranges(contents: &str) -> Vec<(usize, usize)> {

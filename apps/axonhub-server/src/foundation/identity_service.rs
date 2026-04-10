@@ -306,6 +306,8 @@ pub(crate) fn project_context(project: StoredProject) -> ProjectContext {
 
 #[cfg(test)]
 pub(crate) mod sqlite_test_support {
+    pub(crate) use super::SqliteIdentityService;
+
     use axonhub_http::{ApiKeyAuthError, AuthUserContext, GlobalId, RoleInfo, UserProjectInfo};
     use rusqlite::{Connection as SqlConnection, Error as SqlError, Result as SqlResult};
 

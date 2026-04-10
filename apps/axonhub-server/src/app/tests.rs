@@ -17,7 +17,7 @@ use crate::foundation::{
         SYSTEM_KEY_BRAND_NAME, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_ONBOARDED,
         SYSTEM_KEY_VERSION, graphql_gid,
     },
-    sqlite_support::{hash_password, SqliteBootstrapService, SqliteFoundation},
+    system::{hash_password, SqliteBootstrapService, SqliteFoundation},
 };
 use axonhub_http::{
     HttpCorsSettings, HttpState, InitializeSystemRequest, ProviderEdgeAdminCapability,

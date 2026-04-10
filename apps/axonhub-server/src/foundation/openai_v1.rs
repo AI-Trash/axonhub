@@ -57,6 +57,14 @@ impl SeaOrmOpenAiV1Service {
     }
 
     #[cfg(test)]
+    pub(crate) fn new_with_circuit_breaker(
+        db: SeaOrmConnectionFactory,
+        circuit_breaker: SharedCircuitBreaker,
+    ) -> Self {
+        Self { db, circuit_breaker }
+    }
+
+    #[cfg(test)]
     pub(crate) fn new_with_circuit_breaker_policy(
         db: SeaOrmConnectionFactory,
         policy: CircuitBreakerPolicy,
@@ -1309,6 +1317,7 @@ pub struct StoredChannelSummary {
     pub ordering_weight: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredRequestSummary {
     pub id: i64,
@@ -1357,6 +1366,7 @@ pub struct ChannelRoutingStats {
     pub last_status_failed: bool,
 }
 
+#[allow(dead_code)]
 pub struct NewChannelRecord<'a> {
     pub name: &'a str,
     pub channel_type: &'a str,
@@ -1373,6 +1383,7 @@ pub struct NewChannelRecord<'a> {
     pub remark: &'a str,
 }
 
+#[allow(dead_code)]
 pub struct NewModelRecord<'a> {
     pub developer: &'a str,
     pub model_id: &'a str,
@@ -1686,6 +1697,7 @@ impl SelectedOpenAiTarget {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn stored_channel_breaker_status(
     status: ChannelBreakerStatus,
 ) -> Option<(String, String, i32, Option<i64>)> {
@@ -1972,6 +1984,7 @@ pub(crate) fn apply_upstream_request_body(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn apply_blocking_upstream_request_body(
     request: reqwest::blocking::RequestBuilder,
     body: &OpenAiRequestBody,
@@ -3318,6 +3331,7 @@ pub(crate) fn parse_created_at_to_unix(raw: &str) -> i64 {
         .unwrap_or(0)
 }
 
+#[allow(dead_code)]
 pub(crate) fn model_supported_by_channel(supported_models_json: &str, model_id: &str) -> bool {
     serde_json::from_str::<Vec<String>>(supported_models_json)
         .unwrap_or_default()
@@ -3475,6 +3489,226 @@ pub(crate) fn extract_channel_api_key(credentials_json: &str) -> String {
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+pub(crate) mod sqlite_test_support {
+    use std::sync::Arc;
+
+    use axonhub_http::{
+        AnthropicModelListResponse, AuthApiKeyContext, CompatibilityRoute,
+        GeminiModelListResponse, ModelListResponse, OpenAiModel, OpenAiV1Error,
+        OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port, OpenAiV1Route,
+        RealtimeSessionCreateRequest, RealtimeSessionPatchRequest, RealtimeSessionRecord,
+    };
+
+    use super::{
+        super::{
+            circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
+            ports::OpenAiV1Repository,
+            system::sqlite_test_support::SqliteFoundation,
+        },
+        SeaOrmOpenAiV1Service,
+    };
+
+    pub struct SqliteOpenAiV1Service {
+        inner: SeaOrmOpenAiV1Service,
+    }
+
+    impl SqliteOpenAiV1Service {
+        pub fn new(foundation: Arc<SqliteFoundation>) -> Self {
+            Self {
+                inner: SeaOrmOpenAiV1Service::new(foundation.seaorm()),
+            }
+        }
+
+        pub(crate) fn new_with_circuit_breaker(
+            foundation: Arc<SqliteFoundation>,
+            circuit_breaker: SharedCircuitBreaker,
+        ) -> Self {
+            Self {
+                inner: SeaOrmOpenAiV1Service::new_with_circuit_breaker(
+                    foundation.seaorm(),
+                    circuit_breaker,
+                ),
+            }
+        }
+
+        pub(crate) fn new_with_circuit_breaker_policy(
+            foundation: Arc<SqliteFoundation>,
+            policy: CircuitBreakerPolicy,
+        ) -> Self {
+            Self {
+                inner: SeaOrmOpenAiV1Service::new_with_circuit_breaker_policy(
+                    foundation.seaorm(),
+                    policy,
+                ),
+            }
+        }
+    }
+
+    impl OpenAiV1Port for SqliteOpenAiV1Service {
+        fn list_models(
+            &self,
+            include: Option<&str>,
+            api_key: &AuthApiKeyContext,
+        ) -> Result<ModelListResponse, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::list_models(&self.inner, include, api_key)
+        }
+
+        fn retrieve_model(
+            &self,
+            model_id: &str,
+            include: Option<&str>,
+            api_key: &AuthApiKeyContext,
+        ) -> Result<OpenAiModel, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::retrieve_model(
+                &self.inner,
+                model_id,
+                include,
+                api_key,
+            )
+        }
+
+        fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::list_anthropic_models(&self.inner)
+        }
+
+        fn list_gemini_models(&self) -> Result<GeminiModelListResponse, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::list_gemini_models(&self.inner)
+        }
+
+        fn execute(
+            &self,
+            route: OpenAiV1Route,
+            request: OpenAiV1ExecutionRequest,
+        ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::execute(&self.inner, route, request)
+        }
+
+        fn execute_compatibility(
+            &self,
+            route: CompatibilityRoute,
+            request: OpenAiV1ExecutionRequest,
+        ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::execute_compatibility(
+                &self.inner,
+                route,
+                request,
+            )
+        }
+
+        fn create_realtime_session(
+            &self,
+            request: RealtimeSessionCreateRequest,
+        ) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::create_realtime_session(
+                &self.inner,
+                request,
+            )
+        }
+
+        fn get_realtime_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::get_realtime_session(&self.inner, session_id)
+        }
+
+        fn update_realtime_session(
+            &self,
+            session_id: &str,
+            patch: RealtimeSessionPatchRequest,
+        ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::update_realtime_session(
+                &self.inner,
+                session_id,
+                patch,
+            )
+        }
+
+        fn delete_realtime_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::delete_realtime_session(
+                &self.inner,
+                session_id,
+            )
+        }
+    }
+
+    impl OpenAiV1Repository for SqliteOpenAiV1Service {
+        fn list_models(
+            &self,
+            include: Option<&str>,
+            api_key: &AuthApiKeyContext,
+        ) -> Result<ModelListResponse, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::list_models(self, include, api_key)
+        }
+
+        fn retrieve_model(
+            &self,
+            model_id: &str,
+            include: Option<&str>,
+            api_key: &AuthApiKeyContext,
+        ) -> Result<OpenAiModel, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::retrieve_model(self, model_id, include, api_key)
+        }
+
+        fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::list_anthropic_models(self)
+        }
+
+        fn list_gemini_models(&self) -> Result<GeminiModelListResponse, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::list_gemini_models(self)
+        }
+
+        fn execute(
+            &self,
+            route: OpenAiV1Route,
+            request: OpenAiV1ExecutionRequest,
+        ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::execute(self, route, request)
+        }
+
+        fn execute_compatibility(
+            &self,
+            route: CompatibilityRoute,
+            request: OpenAiV1ExecutionRequest,
+        ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::execute_compatibility(self, route, request)
+        }
+
+        fn create_realtime_session(
+            &self,
+            request: RealtimeSessionCreateRequest,
+        ) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::create_realtime_session(self, request)
+        }
+
+        fn get_realtime_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::get_realtime_session(self, session_id)
+        }
+
+        fn update_realtime_session(
+            &self,
+            session_id: &str,
+            patch: RealtimeSessionPatchRequest,
+        ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::update_realtime_session(self, session_id, patch)
+        }
+
+        fn delete_realtime_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Option<RealtimeSessionRecord>, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::delete_realtime_session(self, session_id)
+        }
+    }
 }
 
 #[cfg(test)]

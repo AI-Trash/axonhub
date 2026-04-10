@@ -91,7 +91,7 @@ fn runtime_driver_guard_rejects_runtime_imports() {
     .expect("write app mod");
     fs::write(
         foundation_dir.join("mod.rs"),
-        "pub(crate) mod runtime;\n#[cfg(test)]\npub(crate) mod sqlite_support;\n",
+        "pub(crate) mod runtime;\n#[cfg(test)]\npub(crate) mod sqlite_test_support;\n",
     )
     .expect("write foundation mod");
     fs::write(
@@ -102,7 +102,7 @@ fn runtime_driver_guard_rejects_runtime_imports() {
     fs::write(app_dir.join("tests.rs"), "use rusqlite::Connection;\n")
         .expect("write allowed test file");
     fs::write(
-        foundation_dir.join("sqlite_support.rs"),
+        foundation_dir.join("sqlite_test_support.rs"),
         "use rusqlite::Connection;\n",
     )
     .expect("write allowed foundation helper");

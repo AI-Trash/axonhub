@@ -66,3 +66,9 @@ fn seaorm_run_sync_preserves_trace_context_across_bridge() {
 fn schema_ownership_contract_limits_raw_sql_usage() {
     foundation::schema_ownership::schema_ownership_contract_limits_raw_sql_usage_inner();
 }
+
+#[cfg(test)]
+#[tokio::test]
+async fn admin_graphql_allows_trigger_gc_cleanup_mutation() {
+    foundation::admin_graphql_allows_trigger_gc_cleanup_mutation_inner().await;
+}

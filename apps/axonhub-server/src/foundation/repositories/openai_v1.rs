@@ -11,8 +11,7 @@ use serde_json::Value;
 use sea_orm::ActiveValue::Set;
 use sea_orm::sea_query::{Alias, Expr, Func, SimpleExpr};
 use sea_orm::{
-    ConnectionTrait, DatabaseBackend, ExprTrait, PaginatorTrait, QueryResult, QuerySelect,
-    QueryTrait,
+    ConnectionTrait, DatabaseBackend, ExprTrait, PaginatorTrait, QuerySelect, QueryTrait,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
@@ -296,7 +295,7 @@ pub(crate) async fn select_target_channels_seaorm(
         return Ok(Vec::new());
     }
 
-    let mut targets = select_openai_route_targets_seaorm(
+    let targets = select_openai_route_targets_seaorm(
         db,
         backend,
         request_model.as_str(),
@@ -817,6 +816,736 @@ mod tests {
         .unwrap();
 
         assert!(models.is_empty());
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod sqlite_test_support {
+    use super::*;
+    use rusqlite::{params, Connection as SqlConnection, OptionalExtension, Result as SqlResult};
+
+    use crate::foundation::{
+        admin::{default_system_channel_settings, StoredSystemChannelSettings},
+        openai_v1::{
+            extract_channel_api_key,
+            ChannelRoutingStats, ModelInclude, NewChannelRecord, NewModelRecord,
+            NewRequestExecutionRecord, NewRequestRecord, NewUsageLogRecord, SelectedOpenAiTarget,
+            StoredModelRecord, StoredRequestSummary, UpdateRequestExecutionResultRecord,
+            UpdateRequestResultRecord,
+        },
+        shared::{bool_to_sql, USAGE_LOGS_TABLE_SQL},
+        system::sqlite_test_support::{
+            ensure_channel_model_tables, ensure_operational_tables, ensure_request_tables,
+            SqliteConnectionFactory, SystemSettingsStore,
+        },
+    };
+
+    #[derive(Debug, Clone)]
+    pub struct ChannelModelStore {
+        pub(crate) connection_factory: SqliteConnectionFactory,
+    }
+
+    impl ChannelModelStore {
+        pub(crate) fn new(connection_factory: SqliteConnectionFactory) -> Self {
+            Self { connection_factory }
+        }
+
+        pub fn ensure_schema(&self) -> SqlResult<()> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_channel_model_tables(&connection)
+        }
+
+        pub fn upsert_channel(&self, record: &NewChannelRecord<'_>) -> SqlResult<i64> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_channel_model_tables(&connection)?;
+            connection.execute(
+                "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0)
+                 ON CONFLICT(name) DO UPDATE SET
+                     type = excluded.type,
+                     base_url = excluded.base_url,
+                     status = excluded.status,
+                     credentials = excluded.credentials,
+                     supported_models = excluded.supported_models,
+                     auto_sync_supported_models = excluded.auto_sync_supported_models,
+                     default_test_model = excluded.default_test_model,
+                     settings = excluded.settings,
+                     tags = excluded.tags,
+                     ordering_weight = excluded.ordering_weight,
+                     error_message = excluded.error_message,
+                     remark = excluded.remark,
+                     deleted_at = 0,
+                     updated_at = CURRENT_TIMESTAMP",
+                params![
+                    record.channel_type,
+                    record.base_url,
+                    record.name,
+                    record.status,
+                    record.credentials_json,
+                    record.supported_models_json,
+                    bool_to_sql(record.auto_sync_supported_models),
+                    record.default_test_model,
+                    record.settings_json,
+                    record.tags_json,
+                    record.ordering_weight,
+                    record.error_message,
+                    record.remark,
+                ],
+            )?;
+
+            connection.query_row(
+                "SELECT id FROM channels WHERE name = ?1 AND deleted_at = 0 LIMIT 1",
+                [record.name],
+                |row| row.get(0),
+            )
+        }
+
+        pub fn upsert_model(&self, record: &NewModelRecord<'_>) -> SqlResult<i64> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_channel_model_tables(&connection)?;
+            connection.execute(
+                "INSERT INTO models (developer, model_id, type, name, icon, \"group\", model_card, settings, status, remark, deleted_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0)
+                 ON CONFLICT(developer, model_id, type) DO UPDATE SET
+                     name = excluded.name,
+                     icon = excluded.icon,
+                     \"group\" = excluded.\"group\",
+                     model_card = excluded.model_card,
+                     settings = excluded.settings,
+                     status = excluded.status,
+                     remark = excluded.remark,
+                     deleted_at = 0,
+                     updated_at = CURRENT_TIMESTAMP",
+                params![
+                    record.developer,
+                    record.model_id,
+                    record.model_type,
+                    record.name,
+                    record.icon,
+                    record.group,
+                    record.model_card_json,
+                    record.settings_json,
+                    record.status,
+                    record.remark,
+                ],
+            )?;
+
+            connection.query_row(
+                "SELECT id FROM models WHERE developer = ?1 AND model_id = ?2 AND type = ?3 AND deleted_at = 0 LIMIT 1",
+                params![record.developer, record.model_id, record.model_type],
+                |row| row.get(0),
+            )
+        }
+
+        pub fn list_enabled_models(&self, include: Option<&str>) -> SqlResult<Vec<OpenAiModel>> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_channel_model_tables(&connection)?;
+
+            let include = ModelInclude::parse(include);
+            list_listed_model_records(&connection, &SystemSettingsStore::new(self.connection_factory.clone()))?
+                .into_iter()
+                .map(|record| Ok(record.into_openai_model(&include)))
+                .collect()
+        }
+
+        pub fn list_enabled_model_records(&self) -> SqlResult<Vec<StoredModelRecord>> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_channel_model_tables(&connection)?;
+            list_listed_model_records(&connection, &SystemSettingsStore::new(self.connection_factory.clone()))
+        }
+
+        pub fn list_channels(&self) -> SqlResult<Vec<crate::foundation::openai_v1::StoredChannelSummary>> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_channel_model_tables(&connection)?;
+            let mut statement = connection.prepare(
+                "SELECT id, name, type, base_url, status, supported_models, ordering_weight
+                 FROM channels
+                 WHERE deleted_at = 0
+                 ORDER BY ordering_weight DESC, id ASC",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok(crate::foundation::openai_v1::StoredChannelSummary {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    channel_type: row.get(2)?,
+                    base_url: row.get(3)?,
+                    status: row.get(4)?,
+                    supported_models: crate::foundation::identity::parse_json_string_vec(row.get::<_, String>(5)?),
+                    ordering_weight: row.get(6)?,
+                })
+            })?;
+            rows.collect()
+        }
+
+        pub fn select_inference_targets(
+            &self,
+            request_model_id: &str,
+            trace_id: Option<i64>,
+            max_channel_retries: usize,
+            channel_type: &str,
+            model_type: &str,
+            preferred_channel_id: Option<i64>,
+            circuit_breaker: &SharedCircuitBreaker,
+        ) -> SqlResult<Vec<SelectedOpenAiTarget>> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_channel_model_tables(&connection)?;
+            ensure_request_tables(&connection)?;
+            ensure_operational_tables(&connection)?;
+
+            let mut statement = connection.prepare(
+                "SELECT c.id, c.base_url, c.credentials, c.supported_models, c.ordering_weight,
+                        c.settings, m.created_at, m.developer, m.model_id, m.type, m.name, m.icon, m.remark, m.model_card, c.type
+                  FROM channels c
+                  JOIN models m ON m.deleted_at = 0
+                  WHERE c.deleted_at = 0
+                    AND c.status = 'enabled'
+                    AND m.status = 'enabled'
+                    AND c.type = ?1
+                    AND (?2 = '' OR m.type = ?2)
+                  ORDER BY c.ordering_weight DESC, c.id ASC",
+            )?;
+            let mut rows = statement.query(params![channel_type, model_type])?;
+            let preferred_trace_channel_id = trace_id
+                .map(|trace_id| query_preferred_trace_channel_id(&connection, trace_id, request_model_id))
+                .transpose()?
+                .flatten();
+            let mut candidates = Vec::new();
+
+            while let Some(row) = rows.next()? {
+                let supported_models_json: String = row.get(3)?;
+                let settings_json: String = row.get(5)?;
+                let Some(entry) = resolve_channel_model_entry(
+                    supported_models_json.as_str(),
+                    settings_json.as_str(),
+                    request_model_id,
+                ) else {
+                    continue;
+                };
+
+                let credentials_json: String = row.get(2)?;
+                let api_key = extract_channel_api_key(&credentials_json);
+                if api_key.is_empty() {
+                    continue;
+                }
+
+                let channel_id: i64 = row.get(0)?;
+                let ordering_weight: i64 = row.get(4)?;
+                let actual_model_id = entry.actual_model_id;
+                let routing_stats = query_channel_routing_stats(&connection, channel_id)?;
+                if provider_channel_is_blocked(&connection, channel_id)?
+                    || circuit_breaker.is_blocked(channel_id, actual_model_id.as_str())
+                {
+                    continue;
+                }
+
+                let model = StoredModelRecord {
+                    id: 0,
+                    created_at: row.get(6)?,
+                    developer: row.get(7)?,
+                    model_id: actual_model_id.clone(),
+                    model_type: row.get(9)?,
+                    name: row.get(10)?,
+                    icon: row.get(11)?,
+                    remark: row.get(12)?,
+                    model_card_json: row.get(13)?,
+                };
+
+                candidates.push(SelectedOpenAiTarget {
+                    channel_id,
+                    base_url: row.get(1)?,
+                    api_key,
+                    actual_model_id: actual_model_id.clone(),
+                    provider_type: provider_quota_type_for_channel(&row.get::<_, String>(14)?).map(str::to_owned),
+                    ordering_weight,
+                    trace_affinity: preferred_trace_channel_id == Some(channel_id),
+                    circuit_breaker: circuit_breaker.current_snapshot(channel_id, actual_model_id.as_str()),
+                    routing_stats,
+                    model,
+                });
+            }
+
+            candidates.sort_by(compare_openai_target_priority);
+
+            if let Some(preferred_channel_id) = preferred_channel_id {
+                if let Some(index) = candidates
+                    .iter()
+                    .position(|target| target.channel_id == preferred_channel_id)
+                {
+                    let preferred = candidates.remove(index);
+                    candidates.insert(0, preferred);
+                }
+            }
+
+            let top_k = calculate_top_k(candidates.len(), max_channel_retries);
+            candidates.truncate(top_k);
+            Ok(candidates)
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct RequestStore {
+        pub(crate) connection_factory: SqliteConnectionFactory,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct StoredRequestContentRecord {
+        pub id: i64,
+        pub project_id: i64,
+        pub content_saved: bool,
+        pub content_storage_id: Option<i64>,
+        pub content_storage_key: Option<String>,
+    }
+
+    impl RequestStore {
+        pub(crate) fn new(connection_factory: SqliteConnectionFactory) -> Self {
+            Self { connection_factory }
+        }
+
+        pub fn ensure_schema(&self) -> SqlResult<()> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_request_tables(&connection)
+        }
+
+        pub fn create_request(&self, record: &NewRequestRecord<'_>) -> SqlResult<i64> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_request_tables(&connection)?;
+            connection.execute(
+                "INSERT INTO requests (
+                    api_key_id, project_id, trace_id, data_storage_id, source, model_id, format,
+                    request_headers, request_body, response_body, response_chunks, channel_id,
+                    external_id, status, stream, client_ip, metrics_latency_ms,
+                    metrics_first_token_latency_ms, content_saved, content_storage_id,
+                    content_storage_key, content_saved_at
+                ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                    ?8, ?9, ?10, ?11, ?12,
+                    ?13, ?14, ?15, ?16, ?17,
+                    ?18, ?19, ?20,
+                    ?21, ?22
+                )",
+                params![
+                    record.api_key_id,
+                    record.project_id,
+                    record.trace_id,
+                    record.data_storage_id,
+                    record.source,
+                    record.model_id,
+                    record.format,
+                    record.request_headers_json,
+                    record.request_body_json,
+                    record.response_body_json,
+                    record.response_chunks_json,
+                    record.channel_id,
+                    record.external_id,
+                    record.status,
+                    bool_to_sql(record.stream),
+                    record.client_ip,
+                    record.metrics_latency_ms,
+                    record.metrics_first_token_latency_ms,
+                    bool_to_sql(record.content_saved),
+                    record.content_storage_id,
+                    record.content_storage_key,
+                    record.content_saved_at,
+                ],
+            )?;
+
+            Ok(connection.last_insert_rowid())
+        }
+
+        pub fn create_request_execution(&self, record: &NewRequestExecutionRecord<'_>) -> SqlResult<i64> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_request_tables(&connection)?;
+            connection.execute(
+                "INSERT INTO request_executions (
+                    project_id, request_id, channel_id, data_storage_id, external_id, model_id,
+                    format, request_body, response_body, response_chunks, error_message,
+                    response_status_code, status, stream, metrics_latency_ms,
+                    metrics_first_token_latency_ms, request_headers
+                ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6,
+                    ?7, ?8, ?9, ?10, ?11,
+                    ?12, ?13, ?14, ?15,
+                    ?16, ?17
+                )",
+                params![
+                    record.project_id,
+                    record.request_id,
+                    record.channel_id,
+                    record.data_storage_id,
+                    record.external_id,
+                    record.model_id,
+                    record.format,
+                    record.request_body_json,
+                    record.response_body_json,
+                    record.response_chunks_json,
+                    record.error_message,
+                    record.response_status_code,
+                    record.status,
+                    bool_to_sql(record.stream),
+                    record.metrics_latency_ms,
+                    record.metrics_first_token_latency_ms,
+                    record.request_headers_json,
+                ],
+            )?;
+
+            Ok(connection.last_insert_rowid())
+        }
+
+        pub fn update_request_result(&self, record: &UpdateRequestResultRecord<'_>) -> SqlResult<()> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_request_tables(&connection)?;
+            connection.execute(
+                "UPDATE requests
+                 SET updated_at = CURRENT_TIMESTAMP,
+                     channel_id = COALESCE(?2, channel_id),
+                     external_id = COALESCE(?3, external_id),
+                     response_body = COALESCE(?4, response_body),
+                     status = ?5
+                 WHERE id = ?1",
+                params![
+                    record.request_id,
+                    record.channel_id,
+                    record.external_id,
+                    record.response_body_json,
+                    record.status,
+                ],
+            )?;
+            Ok(())
+        }
+
+        pub fn update_request_execution_result(
+            &self,
+            record: &UpdateRequestExecutionResultRecord<'_>,
+        ) -> SqlResult<()> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_request_tables(&connection)?;
+            connection.execute(
+                "UPDATE request_executions
+                 SET updated_at = CURRENT_TIMESTAMP,
+                     external_id = COALESCE(?2, external_id),
+                     response_body = COALESCE(?3, response_body),
+                     response_status_code = COALESCE(?4, response_status_code),
+                     error_message = COALESCE(?5, error_message),
+                     status = ?6
+                 WHERE id = ?1",
+                params![
+                    record.execution_id,
+                    record.external_id,
+                    record.response_body_json,
+                    record.response_status_code,
+                    record.error_message,
+                    record.status,
+                ],
+            )?;
+            Ok(())
+        }
+
+        pub fn find_request_content_record(
+            &self,
+            request_id: i64,
+        ) -> SqlResult<Option<StoredRequestContentRecord>> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_request_tables(&connection)?;
+            connection
+                .query_row(
+                    "SELECT id, project_id, content_saved, content_storage_id, content_storage_key
+                     FROM requests WHERE id = ?1 LIMIT 1",
+                    [request_id],
+                    |row| {
+                        Ok(StoredRequestContentRecord {
+                            id: row.get(0)?,
+                            project_id: row.get(1)?,
+                            content_saved: row.get::<_, i64>(2)? != 0,
+                            content_storage_id: row.get(3)?,
+                            content_storage_key: row.get(4)?,
+                        })
+                    },
+                )
+                .optional()
+        }
+
+        pub fn list_requests_by_project(&self, project_id: i64) -> SqlResult<Vec<StoredRequestSummary>> {
+            let connection = self.connection_factory.open(true)?;
+            ensure_request_tables(&connection)?;
+            let mut statement = connection.prepare(
+                "SELECT id, project_id, trace_id, channel_id, model_id, format, status, source, external_id
+                 FROM requests
+                 WHERE project_id = ?1
+                 ORDER BY id DESC",
+            )?;
+            let rows = statement.query_map([project_id], |row| {
+                Ok(StoredRequestSummary {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    trace_id: row.get(2)?,
+                    channel_id: row.get(3)?,
+                    model_id: row.get(4)?,
+                    format: row.get(5)?,
+                    status: row.get(6)?,
+                    source: row.get(7)?,
+                    external_id: row.get(8)?,
+                })
+            })?;
+            rows.collect()
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct UsageCostStore {
+        pub(crate) connection_factory: SqliteConnectionFactory,
+    }
+
+    impl UsageCostStore {
+        pub(crate) fn new(connection_factory: SqliteConnectionFactory) -> Self {
+            Self { connection_factory }
+        }
+
+        pub fn ensure_schema(&self) -> SqlResult<()> {
+            let connection = self.connection_factory.open(true)?;
+            connection.execute_batch(USAGE_LOGS_TABLE_SQL)
+        }
+
+        pub fn record_usage(&self, record: &NewUsageLogRecord<'_>) -> SqlResult<i64> {
+            let connection = self.connection_factory.open(true)?;
+            connection.execute_batch(USAGE_LOGS_TABLE_SQL)?;
+            connection.execute(
+                "INSERT INTO usage_logs (
+                    request_id, api_key_id, project_id, channel_id, model_id,
+                    prompt_tokens, completion_tokens, total_tokens,
+                    prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens,
+                    prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h,
+                    completion_audio_tokens, completion_reasoning_tokens,
+                    completion_accepted_prediction_tokens, completion_rejected_prediction_tokens,
+                    source, format, total_cost, cost_items, cost_price_reference_id, deleted_at
+                ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5,
+                    ?6, ?7, ?8,
+                    ?9, ?10, ?11,
+                    ?12, ?13,
+                    ?14, ?15,
+                    ?16, ?17,
+                    ?18, ?19, ?20, ?21, ?22, 0
+                )",
+                params![
+                    record.request_id,
+                    record.api_key_id,
+                    record.project_id,
+                    record.channel_id,
+                    record.model_id,
+                    record.prompt_tokens,
+                    record.completion_tokens,
+                    record.total_tokens,
+                    record.prompt_audio_tokens,
+                    record.prompt_cached_tokens,
+                    record.prompt_write_cached_tokens,
+                    record.prompt_write_cached_tokens_5m,
+                    record.prompt_write_cached_tokens_1h,
+                    record.completion_audio_tokens,
+                    record.completion_reasoning_tokens,
+                    record.completion_accepted_prediction_tokens,
+                    record.completion_rejected_prediction_tokens,
+                    record.source,
+                    record.format,
+                    record.total_cost,
+                    record.cost_items_json,
+                    record.cost_price_reference_id,
+                ],
+            )?;
+
+            Ok(connection.last_insert_rowid())
+        }
+    }
+
+    fn list_enabled_model_records(connection: &SqlConnection) -> SqlResult<Vec<StoredModelRecord>> {
+        let mut statement = connection.prepare(
+            "SELECT id, created_at, developer, model_id, type, name, icon, remark, model_card
+             FROM models WHERE deleted_at = 0 AND status = 'enabled' ORDER BY id ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(StoredModelRecord {
+                id: row.get(0)?,
+                created_at: row.get(1)?,
+                developer: row.get(2)?,
+                model_id: row.get(3)?,
+                model_type: row.get(4)?,
+                name: row.get(5)?,
+                icon: row.get(6)?,
+                remark: row.get(7)?,
+                model_card_json: row.get(8)?,
+            })
+        })?;
+
+        rows.collect()
+    }
+
+    fn list_listed_model_records(
+        connection: &SqlConnection,
+        settings_store: &SystemSettingsStore,
+    ) -> SqlResult<Vec<StoredModelRecord>> {
+        if load_system_channel_settings(settings_store)?.query_all_channel_models {
+            list_routable_model_records(connection)
+        } else {
+            list_enabled_model_records(connection)
+        }
+    }
+
+    fn load_system_channel_settings(
+        settings_store: &SystemSettingsStore,
+    ) -> SqlResult<StoredSystemChannelSettings> {
+        let raw_channel_settings = settings_store.value(crate::foundation::shared::SYSTEM_KEY_CHANNEL_SETTINGS)?;
+        let mut settings = raw_channel_settings
+            .as_deref()
+            .map(parse_system_channel_settings)
+            .transpose()?
+            .unwrap_or_else(default_system_channel_settings);
+
+        let query_all_channel_models_present = raw_channel_settings
+            .as_deref()
+            .map(channel_settings_has_query_all_channel_models)
+            .transpose()?
+            .unwrap_or(false);
+        if !query_all_channel_models_present {
+            if let Some(query_all_channel_models) = settings_store
+                .value(crate::foundation::shared::SYSTEM_KEY_MODEL_SETTINGS)?
+                .as_deref()
+                .map(parse_legacy_query_all_channel_models)
+                .transpose()?
+                .flatten()
+            {
+                settings.query_all_channel_models = query_all_channel_models;
+            }
+        }
+
+        Ok(settings)
+    }
+
+    fn parse_system_channel_settings(raw: &str) -> SqlResult<StoredSystemChannelSettings> {
+        serde_json::from_str::<StoredSystemChannelSettings>(raw).map_err(json_setting_decode_error)
+    }
+
+    fn channel_settings_has_query_all_channel_models(raw: &str) -> SqlResult<bool> {
+        let value = serde_json::from_str::<Value>(raw).map_err(json_setting_decode_error)?;
+        Ok(value
+            .as_object()
+            .is_some_and(|object| object.contains_key("query_all_channel_models")))
+    }
+
+    fn parse_legacy_query_all_channel_models(raw: &str) -> SqlResult<Option<bool>> {
+        #[derive(Deserialize)]
+        struct LegacySystemModelSettings {
+            query_all_channel_models: Option<bool>,
+        }
+
+        serde_json::from_str::<LegacySystemModelSettings>(raw)
+            .map(|settings| settings.query_all_channel_models)
+            .map_err(json_setting_decode_error)
+    }
+
+    fn json_setting_decode_error(error: serde_json::Error) -> rusqlite::Error {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+    }
+
+    fn list_routable_model_records(connection: &SqlConnection) -> SqlResult<Vec<StoredModelRecord>> {
+        let mut statement = connection.prepare(
+            "SELECT supported_models, settings
+             FROM channels
+             WHERE deleted_at = 0
+               AND status = 'enabled'
+             ORDER BY ordering_weight DESC, id ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        let mut routable_model_ids = BTreeSet::new();
+        for row in rows {
+            let (supported_models_json, settings_json) = row?;
+            for entry in derive_channel_model_entries(
+                supported_models_json.as_str(),
+                settings_json.as_str(),
+            )
+            .into_values()
+            {
+                routable_model_ids.insert(entry.actual_model_id);
+            }
+        }
+
+        list_enabled_model_records(connection).map(|records| {
+            records
+                .into_iter()
+                .filter(|record| routable_model_ids.contains(&record.model_id))
+                .collect()
+        })
+    }
+
+    fn provider_channel_is_blocked(connection: &SqlConnection, channel_id: i64) -> SqlResult<bool> {
+        let row: Option<(String, i64)> = connection
+            .query_row(
+                "SELECT status, ready FROM provider_quota_statuses WHERE channel_id = ?1 LIMIT 1",
+                [channel_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        Ok(row.is_some_and(|(status, ready)| ready == 0 || status.eq_ignore_ascii_case("exhausted")))
+    }
+
+    fn query_preferred_trace_channel_id(
+        connection: &SqlConnection,
+        trace_id: i64,
+        model_id: &str,
+    ) -> SqlResult<Option<i64>> {
+        connection
+            .query_row(
+                "SELECT channel_id
+                 FROM requests
+                 WHERE trace_id = ?1
+                   AND model_id = ?2
+                   AND status = 'completed'
+                   AND channel_id IS NOT NULL
+                 ORDER BY id DESC
+                 LIMIT 1",
+                params![trace_id, model_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    fn query_channel_routing_stats(
+        connection: &SqlConnection,
+        channel_id: i64,
+    ) -> SqlResult<ChannelRoutingStats> {
+        let selection_count = connection.query_row(
+            "SELECT COUNT(*) FROM requests WHERE channel_id = ?1",
+            [channel_id],
+            |row| row.get(0),
+        )?;
+        let processing_count = connection.query_row(
+            "SELECT COUNT(*) FROM requests WHERE channel_id = ?1 AND status = 'processing'",
+            [channel_id],
+            |row| row.get(0),
+        )?;
+
+        let mut statement = connection.prepare(
+            "SELECT status FROM request_executions
+             WHERE channel_id = ?1
+             ORDER BY id DESC
+             LIMIT 10",
+        )?;
+        let rows = statement.query_map([channel_id], |row| row.get::<_, String>(0))?;
+        let statuses = rows.collect::<SqlResult<Vec<_>>>()?;
+
+        let last_status_failed = statuses.first().is_some_and(|status| status == "failed");
+        let consecutive_failures = statuses
+            .iter()
+            .take_while(|status| status.as_str() == "failed")
+            .count() as i64;
+
+        Ok(ChannelRoutingStats {
+            selection_count,
+            processing_count,
+            consecutive_failures,
+            last_status_failed,
+        })
     }
 }
 

@@ -571,3 +571,162 @@ pub(crate) fn filename_from_key(key: &str, request_id: i64) -> String {
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("request-{request_id}-content"))
 }
+
+#[cfg(test)]
+pub(crate) mod sqlite_test_support {
+    use std::fs;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use axonhub_http::{AdminContentDownload, AdminError, AdminPort, AuthUserContext};
+    use serde_json::Value;
+
+    use super::{
+        super::{
+            authz::{require_user_project_scope, SCOPE_READ_REQUESTS},
+            ports::AdminRepository,
+            system::sqlite_test_support::SqliteFoundation,
+        },
+        filename_from_key, safe_relative_key_path,
+    };
+
+    pub struct SqliteAdminService {
+        pub(crate) foundation: Arc<SqliteFoundation>,
+    }
+
+    impl SqliteAdminService {
+        pub fn new(foundation: Arc<SqliteFoundation>) -> Self {
+            Self { foundation }
+        }
+    }
+
+    impl AdminPort for SqliteAdminService {
+        fn download_request_content(
+            &self,
+            project_id: i64,
+            request_id: i64,
+            user: AuthUserContext,
+        ) -> Result<AdminContentDownload, AdminError> {
+            if let Err(error) = require_user_project_scope(&user, project_id, SCOPE_READ_REQUESTS) {
+                return Err(AdminError::Forbidden {
+                    message: error.message().to_owned(),
+                });
+            }
+
+            let request = self
+                .foundation
+                .requests()
+                .find_request_content_record(request_id)
+                .map_err(|error| AdminError::Internal {
+                    message: format!("Failed to load request: {error}"),
+                })?
+                .ok_or_else(|| AdminError::NotFound {
+                    message: "Request not found".to_owned(),
+                })?;
+
+            if request.project_id != project_id {
+                return Err(AdminError::NotFound {
+                    message: "Request not found".to_owned(),
+                });
+            }
+
+            if !request.content_saved {
+                return Err(AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                });
+            }
+
+            let content_storage_id =
+                request
+                    .content_storage_id
+                    .ok_or_else(|| AdminError::NotFound {
+                        message: "Content not found".to_owned(),
+                    })?;
+            let key = request
+                .content_storage_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                })?;
+
+            let expected_prefix = format!("/{}/requests/{}/", request.project_id, request.id);
+            let normalized_key = if key.starts_with('/') {
+                key.to_owned()
+            } else {
+                format!("/{key}")
+            };
+            if !normalized_key.starts_with(expected_prefix.as_str()) {
+                return Err(AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                });
+            }
+
+            let data_storage = self
+                .foundation
+                .data_storages()
+                .find_storage_by_id(content_storage_id)
+                .map_err(|error| AdminError::Internal {
+                    message: format!("Failed to load content storage: {error}"),
+                })?
+                .ok_or_else(|| AdminError::NotFound {
+                    message: "Content storage not found".to_owned(),
+                })?;
+
+            if data_storage.storage_type == "database" {
+                return Err(AdminError::BadRequest {
+                    message: "Content storage is not file-based".to_owned(),
+                });
+            }
+
+            if data_storage.storage_type != "fs" {
+                return Err(AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                });
+            }
+
+            let settings: Value =
+                serde_json::from_str(data_storage.settings_json.as_str()).unwrap_or(Value::Null);
+            let base_directory = settings
+                .get("directory")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                })?;
+            let relative = safe_relative_key_path(normalized_key.as_str()).ok_or_else(|| {
+                AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                }
+            })?;
+
+            let full_path = Path::new(base_directory).join(relative.as_path());
+            let bytes = fs::read(&full_path).map_err(|error| match error.kind() {
+                std::io::ErrorKind::NotFound => AdminError::NotFound {
+                    message: "Content not found".to_owned(),
+                },
+                _ => AdminError::Internal {
+                    message: format!("Failed to read content: {error}"),
+                },
+            })?;
+
+            Ok(AdminContentDownload {
+                filename: filename_from_key(normalized_key.as_str(), request.id),
+                bytes,
+            })
+        }
+    }
+
+    impl AdminRepository for SqliteAdminService {
+        fn download_request_content(
+            &self,
+            project_id: i64,
+            request_id: i64,
+            user: AuthUserContext,
+        ) -> Result<AdminContentDownload, AdminError> {
+            <Self as AdminPort>::download_request_content(self, project_id, request_id, user)
+        }
+    }
+}

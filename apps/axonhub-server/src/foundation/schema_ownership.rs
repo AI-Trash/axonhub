@@ -250,12 +250,6 @@ const RAW_SQL_BOUNDARY_RULES: &[RawSqlBoundaryRule] = &[
         allowed: true,
     },
     RawSqlBoundaryRule {
-        location: "apps/axonhub-server/src/foundation/system.rs",
-        usage: RawSqlUsage::BootstrapSeedData,
-        purpose: "Idempotent bootstrap DML that preserves initialization state, default storage, default project, default roles, owner membership, and default API keys for the current slice.",
-        allowed: true,
-    },
-    RawSqlBoundaryRule {
         location: "runtime schema sync",
         usage: RawSqlUsage::MigrationDialectStep,
         purpose: "Ad-hoc schema creation or entity-first sync is not allowed to define production truth once SeaORM migrations own the schema.",
@@ -301,7 +295,7 @@ mod tests {
         authz::scope_strings,
         seaorm::SeaOrmConnectionFactory,
         shared::SYSTEM_KEY_INITIALIZED,
-        sqlite_support::{SqliteBootstrapService, SqliteFoundation},
+        system::{SqliteBootstrapService, SqliteFoundation},
     };
     use axonhub_http::{InitializeSystemRequest, SystemBootstrapPort};
     use rusqlite::{params, OptionalExtension};
@@ -434,7 +428,7 @@ mod tests {
     pub(crate) fn schema_ownership_contract_limits_raw_sql_usage_inner() {
         let contract = current_schema_ownership_contract();
 
-        assert_eq!(contract.raw_sql_boundaries.len(), 3);
+        assert_eq!(contract.raw_sql_boundaries.len(), 2);
         assert_eq!(
             contract.raw_sql_boundaries[0].usage,
             RawSqlUsage::MigrationDialectStep
@@ -442,14 +436,16 @@ mod tests {
         assert!(contract.raw_sql_boundaries[0].allowed);
         assert_eq!(
             contract.raw_sql_boundaries[1].usage,
-            RawSqlUsage::BootstrapSeedData
+            RawSqlUsage::MigrationDialectStep
         );
-        assert!(contract.raw_sql_boundaries[1].allowed);
-        assert!(!contract.raw_sql_boundaries[2].allowed);
+        assert!(!contract.raw_sql_boundaries[1].allowed);
         assert_eq!(
-            contract.raw_sql_boundaries[2].location,
+            contract.raw_sql_boundaries[1].location,
             "runtime schema sync"
         );
+        assert!(contract.raw_sql_boundaries.iter().all(|boundary| {
+            boundary.location != "apps/axonhub-server/src/foundation/system.rs"
+        }));
     }
 
     #[test]
