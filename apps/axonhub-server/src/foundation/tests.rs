@@ -2865,6 +2865,58 @@ struct TestHttpRequest {
     }
 
     #[tokio::test]
+    async fn admin_graphql_keeps_top_requests_projects_as_explicit_not_implemented_boundary() {
+        let db_path = temp_sqlite_path("task-update-video-storage-settings-deferred-sibling");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-reader@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-reader@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ topRequestsProjects { projectID count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let json = read_json_response(response).await;
+        assert_eq!(json["error"], "not_implemented");
+        assert_eq!(json["status"], 501);
+        assert_eq!(json["route_family"], "/admin/graphql");
+        assert_eq!(json["message"], "GraphQL field `topRequestsProjects` is not supported");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
     async fn admin_graphql_queries_retry_policy_defaults_and_stored_value() {
         let db_path = temp_sqlite_path("task-retry-policy");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));

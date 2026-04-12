@@ -157,7 +157,4 @@ locales_backup
 config.schema.json
 *.db-shm
 *.db-wal
-.worktrees/
-.worktrees/**
-
-.omx
+.sisyphus
