@@ -9,6 +9,7 @@ use axonhub_http::{
     OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Port, OpenAiV1Route,
     RealtimeSessionCreateRequest, RealtimeSessionPatchRequest, RealtimeSessionRecord,
 };
+use futures_util::StreamExt;
 use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
 use opentelemetry::propagation::{Injector, TextMapPropagator};
@@ -22,13 +23,15 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::{
     admin_operational::{persist_provider_quota_status_seaorm, quota_exhausted_details, quota_ready_details},
-    authz::{require_api_key_scope, AuthzFailure, SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS},
+    authz::{require_api_key_scope, AuthzFailure, SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS},
     circuit_breaker::{ChannelBreakerStatus, CircuitBreakerSnapshot, CircuitBreakerState, SharedCircuitBreaker},
     ports::OpenAiV1Repository,
     prompt_protection::{apply_prompt_protection, load_enabled_prompt_protection_rules_seaorm},
     repositories::openai_v1::{
         create_request_execution_seaorm, create_request_seaorm,
         default_data_storage_id_seaorm, enforce_api_key_quota_seaorm,
+        find_latest_completed_response_by_external_id_seaorm,
+        find_latest_completed_response_chain_request_by_external_id_seaorm,
         list_enabled_model_records_seaorm,
         query_system_channel_settings_seaorm,
         record_usage_seaorm, select_doubao_task_targets_seaorm,
@@ -132,6 +135,39 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 message: format!("The model `{}` does not exist or you do not have access to it.", model_id),
             })?;
             Ok(model.into_openai_model(&include))
+        })
+    }
+
+    fn retrieve_response(
+        &self,
+        response_id: &str,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<Option<Value>, OpenAiV1Error> {
+        require_api_key_scope(api_key, SCOPE_READ_REQUESTS).map_err(authz_openai_error)?;
+        let db = self.db.clone();
+        let response_id = response_id.trim().to_owned();
+        let project_id = api_key.project.id;
+        let api_key_id = api_key.id;
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
+            let Some(record) = find_latest_completed_response_by_external_id_seaorm(
+                &connection,
+                db.backend(),
+                project_id,
+                api_key_id,
+                response_id.as_str(),
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+
+            let body = serde_json::from_str(record.response_body_json.as_str()).map_err(|error| {
+                OpenAiV1Error::Internal {
+                    message: format!("Failed to decode persisted response body: {error}"),
+                }
+            })?;
+            Ok(Some(body))
         })
     }
 
@@ -403,6 +439,14 @@ impl OpenAiV1Repository for SeaOrmOpenAiV1Service {
         api_key: &AuthApiKeyContext,
     ) -> Result<OpenAiModel, OpenAiV1Error> {
         <Self as OpenAiV1Port>::retrieve_model(self, model_id, include, api_key)
+    }
+
+    fn retrieve_response(
+        &self,
+        response_id: &str,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<Option<Value>, OpenAiV1Error> {
+        <Self as OpenAiV1Port>::retrieve_response(self, response_id, api_key)
     }
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
@@ -858,6 +902,530 @@ fn map_openai_db_err(error: sea_orm::DbErr) -> OpenAiV1Error {
     }
 }
 
+async fn chained_request_body_for_route_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    route_format: &str,
+    request: &OpenAiV1ExecutionRequest,
+) -> Result<OpenAiRequestBody, OpenAiV1Error> {
+    if !matches!(route_format, "openai/responses" | "openai/responses_compact") {
+        return Ok(request.body.clone());
+    }
+
+    let body = json_request_body(&request.body)?;
+    let Some(previous_response_id) = body
+        .get("previous_response_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(request.body.clone());
+    };
+
+    let Some(previous_request) = find_latest_completed_response_chain_request_by_external_id_seaorm(
+        db,
+        backend,
+        request.project.id,
+        request.api_key_id,
+        route_format,
+        previous_response_id,
+    )
+    .await?
+    else {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: format!("previous_response_id `{previous_response_id}` was not found"),
+        });
+    };
+
+    let previous_request_body: Value = serde_json::from_str(previous_request.request_body_json.as_str()).map_err(|error| {
+        OpenAiV1Error::Internal {
+            message: format!("Failed to decode previous response request body: {error}"),
+        }
+    })?;
+    let previous_object = previous_request_body.as_object().ok_or_else(|| OpenAiV1Error::Internal {
+        message: "Persisted previous response request body must be a JSON object".to_owned(),
+    })?;
+    let current_object = body.as_object().ok_or_else(|| OpenAiV1Error::InvalidRequest {
+        message: "Invalid request format".to_owned(),
+    })?;
+
+    if current_object
+        .contains_key("instructions")
+        && !previous_object.contains_key("instructions")
+    {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "instructions are not supported together with previous_response_id".to_owned(),
+        });
+    }
+
+    let previous_input = previous_object.get("input").cloned().ok_or_else(|| OpenAiV1Error::Internal {
+        message: "Persisted previous response request is missing input".to_owned(),
+    })?;
+    let current_input = current_object.get("input").cloned().ok_or_else(|| OpenAiV1Error::InvalidRequest {
+        message: "input is required".to_owned(),
+    })?;
+
+    let mut combined_input = normalized_response_input_items(previous_input)?;
+    if let Some(previous_response_body_json) = previous_request.response_body_json.as_deref() {
+        combined_input.extend(extract_response_output_items(previous_response_body_json)?);
+    }
+    combined_input.extend(normalized_response_input_items(current_input)?);
+
+    let mut chained_object = current_object.clone();
+    chained_object.remove("previous_response_id");
+    chained_object.insert("input".to_owned(), Value::Array(combined_input));
+
+    Ok(OpenAiRequestBody::Json(Value::Object(chained_object)))
+}
+
+fn normalized_response_input_items(input: Value) -> Result<Vec<Value>, OpenAiV1Error> {
+    match input {
+        Value::String(text) => Ok(vec![serde_json::json!({
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": text,
+                }
+            ],
+        })]),
+        Value::Array(values) => Ok(values),
+        _ => Err(OpenAiV1Error::InvalidRequest {
+            message: "Responses input must be a string or array".to_owned(),
+        }),
+    }
+}
+
+fn extract_response_output_items(response_body_json: &str) -> Result<Vec<Value>, OpenAiV1Error> {
+    let response_body: Value = serde_json::from_str(response_body_json).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to decode previous response body: {error}"),
+    })?;
+    let Some(output) = response_body.get("output") else {
+        return Ok(Vec::new());
+    };
+    let items = output.as_array().ok_or_else(|| OpenAiV1Error::Internal {
+        message: "Persisted previous response output must be an array".to_owned(),
+    })?;
+    Ok(items.clone())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpenAiStreamRoute {
+    ChatCompletions,
+    Responses,
+}
+
+fn openai_stream_route(route_format: &str, body: &OpenAiRequestBody) -> Option<OpenAiStreamRoute> {
+    if !body.stream_flag() {
+        return None;
+    }
+
+    match route_format {
+        "openai/chat_completions" => Some(OpenAiStreamRoute::ChatCompletions),
+        "openai/responses" | "openai/responses_compact" => Some(OpenAiStreamRoute::Responses),
+        _ => None,
+    }
+}
+
+fn extract_response_output_text(response_body: &Value) -> String {
+    if let Some(output_text) = response_body
+        .get("output_text")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        return output_text.to_owned();
+    }
+
+    response_body
+        .get("output")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("content").and_then(Value::as_array))
+                .flatten()
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<String>()
+        })
+        .unwrap_or_default()
+}
+
+struct ExecutedOpenAiStream {
+    response_body: Value,
+    frames: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct AggregatedChatFunctionCall {
+    name: String,
+    arguments: String,
+}
+
+#[derive(Debug, Default)]
+struct AggregatedChatToolCall {
+    id: String,
+    kind: String,
+    function: AggregatedChatFunctionCall,
+}
+
+#[derive(Debug, Default)]
+struct AggregatedChatChoice {
+    role: String,
+    content: String,
+    function_call: AggregatedChatFunctionCall,
+    has_function_call: bool,
+    tool_calls: BTreeMap<usize, AggregatedChatToolCall>,
+    finish_reason: Option<String>,
+}
+
+async fn execute_openai_response_sse(
+    mut upstream_response: reqwest::Response,
+) -> Result<ExecutedOpenAiStream, OpenAiV1Error> {
+    let frames = collect_sse_frames(&mut upstream_response).await?;
+    let mut completed_response = None;
+
+    for frame in &frames {
+        if frame == "[DONE]" {
+            continue;
+        }
+        let event: Value = serde_json::from_str(frame.as_str()).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to decode upstream response stream event: {error}"),
+        })?;
+        if event.get("type").and_then(Value::as_str) == Some("response.completed") {
+            completed_response = event.get("response").cloned();
+        }
+    }
+
+    let response_body = completed_response.ok_or_else(|| OpenAiV1Error::Internal {
+        message: "Upstream responses stream completed without a response.completed event".to_owned(),
+    })?;
+
+    Ok(ExecutedOpenAiStream { response_body, frames })
+}
+
+async fn execute_openai_chat_completions_sse(
+    mut upstream_response: reqwest::Response,
+) -> Result<ExecutedOpenAiStream, OpenAiV1Error> {
+    let frames = collect_sse_frames(&mut upstream_response).await?;
+    let response_body = aggregate_chat_completion_stream_frames(&frames)?;
+    Ok(ExecutedOpenAiStream { response_body, frames })
+}
+
+async fn collect_sse_frames(
+    upstream_response: &mut reqwest::Response,
+) -> Result<Vec<String>, OpenAiV1Error> {
+    let mut buffer = Vec::new();
+    let mut frames = Vec::new();
+
+    while let Some(chunk) = upstream_response.chunk().await.map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to read upstream response stream: {error}"),
+        })? {
+        buffer.extend_from_slice(&chunk);
+        drain_sse_frames(&mut buffer, &mut frames)?;
+    }
+
+    drain_sse_frames(&mut buffer, &mut frames)?;
+    if !buffer.is_empty() && buffer.iter().any(|byte| !byte.is_ascii_whitespace()) {
+        return Err(OpenAiV1Error::Internal {
+            message: "Upstream SSE stream ended with an incomplete frame".to_owned(),
+        });
+    }
+
+    Ok(frames)
+}
+
+fn drain_sse_frames(buffer: &mut Vec<u8>, frames: &mut Vec<String>) -> Result<(), OpenAiV1Error> {
+    while let Some(frame) = next_sse_frame(buffer)? {
+        if !frame.is_empty() {
+            frames.push(frame);
+        }
+    }
+
+    Ok(())
+}
+
+fn aggregate_chat_completion_stream_frames(frames: &[String]) -> Result<Value, OpenAiV1Error> {
+    let mut response_id = None;
+    let mut created = None;
+    let mut model = None;
+    let mut usage = None;
+    let mut system_fingerprint = None;
+    let mut service_tier = None;
+    let mut choices = BTreeMap::<usize, AggregatedChatChoice>::new();
+    let mut completed_response = None;
+
+    for frame in frames {
+        if frame == "[DONE]" {
+            continue;
+        }
+
+        let event: Value = serde_json::from_str(frame.as_str()).map_err(|error| OpenAiV1Error::Internal {
+            message: format!("Failed to decode upstream chat stream event: {error}"),
+        })?;
+
+        if event.get("object").and_then(Value::as_str) == Some("chat.completion") {
+            completed_response = Some(event);
+            continue;
+        }
+
+        response_id = response_id.or_else(|| event.get("id").and_then(Value::as_str).map(ToOwned::to_owned));
+        created = created.or_else(|| event.get("created").and_then(Value::as_i64));
+        model = model.or_else(|| event.get("model").and_then(Value::as_str).map(ToOwned::to_owned));
+        if usage.is_none() {
+            usage = event.get("usage").cloned();
+        }
+        if system_fingerprint.is_none() {
+            system_fingerprint = event
+                .get("system_fingerprint")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+        }
+        if service_tier.is_none() {
+            service_tier = event.get("service_tier").and_then(Value::as_str).map(ToOwned::to_owned);
+        }
+
+        let event_choices = event
+            .get("choices")
+            .and_then(Value::as_array)
+            .ok_or_else(|| OpenAiV1Error::Internal {
+                message: "Upstream chat stream event is missing choices".to_owned(),
+            })?;
+
+        for (fallback_index, choice) in event_choices.iter().enumerate() {
+            let choice_index = choice
+                .get("index")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(fallback_index);
+            let entry = choices.entry(choice_index).or_insert_with(|| AggregatedChatChoice {
+                role: "assistant".to_owned(),
+                ..Default::default()
+            });
+
+            if let Some(delta) = choice.get("delta") {
+                apply_chat_stream_message_parts(entry, delta)?;
+            }
+            if let Some(message) = choice.get("message") {
+                apply_chat_stream_message_parts(entry, message)?;
+            }
+            if let Some(finish_reason) = choice.get("finish_reason").and_then(Value::as_str) {
+                entry.finish_reason = Some(finish_reason.to_owned());
+            }
+        }
+    }
+
+    if let Some(completed_response) = completed_response {
+        return Ok(completed_response);
+    }
+
+    let response_id = response_id.ok_or_else(|| OpenAiV1Error::Internal {
+        message: "Upstream chat stream completed without any chat completion chunks".to_owned(),
+    })?;
+
+    let aggregated_choices = choices
+        .into_iter()
+        .map(|(index, choice)| {
+            let mut message = serde_json::Map::new();
+            message.insert(
+                "role".to_owned(),
+                Value::String(if choice.role.trim().is_empty() {
+                    "assistant".to_owned()
+                } else {
+                    choice.role
+                }),
+            );
+
+            let has_tool_calls = !choice.tool_calls.is_empty();
+            let has_function_call = choice.has_function_call;
+            if choice.content.is_empty() && (has_tool_calls || has_function_call) {
+                message.insert("content".to_owned(), Value::Null);
+            } else {
+                message.insert("content".to_owned(), Value::String(choice.content));
+            }
+
+            if has_function_call {
+                message.insert(
+                    "function_call".to_owned(),
+                    serde_json::json!({
+                        "name": choice.function_call.name,
+                        "arguments": choice.function_call.arguments,
+                    }),
+                );
+            }
+
+            if has_tool_calls {
+                message.insert(
+                    "tool_calls".to_owned(),
+                    Value::Array(
+                        choice
+                            .tool_calls
+                            .into_iter()
+                            .map(|(tool_index, tool_call)| {
+                                serde_json::json!({
+                                    "index": tool_index,
+                                    "id": tool_call.id,
+                                    "type": if tool_call.kind.is_empty() { "function" } else { tool_call.kind.as_str() },
+                                    "function": {
+                                        "name": tool_call.function.name,
+                                        "arguments": tool_call.function.arguments,
+                                    }
+                                })
+                            })
+                            .collect(),
+                    ),
+                );
+            }
+
+            serde_json::json!({
+                "index": index,
+                "message": Value::Object(message),
+                "finish_reason": choice.finish_reason.unwrap_or_else(|| {
+                    if has_tool_calls {
+                        "tool_calls".to_owned()
+                    } else if has_function_call {
+                        "function_call".to_owned()
+                    } else {
+                        "stop".to_owned()
+                    }
+                }),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut response = serde_json::Map::new();
+    response.insert("id".to_owned(), Value::String(response_id));
+    response.insert("object".to_owned(), Value::String("chat.completion".to_owned()));
+    response.insert("created".to_owned(), Value::from(created.unwrap_or(0)));
+    response.insert(
+        "model".to_owned(),
+        Value::String(model.unwrap_or_default()),
+    );
+    response.insert("choices".to_owned(), Value::Array(aggregated_choices));
+    if let Some(usage) = usage {
+        response.insert("usage".to_owned(), usage);
+    }
+    if let Some(system_fingerprint) = system_fingerprint {
+        response.insert("system_fingerprint".to_owned(), Value::String(system_fingerprint));
+    }
+    if let Some(service_tier) = service_tier {
+        response.insert("service_tier".to_owned(), Value::String(service_tier));
+    }
+
+    Ok(Value::Object(response))
+}
+
+fn apply_chat_stream_message_parts(
+    choice: &mut AggregatedChatChoice,
+    message: &Value,
+) -> Result<(), OpenAiV1Error> {
+    let Some(message) = message.as_object() else {
+        return Ok(());
+    };
+
+    if let Some(role) = message.get("role").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        choice.role = role.to_owned();
+    }
+
+    append_chat_stream_content(choice, message.get("content"));
+    update_chat_stream_function_call(choice, message.get("function_call"));
+    update_chat_stream_tool_calls(choice, message.get("tool_calls"))?;
+
+    Ok(())
+}
+
+fn append_chat_stream_content(choice: &mut AggregatedChatChoice, content: Option<&Value>) {
+    let Some(content) = content else {
+        return;
+    };
+
+    if let Some(text) = content.as_str() {
+        choice.content.push_str(text);
+        return;
+    }
+
+    if let Some(parts) = content.as_array() {
+        for part in parts {
+            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                choice.content.push_str(text);
+            }
+        }
+    }
+}
+
+fn update_chat_stream_function_call(choice: &mut AggregatedChatChoice, function_call: Option<&Value>) {
+    let Some(function_call) = function_call.and_then(Value::as_object) else {
+        return;
+    };
+
+    if let Some(name) = function_call.get("name").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+        choice.function_call.name = name.to_owned();
+        choice.has_function_call = true;
+    }
+    if let Some(arguments) = function_call.get("arguments").and_then(Value::as_str) {
+        choice.function_call.arguments.push_str(arguments);
+        choice.has_function_call = true;
+    }
+}
+
+fn update_chat_stream_tool_calls(
+    choice: &mut AggregatedChatChoice,
+    tool_calls: Option<&Value>,
+) -> Result<(), OpenAiV1Error> {
+    let Some(tool_calls) = tool_calls.and_then(Value::as_array) else {
+        return Ok(());
+    };
+
+    for (fallback_index, tool_call) in tool_calls.iter().enumerate() {
+        let object = tool_call.as_object().ok_or_else(|| OpenAiV1Error::Internal {
+            message: "Upstream chat tool call delta must be an object".to_owned(),
+        })?;
+        let tool_index = object
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(fallback_index);
+        let entry = choice.tool_calls.entry(tool_index).or_default();
+
+        if let Some(id) = object.get("id").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+            entry.id = id.to_owned();
+        }
+        if let Some(kind) = object.get("type").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+            entry.kind = kind.to_owned();
+        }
+
+        if let Some(function) = object.get("function").and_then(Value::as_object) {
+            if let Some(name) = function.get("name").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+                entry.function.name = name.to_owned();
+            }
+            if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
+                entry.function.arguments.push_str(arguments);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn next_sse_frame(buffer: &mut Vec<u8>) -> Result<Option<String>, OpenAiV1Error> {
+    let Some(frame_end) = buffer.windows(2).position(|window| window == b"\n\n") else {
+        return Ok(None);
+    };
+
+    let frame_bytes = buffer.drain(..frame_end + 2).collect::<Vec<u8>>();
+    let frame_text = String::from_utf8(frame_bytes).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to decode upstream SSE frame: {error}"),
+    })?;
+    let data = frame_text
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:")))
+        .map(str::trim_start)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok(Some(data))
+}
+
 async fn execute_shared_route_seaorm<UrlBuilder, ResponseMapper, UsageExtractor>(
     db: &impl ConnectionTrait,
     backend: DatabaseBackend,
@@ -866,7 +1434,7 @@ async fn execute_shared_route_seaorm<UrlBuilder, ResponseMapper, UsageExtractor>
     route_format: &str,
     upstream_method: reqwest::Method,
     targets: Vec<SelectedOpenAiTarget>,
-    upstream_body: &OpenAiRequestBody,
+    _upstream_body: &OpenAiRequestBody,
     upstream_headers: &HashMap<String, String>,
     data_storage_id: Option<i64>,
     circuit_breaker: &SharedCircuitBreaker,
@@ -882,11 +1450,13 @@ where
     enforce_api_key_quota_seaorm(db, backend, request.api_key_id).await?;
     let span = Span::current();
 
+    let effective_body = chained_request_body_for_route_seaorm(db, backend, route_format, request).await?;
+
     let masked_request_headers = sanitize_headers_json(upstream_headers);
-    let request_body_json = serde_json::to_string(&request.body).map_err(|error| OpenAiV1Error::Internal {
+    let request_body_json = serde_json::to_string(&effective_body).map_err(|error| OpenAiV1Error::Internal {
         message: format!("Failed to serialize request body: {error}"),
     })?;
-    let stream = request.body.stream_flag();
+    let stream = effective_body.stream_flag();
 
     let request_id = create_request_seaorm(
         db,
@@ -926,7 +1496,7 @@ where
             let prepared_attempt = match prepare_outbound_request_with_prompt_protection(
                 db,
                 backend,
-                upstream_body,
+                &effective_body,
                 upstream_headers,
                 target.actual_model_id.as_str(),
                 target.api_key.as_str(),
@@ -991,31 +1561,66 @@ where
                     message: format!("Failed to execute upstream request: {error}"),
                 })?;
                 let status = upstream_response.status().as_u16();
-                let response_text = upstream_response.text().await.map_err(|error| OpenAiV1Error::Internal {
-                    message: format!("Failed to read upstream response: {error}"),
-                })?;
-                let raw_response_body: Value = serde_json::from_str(&response_text).map_err(|error| OpenAiV1Error::Internal {
-                    message: format!("Failed to decode upstream response: {error}"),
-                })?;
 
                 if (200..300).contains(&status) {
-                    let usage = usage_extractor(&raw_response_body);
-                    let response_body = response_mapper(raw_response_body)?;
-                    complete_execution_seaorm(
-                        db,
-                        backend,
-                        request,
-                        route_format,
-                        request_id,
-                        execution_id,
-                        target,
-                        status,
-                        response_body,
-                        usage,
-                        circuit_breaker,
-                    )
-                    .await
+                    if let Some(stream_route) = openai_stream_route(route_format, &effective_body) {
+                        let stream_response = match stream_route {
+                            OpenAiStreamRoute::Responses => execute_openai_response_sse(upstream_response).await?,
+                            OpenAiStreamRoute::ChatCompletions => {
+                                execute_openai_chat_completions_sse(upstream_response).await?
+                            }
+                        };
+                        let response_body = response_mapper(stream_response.response_body)?;
+                        let usage = usage_extractor(&response_body);
+                        complete_execution_seaorm(
+                            db,
+                            backend,
+                            request,
+                            route_format,
+                            request_id,
+                            execution_id,
+                            target,
+                            status,
+                            response_body,
+                            Some(stream_response.frames),
+                            usage,
+                            circuit_breaker,
+                        )
+                        .await
+                    } else {
+                        let response_text = upstream_response.text().await.map_err(|error| OpenAiV1Error::Internal {
+                            message: format!("Failed to read upstream response: {error}"),
+                        })?;
+                        let raw_response_body: Value = serde_json::from_str(&response_text).map_err(|error| OpenAiV1Error::Internal {
+                            message: format!("Failed to decode upstream response: {error}"),
+                        })?;
+
+                        let usage = usage_extractor(&raw_response_body);
+                        let response_body = response_mapper(raw_response_body)?;
+                        complete_execution_seaorm(
+                            db,
+                            backend,
+                            request,
+                            route_format,
+                            request_id,
+                            execution_id,
+                            target,
+                            status,
+                            response_body,
+                            None,
+                            usage,
+                            circuit_breaker,
+                        )
+                        .await
+                    }
                 } else {
+                    let response_text = upstream_response.text().await.map_err(|error| OpenAiV1Error::Internal {
+                        message: format!("Failed to read upstream response: {error}"),
+                    })?;
+                    let raw_response_body: Value = serde_json::from_str(&response_text).map_err(|error| OpenAiV1Error::Internal {
+                        message: format!("Failed to decode upstream response: {error}"),
+                    })?;
+
                     Err(OpenAiV1Error::Upstream {
                         status,
                         body: raw_response_body,
@@ -1100,6 +1705,7 @@ async fn complete_execution_seaorm(
     target: &SelectedOpenAiTarget,
     status: u16,
     response_body: Value,
+    stream_frames: Option<Vec<String>>,
     usage: Option<ExtractedUsage>,
     circuit_breaker: &SharedCircuitBreaker,
 ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
@@ -1174,7 +1780,14 @@ async fn complete_execution_seaorm(
     .await?;
     circuit_breaker.record_success(target.channel_id, target.actual_model_id.as_str());
 
-    Ok(OpenAiV1ExecutionResponse { status, body: response_body })
+    Ok(OpenAiV1ExecutionResponse {
+        status,
+        body: response_body,
+        stream: stream_frames.map(|frames| axonhub_http::OpenAiV1EventStream {
+            content_type: "text/event-stream; charset=utf-8",
+            frames: futures_util::stream::iter(frames.into_iter().map(Ok::<_, OpenAiV1Error>)).boxed(),
+        }),
+    })
 }
 
 pub(crate) async fn mark_provider_quota_ready_seaorm(
@@ -3570,6 +4183,18 @@ pub(crate) mod sqlite_test_support {
             )
         }
 
+        fn retrieve_response(
+            &self,
+            response_id: &str,
+            api_key: &AuthApiKeyContext,
+        ) -> Result<Option<serde_json::Value>, OpenAiV1Error> {
+            <SeaOrmOpenAiV1Service as OpenAiV1Port>::retrieve_response(
+                &self.inner,
+                response_id,
+                api_key,
+            )
+        }
+
         fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
             <SeaOrmOpenAiV1Service as OpenAiV1Port>::list_anthropic_models(&self.inner)
         }
@@ -3654,6 +4279,14 @@ pub(crate) mod sqlite_test_support {
             api_key: &AuthApiKeyContext,
         ) -> Result<OpenAiModel, OpenAiV1Error> {
             <Self as OpenAiV1Port>::retrieve_model(self, model_id, include, api_key)
+        }
+
+        fn retrieve_response(
+            &self,
+            response_id: &str,
+            api_key: &AuthApiKeyContext,
+        ) -> Result<Option<serde_json::Value>, OpenAiV1Error> {
+            <Self as OpenAiV1Port>::retrieve_response(self, response_id, api_key)
         }
 
         fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {

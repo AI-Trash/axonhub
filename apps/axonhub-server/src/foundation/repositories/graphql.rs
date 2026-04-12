@@ -1,5 +1,6 @@
 use axonhub_db_entity::{
-    api_keys, channels, data_storages, models, projects, provider_quota_statuses, roles, systems,
+    api_keys, channels, data_storages, models, projects, provider_quota_statuses, requests, roles,
+    systems,
     user_projects, user_roles, users,
 };
 use axonhub_http::AuthApiKeyContext;
@@ -9,6 +10,8 @@ use sea_orm::{
 };
 
 use crate::foundation::seaorm::SeaOrmConnectionFactory;
+use crate::foundation::request_context::{parse_onboarding_record, OnboardingRecord};
+use crate::foundation::openai_v1::StoredRequestSummary;
 
 use super::openai_v1::{list_enabled_model_records_seaorm, query_system_channel_settings_seaorm};
 
@@ -31,12 +34,27 @@ pub(crate) struct GraphqlStoragePolicyRecord {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct GraphqlRetryPolicyRecord {
+    pub(crate) value: String,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct GraphqlAutoBackupSettingsRecord {
     pub(crate) value: String,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct GraphqlSystemChannelSettingsRecord {
+    pub(crate) value: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlVideoStorageSettingsRecord {
+    pub(crate) value: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlSystemGeneralSettingsRecord {
     pub(crate) value: String,
 }
 
@@ -102,6 +120,8 @@ pub(crate) struct GraphqlUserRecord {
 #[derive(Debug, Clone)]
 pub(crate) struct GraphqlProjectRecord {
     pub(crate) id: i64,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
     pub(crate) name: String,
     pub(crate) description: String,
     pub(crate) status: String,
@@ -152,19 +172,38 @@ pub(crate) struct GraphqlModelRecord {
 
 pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
     fn query_channels(&self) -> Result<Vec<GraphqlChannelRecord>, String>;
+    fn query_projects(&self) -> Result<Vec<GraphqlProjectRecord>, String>;
+    fn query_roles(&self) -> Result<Vec<GraphqlRoleRecord>, String>;
+    fn query_api_keys(&self) -> Result<Vec<GraphqlApiKeyRecord>, String>;
+    fn query_requests(&self, project_id: i64) -> Result<Vec<StoredRequestSummary>, String>;
     fn query_model_statuses(&self) -> Result<Vec<GraphqlModelStatusRecord>, String>;
     fn query_default_data_storage(&self) -> Result<Option<GraphqlDefaultDataStorageRecord>, String>;
+    fn query_brand_name(&self) -> Result<Option<String>, String>;
+    fn query_brand_logo(&self) -> Result<Option<String>, String>;
     fn upsert_default_data_storage(&self, value: &str) -> Result<(), String>;
+    fn upsert_brand_name(&self, value: &str) -> Result<(), String>;
+    fn upsert_brand_logo(&self, value: &str) -> Result<(), String>;
     fn query_data_storage_status(&self, id: i64) -> Result<Option<GraphqlDataStorageStatusRecord>, String>;
     fn query_data_storage_config(&self, id: i64) -> Result<Option<GraphqlDataStorageConfigRecord>, String>;
     fn query_storage_policy(&self) -> Result<Option<GraphqlStoragePolicyRecord>, String>;
     fn upsert_storage_policy(&self, value: &str) -> Result<(), String>;
+    fn query_retry_policy(&self) -> Result<Option<GraphqlRetryPolicyRecord>, String>;
+    fn upsert_retry_policy(&self, value: &str) -> Result<(), String>;
     fn query_auto_backup_settings(&self) -> Result<Option<GraphqlAutoBackupSettingsRecord>, String>;
     fn upsert_auto_backup_settings(&self, value: &str) -> Result<(), String>;
     fn query_system_channel_settings(
         &self,
     ) -> Result<Option<GraphqlSystemChannelSettingsRecord>, String>;
+    fn query_system_general_settings(
+        &self,
+    ) -> Result<Option<GraphqlSystemGeneralSettingsRecord>, String>;
+    fn query_video_storage_settings(
+        &self,
+    ) -> Result<Option<GraphqlVideoStorageSettingsRecord>, String>;
+    fn query_version(&self) -> Result<Option<String>, String>;
+    fn query_onboarding_record(&self) -> Result<Option<OnboardingRecord>, String>;
     fn upsert_system_channel_settings(&self, value: &str) -> Result<(), String>;
+    fn upsert_system_general_settings(&self, value: &str) -> Result<(), String>;
     fn query_is_initialized(&self) -> Result<bool, String>;
     fn query_user_profile(&self, user_id: i64) -> Result<Option<GraphqlUserProfileRecord>, String>;
     fn query_user_projects(&self, user_id: i64) -> Result<Vec<GraphqlUserProjectMembershipRecord>, String>;
@@ -385,6 +424,38 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         })
     }
 
+    fn query_projects(&self) -> Result<Vec<GraphqlProjectRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_projects_seaorm(&connection).await
+        })
+    }
+
+    fn query_roles(&self) -> Result<Vec<GraphqlRoleRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_roles_seaorm(&connection).await
+        })
+    }
+
+    fn query_api_keys(&self) -> Result<Vec<GraphqlApiKeyRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_api_keys_seaorm(&connection).await
+        })
+    }
+
+    fn query_requests(&self, project_id: i64) -> Result<Vec<StoredRequestSummary>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_requests_seaorm(&connection, project_id).await
+        })
+    }
+
     fn query_model_statuses(&self) -> Result<Vec<GraphqlModelStatusRecord>, String> {
         let db = self.db.clone();
         db.run_sync(move |db| async move {
@@ -406,6 +477,30 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         })
     }
 
+    fn query_brand_name(&self) -> Result<Option<String>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_system_json_setting_seaorm(
+                &connection,
+                crate::foundation::shared::SYSTEM_KEY_BRAND_NAME,
+            )
+            .await
+        })
+    }
+
+    fn query_brand_logo(&self) -> Result<Option<String>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_system_json_setting_seaorm(
+                &connection,
+                crate::foundation::shared::SYSTEM_KEY_BRAND_LOGO,
+            )
+            .await
+        })
+    }
+
     fn upsert_default_data_storage(&self, value: &str) -> Result<(), String> {
         let db = self.db.clone();
         let value = value.to_owned();
@@ -414,6 +509,34 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
             upsert_system_json_setting_seaorm(
                 &connection,
                 crate::foundation::shared::SYSTEM_KEY_DEFAULT_DATA_STORAGE,
+                &value,
+            )
+            .await
+        })
+    }
+
+    fn upsert_brand_name(&self, value: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let value = value.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            upsert_system_json_setting_seaorm(
+                &connection,
+                crate::foundation::shared::SYSTEM_KEY_BRAND_NAME,
+                &value,
+            )
+            .await
+        })
+    }
+
+    fn upsert_brand_logo(&self, value: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let value = value.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            upsert_system_json_setting_seaorm(
+                &connection,
+                crate::foundation::shared::SYSTEM_KEY_BRAND_LOGO,
                 &value,
             )
             .await
@@ -443,6 +566,25 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
             query_system_json_setting_seaorm(&connection, "storage_policy")
                 .await
                 .map(|value| value.map(|value| GraphqlStoragePolicyRecord { value }))
+        })
+    }
+
+    fn query_retry_policy(&self) -> Result<Option<GraphqlRetryPolicyRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_system_json_setting_seaorm(&connection, "retry_policy")
+                .await
+                .map(|value| value.map(|value| GraphqlRetryPolicyRecord { value }))
+        })
+    }
+
+    fn upsert_retry_policy(&self, value: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let value = value.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            upsert_system_json_setting_seaorm(&connection, "retry_policy", &value).await
         })
     }
 
@@ -487,12 +629,68 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         })
     }
 
+    fn query_system_general_settings(
+        &self,
+    ) -> Result<Option<GraphqlSystemGeneralSettingsRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_system_json_setting_seaorm(&connection, "system_general_settings")
+                .await
+                .map(|value| value.map(|value| GraphqlSystemGeneralSettingsRecord { value }))
+        })
+    }
+
+    fn query_video_storage_settings(
+        &self,
+    ) -> Result<Option<GraphqlVideoStorageSettingsRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_system_json_setting_seaorm(&connection, "system_video_storage_settings")
+                .await
+                .map(|value| value.map(|value| GraphqlVideoStorageSettingsRecord { value }))
+        })
+    }
+
+    fn query_version(&self) -> Result<Option<String>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_system_json_setting_seaorm(&connection, crate::foundation::shared::SYSTEM_KEY_VERSION)
+                .await
+        })
+    }
+
+    fn query_onboarding_record(&self) -> Result<Option<OnboardingRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_system_json_setting_seaorm(&connection, crate::foundation::shared::SYSTEM_KEY_ONBOARDED)
+                .await
+                .and_then(|value| {
+                    value
+                        .map(|value| parse_onboarding_record(&value).map_err(|error| error.to_string()))
+                        .transpose()
+                })
+        })
+    }
+
     fn upsert_system_channel_settings(&self, value: &str) -> Result<(), String> {
         let db = self.db.clone();
         let value = value.to_owned();
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
             upsert_system_json_setting_seaorm(&connection, "system_channel_settings", &value).await
+        })
+    }
+
+    fn upsert_system_general_settings(&self, value: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let value = value.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            upsert_system_json_setting_seaorm(&connection, "system_general_settings", &value).await
         })
     }
 
@@ -1221,6 +1419,70 @@ async fn query_channels_seaorm(
         .await
         .map_err(|error| error.to_string())
         .map(|rows| rows.into_iter().map(graphql_channel_record_from_model).collect())
+}
+
+async fn query_projects_seaorm(
+    db: &DatabaseConnection,
+) -> Result<Vec<GraphqlProjectRecord>, String> {
+    projects::Entity::find()
+        .filter(projects::Column::DeletedAt.eq(0_i64))
+        .order_by_asc(projects::Column::Id)
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|rows| rows.into_iter().map(graphql_project_record_from_model).collect())
+}
+
+async fn query_roles_seaorm(
+    db: &DatabaseConnection,
+) -> Result<Vec<GraphqlRoleRecord>, String> {
+    roles::Entity::find()
+        .filter(roles::Column::DeletedAt.eq(0_i64))
+        .order_by_asc(roles::Column::Id)
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|rows| rows.into_iter().map(graphql_role_record_from_model).collect())
+}
+
+async fn query_api_keys_seaorm(
+    db: &DatabaseConnection,
+) -> Result<Vec<GraphqlApiKeyRecord>, String> {
+    api_keys::Entity::find()
+        .filter(api_keys::Column::DeletedAt.eq(0_i64))
+        .order_by_asc(api_keys::Column::Id)
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|rows| rows.into_iter().map(graphql_api_key_record_from_model).collect())
+}
+
+async fn query_requests_seaorm(
+    db: &DatabaseConnection,
+    project_id: i64,
+) -> Result<Vec<StoredRequestSummary>, String> {
+    requests::Entity::find()
+        .filter(requests::Column::ProjectId.eq(project_id))
+        .order_by_desc(requests::Column::Id)
+        .into_partial_model::<requests::GraphqlSummary>()
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| StoredRequestSummary {
+                    id: row.id,
+                    project_id: row.project_id,
+                    trace_id: row.trace_id,
+                    channel_id: row.channel_id,
+                    model_id: row.model_id,
+                    format: row.format,
+                    status: row.status,
+                    source: row.source,
+                    external_id: row.external_id,
+                })
+                .collect()
+        })
 }
 
 async fn query_data_storage_status_seaorm(
@@ -2255,7 +2517,14 @@ async fn load_model_record_seaorm(
 }
 
 fn graphql_project_record_from_model(value: projects::Model) -> GraphqlProjectRecord {
-    GraphqlProjectRecord { id: value.id, name: value.name, description: value.description, status: value.status }
+    GraphqlProjectRecord {
+        id: value.id,
+        created_at: value.created_at,
+        updated_at: value.updated_at,
+        name: value.name,
+        description: value.description,
+        status: value.status,
+    }
 }
 
 fn graphql_role_record_from_model(value: roles::Model) -> GraphqlRoleRecord {

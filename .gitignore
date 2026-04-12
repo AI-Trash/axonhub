@@ -149,7 +149,6 @@ tools
 
 mise.toml
 locales_backup
-.sisyphus
 
 # Chunkhound local database
 .chunkhound/

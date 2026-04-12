@@ -110,22 +110,11 @@ if (result.data) {
 | `moderation` | string | 内容审核级别：`"low"` 或 `"auto"`。 | - |
 | `partial_images` | number | 要生成的部分图像数量。 | 1 |
 
-## 图像编辑边界（`/v1/images/edits`）
+## 图像编辑（`/v1/images/edits`）
 
-`POST /v1/images/edits` 在当前 Rust-canonical 后端状态下仍然是显式未支持边界。请求这个端点时，Rust 会返回结构化的 `501 Not Implemented` 响应，而不是执行局部重绘或 multipart 图像编辑。
+当前已验证的 Rust 行为包含 `POST /v1/images/edits`。如果你的客户端需要 OpenAI 兼容的图像编辑流程，可以直接调用这个端点。
 
-如果你的客户端仍然调用 `/v1/images/edits`，应当预期得到与其他显式未支持能力相同风格的边界响应：
-
-```json
-{
-  "error": "not_implemented",
-  "message": "当前 Rust 后端尚未实现图像编辑能力。",
-  "path": "/v1/images/edits",
-  "status": 501
-}
-```
-
-本页刻意只描述当前已接受的真实状态。请使用 `/v1/images/generations` 完成受支持的图像生成流程，不要把 `/v1/images/edits` 当作当前后端中的可用端点。
+同时请保持预期克制，图像能力仍在持续补齐中。对于尚未纳入已验证范围的图像相关分支，后端仍会以结构化边界响应明确返回。
 
 ## 支持的提供商
 

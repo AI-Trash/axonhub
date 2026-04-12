@@ -152,6 +152,17 @@ pub(crate) struct StoredRequestRouteHint {
     pub(crate) model_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct StoredResponseChainRequest {
+    pub(crate) request_body_json: String,
+    pub(crate) response_body_json: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StoredResponseRecord {
+    pub(crate) response_body_json: String,
+}
+
 pub(crate) async fn default_data_storage_id_seaorm(
     db: &impl ConnectionTrait,
     _backend: DatabaseBackend,
@@ -2095,6 +2106,63 @@ pub(crate) async fn find_latest_completed_request_by_external_id_seaorm(
             row.map(|row| StoredRequestRouteHint {
                 channel_id: row.channel_id.unwrap_or_default(),
                 model_id: row.model_id,
+            })
+        })
+}
+
+pub(crate) async fn find_latest_completed_response_chain_request_by_external_id_seaorm(
+    db: &impl ConnectionTrait,
+    _backend: DatabaseBackend,
+    project_id: i64,
+    api_key_id: Option<i64>,
+    route_format: &str,
+    external_id: &str,
+) -> Result<Option<StoredResponseChainRequest>, OpenAiV1Error> {
+    let mut query = requests::Entity::find()
+        .filter(requests::Column::Format.eq(route_format))
+        .filter(requests::Column::ExternalId.eq(external_id))
+        .filter(requests::Column::Status.eq("completed"))
+        .filter(requests::Column::ProjectId.eq(project_id));
+
+    query = match api_key_id {
+        Some(api_key_id) => query.filter(requests::Column::ApiKeyId.eq(api_key_id)),
+        None => query.filter(requests::Column::ApiKeyId.is_null()),
+    };
+
+    query
+        .order_by_desc(requests::Column::Id)
+        .one(db)
+        .await
+        .map_err(map_openai_db_err)
+        .map(|row| {
+            row.map(|row| StoredResponseChainRequest {
+                request_body_json: row.request_body,
+                response_body_json: row.response_body,
+            })
+        })
+}
+
+pub(crate) async fn find_latest_completed_response_by_external_id_seaorm(
+    db: &impl ConnectionTrait,
+    _backend: DatabaseBackend,
+    project_id: i64,
+    api_key_id: i64,
+    external_id: &str,
+) -> Result<Option<StoredResponseRecord>, OpenAiV1Error> {
+    requests::Entity::find()
+        .filter(requests::Column::Format.is_in(["openai/responses", "openai/responses_compact"]))
+        .filter(requests::Column::ExternalId.eq(external_id))
+        .filter(requests::Column::Status.eq("completed"))
+        .filter(requests::Column::ProjectId.eq(project_id))
+        .filter(requests::Column::ApiKeyId.eq(api_key_id))
+        .filter(requests::Column::ResponseBody.is_not_null())
+        .order_by_desc(requests::Column::Id)
+        .one(db)
+        .await
+        .map_err(map_openai_db_err)
+        .map(|row| {
+            row.and_then(|row| {
+                row.response_body.map(|response_body_json| StoredResponseRecord { response_body_json })
             })
         })
 }

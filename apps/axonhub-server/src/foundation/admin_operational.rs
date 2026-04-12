@@ -15,19 +15,21 @@ use serde_json::{json, Value};
 
 use super::{
     admin::{
-        default_auto_backup_settings, default_storage_policy, default_system_channel_settings,
-        generate_probe_timestamps, provider_quota_type_for_channel, CachedFileStorage,
-        StoredAutoBackupSettings, StoredBackupApiKey, StoredBackupChannel, StoredBackupModel,
-        StoredBackupPayload, StoredChannelProbeData, StoredChannelProbePoint,
-        StoredGcCleanupSummary, StoredProviderQuotaStatus, StoredProxyPreset,
-        StoredStoragePolicy, StoredSystemChannelSettings,
+        default_auto_backup_settings, default_retry_policy, default_storage_policy, default_system_channel_settings,
+        default_video_storage_settings, generate_probe_timestamps,
+        provider_quota_type_for_channel, CachedFileStorage, StoredAutoBackupSettings,
+        StoredBackupApiKey, StoredBackupChannel, StoredBackupModel, StoredBackupPayload,
+        StoredChannelProbeData, StoredChannelProbePoint, StoredGcCleanupSummary,
+        StoredProviderQuotaStatus, StoredProxyPreset, StoredStoragePolicy,
+        StoredSystemChannelSettings, StoredVideoStorageSettings, StoredRetryPolicy,
     },
+    graphql::AdminGraphqlUpdateVideoStorageSettingsInput,
     seaorm::SeaOrmConnectionFactory,
     shared::{
         current_rfc3339_timestamp, current_unix_timestamp, format_unix_timestamp,
         AUTO_BACKUP_PREFIX, AUTO_BACKUP_SUFFIX, BACKUP_VERSION,
         SYSTEM_KEY_AUTO_BACKUP_SETTINGS, SYSTEM_KEY_CHANNEL_SETTINGS, SYSTEM_KEY_PROXY_PRESETS,
-        SYSTEM_KEY_STORAGE_POLICY, SYSTEM_KEY_USER_AGENT_PASS_THROUGH,
+        SYSTEM_KEY_STORAGE_POLICY, SYSTEM_KEY_USER_AGENT_PASS_THROUGH, SYSTEM_KEY_VIDEO_STORAGE_SETTINGS,
     },
 };
 
@@ -94,6 +96,19 @@ impl SeaOrmOperationalService {
         })
     }
 
+    pub(crate) fn update_retry_policy(
+        &self,
+        policy: StoredRetryPolicy,
+    ) -> Result<StoredRetryPolicy, String> {
+        let db = self.db.clone();
+        let policy_to_store = policy.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            store_json_setting(&connection, "retry_policy", &policy_to_store).await?;
+            Ok(policy_to_store)
+        })
+    }
+
     pub(crate) fn auto_backup_settings(&self) -> Result<StoredAutoBackupSettings, String> {
         let db = self.db.clone();
         db.run_sync(move |factory| async move {
@@ -152,6 +167,66 @@ impl SeaOrmOperationalService {
             let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
             store_json_setting(&connection, SYSTEM_KEY_CHANNEL_SETTINGS, &settings_to_store).await?;
             Ok(settings_to_store)
+        })
+    }
+
+    pub(crate) fn update_video_storage_settings(
+        &self,
+        input: AdminGraphqlUpdateVideoStorageSettingsInput,
+    ) -> Result<StoredVideoStorageSettings, String> {
+        let db = self.db.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            let defaults = default_video_storage_settings();
+            let mut settings: StoredVideoStorageSettings = load_json_setting(
+                &connection,
+                SYSTEM_KEY_VIDEO_STORAGE_SETTINGS,
+                default_video_storage_settings(),
+            )
+            .await?;
+
+            if let Some(enabled) = input.enabled {
+                settings.enabled = enabled;
+            }
+            if let Some(data_storage_id) = input.data_storage_id {
+                settings.data_storage_id = data_storage_id;
+            }
+            if let Some(scan_interval_minutes) = input.scan_interval_minutes {
+                settings.scan_interval_minutes = if scan_interval_minutes <= 0 {
+                    defaults.scan_interval_minutes
+                } else {
+                    scan_interval_minutes
+                };
+            }
+            if let Some(scan_limit) = input.scan_limit {
+                settings.scan_limit = if scan_limit <= 0 {
+                    defaults.scan_limit
+                } else {
+                    scan_limit
+                };
+            }
+
+            if settings.enabled {
+                if settings.data_storage_id <= 0 {
+                    return Err("dataStorageID is required when video storage is enabled".to_owned());
+                }
+
+                let storage = data_storages::Entity::find_by_id(settings.data_storage_id)
+                    .filter(data_storages::Column::DeletedAt.eq(0_i64))
+                    .one(&connection)
+                    .await
+                    .map_err(|error| format!("failed to load video storage target: {error}"))?;
+                let Some(storage) = storage else {
+                    return Err("data storage not found".to_owned());
+                };
+
+                if storage.primary_flag || storage.type_field == "database" {
+                    return Err("video storage must use a non-database data storage".to_owned());
+                }
+            }
+
+            store_json_setting(&connection, SYSTEM_KEY_VIDEO_STORAGE_SETTINGS, &settings).await?;
+            Ok(settings)
         })
     }
 
@@ -1498,18 +1573,19 @@ pub(crate) mod sqlite_test_support {
 
     use super::{
         super::{
-            admin::{
-                default_auto_backup_settings, default_storage_policy,
-                default_system_channel_settings, generate_probe_timestamps,
-                parse_graphql_resource_id, provider_quota_type_for_channel, CachedFileStorage,
-                StoredAutoBackupSettings, StoredBackupApiKey, StoredBackupChannel,
-                StoredBackupModel, StoredBackupPayload, StoredChannelProbeData,
-                StoredChannelProbePoint, StoredCleanupOption, StoredGcCleanupSummary,
-                StoredProviderQuotaStatus, StoredProxyPreset, StoredStoragePolicy,
-                StoredSystemChannelSettings,
-            },
+                admin::{
+                    default_auto_backup_settings, default_retry_policy, default_storage_policy,
+                    default_system_channel_settings, default_video_storage_settings,
+                    generate_probe_timestamps,
+                    parse_graphql_resource_id, provider_quota_type_for_channel, CachedFileStorage,
+                    StoredAutoBackupSettings, StoredBackupApiKey, StoredBackupChannel,
+                    StoredBackupModel, StoredBackupPayload, StoredChannelProbeData,
+                    StoredChannelProbePoint, StoredCleanupOption, StoredGcCleanupSummary,
+                    StoredAutoDisableChannelStatus, StoredProviderQuotaStatus, StoredProxyPreset, StoredRetryPolicy, StoredStoragePolicy,
+                    StoredSystemChannelSettings, StoredVideoStorageSettings,
+                },
             graphql::{
-                AdminGraphqlUpdateAutoBackupSettingsInput, AdminGraphqlUpdateStoragePolicyInput,
+                AdminGraphqlUpdateAutoBackupSettingsInput, AdminGraphqlUpdateRetryPolicyInput, AdminGraphqlUpdateStoragePolicyInput,
                 AdminGraphqlUpdateSystemChannelSettingsInput,
             },
             shared::{
@@ -1850,6 +1926,15 @@ pub(crate) mod sqlite_test_support {
             .map_err(|error| format!("failed to load storage policy: {error}"))
         }
 
+        pub fn retry_policy(&self) -> Result<crate::foundation::admin::StoredRetryPolicy, String> {
+            load_json_setting(
+                &self.foundation.system_settings(),
+                "retry_policy",
+                crate::foundation::admin::default_retry_policy(),
+            )
+            .map_err(|error| format!("failed to load retry policy: {error}"))
+        }
+
         pub fn update_storage_policy(
             &self,
             input: AdminGraphqlUpdateStoragePolicyInput,
@@ -1876,6 +1961,49 @@ pub(crate) mod sqlite_test_support {
             }
 
             self.store_json_setting(SYSTEM_KEY_STORAGE_POLICY, &policy)?;
+            Ok(policy)
+        }
+
+        pub fn update_retry_policy(
+            &self,
+            input: AdminGraphqlUpdateRetryPolicyInput,
+        ) -> Result<StoredRetryPolicy, String> {
+            let mut policy = self.retry_policy()?;
+            if let Some(enabled) = input.enabled {
+                policy.enabled = enabled;
+            }
+            if let Some(max_channel_retries) = input.max_channel_retries {
+                policy.max_channel_retries = max_channel_retries.max(0);
+            }
+            if let Some(max_single_channel_retries) = input.max_single_channel_retries {
+                policy.max_single_channel_retries = max_single_channel_retries.max(0);
+            }
+            if let Some(retry_delay_ms) = input.retry_delay_ms {
+                policy.retry_delay_ms = retry_delay_ms.max(0);
+            }
+            if let Some(load_balancer_strategy) = input.load_balancer_strategy {
+                policy.load_balancer_strategy = if load_balancer_strategy == "weighted" {
+                    "failover".to_owned()
+                } else {
+                    load_balancer_strategy
+                };
+            }
+            if let Some(auto_disable_channel) = input.auto_disable_channel {
+                if let Some(enabled) = auto_disable_channel.enabled {
+                    policy.auto_disable_channel.enabled = enabled;
+                }
+                if let Some(statuses) = auto_disable_channel.statuses {
+                    policy.auto_disable_channel.statuses = statuses
+                        .into_iter()
+                        .map(|status| StoredAutoDisableChannelStatus {
+                            status: status.status,
+                            times: status.times,
+                        })
+                        .collect();
+                }
+            }
+
+            self.store_json_setting("retry_policy", &policy)?;
             Ok(policy)
         }
 
@@ -1931,14 +2059,23 @@ pub(crate) mod sqlite_test_support {
             Ok("Backup completed successfully".to_owned())
         }
 
-        pub fn system_channel_settings(&self) -> Result<StoredSystemChannelSettings, String> {
-            load_json_setting(
-                &self.foundation.system_settings(),
-                SYSTEM_KEY_CHANNEL_SETTINGS,
-                default_system_channel_settings(),
-            )
-            .map_err(|error| format!("failed to load channel settings: {error}"))
-        }
+    pub fn system_channel_settings(&self) -> Result<StoredSystemChannelSettings, String> {
+        load_json_setting(
+            &self.foundation.system_settings(),
+            SYSTEM_KEY_CHANNEL_SETTINGS,
+            default_system_channel_settings(),
+        )
+        .map_err(|error| format!("failed to load channel settings: {error}"))
+    }
+
+    pub fn video_storage_settings(&self) -> Result<StoredVideoStorageSettings, String> {
+        load_json_setting(
+            &self.foundation.system_settings(),
+            crate::foundation::shared::SYSTEM_KEY_VIDEO_STORAGE_SETTINGS,
+            default_video_storage_settings(),
+        )
+        .map_err(|error| format!("failed to load video storage settings: {error}"))
+    }
 
         pub fn update_system_channel_settings(
             &self,

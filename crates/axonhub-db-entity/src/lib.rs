@@ -1043,6 +1043,20 @@ pub mod requests {
         pub id: i64,
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq, DerivePartialModel)]
+    #[sea_orm(entity = "Entity")]
+    pub struct GraphqlSummary {
+        pub id: i64,
+        pub project_id: i64,
+        pub trace_id: Option<i64>,
+        pub channel_id: Option<i64>,
+        pub model_id: String,
+        pub format: String,
+        pub status: String,
+        pub source: String,
+        pub external_id: Option<String>,
+    }
+
     impl ActiveModelBehavior for ActiveModel {}
 }
 

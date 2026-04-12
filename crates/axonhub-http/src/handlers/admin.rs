@@ -2,10 +2,13 @@ use crate::errors::{
     already_initialized_response, error_response, internal_error_response,
     invalid_initialize_request_response, not_implemented_response,
 };
-use crate::handlers::{execute_openai_request_with_body, parse_json_body};
+use crate::handlers::{
+    AiSdkProtocol, execute_openai_request_with_body_and_api_key_and_protocol, parse_json_body,
+};
 use crate::models::{
-    InitializeSystemRequest, InitializeSystemResponse, OpenAiRequestBody, OpenAiV1Route,
-    ProjectContext, SignInRequest, SignInResponse, SystemStatusResponse,
+    ApiKeyType, AuthApiKeyContext, InitializeSystemRequest, InitializeSystemResponse,
+    OpenAiRequestBody, OpenAiV1Route, ProjectContext, SignInRequest, SignInResponse,
+    SystemStatusResponse,
 };
 use crate::state::{
     AdminCapability, HttpState, IdentityCapability, OpenAiV1Capability, RequestAuthContext,
@@ -242,32 +245,34 @@ pub(crate) async fn playground_chat(
         Err(response) => return response,
     };
 
-    execute_openai_request_with_body(
+    let api_key = match resolve_playground_api_key(&request) {
+        Some(api_key) => api_key,
+        None => {
+            return error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid API key")
+        }
+    };
+
+    let protocol = body
+        .get("stream")
+        .and_then(Value::as_bool)
+        .filter(|stream| *stream)
+        .map(|_| AiSdkProtocol::DataStream);
+
+    execute_openai_request_with_body_and_api_key_and_protocol(
         state.get_ref().clone(),
         request,
         original_uri,
         OpenAiV1Route::ChatCompletions,
         OpenAiRequestBody::Json(body),
         channel_hint_id,
+        Some((api_key, None)),
+        protocol,
     )
     .await
 }
 
 fn validate_playground_chat_request(body: &Value) -> Option<HttpResponse> {
-    let body_object = body.as_object()?;
-
-    if body_object
-        .get("stream")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Some(error_response(
-            StatusCode::NOT_IMPLEMENTED,
-            "Not Implemented",
-            "Streaming is not supported for /admin/playground/chat in the Rust backend yet",
-        ));
-    }
-
+    body.as_object()?;
     None
 }
 
@@ -289,6 +294,29 @@ fn resolve_playground_channel_override(request: &HttpRequest) -> Result<Option<i
     parse_channel_query_value(channel_id.as_ref())
         .map(Some)
         .map_err(|()| error_response(StatusCode::BAD_REQUEST, "Bad Request", "Invalid channel ID"))
+}
+
+fn resolve_playground_api_key(request: &HttpRequest) -> Option<AuthApiKeyContext> {
+    let extensions = request.extensions();
+    let context = extensions.get::<RequestContextState>()?;
+    let project = context.project.clone()?;
+
+    context.auth.as_ref().and_then(|auth| match auth {
+        RequestAuthContext::ApiKey(key) => Some(key.clone()),
+        RequestAuthContext::Admin(user) => Some(AuthApiKeyContext {
+            id: 0,
+            key: format!("admin-playground-user-{}", user.id),
+            name: format!("Admin Playground {}", user.email),
+            key_type: ApiKeyType::User,
+            project,
+            scopes: vec![
+                "read_channels".to_owned(),
+                "read_requests".to_owned(),
+                "write_requests".to_owned(),
+            ],
+            profiles_json: None,
+        }),
+    })
 }
 
 fn apply_playground_project_context(

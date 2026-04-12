@@ -1,31 +1,42 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_graphql::{Enum, InputObject, SimpleObject};
+use chrono::{Datelike, TimeZone};
+use chrono_tz::Tz;
+use axonhub_db_entity::{api_keys, channel_probes, channels, request_executions, requests, usage_logs};
 use axonhub_http::{
     AdminGraphqlPort, AuthApiKeyContext, AuthUserContext, GraphqlExecutionResult,
     GraphqlRequestPayload, OpenApiGraphqlPort, ProjectContext, TraceContext,
 };
 use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
+use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
 use tracing::{field, Instrument, Span};
 
-use super::{
-    admin::{
-        default_auto_backup_settings, default_storage_policy, default_system_channel_settings,
-        parse_graphql_resource_id, AutoSyncFrequencySetting, BackupFrequencySetting,
-        ProbeFrequencySetting, StoredAutoBackupSettings, StoredChannelProbeData,
-        StoredCircuitBreakerStatus, StoredProviderQuotaStatus, StoredProxyPreset,
-        StoredStoragePolicy, StoredSystemChannelSettings,
+    use super::{
+        admin::{
+            default_auto_backup_settings, default_retry_policy, default_storage_policy, default_system_channel_settings,
+            default_system_general_settings,
+            normalize_retry_policy_load_balancer_strategy,
+        default_video_storage_settings, parse_graphql_resource_id, AutoSyncFrequencySetting, BackupFrequencySetting,
+            ProbeFrequencySetting, StoredAutoBackupSettings, StoredChannelProbeData,
+        StoredSystemGeneralSettings,
+        StoredCircuitBreakerStatus,
+        StoredProviderQuotaStatus, StoredProxyPreset, StoredRetryPolicy, StoredStoragePolicy,
+        StoredSystemChannelSettings, StoredVideoStorageSettings,
     },
     admin_operational::SeaOrmOperationalService,
     authz::{
         authorize_user_system_scope, is_valid_scope, require_owner_bypass,
         require_service_api_key_write_access, require_user_project_scope, scope_strings,
-        serialize_scope_slugs, LLM_API_KEY_SCOPES, SCOPE_READ_CHANNELS, SCOPE_READ_SETTINGS,
-        SCOPE_READ_PROMPTS, SCOPE_WRITE_API_KEYS, SCOPE_WRITE_CHANNELS,
+        serialize_scope_slugs, LLM_API_KEY_SCOPES, SCOPE_READ_API_KEYS, SCOPE_READ_CHANNELS,
+        SCOPE_READ_PROJECTS, SCOPE_READ_PROMPTS, SCOPE_READ_REQUESTS, SCOPE_READ_ROLES, SCOPE_READ_SETTINGS,
+        SCOPE_WRITE_API_KEYS, SCOPE_WRITE_CHANNELS,
         SCOPE_WRITE_PROJECTS, SCOPE_WRITE_PROMPTS, SCOPE_WRITE_ROLES, SCOPE_WRITE_SETTINGS,
     },
     circuit_breaker::SharedCircuitBreaker,
@@ -40,8 +51,9 @@ use super::{
     repositories::graphql::{
         AdminGraphqlSubsetRepository, GraphqlApiKeyRecord, GraphqlAutoBackupSettingsRecord,
         GraphqlChannelRecord, GraphqlDefaultDataStorageRecord, GraphqlModelRecord,
-        GraphqlProjectRecord, GraphqlRoleRecord, GraphqlRoleSummaryRecord,
-        GraphqlStoragePolicyRecord, GraphqlSystemChannelSettingsRecord,
+        GraphqlProjectRecord, GraphqlRetryPolicyRecord, GraphqlRoleRecord, GraphqlRoleSummaryRecord,
+        GraphqlStoragePolicyRecord, GraphqlSystemChannelSettingsRecord, GraphqlSystemGeneralSettingsRecord,
+        GraphqlVideoStorageSettingsRecord,
         OpenApiGraphqlMutationRepository,
         SeaOrmAdminGraphqlSubsetRepository, SeaOrmOpenApiGraphqlMutationRepository,
     },
@@ -54,10 +66,12 @@ use serde_json::json;
 
 #[cfg(test)]
 use super::circuit_breaker::CircuitBreakerPolicy;
+use crate::app::build_info::BuildInfo;
 
 pub struct SeaOrmAdminGraphqlService {
     repository: SeaOrmAdminGraphqlSubsetRepository,
     circuit_breaker: SharedCircuitBreaker,
+    update_checker: AdminGraphqlUpdateChecker,
 }
 
 pub struct SeaOrmOpenApiGraphqlService {
@@ -70,6 +84,406 @@ pub struct SeaOrmOpenApiGraphqlService {
 #[graphql(name = "SystemStatus", rename_fields = "camelCase")]
 pub(crate) struct AdminGraphqlSystemStatus {
     pub(crate) is_initialized: bool,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "SystemVersion", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlSystemVersion {
+    pub(crate) version: String,
+    pub(crate) commit: String,
+    #[graphql(name = "buildTime")]
+    pub(crate) build_time: String,
+    #[graphql(name = "goVersion")]
+    pub(crate) go_version: String,
+    pub(crate) platform: String,
+    pub(crate) uptime: String,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "VersionCheck", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlVersionCheck {
+    pub(crate) current_version: String,
+    pub(crate) latest_version: String,
+    pub(crate) has_update: bool,
+    pub(crate) release_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "RequestStats", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlRequestStats {
+    pub(crate) requests_today: i32,
+    pub(crate) requests_this_week: i32,
+    pub(crate) requests_last_week: i32,
+    pub(crate) requests_this_month: i32,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "RequestStatsByChannel", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlRequestStatsByChannel {
+    pub(crate) channel_name: String,
+    pub(crate) count: i32,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "RequestStatsByModel", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlRequestStatsByModel {
+    pub(crate) model_id: String,
+    pub(crate) count: i32,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "RequestStatsByAPIKey", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlRequestStatsByAPIKey {
+    pub(crate) api_key_id: String,
+    pub(crate) api_key_name: String,
+    pub(crate) count: i32,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "TokenStats", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlTokenStats {
+    pub(crate) total_input_tokens_today: i32,
+    pub(crate) total_output_tokens_today: i32,
+    pub(crate) total_cached_tokens_today: i32,
+    pub(crate) total_input_tokens_this_week: i32,
+    pub(crate) total_output_tokens_this_week: i32,
+    pub(crate) total_cached_tokens_this_week: i32,
+    pub(crate) total_input_tokens_this_month: i32,
+    pub(crate) total_output_tokens_this_month: i32,
+    pub(crate) total_cached_tokens_this_month: i32,
+    pub(crate) total_input_tokens_all_time: i32,
+    pub(crate) total_output_tokens_all_time: i32,
+    pub(crate) total_cached_tokens_all_time: i32,
+    pub(crate) last_updated: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "CostStatsByModel", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlCostStatsByModel {
+    pub(crate) model_id: String,
+    pub(crate) cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "CostStatsByChannel", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlCostStatsByChannel {
+    pub(crate) channel_name: String,
+    pub(crate) cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "CostStatsByAPIKey", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlCostStatsByAPIKey {
+    pub(crate) api_key_id: String,
+    pub(crate) api_key_name: String,
+    pub(crate) cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "TokenStatsByAPIKey", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlTokenStatsByAPIKey {
+    pub(crate) api_key_id: String,
+    pub(crate) api_key_name: String,
+    pub(crate) input_tokens: i32,
+    pub(crate) output_tokens: i32,
+    pub(crate) cached_tokens: i32,
+    pub(crate) reasoning_tokens: i32,
+    pub(crate) total_tokens: i32,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "ModelTokenUsageStats", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlModelTokenUsageStats {
+    pub(crate) model_id: String,
+    pub(crate) input_tokens: i32,
+    pub(crate) output_tokens: i32,
+    pub(crate) cached_tokens: i32,
+    pub(crate) reasoning_tokens: i32,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "APIKeyTokenUsageStats", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlApiKeyTokenUsageStats {
+    pub(crate) api_key_id: String,
+    pub(crate) input_tokens: i32,
+    pub(crate) output_tokens: i32,
+    pub(crate) cached_tokens: i32,
+    pub(crate) reasoning_tokens: i32,
+    pub(crate) top_models: Vec<AdminGraphqlModelTokenUsageStats>,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "TokenStatsByChannel", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlTokenStatsByChannel {
+    pub(crate) channel_name: String,
+    pub(crate) input_tokens: i32,
+    pub(crate) output_tokens: i32,
+    pub(crate) cached_tokens: i32,
+    pub(crate) reasoning_tokens: i32,
+    pub(crate) total_tokens: i32,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "TokenStatsByModel", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlTokenStatsByModel {
+    pub(crate) model_id: String,
+    pub(crate) input_tokens: i32,
+    pub(crate) output_tokens: i32,
+    pub(crate) cached_tokens: i32,
+    pub(crate) reasoning_tokens: i32,
+    pub(crate) total_tokens: i32,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "DailyRequestStats", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlDailyRequestStats {
+    pub(crate) date: String,
+    pub(crate) count: i32,
+    pub(crate) tokens: i32,
+    pub(crate) cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "DashboardOverview", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlDashboardOverview {
+    pub(crate) total_requests: i32,
+    pub(crate) request_stats: AdminGraphqlRequestStats,
+    pub(crate) failed_requests: i32,
+    pub(crate) average_response_time: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "ChannelSuccessRate", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlChannelSuccessRate {
+    pub(crate) channel_id: String,
+    pub(crate) channel_name: String,
+    pub(crate) channel_type: String,
+    pub(crate) success_count: i32,
+    pub(crate) failed_count: i32,
+    pub(crate) total_count: i32,
+    pub(crate) success_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "FastestChannel", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlFastestChannel {
+    pub(crate) channel_id: String,
+    pub(crate) channel_name: String,
+    pub(crate) channel_type: String,
+    pub(crate) throughput: f64,
+    pub(crate) tokens_count: i32,
+    pub(crate) latency_ms: i32,
+    pub(crate) request_count: i32,
+    pub(crate) confidence_level: String,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "FastestModel", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlFastestModel {
+    pub(crate) model_id: String,
+    pub(crate) model_name: String,
+    pub(crate) throughput: f64,
+    pub(crate) tokens_count: i32,
+    pub(crate) latency_ms: i32,
+    pub(crate) request_count: i32,
+    pub(crate) confidence_level: String,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "ModelPerformanceStat", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlModelPerformanceStat {
+    pub(crate) date: String,
+    pub(crate) model_id: String,
+    pub(crate) throughput: Option<f64>,
+    pub(crate) ttft_ms: Option<f64>,
+    pub(crate) request_count: i32,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "ChannelPerformanceStat", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlChannelPerformanceStat {
+    pub(crate) date: String,
+    pub(crate) channel_id: String,
+    pub(crate) channel_name: String,
+    pub(crate) throughput: Option<f64>,
+    pub(crate) ttft_ms: Option<f64>,
+    pub(crate) request_count: i32,
+}
+
+#[derive(Debug, Clone)]
+struct AdminGraphqlUpdateChecker {
+    releases_api_url: String,
+    release_url_prefix: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct AdminGraphqlGeneralSettings {
+    #[serde(alias = "currencyCode")]
+    currency_code: String,
+    timezone: String,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "UpdateSystemGeneralSettingsInput")]
+pub(crate) struct AdminGraphqlUpdateSystemGeneralSettingsInput {
+    pub(crate) currency_code: Option<String>,
+    pub(crate) timezone: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "UpdateVideoStorageSettingsInput")]
+pub(crate) struct AdminGraphqlUpdateVideoStorageSettingsInput {
+    pub(crate) enabled: Option<bool>,
+    #[serde(rename = "dataStorageID")]
+    #[graphql(name = "dataStorageID")]
+    pub(crate) data_storage_id: Option<i64>,
+    pub(crate) scan_interval_minutes: Option<i32>,
+    pub(crate) scan_limit: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "FastestChannelsInput")]
+pub(crate) struct AdminGraphqlFastestChannelsInput {
+    pub(crate) time_window: String,
+    pub(crate) limit: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "APIKeyTokenUsageStatsInput")]
+pub(crate) struct AdminGraphqlApiKeyTokenUsageStatsInput {
+    #[serde(rename = "apiKeyIds")]
+    #[graphql(name = "apiKeyIds")]
+    pub(crate) api_key_ids: Option<Vec<String>>,
+    #[serde(rename = "createdAtGTE")]
+    #[graphql(name = "createdAtGTE")]
+    pub(crate) created_at_gte: Option<String>,
+    #[serde(rename = "createdAtLTE")]
+    #[graphql(name = "createdAtLTE")]
+    pub(crate) created_at_lte: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AdminGraphqlGitHubRelease {
+    tag_name: String,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    published_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct SemanticVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    prerelease: Vec<SemanticVersionIdentifier>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum SemanticVersionIdentifier {
+    Numeric(u64),
+    AlphaNumeric(String),
+}
+
+const ADMIN_GRAPHQL_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/looplj/axonhub/releases";
+const ADMIN_GRAPHQL_RELEASE_URL_PREFIX: &str =
+    "https://github.com/looplj/axonhub/releases/tag/";
+const ADMIN_GRAPHQL_VERSION_CHECK_USER_AGENT: &str = "AxonHub-Version-Checker";
+const ADMIN_GRAPHQL_RELEASE_COOLDOWN: Duration = Duration::from_secs(30 * 60);
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "OnboardingModule", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlOnboardingModule {
+    pub(crate) onboarded: bool,
+    #[graphql(name = "completedAt")]
+    pub(crate) completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "OnboardingInfo", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlOnboardingInfo {
+    pub(crate) onboarded: bool,
+    #[graphql(name = "completedAt")]
+    pub(crate) completed_at: Option<String>,
+    pub(crate) system_model_setting: Option<AdminGraphqlOnboardingModule>,
+    pub(crate) auto_disable_channel: Option<AdminGraphqlOnboardingModule>,
+}
+
+impl From<crate::foundation::request_context::OnboardingModule> for AdminGraphqlOnboardingModule {
+    fn from(value: crate::foundation::request_context::OnboardingModule) -> Self {
+        Self {
+            onboarded: value.onboarded,
+            completed_at: value.completed_at,
+        }
+    }
+}
+
+impl From<crate::foundation::request_context::OnboardingRecord> for AdminGraphqlOnboardingInfo {
+    fn from(value: crate::foundation::request_context::OnboardingRecord) -> Self {
+        let onboarded = value.onboarded;
+        let completed_at = value.completed_at;
+        let system_completed_at = completed_at.clone();
+        let system_model_setting = Some(match value.system_model_setting {
+            Some(module) => module.into(),
+            None => AdminGraphqlOnboardingModule {
+                onboarded,
+                completed_at: system_completed_at,
+            },
+        });
+        let auto_disable_channel = Some(match value.auto_disable_channel {
+            Some(module) => module.into(),
+            None => AdminGraphqlOnboardingModule {
+                onboarded,
+                completed_at: completed_at.clone(),
+            },
+        });
+
+        Self {
+            onboarded,
+            completed_at,
+            system_model_setting,
+            auto_disable_channel,
+        }
+    }
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "BrandSettings", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlBrandSettings {
+    pub(crate) brand_name: Option<String>,
+    pub(crate) brand_logo: Option<String>,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
@@ -87,6 +501,31 @@ pub(crate) struct AdminGraphqlStoragePolicy {
     pub(crate) store_request_body: bool,
     pub(crate) store_response_body: bool,
     pub(crate) cleanup_options: Vec<AdminGraphqlCleanupOption>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "RetryPolicy", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlRetryPolicy {
+    pub(crate) enabled: bool,
+    pub(crate) max_channel_retries: i32,
+    pub(crate) max_single_channel_retries: i32,
+    pub(crate) retry_delay_ms: i32,
+    pub(crate) load_balancer_strategy: String,
+    pub(crate) auto_disable_channel: AdminGraphqlAutoDisableChannel,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "AutoDisableChannel", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlAutoDisableChannel {
+    pub(crate) enabled: bool,
+    pub(crate) statuses: Vec<AdminGraphqlAutoDisableChannelStatus>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "AutoDisableChannelStatus", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlAutoDisableChannelStatus {
+    pub(crate) status: i32,
+    pub(crate) times: i32,
 }
 
 #[derive(Debug, Clone, Deserialize, InputObject)]
@@ -108,6 +547,42 @@ pub(crate) struct AdminGraphqlUpdateStoragePolicyInput {
     pub(crate) cleanup_options: Option<Vec<AdminGraphqlCleanupOptionInput>>,
 }
 
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "AutoDisableChannelStatusInput")]
+pub(crate) struct AdminGraphqlAutoDisableChannelStatusInput {
+    pub(crate) status: i32,
+    pub(crate) times: i32,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "AutoDisableChannelInput")]
+pub(crate) struct AdminGraphqlAutoDisableChannelInput {
+    pub(crate) enabled: Option<bool>,
+    pub(crate) statuses: Option<Vec<AdminGraphqlAutoDisableChannelStatusInput>>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "UpdateRetryPolicyInput")]
+pub(crate) struct AdminGraphqlUpdateRetryPolicyInput {
+    pub(crate) enabled: Option<bool>,
+    pub(crate) max_channel_retries: Option<i32>,
+    pub(crate) max_single_channel_retries: Option<i32>,
+    pub(crate) retry_delay_ms: Option<i32>,
+    pub(crate) load_balancer_strategy: Option<String>,
+    pub(crate) auto_disable_channel: Option<AdminGraphqlAutoDisableChannelInput>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "UpdateBrandSettingsInput")]
+pub(crate) struct AdminGraphqlUpdateBrandSettingsInput {
+    pub(crate) brand_name: Option<String>,
+    pub(crate) brand_logo: Option<String>,
+}
+
 #[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "AutoBackupSettings", rename_fields = "camelCase")]
 pub(crate) struct AdminGraphqlAutoBackupSettings {
@@ -123,6 +598,16 @@ pub(crate) struct AdminGraphqlAutoBackupSettings {
     pub(crate) retention_days: i32,
     pub(crate) last_backup_at: Option<String>,
     pub(crate) last_backup_error: Option<String>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "VideoStorageSettings", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlVideoStorageSettings {
+    pub(crate) enabled: bool,
+    #[graphql(name = "dataStorageID")]
+    pub(crate) data_storage_id: i32,
+    pub(crate) scan_interval_minutes: i32,
+    pub(crate) scan_limit: i32,
 }
 
 #[derive(Debug, Clone, Deserialize, InputObject)]
@@ -162,6 +647,13 @@ pub(crate) struct AdminGraphqlChannelProbeSetting {
 pub(crate) struct AdminGraphqlSystemChannelSettings {
     pub(crate) probe: AdminGraphqlChannelProbeSetting,
     pub(crate) auto_sync: AdminGraphqlChannelModelAutoSyncSetting,
+    pub(crate) query_all_channel_models: bool,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "SystemModelSettings", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlSystemModelSettings {
+    pub(crate) fallback_to_channels_on_model_not_found: bool,
     pub(crate) query_all_channel_models: bool,
 }
 
@@ -246,9 +738,12 @@ pub(crate) struct AdminGraphqlChannelProbeData {
     pub(crate) points: Vec<AdminGraphqlChannelProbePoint>,
 }
 
-#[derive(Debug, Clone, InputObject)]
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
 #[graphql(name = "GetChannelProbeDataInput")]
 pub(crate) struct AdminGraphqlGetChannelProbeDataInput {
+    #[serde(rename = "channelIDs")]
+    #[graphql(name = "channelIDs")]
     pub(crate) channel_ids: Vec<String>,
 }
 
@@ -429,9 +924,18 @@ pub(crate) enum CreateLlmApiKeyError {
 impl SeaOrmAdminGraphqlService {
     pub fn new(db: super::seaorm::SeaOrmConnectionFactory) -> Self {
         let circuit_breaker = SharedCircuitBreaker::with_factory(&db);
+        Self::with_dependencies(db, circuit_breaker, AdminGraphqlUpdateChecker::github())
+    }
+
+    fn with_dependencies(
+        db: super::seaorm::SeaOrmConnectionFactory,
+        circuit_breaker: SharedCircuitBreaker,
+        update_checker: AdminGraphqlUpdateChecker,
+    ) -> Self {
         Self {
             repository: SeaOrmAdminGraphqlSubsetRepository::new(db),
             circuit_breaker,
+            update_checker,
         }
     }
 
@@ -441,10 +945,18 @@ impl SeaOrmAdminGraphqlService {
         policy: CircuitBreakerPolicy,
     ) -> Self {
         let circuit_breaker = SharedCircuitBreaker::with_factory_and_policy(&db, policy);
-        Self {
-            repository: SeaOrmAdminGraphqlSubsetRepository::new(db),
-            circuit_breaker,
-        }
+        Self::with_dependencies(db, circuit_breaker, AdminGraphqlUpdateChecker::github())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_update_checker_urls(
+        db: super::seaorm::SeaOrmConnectionFactory,
+        releases_api_url: impl Into<String>,
+        release_url_prefix: impl Into<String>,
+    ) -> Self {
+        let circuit_breaker = SharedCircuitBreaker::with_factory(&db);
+        let update_checker = AdminGraphqlUpdateChecker::new(releases_api_url, release_url_prefix);
+        Self::with_dependencies(db, circuit_breaker, update_checker)
     }
 }
 
@@ -465,6 +977,7 @@ impl AdminGraphqlPort for SeaOrmAdminGraphqlService {
     ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
         let repository = self.repository.clone();
         let circuit_breaker = self.circuit_breaker.clone();
+        let update_checker = self.update_checker.clone();
         let span = graphql_execution_span(
             "admin",
             graphql_request_kind(request.query.as_str()),
@@ -478,6 +991,7 @@ impl AdminGraphqlPort for SeaOrmAdminGraphqlService {
             match execute_admin_graphql_seaorm_request(
                 repository,
                 circuit_breaker,
+                update_checker,
                 payload,
                 project_id,
                 user,
@@ -649,6 +1163,7 @@ fn graphql_response_has_error(body: &Value) -> bool {
 async fn execute_admin_graphql_seaorm_request(
     repository: SeaOrmAdminGraphqlSubsetRepository,
     circuit_breaker: SharedCircuitBreaker,
+    update_checker: AdminGraphqlUpdateChecker,
     payload: GraphqlRequestPayload,
     _project_id: Option<i64>,
     user: AuthUserContext,
@@ -671,6 +1186,35 @@ async fn execute_admin_graphql_seaorm_request(
         return query_auto_backup_settings_seaorm(&repository);
     }
 
+    if query.contains("videoStorageSettings") {
+        if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
+            return graphql_permission_denied("videoStorageSettings");
+        }
+
+        return query_video_storage_settings_seaorm(&repository);
+    }
+
+    if query.contains("allScopes") {
+        if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
+            return graphql_permission_denied("allScopes");
+        }
+
+        let level = graphql_string_argument(query, "level");
+        let scopes = filter_admin_graphql_scope_info(level.as_deref())?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "allScopes": scopes.into_iter().map(|scope| json!({
+                        "scope": scope.scope,
+                        "description": scope.description,
+                        "levels": scope.levels,
+                    })).collect::<Vec<_>>()
+                }
+            }),
+        });
+    }
+
     if query.contains("defaultDataStorageID") {
         if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
             return graphql_permission_denied("defaultDataStorageID");
@@ -685,6 +1229,38 @@ async fn execute_admin_graphql_seaorm_request(
         }
 
         return query_system_channel_settings_seaorm(&repository);
+    }
+
+    if query.contains("systemGeneralSettings") {
+        if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
+            return graphql_permission_denied("systemGeneralSettings");
+        }
+
+        return query_system_general_settings_seaorm(&repository);
+    }
+
+    if query.contains("systemModelSettings") {
+        if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
+            return graphql_permission_denied("systemModelSettings");
+        }
+
+        return query_system_model_settings_seaorm(&repository);
+    }
+
+    if query.contains("brandSettings") {
+        if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
+            return graphql_permission_denied("brandSettings");
+        }
+
+        return query_brand_settings_seaorm(&repository);
+    }
+
+    if query.contains("onboardingInfo") {
+        if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
+            return graphql_permission_denied("onboardingInfo");
+        }
+
+        return query_onboarding_info_seaorm(&repository);
     }
 
     if query.contains("proxyPresets") {
@@ -711,12 +1287,81 @@ async fn execute_admin_graphql_seaorm_request(
         return query_channels_seaorm(&repository, &circuit_breaker);
     }
 
+    if first_graphql_field_name(query).as_deref() == Some("projects") {
+        if authorize_user_system_scope(&user, SCOPE_READ_PROJECTS).is_err() {
+            return graphql_permission_denied("projects");
+        }
+
+        return query_projects_seaorm(&repository);
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("myProjects") {
+        return query_my_projects_seaorm(&repository, &user);
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("roles") {
+        if authorize_user_system_scope(&user, SCOPE_READ_ROLES).is_err() {
+            return graphql_permission_denied("roles");
+        }
+
+        return query_roles_seaorm(&repository);
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("apiKeys") {
+        if authorize_user_system_scope(&user, SCOPE_READ_API_KEYS).is_err() {
+            return graphql_permission_denied("apiKeys");
+        }
+
+        return query_api_keys_seaorm(&repository);
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("requests") {
+        let project_id = _project_id.ok_or_else(|| "project context is required for this query".to_owned())?;
+        if require_user_project_scope(&user, project_id, SCOPE_READ_REQUESTS).is_err() {
+            return graphql_permission_denied("requests");
+        }
+
+        let requests = repository.query_requests(project_id)?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "requests": requests.iter().map(request_summary_json).collect::<Vec<_>>()
+                }
+            }),
+        });
+    }
+
     if query.contains("updateStoragePolicy") {
         if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
             return graphql_permission_denied("updateStoragePolicy");
         }
 
         return update_storage_policy_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateRetryPolicy") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("updateRetryPolicy");
+        }
+
+        return update_retry_policy_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateBrandSettings") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("updateBrandSettings");
+        }
+
+        return update_brand_settings_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("retryPolicy") {
+        if authorize_user_system_scope(&user, SCOPE_READ_SETTINGS).is_err() {
+            return graphql_permission_denied("retryPolicy");
+        }
+
+        return query_retry_policy_seaorm(&repository);
     }
 
     if query.contains("updateAutoBackupSettings") {
@@ -741,6 +1386,22 @@ async fn execute_admin_graphql_seaorm_request(
         }
 
         return update_system_channel_settings_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateSystemGeneralSettings") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("updateSystemGeneralSettings");
+        }
+
+        return update_system_general_settings_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("updateVideoStorageSettings") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("updateVideoStorageSettings");
+        }
+
+        return update_video_storage_settings_seaorm(&repository, payload.variables);
     }
 
     if query.contains("saveProxyPreset") {
@@ -911,6 +1572,10 @@ async fn execute_admin_graphql_seaorm_request(
         return update_prompt_protection_rule_graphql_seaorm(&repository, payload.variables);
     }
 
+    if first_graphql_field_name(query).as_deref() == Some("me") {
+        return query_me_graphql_seaorm(&repository, &user);
+    }
+
     if query.contains("updateMe") {
         return update_me_seaorm(&repository, payload.variables, &user);
     }
@@ -993,6 +1658,355 @@ async fn execute_admin_graphql_seaorm_request(
         });
     }
 
+    if query.contains("systemVersion") {
+        return query_system_version_seaorm(&repository);
+    }
+
+    if query.contains("dashboardOverview") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("dashboardOverview");
+        }
+
+        return query_dashboard_overview_seaorm(repository).await;
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("requestStats") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("requestStats");
+        }
+
+        let request_stats = query_request_stats_seaorm(repository).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "requestStats": request_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("requestStatsByChannel") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("requestStatsByChannel");
+        }
+
+        let time_window = graphql_input_string(&payload.variables, query, "timeWindow");
+        let request_stats = query_request_stats_by_channel_seaorm(repository, time_window).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "requestStatsByChannel": request_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("requestStatsByModel") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("requestStatsByModel");
+        }
+
+        let time_window = graphql_input_string(&payload.variables, query, "timeWindow");
+        let request_stats = query_request_stats_by_model_seaorm(repository, time_window).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "requestStatsByModel": request_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("requestStatsByAPIKey") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("requestStatsByAPIKey");
+        }
+
+        let time_window = graphql_input_string(&payload.variables, query, "timeWindow");
+        let request_stats = query_request_stats_by_api_key_seaorm(repository, time_window).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "requestStatsByAPIKey": request_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("tokenStats") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("tokenStats");
+        }
+
+        let token_stats = query_token_stats_seaorm(repository).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "tokenStats": token_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("costStatsByModel") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("costStatsByModel");
+        }
+
+        let time_window = graphql_input_string(&payload.variables, query, "timeWindow");
+        let cost_stats = query_cost_stats_by_model_seaorm(repository, time_window).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "costStatsByModel": cost_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("costStatsByChannel") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("costStatsByChannel");
+        }
+
+        let time_window = graphql_input_string(&payload.variables, query, "timeWindow");
+        let cost_stats = query_cost_stats_by_channel_seaorm(repository, time_window).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "costStatsByChannel": cost_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("costStatsByAPIKey") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("costStatsByAPIKey");
+        }
+
+        let time_window = graphql_input_string(&payload.variables, query, "timeWindow");
+        let cost_stats = query_cost_stats_by_api_key_seaorm(repository, time_window).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "costStatsByAPIKey": cost_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("tokenStatsByAPIKey") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("tokenStatsByAPIKey");
+        }
+
+        let time_window = graphql_input_string(&payload.variables, query, "timeWindow");
+        let token_stats = query_token_stats_by_api_key_seaorm(repository, time_window).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "tokenStatsByAPIKey": token_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("tokenStatsByChannel") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("tokenStatsByChannel");
+        }
+
+        let time_window = graphql_input_string(&payload.variables, query, "timeWindow");
+        let token_stats = query_token_stats_by_channel_seaorm(repository, time_window).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "tokenStatsByChannel": token_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("tokenStatsByModel") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("tokenStatsByModel");
+        }
+
+        let time_window = graphql_input_string(&payload.variables, query, "timeWindow");
+        let token_stats = query_token_stats_by_model_seaorm(repository, time_window).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "tokenStatsByModel": token_stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("dailyRequestStats") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("dailyRequestStats");
+        }
+
+        let stats = query_daily_request_stats_seaorm(repository).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "dailyRequestStats": stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("fastestChannels") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("fastestChannels");
+        }
+
+        let input = parse_graphql_variable_input::<AdminGraphqlFastestChannelsInput>(
+            payload.variables.clone(),
+            "input",
+            "input is required",
+        )?;
+        let channels = query_fastest_channels_seaorm(repository, input).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "fastestChannels": channels,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("fastestModels") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("fastestModels");
+        }
+
+        let input = parse_graphql_variable_input::<AdminGraphqlFastestChannelsInput>(
+            payload.variables.clone(),
+            "input",
+            "input is required",
+        )?;
+        let models = query_fastest_models_seaorm(repository, input).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "fastestModels": models,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("modelPerformanceStats") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("modelPerformanceStats");
+        }
+
+        let stats = query_model_performance_stats_seaorm(repository).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "modelPerformanceStats": stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("channelPerformanceStats") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("channelPerformanceStats");
+        }
+
+        let stats = query_channel_performance_stats_seaorm(repository).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "channelPerformanceStats": stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("channelProbeData") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_CHANNELS).is_err() {
+            return graphql_permission_denied("channelProbeData");
+        }
+
+        let input = parse_graphql_variable_input::<AdminGraphqlGetChannelProbeDataInput>(
+            payload.variables.clone(),
+            "input",
+            "input is required",
+        )?;
+        let probe_data = query_channel_probe_data_seaorm(repository, input)?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "channelProbeData": probe_data,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("apiKeyTokenUsageStats") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_API_KEYS).is_err() {
+            return graphql_permission_denied("apiKeyTokenUsageStats");
+        }
+
+        let input = parse_graphql_variable_input::<AdminGraphqlApiKeyTokenUsageStatsInput>(
+            payload.variables.clone(),
+            "input",
+            "input is required",
+        )?;
+        let stats = query_api_key_token_usage_stats_seaorm(repository, input).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "apiKeyTokenUsageStats": stats,
+                }
+            }),
+        });
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("channelSuccessRates") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("channelSuccessRates");
+        }
+
+        let success_rates = query_channel_success_rates_seaorm(repository).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "channelSuccessRates": success_rates,
+                }
+            }),
+        });
+    }
+
+    if query.contains("checkForUpdate") {
+        return query_check_for_update_seaorm(update_checker).await;
+    }
+
     if let Some(field) = first_graphql_field_name(query) {
         return graphql_not_implemented_for_route("/admin/graphql", field.as_str());
     }
@@ -1061,6 +2075,32 @@ fn query_storage_policy_seaorm(
     })
 }
 
+fn query_retry_policy_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let policy = load_retry_policy_seaorm(repository)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "retryPolicy": retry_policy_json(&policy),
+            }
+        }),
+    })
+}
+
+fn query_me_graphql_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    user: &AuthUserContext,
+) -> Result<GraphqlExecutionResult, String> {
+    let profile = load_graphql_user_profile(repository, user.id)?
+        .ok_or_else(|| "user not found".to_owned())?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"me": admin_user_profile_json(&profile)}}),
+    })
+}
+
 fn query_auto_backup_settings_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
 ) -> Result<GraphqlExecutionResult, String> {
@@ -1070,6 +2110,20 @@ fn query_auto_backup_settings_seaorm(
         body: json!({
             "data": {
                 "autoBackupSettings": auto_backup_settings_json(&settings),
+            }
+        }),
+    })
+}
+
+fn query_video_storage_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let settings = load_video_storage_settings_seaorm(repository)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "videoStorageSettings": video_storage_settings_json(&settings),
             }
         }),
     })
@@ -1101,6 +2155,2824 @@ fn query_system_channel_settings_seaorm(
             }
         }),
     })
+}
+
+fn query_system_general_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let settings = load_system_general_settings_seaorm(repository)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "systemGeneralSettings": system_general_settings_json(&settings),
+            }
+        }),
+    })
+}
+
+fn query_system_model_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let settings = load_system_channel_settings_seaorm(repository)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "systemModelSettings": system_model_settings_json(&settings),
+            }
+        }),
+    })
+}
+
+fn query_brand_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let brand_name = repository.query_brand_name()?;
+    let brand_logo = repository.query_brand_logo()?;
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "brandSettings": {
+                    "brandName": brand_name,
+                    "brandLogo": brand_logo,
+                }
+            }
+        }),
+    })
+}
+
+fn update_brand_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = variables.get("input").ok_or_else(|| "input is required".to_owned())?;
+    if let Some(brand_name) = input.get("brandName").and_then(Value::as_str) {
+        repository.upsert_brand_name(brand_name)?;
+    }
+    if let Some(brand_logo) = input.get("brandLogo").and_then(Value::as_str) {
+        repository.upsert_brand_logo(brand_logo)?;
+    }
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateBrandSettings": true}}),
+    })
+}
+
+fn query_onboarding_info_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let onboarding = repository
+        .query_onboarding_record()?
+        .unwrap_or_default();
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "onboardingInfo": AdminGraphqlOnboardingInfo::from(onboarding),
+            }
+        }),
+    })
+}
+
+fn query_system_version_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let current = BuildInfo::current();
+    let stored_version = repository.query_version()?.unwrap_or_else(|| current.version().to_owned());
+    let commit = current.commit().unwrap_or_default().to_owned();
+    let build_time = current.build_time().unwrap_or_default().to_owned();
+    let go_version = current
+        .go_version()
+        .unwrap_or("n/a (Rust build)")
+        .to_owned();
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "systemVersion": {
+                    "version": stored_version,
+                    "commit": commit,
+                    "buildTime": build_time,
+                    "goVersion": go_version,
+                    "platform": current.platform(),
+                    "uptime": current.uptime(),
+                }
+            }
+        }),
+    })
+}
+
+async fn query_dashboard_overview_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+
+    let db = repository.db();
+    let overview = db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+
+            let total_requests = requests::Entity::find()
+                .count(&connection)
+                .await
+                .map_err(|error| error.to_string())?;
+            let total_requests = total_requests as i32;
+
+            let failed_requests = requests::Entity::find()
+                .filter(requests::Column::Status.eq("failed"))
+                .count(&connection)
+                .await
+                .map_err(|error| error.to_string())?;
+            let failed_requests = failed_requests as i32;
+
+            let request_stats = query_request_stats_connection(connection).await?;
+
+            Ok::<AdminGraphqlDashboardOverview, String>(AdminGraphqlDashboardOverview {
+                total_requests,
+                request_stats,
+                failed_requests,
+                average_response_time: None,
+            })
+        })
+        .map_err(|error| error.to_string())?;
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "dashboardOverview": overview,
+            }
+        }),
+    })
+}
+
+async fn query_request_stats_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<AdminGraphqlRequestStats, String> {
+    let db = repository.db();
+    Ok(db.run_sync(move |db| async move {
+        let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+        query_request_stats_connection(connection).await
+    })
+    .map_err(|error| error.to_string())?)
+}
+
+async fn query_request_stats_by_channel_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlRequestStatsByChannel>, String> {
+    let db = repository.db();
+    Ok(db.run_sync(move |db| async move {
+        let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+        query_request_stats_by_channel_connection(connection, time_window).await
+    })
+    .map_err(|error| error.to_string())?)
+}
+
+async fn query_request_stats_by_model_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlRequestStatsByModel>, String> {
+    let db = repository.db();
+    Ok(db.run_sync(move |db| async move {
+        let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+        query_request_stats_by_model_connection(connection, time_window).await
+    })
+    .map_err(|error| error.to_string())?)
+}
+
+async fn query_request_stats_by_api_key_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlRequestStatsByAPIKey>, String> {
+    let db = repository.db();
+    Ok(db.run_sync(move |db| async move {
+        let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+        query_request_stats_by_api_key_connection(connection, time_window).await
+    })
+    .map_err(|error| error.to_string())?)
+}
+
+async fn query_token_stats_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<AdminGraphqlTokenStats, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_token_stats_connection(connection).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_cost_stats_by_model_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlCostStatsByModel>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_cost_stats_by_model_connection(connection, time_window).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_cost_stats_by_channel_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlCostStatsByChannel>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_cost_stats_by_channel_connection(connection, time_window).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_cost_stats_by_api_key_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlCostStatsByAPIKey>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_cost_stats_by_api_key_connection(connection, time_window).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_token_stats_by_api_key_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlTokenStatsByAPIKey>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_token_stats_by_api_key_connection(connection, time_window).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_api_key_token_usage_stats_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    input: AdminGraphqlApiKeyTokenUsageStatsInput,
+) -> Result<Vec<AdminGraphqlApiKeyTokenUsageStats>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_api_key_token_usage_stats_connection(connection, input).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_token_stats_by_channel_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlTokenStatsByChannel>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_token_stats_by_channel_connection(connection, time_window).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_token_stats_by_model_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlTokenStatsByModel>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_token_stats_by_model_connection(connection, time_window).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_daily_request_stats_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<Vec<AdminGraphqlDailyRequestStats>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_daily_request_stats_connection(connection).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_fastest_channels_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    input: AdminGraphqlFastestChannelsInput,
+) -> Result<Vec<AdminGraphqlFastestChannel>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_fastest_channels_connection(connection, input).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_fastest_models_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    input: AdminGraphqlFastestChannelsInput,
+) -> Result<Vec<AdminGraphqlFastestModel>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_fastest_models_connection(connection, input).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_model_performance_stats_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<Vec<AdminGraphqlModelPerformanceStat>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_model_performance_stats_connection(connection).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_channel_performance_stats_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<Vec<AdminGraphqlChannelPerformanceStat>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_channel_performance_stats_connection(connection).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+fn query_channel_probe_data_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+    input: AdminGraphqlGetChannelProbeDataInput,
+) -> Result<Vec<Value>, String> {
+    let channel_ids = parse_graphql_id_list(Some(input.channel_ids), "channel")?;
+    let probe_data = SeaOrmOperationalService::new(repository.db()).channel_probe_data(&channel_ids)?;
+    Ok(probe_data
+        .into_iter()
+        .map(|item| {
+            json!({
+                "channelID": graphql_gid("channel", item.channel_id),
+                "points": item.points.into_iter().map(|point| json!({
+                    "timestamp": point.timestamp,
+                    "totalRequestCount": point.total_request_count,
+                    "successRequestCount": point.success_request_count,
+                    "avgTokensPerSecond": point.avg_tokens_per_second,
+                    "avgTimeToFirstTokenMs": point.avg_time_to_first_token_ms,
+                })).collect::<Vec<_>>()
+            })
+        })
+        .collect())
+}
+
+async fn query_channel_success_rates_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<Vec<AdminGraphqlChannelSuccessRate>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_channel_success_rates_connection(connection).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
+async fn query_request_stats_by_channel_connection(
+    connection: sea_orm::DatabaseConnection,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlRequestStatsByChannel>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, RelationTrait};
+
+    let since = parse_admin_graphql_time_window(time_window.as_deref())?;
+
+    let query = usage_logs::Entity::find()
+        .join(sea_orm::JoinType::InnerJoin, usage_logs::Relation::Channels.def())
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .select_only()
+        .column(channels::Column::Name)
+        .column_as(sea_orm::sea_query::Expr::cust("COUNT(*)"), "request_count")
+        .group_by(channels::Column::Name);
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since.as_str()))
+    } else {
+        query
+    };
+
+    let mut rows = query
+        .into_tuple::<(String, i64)>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    rows.truncate(10);
+
+    Ok(rows
+        .into_iter()
+        .map(|(channel_name, count)| AdminGraphqlRequestStatsByChannel {
+            channel_name,
+            count: count as i32,
+        })
+        .collect())
+}
+
+async fn query_request_stats_by_model_connection(
+    connection: sea_orm::DatabaseConnection,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlRequestStatsByModel>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    let since = parse_admin_graphql_time_window(time_window.as_deref())?;
+
+    let query = usage_logs::Entity::find()
+        .select_only()
+        .column(usage_logs::Column::ModelId)
+        .column_as(sea_orm::sea_query::Expr::cust("COUNT(*)"), "request_count")
+        .group_by(usage_logs::Column::ModelId);
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since.as_str()))
+    } else {
+        query
+    };
+
+    let mut rows = query
+        .into_tuple::<(String, i64)>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    rows.truncate(10);
+
+    Ok(rows
+        .into_iter()
+        .map(|(model_id, count)| AdminGraphqlRequestStatsByModel {
+            model_id,
+            count: count as i32,
+        })
+        .collect())
+}
+
+async fn query_request_stats_by_api_key_connection(
+    connection: sea_orm::DatabaseConnection,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlRequestStatsByAPIKey>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    let since = parse_admin_graphql_time_window(time_window.as_deref())?;
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct ApiKeyStatsRow {
+        api_key_id: i64,
+        request_count: i64,
+    }
+
+    let query = usage_logs::Entity::find()
+        .select_only()
+        .column(usage_logs::Column::ApiKeyId)
+        .column_as(sea_orm::sea_query::Expr::cust("COUNT(*)"), "request_count")
+        .filter(usage_logs::Column::ApiKeyId.is_not_null())
+        .group_by(usage_logs::Column::ApiKeyId);
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since.as_str()))
+    } else {
+        query
+    };
+
+    let mut rows = query
+        .into_model::<ApiKeyStatsRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| right.request_count.cmp(&left.request_count).then_with(|| left.api_key_id.cmp(&right.api_key_id)));
+    rows.truncate(10);
+
+    let api_key_ids: Vec<i64> = rows.iter().map(|row| row.api_key_id).collect();
+    let api_key_map = api_keys::Entity::find()
+        .select_only()
+        .column(api_keys::Column::Id)
+        .column(api_keys::Column::Name)
+        .filter(api_keys::Column::DeletedAt.eq(0_i64))
+        .filter(api_keys::Column::Id.is_in(api_key_ids))
+        .into_tuple::<(i64, String)>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .collect::<HashMap<i64, String>>();
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            api_key_map.get(&row.api_key_id).map(|api_key_name| AdminGraphqlRequestStatsByAPIKey {
+                api_key_id: graphql_gid("api_key", row.api_key_id),
+                api_key_name: api_key_name.clone(),
+                count: row.request_count as i32,
+            })
+        })
+        .collect())
+}
+
+#[derive(sea_orm::FromQueryResult)]
+struct AdminGraphqlTokenStatsAggregateRow {
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+    cached_tokens: Option<i64>,
+    last_updated: Option<String>,
+}
+
+async fn query_token_stats_connection(
+    connection: sea_orm::DatabaseConnection,
+) -> Result<AdminGraphqlTokenStats, String> {
+    let now = chrono::Utc::now();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    let this_week_start =
+        today_start - chrono::Duration::days(now.weekday().num_days_from_monday() as i64);
+    let this_month_start = now
+        .date_naive()
+        .with_day(1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+
+    let today_start = today_start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let this_week_start = this_week_start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let this_month_start = this_month_start.format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let today = query_token_stats_aggregate(&connection, Some(today_start.as_str())).await?;
+    let this_week = query_token_stats_aggregate(&connection, Some(this_week_start.as_str())).await?;
+    let this_month = query_token_stats_aggregate(&connection, Some(this_month_start.as_str())).await?;
+    let all_time = query_token_stats_aggregate(&connection, None).await?;
+
+    Ok(AdminGraphqlTokenStats {
+        total_input_tokens_today: i64_to_i32(today.input_tokens.unwrap_or(0)),
+        total_output_tokens_today: i64_to_i32(today.output_tokens.unwrap_or(0)),
+        total_cached_tokens_today: i64_to_i32(today.cached_tokens.unwrap_or(0)),
+        total_input_tokens_this_week: i64_to_i32(this_week.input_tokens.unwrap_or(0)),
+        total_output_tokens_this_week: i64_to_i32(this_week.output_tokens.unwrap_or(0)),
+        total_cached_tokens_this_week: i64_to_i32(this_week.cached_tokens.unwrap_or(0)),
+        total_input_tokens_this_month: i64_to_i32(this_month.input_tokens.unwrap_or(0)),
+        total_output_tokens_this_month: i64_to_i32(this_month.output_tokens.unwrap_or(0)),
+        total_cached_tokens_this_month: i64_to_i32(this_month.cached_tokens.unwrap_or(0)),
+        total_input_tokens_all_time: i64_to_i32(all_time.input_tokens.unwrap_or(0)),
+        total_output_tokens_all_time: i64_to_i32(all_time.output_tokens.unwrap_or(0)),
+        total_cached_tokens_all_time: i64_to_i32(all_time.cached_tokens.unwrap_or(0)),
+        last_updated: all_time
+            .last_updated
+            .as_deref()
+            .map(normalize_usage_log_last_updated),
+    })
+}
+
+async fn query_cost_stats_by_model_connection(
+    connection: sea_orm::DatabaseConnection,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlCostStatsByModel>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    let since = parse_admin_graphql_time_window(time_window.as_deref())?;
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct CostStatsByModelRow {
+        model_id: String,
+        total_cost: Option<f64>,
+    }
+
+    let query = usage_logs::Entity::find()
+        .select_only()
+        .column(usage_logs::Column::ModelId)
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(total_cost), 0)"),
+            "total_cost",
+        )
+        .group_by(usage_logs::Column::ModelId);
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since.as_str()))
+    } else {
+        query
+    };
+
+    let mut rows = query
+        .into_model::<CostStatsByModelRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| {
+        right
+            .total_cost
+            .unwrap_or(0.0)
+            .total_cmp(&left.total_cost.unwrap_or(0.0))
+            .then_with(|| left.model_id.cmp(&right.model_id))
+    });
+    rows.truncate(10);
+
+    Ok(rows
+        .into_iter()
+        .map(|row| AdminGraphqlCostStatsByModel {
+            model_id: row.model_id,
+            cost: row.total_cost.unwrap_or(0.0),
+        })
+        .collect())
+}
+
+async fn query_cost_stats_by_channel_connection(
+    connection: sea_orm::DatabaseConnection,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlCostStatsByChannel>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, RelationTrait};
+
+    let since = parse_admin_graphql_time_window(time_window.as_deref())?;
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct CostStatsByChannelRow {
+        channel_name: String,
+        total_cost: Option<f64>,
+    }
+
+    let query = usage_logs::Entity::find()
+        .join(sea_orm::JoinType::InnerJoin, usage_logs::Relation::Channels.def())
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .select_only()
+        .column_as(channels::Column::Name, "channel_name")
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(total_cost), 0)"),
+            "total_cost",
+        )
+        .group_by(channels::Column::Name);
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since.as_str()))
+    } else {
+        query
+    };
+
+    let mut rows = query
+        .into_model::<CostStatsByChannelRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| {
+        right
+            .total_cost
+            .unwrap_or(0.0)
+            .total_cmp(&left.total_cost.unwrap_or(0.0))
+            .then_with(|| left.channel_name.cmp(&right.channel_name))
+    });
+    rows.truncate(10);
+
+    Ok(rows
+        .into_iter()
+        .map(|row| AdminGraphqlCostStatsByChannel {
+            channel_name: row.channel_name,
+            cost: row.total_cost.unwrap_or(0.0),
+        })
+        .collect())
+}
+
+async fn query_cost_stats_by_api_key_connection(
+    connection: sea_orm::DatabaseConnection,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlCostStatsByAPIKey>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    let since = parse_admin_graphql_time_window(time_window.as_deref())?;
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct ApiKeyCostRow {
+        api_key_id: i64,
+        total_cost: Option<f64>,
+    }
+
+    let query = usage_logs::Entity::find()
+        .select_only()
+        .column(usage_logs::Column::ApiKeyId)
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(total_cost), 0)"),
+            "total_cost",
+        )
+        .filter(usage_logs::Column::ApiKeyId.is_not_null())
+        .group_by(usage_logs::Column::ApiKeyId);
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since.as_str()))
+    } else {
+        query
+    };
+
+    let mut rows = query
+        .into_model::<ApiKeyCostRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| {
+        right
+            .total_cost
+            .unwrap_or(0.0)
+            .total_cmp(&left.total_cost.unwrap_or(0.0))
+            .then_with(|| left.api_key_id.cmp(&right.api_key_id))
+    });
+    rows.truncate(10);
+
+    let api_key_ids: Vec<i64> = rows.iter().map(|row| row.api_key_id).collect();
+    let api_key_map = api_keys::Entity::find()
+        .select_only()
+        .column(api_keys::Column::Id)
+        .column(api_keys::Column::Name)
+        .filter(api_keys::Column::DeletedAt.eq(0_i64))
+        .filter(api_keys::Column::Id.is_in(api_key_ids))
+        .into_tuple::<(i64, String)>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .collect::<HashMap<i64, String>>();
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            api_key_map.get(&row.api_key_id).map(|api_key_name| AdminGraphqlCostStatsByAPIKey {
+                api_key_id: graphql_gid("api_key", row.api_key_id),
+                api_key_name: api_key_name.clone(),
+                cost: row.total_cost.unwrap_or(0.0),
+            })
+        })
+        .collect())
+}
+
+async fn query_token_stats_by_api_key_connection(
+    connection: sea_orm::DatabaseConnection,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlTokenStatsByAPIKey>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    let since = parse_admin_graphql_time_window(time_window.as_deref())?;
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct ApiKeyTokenRow {
+        api_key_id: i64,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        cached_tokens: Option<i64>,
+        reasoning_tokens: Option<i64>,
+    }
+
+    let query = usage_logs::Entity::find()
+        .select_only()
+        .column(usage_logs::Column::ApiKeyId)
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_tokens), 0)"),
+            "input_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_tokens), 0)"),
+            "output_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_cached_tokens), 0)"),
+            "cached_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_reasoning_tokens), 0)"),
+            "reasoning_tokens",
+        )
+        .filter(usage_logs::Column::ApiKeyId.is_not_null())
+        .group_by(usage_logs::Column::ApiKeyId);
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since.as_str()))
+    } else {
+        query
+    };
+
+    let mut rows = query
+        .into_model::<ApiKeyTokenRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| {
+        let left_total = left.input_tokens.unwrap_or(0)
+            + left.output_tokens.unwrap_or(0)
+            + left.cached_tokens.unwrap_or(0)
+            + left.reasoning_tokens.unwrap_or(0);
+        let right_total = right.input_tokens.unwrap_or(0)
+            + right.output_tokens.unwrap_or(0)
+            + right.cached_tokens.unwrap_or(0)
+            + right.reasoning_tokens.unwrap_or(0);
+        right_total.cmp(&left_total).then_with(|| left.api_key_id.cmp(&right.api_key_id))
+    });
+    rows.truncate(3);
+
+    let api_key_ids: Vec<i64> = rows.iter().map(|row| row.api_key_id).collect();
+    let api_key_map = api_keys::Entity::find()
+        .select_only()
+        .column(api_keys::Column::Id)
+        .column(api_keys::Column::Name)
+        .filter(api_keys::Column::DeletedAt.eq(0_i64))
+        .filter(api_keys::Column::Id.is_in(api_key_ids))
+        .into_tuple::<(i64, String)>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .collect::<HashMap<i64, String>>();
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            api_key_map.get(&row.api_key_id).map(|api_key_name| {
+                let input_tokens = i64_to_i32(row.input_tokens.unwrap_or(0));
+                let output_tokens = i64_to_i32(row.output_tokens.unwrap_or(0));
+                let cached_tokens = i64_to_i32(row.cached_tokens.unwrap_or(0));
+                let reasoning_tokens = i64_to_i32(row.reasoning_tokens.unwrap_or(0));
+
+                AdminGraphqlTokenStatsByAPIKey {
+                    api_key_id: graphql_gid("api_key", row.api_key_id),
+                    api_key_name: api_key_name.clone(),
+                    input_tokens,
+                    output_tokens,
+                    cached_tokens,
+                    reasoning_tokens,
+                    total_tokens: input_tokens + output_tokens + cached_tokens + reasoning_tokens,
+                }
+            })
+        })
+        .collect())
+}
+
+async fn query_api_key_token_usage_stats_connection(
+    connection: sea_orm::DatabaseConnection,
+    input: AdminGraphqlApiKeyTokenUsageStatsInput,
+) -> Result<Vec<AdminGraphqlApiKeyTokenUsageStats>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    let api_key_ids = input
+        .api_key_ids
+        .ok_or_else(|| "apiKeyIds is required and must contain at least one API key".to_owned())?;
+    if api_key_ids.is_empty() {
+        return Err("apiKeyIds is required and must contain at least one API key".to_owned());
+    }
+    if api_key_ids.len() > 100 {
+        return Err("apiKeyIds cannot exceed 100 items".to_owned());
+    }
+
+    let mut parsed_api_key_ids = Vec::with_capacity(api_key_ids.len());
+    for api_key_id in api_key_ids {
+        let parsed = parse_graphql_resource_id(api_key_id.as_str(), "api_key")
+            .or_else(|_| parse_graphql_resource_id(api_key_id.as_str(), "apiKey"))
+            .map_err(|_| "invalid api key id".to_owned())?;
+        parsed_api_key_ids.push(parsed);
+    }
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct ApiKeyTokenUsageRow {
+        api_key_id: i64,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        cached_tokens: Option<i64>,
+        reasoning_tokens: Option<i64>,
+    }
+
+    let query = usage_logs::Entity::find()
+        .select_only()
+        .column(usage_logs::Column::ApiKeyId)
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_tokens), 0)"),
+            "input_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_tokens), 0)"),
+            "output_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_cached_tokens), 0)"),
+            "cached_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_reasoning_tokens), 0)"),
+            "reasoning_tokens",
+        )
+        .filter(usage_logs::Column::ApiKeyId.is_in(parsed_api_key_ids.clone()))
+        .group_by(usage_logs::Column::ApiKeyId);
+
+    let query = if let Some(created_at_gte) = input.created_at_gte.as_deref() {
+        query.filter(usage_logs::Column::CreatedAt.gte(created_at_gte))
+    } else {
+        query
+    };
+    let query = if let Some(created_at_lte) = input.created_at_lte.as_deref() {
+        query.filter(usage_logs::Column::CreatedAt.lte(created_at_lte))
+    } else {
+        query
+    };
+
+    let rows = query
+        .into_model::<ApiKeyTokenUsageRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let top_models = query_top_models_for_api_keys_connection(
+        connection.clone(),
+        &parsed_api_key_ids,
+        input.created_at_gte.as_deref(),
+        input.created_at_lte.as_deref(),
+    )
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| AdminGraphqlApiKeyTokenUsageStats {
+            api_key_id: graphql_gid("api_key", row.api_key_id),
+            input_tokens: i64_to_i32(row.input_tokens.unwrap_or(0)),
+            output_tokens: i64_to_i32(row.output_tokens.unwrap_or(0)),
+            cached_tokens: i64_to_i32(row.cached_tokens.unwrap_or(0)),
+            reasoning_tokens: i64_to_i32(row.reasoning_tokens.unwrap_or(0)),
+            top_models: top_models.get(&row.api_key_id).cloned().unwrap_or_default(),
+        })
+        .collect())
+}
+
+async fn query_top_models_for_api_keys_connection(
+    connection: sea_orm::DatabaseConnection,
+    api_key_ids: &[i64],
+    created_at_gte: Option<&str>,
+    created_at_lte: Option<&str>,
+) -> Result<HashMap<i64, Vec<AdminGraphqlModelTokenUsageStats>>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct ApiKeyModelTokenUsageRow {
+        api_key_id: i64,
+        model_id: String,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        cached_tokens: Option<i64>,
+        reasoning_tokens: Option<i64>,
+    }
+
+    let query = usage_logs::Entity::find()
+        .select_only()
+        .column(usage_logs::Column::ApiKeyId)
+        .column(usage_logs::Column::ModelId)
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_tokens), 0)"),
+            "input_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_tokens), 0)"),
+            "output_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_cached_tokens), 0)"),
+            "cached_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_reasoning_tokens), 0)"),
+            "reasoning_tokens",
+        )
+        .filter(usage_logs::Column::ApiKeyId.is_in(api_key_ids.to_vec()))
+        .group_by(usage_logs::Column::ApiKeyId)
+        .group_by(usage_logs::Column::ModelId);
+
+    let query = if let Some(created_at_gte) = created_at_gte {
+        query.filter(usage_logs::Column::CreatedAt.gte(created_at_gte))
+    } else {
+        query
+    };
+    let query = if let Some(created_at_lte) = created_at_lte {
+        query.filter(usage_logs::Column::CreatedAt.lte(created_at_lte))
+    } else {
+        query
+    };
+
+    let rows = query
+        .into_model::<ApiKeyModelTokenUsageRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut grouped = HashMap::<i64, Vec<AdminGraphqlModelTokenUsageStats>>::new();
+    for row in rows {
+        grouped
+            .entry(row.api_key_id)
+            .or_default()
+            .push(AdminGraphqlModelTokenUsageStats {
+                model_id: row.model_id,
+                input_tokens: i64_to_i32(row.input_tokens.unwrap_or(0)),
+                output_tokens: i64_to_i32(row.output_tokens.unwrap_or(0)),
+                cached_tokens: i64_to_i32(row.cached_tokens.unwrap_or(0)),
+                reasoning_tokens: i64_to_i32(row.reasoning_tokens.unwrap_or(0)),
+            });
+    }
+
+    for models in grouped.values_mut() {
+        models.sort_by(|left, right| {
+            let left_total = left.input_tokens + left.output_tokens + left.cached_tokens + left.reasoning_tokens;
+            let right_total = right.input_tokens + right.output_tokens + right.cached_tokens + right.reasoning_tokens;
+            right_total.cmp(&left_total).then_with(|| left.model_id.cmp(&right.model_id))
+        });
+        models.truncate(3);
+    }
+
+    Ok(grouped)
+}
+
+async fn query_token_stats_by_channel_connection(
+    connection: sea_orm::DatabaseConnection,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlTokenStatsByChannel>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, RelationTrait};
+
+    let since = parse_admin_graphql_time_window(time_window.as_deref())?;
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct ChannelTokenRow {
+        channel_name: String,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        cached_tokens: Option<i64>,
+        reasoning_tokens: Option<i64>,
+    }
+
+    let query = usage_logs::Entity::find()
+        .join(sea_orm::JoinType::InnerJoin, usage_logs::Relation::Channels.def())
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .select_only()
+        .column_as(channels::Column::Name, "channel_name")
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_tokens), 0)"),
+            "input_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_tokens), 0)"),
+            "output_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_cached_tokens), 0)"),
+            "cached_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_reasoning_tokens), 0)"),
+            "reasoning_tokens",
+        )
+        .group_by(channels::Column::Name);
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since.as_str()))
+    } else {
+        query
+    };
+
+    let mut rows = query
+        .into_model::<ChannelTokenRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| {
+        let left_total = left.input_tokens.unwrap_or(0)
+            + left.output_tokens.unwrap_or(0)
+            + left.cached_tokens.unwrap_or(0)
+            + left.reasoning_tokens.unwrap_or(0);
+        let right_total = right.input_tokens.unwrap_or(0)
+            + right.output_tokens.unwrap_or(0)
+            + right.cached_tokens.unwrap_or(0)
+            + right.reasoning_tokens.unwrap_or(0);
+        right_total.cmp(&left_total).then_with(|| left.channel_name.cmp(&right.channel_name))
+    });
+    rows.truncate(10);
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let input_tokens = i64_to_i32(row.input_tokens.unwrap_or(0));
+            let output_tokens = i64_to_i32(row.output_tokens.unwrap_or(0));
+            let cached_tokens = i64_to_i32(row.cached_tokens.unwrap_or(0));
+            let reasoning_tokens = i64_to_i32(row.reasoning_tokens.unwrap_or(0));
+            AdminGraphqlTokenStatsByChannel {
+                channel_name: row.channel_name,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
+                reasoning_tokens,
+                total_tokens: input_tokens + output_tokens + cached_tokens + reasoning_tokens,
+            }
+        })
+        .collect())
+}
+
+async fn query_token_stats_by_model_connection(
+    connection: sea_orm::DatabaseConnection,
+    time_window: Option<String>,
+) -> Result<Vec<AdminGraphqlTokenStatsByModel>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    let since = parse_admin_graphql_time_window(time_window.as_deref())?;
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct ModelTokenRow {
+        model_id: String,
+        input_tokens: Option<i64>,
+        output_tokens: Option<i64>,
+        cached_tokens: Option<i64>,
+        reasoning_tokens: Option<i64>,
+    }
+
+    let query = usage_logs::Entity::find()
+        .select_only()
+        .column(usage_logs::Column::ModelId)
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_tokens), 0)"),
+            "input_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_tokens), 0)"),
+            "output_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_cached_tokens), 0)"),
+            "cached_tokens",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_reasoning_tokens), 0)"),
+            "reasoning_tokens",
+        )
+        .group_by(usage_logs::Column::ModelId);
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since.as_str()))
+    } else {
+        query
+    };
+
+    let mut rows = query
+        .into_model::<ModelTokenRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| {
+        let left_total = left.input_tokens.unwrap_or(0)
+            + left.output_tokens.unwrap_or(0)
+            + left.cached_tokens.unwrap_or(0)
+            + left.reasoning_tokens.unwrap_or(0);
+        let right_total = right.input_tokens.unwrap_or(0)
+            + right.output_tokens.unwrap_or(0)
+            + right.cached_tokens.unwrap_or(0)
+            + right.reasoning_tokens.unwrap_or(0);
+        right_total.cmp(&left_total).then_with(|| left.model_id.cmp(&right.model_id))
+    });
+    rows.truncate(10);
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let input_tokens = i64_to_i32(row.input_tokens.unwrap_or(0));
+            let output_tokens = i64_to_i32(row.output_tokens.unwrap_or(0));
+            let cached_tokens = i64_to_i32(row.cached_tokens.unwrap_or(0));
+            let reasoning_tokens = i64_to_i32(row.reasoning_tokens.unwrap_or(0));
+            AdminGraphqlTokenStatsByModel {
+                model_id: row.model_id,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
+                reasoning_tokens,
+                total_tokens: input_tokens + output_tokens + cached_tokens + reasoning_tokens,
+            }
+        })
+        .collect())
+}
+
+async fn query_channel_success_rates_connection(
+    connection: sea_orm::DatabaseConnection,
+) -> Result<Vec<AdminGraphqlChannelSuccessRate>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct ChannelExecutionStatsRow {
+        channel_id: i64,
+        success_count: Option<i64>,
+        failed_count: Option<i64>,
+    }
+
+    let mut rows = request_executions::Entity::find()
+        .select_only()
+        .column(request_executions::Column::ChannelId)
+        .column_as(
+            sea_orm::sea_query::Expr::cust("SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END)"),
+            "success_count",
+        )
+        .column_as(
+            sea_orm::sea_query::Expr::cust("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)"),
+            "failed_count",
+        )
+        .filter(request_executions::Column::ChannelId.is_not_null())
+        .group_by(request_executions::Column::ChannelId)
+        .into_model::<ChannelExecutionStatsRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| {
+        let right_total = right.success_count.unwrap_or(0) + right.failed_count.unwrap_or(0);
+        let left_total = left.success_count.unwrap_or(0) + left.failed_count.unwrap_or(0);
+        right_total.cmp(&left_total).then_with(|| left.channel_id.cmp(&right.channel_id))
+    });
+    rows.truncate(5);
+
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let channel_ids: Vec<i64> = rows.iter().map(|row| row.channel_id).collect();
+    let channel_map = channels::Entity::find()
+        .filter(channels::Column::Id.is_in(channel_ids.clone()))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|channel| (channel.id, (channel.name, channel.type_field)))
+        .collect::<HashMap<i64, (String, String)>>();
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let success_count = i64_to_i32(row.success_count.unwrap_or(0));
+            let failed_count = i64_to_i32(row.failed_count.unwrap_or(0));
+            let total_count = success_count + failed_count;
+            let success_rate = if total_count > 0 {
+                (success_count as f64 / total_count as f64) * 100.0
+            } else {
+                0.0
+            };
+            let (channel_name, channel_type) = channel_map
+                .get(&row.channel_id)
+                .cloned()
+                .unwrap_or_else(|| (String::new(), String::new()));
+
+            AdminGraphqlChannelSuccessRate {
+                channel_id: graphql_gid("channel", row.channel_id),
+                channel_name,
+                channel_type,
+                success_count,
+                failed_count,
+                total_count,
+                success_rate,
+            }
+        })
+        .collect())
+}
+
+async fn query_fastest_channels_connection(
+    connection: sea_orm::DatabaseConnection,
+    input: AdminGraphqlFastestChannelsInput,
+) -> Result<Vec<AdminGraphqlFastestChannel>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let limit = input.limit.unwrap_or(5).clamp(1, 100) as usize;
+    let since = match input.time_window.as_str() {
+        "day" => Some(chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap()),
+        "week" => {
+            let now = chrono::Utc::now();
+            Some(
+                (now.date_naive()
+                    - chrono::Duration::days(now.weekday().num_days_from_monday() as i64))
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            )
+        }
+        "month" => Some(
+            chrono::Utc::now()
+                .date_naive()
+                .with_day(1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        ),
+        _ => Some(chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap()),
+    }
+    .unwrap()
+    .format("%Y-%m-%d %H:%M:%S")
+    .to_string();
+
+    let executions = request_executions::Entity::find()
+        .filter(request_executions::Column::CreatedAt.gte(since.as_str()))
+        .filter(request_executions::Column::MetricsLatencyMs.is_not_null())
+        .filter(request_executions::Column::MetricsLatencyMs.gt(0_i64))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut latest_by_request = HashMap::<i64, axonhub_db_entity::request_executions::Model>::new();
+    for execution in executions {
+        if execution.status != "completed" {
+            continue;
+        }
+        match latest_by_request.get(&execution.request_id) {
+            Some(current)
+                if current.created_at > execution.created_at
+                    || (current.created_at == execution.created_at && current.id >= execution.id) => {}
+            _ => {
+                latest_by_request.insert(execution.request_id, execution);
+            }
+        }
+    }
+
+    let latest_completed: Vec<_> = latest_by_request
+        .into_values()
+        .filter(|execution| execution.channel_id.is_some())
+        .collect();
+    if latest_completed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let request_ids: Vec<i64> = latest_completed.iter().map(|execution| execution.request_id).collect();
+    let usage_rows = usage_logs::Entity::find()
+        .filter(usage_logs::Column::RequestId.is_in(request_ids.clone()))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let usage_by_request = usage_rows
+        .into_iter()
+        .map(|row| (row.request_id, row))
+        .collect::<HashMap<i64, axonhub_db_entity::usage_logs::Model>>();
+
+    let channel_ids: Vec<i64> = latest_completed.iter().filter_map(|execution| execution.channel_id).collect();
+    let channel_map = channels::Entity::find()
+        .filter(channels::Column::Id.is_in(channel_ids))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|channel| (channel.id, (channel.name, channel.type_field)))
+        .collect::<HashMap<i64, (String, String)>>();
+
+    #[derive(Clone)]
+    struct FastestChannelAggregate {
+        channel_id: i64,
+        channel_name: String,
+        channel_type: String,
+        tokens_count: i64,
+        latency_ms: i64,
+        request_count: i64,
+        throughput: f64,
+        confidence_level: String,
+        confidence_score: i32,
+    }
+
+    #[derive(Default)]
+    struct ChannelAccumulator {
+        channel_name: String,
+        channel_type: String,
+        tokens_count: i64,
+        latency_ms: i64,
+        request_count: i64,
+    }
+
+    let mut by_channel = HashMap::<i64, ChannelAccumulator>::new();
+    for execution in latest_completed {
+        let Some(channel_id) = execution.channel_id else { continue; };
+        let Some(usage) = usage_by_request.get(&execution.request_id) else { continue; };
+        let Some((channel_name, channel_type)) = channel_map.get(&channel_id) else { continue; };
+        let Some(latency_ms) = execution.metrics_latency_ms else { continue; };
+
+        let completion_latency = if execution.stream {
+            match execution.metrics_first_token_latency_ms {
+                Some(first_token) if first_token < latency_ms => latency_ms - first_token,
+                Some(_) => 0,
+                None => latency_ms,
+            }
+        } else {
+            latency_ms
+        };
+
+        let tokens = usage.completion_tokens
+            + usage.completion_reasoning_tokens
+            + usage.completion_audio_tokens;
+
+        let entry = by_channel.entry(channel_id).or_default();
+        entry.channel_name = channel_name.clone();
+        entry.channel_type = channel_type.clone();
+        entry.tokens_count += tokens;
+        entry.latency_ms += completion_latency;
+        entry.request_count += 1;
+    }
+
+    let mut aggregates = by_channel
+        .into_iter()
+        .map(|(channel_id, acc)| FastestChannelAggregate {
+            channel_id,
+            channel_name: acc.channel_name,
+            channel_type: acc.channel_type,
+            tokens_count: acc.tokens_count,
+            latency_ms: acc.latency_ms,
+            request_count: acc.request_count,
+            throughput: if acc.latency_ms > 0 {
+                acc.tokens_count as f64 * 1000.0 / acc.latency_ms as f64
+            } else {
+                0.0
+            },
+            confidence_level: String::new(),
+            confidence_score: 0,
+        })
+        .collect::<Vec<_>>();
+
+    if aggregates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut request_counts = aggregates.iter().map(|item| item.request_count).collect::<Vec<_>>();
+    request_counts.sort_unstable();
+    let mid = request_counts.len() / 2;
+    let median = if request_counts.len() % 2 == 0 {
+        (request_counts[mid - 1] + request_counts[mid]) as f64 / 2.0
+    } else {
+        request_counts[mid] as f64
+    };
+
+    for item in &mut aggregates {
+        let confidence_level = graphql_calculate_confidence_level(item.request_count, median);
+        let confidence_score = match confidence_level.as_str() {
+            "high" => 3,
+            "medium" => 2,
+            _ => 1,
+        };
+        item.confidence_level = confidence_level;
+        item.confidence_score = confidence_score;
+    }
+
+    let high_medium_count = aggregates
+        .iter()
+        .filter(|item| item.confidence_level == "high" || item.confidence_level == "medium")
+        .count();
+    let mut results_to_show = if high_medium_count >= limit {
+        aggregates
+            .into_iter()
+            .filter(|item| item.confidence_level == "high" || item.confidence_level == "medium")
+            .collect::<Vec<_>>()
+    } else {
+        aggregates
+    };
+
+    results_to_show.sort_by(|left, right| {
+        right
+            .confidence_score
+            .cmp(&left.confidence_score)
+            .then_with(|| right.throughput.total_cmp(&left.throughput))
+            .then_with(|| left.channel_id.cmp(&right.channel_id))
+    });
+    results_to_show.truncate(limit);
+
+    Ok(results_to_show
+        .into_iter()
+        .map(|item| AdminGraphqlFastestChannel {
+            channel_id: graphql_gid("channel", item.channel_id),
+            channel_name: item.channel_name,
+            channel_type: item.channel_type,
+            throughput: item.throughput,
+            tokens_count: i64_to_i32(item.tokens_count),
+            latency_ms: i64_to_i32(item.latency_ms),
+            request_count: i64_to_i32(item.request_count),
+            confidence_level: item.confidence_level,
+        })
+        .collect())
+}
+
+fn graphql_calculate_confidence_level(request_count: i64, median: f64) -> String {
+    if median == 0.0 {
+        return "low".to_owned();
+    }
+    if request_count < 100 {
+        return "low".to_owned();
+    }
+    let ratio = request_count as f64 / median;
+    if ratio >= 1.5 && request_count >= 500 {
+        return "high".to_owned();
+    }
+    if ratio >= 0.5 {
+        return "medium".to_owned();
+    }
+    "low".to_owned()
+}
+
+async fn query_fastest_models_connection(
+    connection: sea_orm::DatabaseConnection,
+    input: AdminGraphqlFastestChannelsInput,
+) -> Result<Vec<AdminGraphqlFastestModel>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let limit = input.limit.unwrap_or(5).clamp(1, 100) as usize;
+    let since = match input.time_window.as_str() {
+        "day" => Some(chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap()),
+        "week" => {
+            let now = chrono::Utc::now();
+            Some(
+                (now.date_naive()
+                    - chrono::Duration::days(now.weekday().num_days_from_monday() as i64))
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            )
+        }
+        "month" => Some(
+            chrono::Utc::now()
+                .date_naive()
+                .with_day(1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+        ),
+        _ => Some(chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap()),
+    }
+    .unwrap()
+    .format("%Y-%m-%d %H:%M:%S")
+    .to_string();
+
+    let executions = request_executions::Entity::find()
+        .filter(request_executions::Column::CreatedAt.gte(since.as_str()))
+        .filter(request_executions::Column::MetricsLatencyMs.is_not_null())
+        .filter(request_executions::Column::MetricsLatencyMs.gt(0_i64))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut latest_by_request = HashMap::<i64, axonhub_db_entity::request_executions::Model>::new();
+    for execution in executions {
+        if execution.status != "completed" {
+            continue;
+        }
+        match latest_by_request.get(&execution.request_id) {
+            Some(current)
+                if current.created_at > execution.created_at
+                    || (current.created_at == execution.created_at && current.id >= execution.id) => {}
+            _ => {
+                latest_by_request.insert(execution.request_id, execution);
+            }
+        }
+    }
+
+    let latest_completed: Vec<_> = latest_by_request.into_values().collect();
+    if latest_completed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let request_ids: Vec<i64> = latest_completed.iter().map(|execution| execution.request_id).collect();
+    let usage_rows = usage_logs::Entity::find()
+        .filter(usage_logs::Column::RequestId.is_in(request_ids.clone()))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let usage_by_request = usage_rows
+        .into_iter()
+        .map(|row| (row.request_id, row))
+        .collect::<HashMap<i64, axonhub_db_entity::usage_logs::Model>>();
+
+    let request_rows = requests::Entity::find()
+        .filter(requests::Column::Id.is_in(request_ids))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let request_by_id = request_rows
+        .into_iter()
+        .map(|row| (row.id, row))
+        .collect::<HashMap<i64, axonhub_db_entity::requests::Model>>();
+
+    let model_ids: Vec<String> = request_by_id.values().map(|request| request.model_id.clone()).collect();
+    let model_rows = axonhub_db_entity::models::Entity::find()
+        .filter(axonhub_db_entity::models::Column::ModelId.is_in(model_ids))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let model_name_by_id = model_rows
+        .into_iter()
+        .map(|model| (model.model_id, model.name))
+        .collect::<HashMap<String, String>>();
+
+    #[derive(Clone)]
+    struct FastestModelAggregate {
+        model_id: String,
+        model_name: String,
+        tokens_count: i64,
+        latency_ms: i64,
+        request_count: i64,
+        throughput: f64,
+        confidence_level: String,
+        confidence_score: i32,
+    }
+
+    #[derive(Default)]
+    struct ModelAccumulator {
+        model_name: String,
+        tokens_count: i64,
+        latency_ms: i64,
+        request_count: i64,
+    }
+
+    let mut by_model = HashMap::<String, ModelAccumulator>::new();
+    for execution in latest_completed {
+        let Some(usage) = usage_by_request.get(&execution.request_id) else { continue; };
+        let Some(request) = request_by_id.get(&execution.request_id) else { continue; };
+        let model_id = request.model_id.clone();
+        let model_name = model_name_by_id
+            .get(&model_id)
+            .cloned()
+            .unwrap_or_else(|| model_id.clone());
+        let Some(latency_ms) = execution.metrics_latency_ms else { continue; };
+
+        let completion_latency = if execution.stream {
+            match execution.metrics_first_token_latency_ms {
+                Some(first_token) if first_token < latency_ms => latency_ms - first_token,
+                Some(_) => 0,
+                None => latency_ms,
+            }
+        } else {
+            latency_ms
+        };
+
+        let tokens = usage.completion_tokens
+            + usage.completion_reasoning_tokens
+            + usage.completion_audio_tokens;
+
+        let entry = by_model.entry(model_id).or_default();
+        entry.model_name = model_name;
+        entry.tokens_count += tokens;
+        entry.latency_ms += completion_latency;
+        entry.request_count += 1;
+    }
+
+    let mut aggregates = by_model
+        .into_iter()
+        .map(|(model_id, acc)| FastestModelAggregate {
+            model_id,
+            model_name: acc.model_name,
+            tokens_count: acc.tokens_count,
+            latency_ms: acc.latency_ms,
+            request_count: acc.request_count,
+            throughput: if acc.latency_ms > 0 {
+                acc.tokens_count as f64 * 1000.0 / acc.latency_ms as f64
+            } else {
+                0.0
+            },
+            confidence_level: String::new(),
+            confidence_score: 0,
+        })
+        .collect::<Vec<_>>();
+
+    if aggregates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut request_counts = aggregates.iter().map(|item| item.request_count).collect::<Vec<_>>();
+    request_counts.sort_unstable();
+    let mid = request_counts.len() / 2;
+    let median = if request_counts.len() % 2 == 0 {
+        (request_counts[mid - 1] + request_counts[mid]) as f64 / 2.0
+    } else {
+        request_counts[mid] as f64
+    };
+
+    for item in &mut aggregates {
+        let confidence_level = graphql_calculate_confidence_level(item.request_count, median);
+        let confidence_score = match confidence_level.as_str() {
+            "high" => 3,
+            "medium" => 2,
+            _ => 1,
+        };
+        item.confidence_level = confidence_level;
+        item.confidence_score = confidence_score;
+    }
+
+    let high_medium_count = aggregates
+        .iter()
+        .filter(|item| item.confidence_level == "high" || item.confidence_level == "medium")
+        .count();
+    let mut results_to_show = if high_medium_count >= limit {
+        aggregates
+            .into_iter()
+            .filter(|item| item.confidence_level == "high" || item.confidence_level == "medium")
+            .collect::<Vec<_>>()
+    } else {
+        aggregates
+    };
+
+    results_to_show.sort_by(|left, right| {
+        right
+            .confidence_score
+            .cmp(&left.confidence_score)
+            .then_with(|| right.throughput.total_cmp(&left.throughput))
+            .then_with(|| left.model_id.cmp(&right.model_id))
+    });
+    results_to_show.truncate(limit);
+
+    Ok(results_to_show
+        .into_iter()
+        .map(|item| AdminGraphqlFastestModel {
+            model_id: item.model_id,
+            model_name: item.model_name,
+            throughput: item.throughput,
+            tokens_count: i64_to_i32(item.tokens_count),
+            latency_ms: i64_to_i32(item.latency_ms),
+            request_count: i64_to_i32(item.request_count),
+            confidence_level: item.confidence_level,
+        })
+        .collect())
+}
+
+async fn query_model_performance_stats_connection(
+    connection: sea_orm::DatabaseConnection,
+) -> Result<Vec<AdminGraphqlModelPerformanceStat>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    const TOP_PERFORMERS_LIMIT: usize = 6;
+
+    let timezone = query_graphql_general_settings_timezone(&connection)
+        .await?
+        .unwrap_or_else(|| "UTC".to_owned());
+    let tz: Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
+
+    let days_count = 30_i64;
+    let now_utc = chrono::Utc::now();
+    let now_local = now_utc.with_timezone(&tz);
+    let start_date_local = now_local.date_naive() - chrono::Duration::days(days_count - 1);
+    let start_of_window_local = resolve_tz_local_datetime(
+        tz,
+        start_date_local.and_hms_opt(0, 0, 0).unwrap(),
+        timezone.as_str(),
+    )?;
+    let start_utc_string = start_of_window_local
+        .with_timezone(&chrono::Utc)
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+
+    let executions = request_executions::Entity::find()
+        .filter(request_executions::Column::CreatedAt.gte(start_utc_string.as_str()))
+        .filter(request_executions::Column::MetricsLatencyMs.is_not_null())
+        .filter(request_executions::Column::MetricsLatencyMs.gt(0_i64))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut latest_by_request = HashMap::<i64, axonhub_db_entity::request_executions::Model>::new();
+    for execution in executions {
+        if execution.status != "completed" {
+            continue;
+        }
+        match latest_by_request.get(&execution.request_id) {
+            Some(current)
+                if current.created_at > execution.created_at
+                    || (current.created_at == execution.created_at && current.id >= execution.id) => {}
+            _ => {
+                latest_by_request.insert(execution.request_id, execution);
+            }
+        }
+    }
+
+    let latest_completed = latest_by_request.into_values().collect::<Vec<_>>();
+    if latest_completed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let request_ids = latest_completed.iter().map(|execution| execution.request_id).collect::<Vec<_>>();
+    let usage_by_request = usage_logs::Entity::find()
+        .filter(usage_logs::Column::RequestId.is_in(request_ids.clone()))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|row| (row.request_id, row))
+        .collect::<HashMap<i64, axonhub_db_entity::usage_logs::Model>>();
+    let request_by_id = requests::Entity::find()
+        .filter(requests::Column::Id.is_in(request_ids.clone()))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|row| (row.id, row))
+        .collect::<HashMap<i64, axonhub_db_entity::requests::Model>>();
+
+    let model_ids = request_by_id
+        .values()
+        .map(|request| request.model_id.clone())
+        .collect::<Vec<_>>();
+    let known_models = axonhub_db_entity::models::Entity::find()
+        .filter(axonhub_db_entity::models::Column::ModelId.is_in(model_ids))
+        .filter(axonhub_db_entity::models::Column::DeletedAt.eq(0_i64))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|model| model.model_id)
+        .collect::<std::collections::HashSet<_>>();
+
+    #[derive(Default)]
+    struct DailyPerfAccumulator {
+        tokens_count: i64,
+        latency_ms: i64,
+        first_token_sum: i64,
+        first_token_count: i64,
+        request_count: i64,
+    }
+
+    let mut by_day_model = HashMap::<(String, String), DailyPerfAccumulator>::new();
+    let mut total_requests_by_model = HashMap::<String, i64>::new();
+
+    for execution in latest_completed {
+        let Some(request) = request_by_id.get(&execution.request_id) else { continue; };
+        if !known_models.contains(&request.model_id) {
+            continue;
+        }
+        let Some(usage) = usage_by_request.get(&execution.request_id) else { continue; };
+        let Some(latency_ms) = execution.metrics_latency_ms else { continue; };
+
+        let exec_naive = chrono::NaiveDateTime::parse_from_str(&execution.created_at, "%Y-%m-%d %H:%M:%S")
+            .map_err(|error| format!("failed to parse request execution timestamp {:?}: {error}", execution.created_at))?;
+        let local_date = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(exec_naive, chrono::Utc)
+            .with_timezone(&tz)
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        let effective_latency = if execution.stream {
+            match execution.metrics_first_token_latency_ms {
+                Some(first_token) if first_token < latency_ms => latency_ms - first_token,
+                Some(_) => 0,
+                None => latency_ms,
+            }
+        } else {
+            latency_ms
+        };
+
+        let tokens = usage.completion_tokens
+            + usage.completion_reasoning_tokens
+            + usage.completion_audio_tokens;
+
+        let entry = by_day_model.entry((local_date, request.model_id.clone())).or_default();
+        entry.tokens_count += tokens;
+        entry.latency_ms += effective_latency;
+        entry.request_count += 1;
+        if let Some(first_token) = execution.metrics_first_token_latency_ms.filter(|value| *value > 0) {
+            entry.first_token_sum += first_token;
+            entry.first_token_count += 1;
+        }
+
+        *total_requests_by_model.entry(request.model_id.clone()).or_insert(0) += 1;
+    }
+
+    if by_day_model.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut model_infos = total_requests_by_model
+        .into_iter()
+        .map(|(model_id, request_count)| (model_id, request_count))
+        .collect::<Vec<_>>();
+    let request_counts = model_infos.iter().map(|(_, request_count)| *request_count).collect::<Vec<_>>();
+    let mut sorted_counts = request_counts;
+    sorted_counts.sort_unstable();
+    let mid = sorted_counts.len() / 2;
+    let median = if sorted_counts.len() % 2 == 0 {
+        (sorted_counts[mid - 1] + sorted_counts[mid]) as f64 / 2.0
+    } else {
+        sorted_counts[mid] as f64
+    };
+
+    #[derive(Clone)]
+    struct RankedModel {
+        model_id: String,
+        request_count: i64,
+        confidence_score: i32,
+    }
+
+    let mut ranked_models = model_infos
+        .drain(..)
+        .map(|(model_id, request_count)| {
+            let confidence_level = graphql_calculate_confidence_level(request_count, median);
+            let confidence_score = match confidence_level.as_str() {
+                "high" => 3,
+                "medium" => 2,
+                _ => 1,
+            };
+            RankedModel {
+                model_id,
+                request_count,
+                confidence_score,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let high_medium_count = ranked_models
+        .iter()
+        .filter(|item| item.confidence_score >= 2)
+        .count();
+    if high_medium_count >= TOP_PERFORMERS_LIMIT {
+        ranked_models.retain(|item| item.confidence_score >= 2);
+    }
+    ranked_models.sort_by(|left, right| {
+        right
+            .confidence_score
+            .cmp(&left.confidence_score)
+            .then_with(|| right.request_count.cmp(&left.request_count))
+            .then_with(|| left.model_id.cmp(&right.model_id))
+    });
+    ranked_models.truncate(TOP_PERFORMERS_LIMIT);
+
+    let top_model_ids = ranked_models
+        .into_iter()
+        .map(|item| item.model_id)
+        .collect::<std::collections::HashSet<_>>();
+
+    let mut results = by_day_model
+        .into_iter()
+        .filter(|((_, model_id), _)| top_model_ids.contains(model_id))
+        .filter_map(|((date, model_id), acc)| {
+            let throughput = if acc.latency_ms > 0 {
+                Some(acc.tokens_count as f64 * 1000.0 / acc.latency_ms as f64)
+            } else {
+                None
+            };
+            if throughput.is_none_or(|value| value <= 0.0) {
+                return None;
+            }
+            let ttft_ms = if acc.first_token_count > 0 {
+                Some(acc.first_token_sum as f64 / acc.first_token_count as f64)
+            } else {
+                None
+            };
+
+            Some(AdminGraphqlModelPerformanceStat {
+                date,
+                model_id,
+                throughput,
+                ttft_ms,
+                request_count: i64_to_i32(acc.request_count),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    results.sort_by(|left, right| {
+        right
+            .date
+            .cmp(&left.date)
+            .then_with(|| right.throughput.unwrap_or(0.0).total_cmp(&left.throughput.unwrap_or(0.0)))
+            .then_with(|| left.model_id.cmp(&right.model_id))
+    });
+    Ok(results)
+}
+
+async fn query_channel_performance_stats_connection(
+    connection: sea_orm::DatabaseConnection,
+) -> Result<Vec<AdminGraphqlChannelPerformanceStat>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    const TOP_PERFORMERS_LIMIT: usize = 6;
+
+    let timezone = query_graphql_general_settings_timezone(&connection)
+        .await?
+        .unwrap_or_else(|| "UTC".to_owned());
+    let tz: Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
+
+    let days_count = 30_i64;
+    let now_utc = chrono::Utc::now();
+    let now_local = now_utc.with_timezone(&tz);
+    let start_date_local = now_local.date_naive() - chrono::Duration::days(days_count - 1);
+    let start_of_window_local = resolve_tz_local_datetime(
+        tz,
+        start_date_local.and_hms_opt(0, 0, 0).unwrap(),
+        timezone.as_str(),
+    )?;
+    let start_utc = start_of_window_local.with_timezone(&chrono::Utc);
+    let start_utc_string = start_utc.format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let probe_rows = channel_probes::Entity::find()
+        .filter(channel_probes::Column::Timestamp.gte(start_utc.timestamp()))
+        .filter(channel_probes::Column::AvgTokensPerSecond.lte(2000.0))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    if !probe_rows.is_empty() {
+        return query_channel_performance_stats_from_probes(connection, probe_rows, tz, TOP_PERFORMERS_LIMIT).await;
+    }
+
+    query_channel_performance_stats_from_executions(
+        connection,
+        tz,
+        start_utc_string.as_str(),
+        TOP_PERFORMERS_LIMIT,
+    )
+    .await
+}
+
+async fn query_channel_performance_stats_from_probes(
+    connection: sea_orm::DatabaseConnection,
+    probe_rows: Vec<axonhub_db_entity::channel_probes::Model>,
+    tz: Tz,
+    limit: usize,
+) -> Result<Vec<AdminGraphqlChannelPerformanceStat>, String> {
+    #[derive(Default)]
+    struct ProbeDailyAccumulator {
+        request_count: i64,
+        throughput_weighted_sum: f64,
+        throughput_weight: i64,
+        ttft_weighted_sum: f64,
+        ttft_weight: i64,
+    }
+
+    let mut by_day_channel = HashMap::<(String, i64), ProbeDailyAccumulator>::new();
+    let mut total_requests_by_channel = HashMap::<i64, i64>::new();
+
+    for probe in probe_rows {
+        let date = chrono::DateTime::<chrono::Utc>::from_timestamp(probe.timestamp, 0)
+            .ok_or_else(|| format!("invalid probe timestamp: {}", probe.timestamp))?
+            .with_timezone(&tz)
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+        let weight = i64::from(probe.total_request_count);
+        let entry = by_day_channel.entry((date, probe.channel_id)).or_default();
+        entry.request_count += weight;
+        if let Some(throughput) = probe.avg_tokens_per_second {
+            entry.throughput_weighted_sum += throughput * weight as f64;
+            entry.throughput_weight += weight;
+        }
+        if let Some(ttft) = probe.avg_time_to_first_token_ms {
+            entry.ttft_weighted_sum += ttft * weight as f64;
+            entry.ttft_weight += weight;
+        }
+        *total_requests_by_channel.entry(probe.channel_id).or_insert(0) += weight;
+    }
+
+    if by_day_channel.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let top_channel_ids = graphql_select_top_channel_ids(total_requests_by_channel, limit);
+    let channel_names = query_channel_name_map(&connection, &top_channel_ids.iter().copied().collect::<Vec<_>>()).await?;
+
+    let mut results = by_day_channel
+        .into_iter()
+        .filter(|((_, channel_id), _)| top_channel_ids.contains(channel_id))
+        .map(|((date, channel_id), acc)| {
+            let throughput = if acc.throughput_weight > 0 {
+                let value = acc.throughput_weighted_sum / acc.throughput_weight as f64;
+                (value > 0.0).then_some(value)
+            } else {
+                None
+            };
+            let ttft_ms = if acc.ttft_weight > 0 {
+                let value = acc.ttft_weighted_sum / acc.ttft_weight as f64;
+                (value > 0.0).then_some(value)
+            } else {
+                None
+            };
+
+            AdminGraphqlChannelPerformanceStat {
+                date,
+                channel_id: channel_id.to_string(),
+                channel_name: channel_names
+                    .get(&channel_id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("channel-{channel_id}")),
+                throughput,
+                ttft_ms,
+                request_count: i64_to_i32(acc.request_count),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    results.sort_by(|left, right| left.date.cmp(&right.date).then_with(|| left.channel_id.cmp(&right.channel_id)));
+    Ok(results)
+}
+
+async fn query_channel_performance_stats_from_executions(
+    connection: sea_orm::DatabaseConnection,
+    tz: Tz,
+    start_utc_string: &str,
+    limit: usize,
+) -> Result<Vec<AdminGraphqlChannelPerformanceStat>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let executions = request_executions::Entity::find()
+        .filter(request_executions::Column::CreatedAt.gte(start_utc_string))
+        .filter(request_executions::Column::MetricsLatencyMs.is_not_null())
+        .filter(request_executions::Column::MetricsLatencyMs.gt(0_i64))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut latest_by_request = HashMap::<i64, axonhub_db_entity::request_executions::Model>::new();
+    for execution in executions {
+        if execution.status != "completed" {
+            continue;
+        }
+        match latest_by_request.get(&execution.request_id) {
+            Some(current)
+                if current.created_at > execution.created_at
+                    || (current.created_at == execution.created_at && current.id >= execution.id) => {}
+            _ => {
+                latest_by_request.insert(execution.request_id, execution);
+            }
+        }
+    }
+
+    let latest_completed = latest_by_request
+        .into_values()
+        .filter(|execution| execution.channel_id.is_some())
+        .collect::<Vec<_>>();
+    if latest_completed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let request_ids = latest_completed.iter().map(|execution| execution.request_id).collect::<Vec<_>>();
+    let usage_by_request = usage_logs::Entity::find()
+        .filter(usage_logs::Column::RequestId.is_in(request_ids))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|row| (row.request_id, row))
+        .collect::<HashMap<i64, axonhub_db_entity::usage_logs::Model>>();
+
+    #[derive(Default)]
+    struct ChannelPerfAccumulator {
+        tokens_count: i64,
+        effective_latency_ms: i64,
+        first_token_sum: i64,
+        first_token_count: i64,
+        request_count: i64,
+    }
+
+    let mut by_day_channel = HashMap::<(String, i64), ChannelPerfAccumulator>::new();
+    let mut total_requests_by_channel = HashMap::<i64, i64>::new();
+
+    for execution in latest_completed {
+        let Some(channel_id) = execution.channel_id else { continue; };
+        let Some(usage) = usage_by_request.get(&execution.request_id) else { continue; };
+        let Some(latency_ms) = execution.metrics_latency_ms else { continue; };
+
+        let exec_naive = chrono::NaiveDateTime::parse_from_str(&execution.created_at, "%Y-%m-%d %H:%M:%S")
+            .map_err(|error| format!("failed to parse request execution timestamp {:?}: {error}", execution.created_at))?;
+        let local_date = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(exec_naive, chrono::Utc)
+            .with_timezone(&tz)
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+
+        let effective_latency = if execution.stream {
+            match execution.metrics_first_token_latency_ms {
+                Some(first_token) if first_token < latency_ms => latency_ms - first_token,
+                Some(_) => 0,
+                None => latency_ms,
+            }
+        } else {
+            latency_ms
+        };
+
+        let tokens = usage.completion_tokens
+            + usage.completion_reasoning_tokens
+            + usage.completion_audio_tokens;
+
+        let entry = by_day_channel.entry((local_date, channel_id)).or_default();
+        entry.tokens_count += tokens;
+        entry.effective_latency_ms += effective_latency;
+        entry.request_count += 1;
+        if let Some(first_token) = execution.metrics_first_token_latency_ms.filter(|value| *value > 0) {
+            entry.first_token_sum += first_token;
+            entry.first_token_count += 1;
+        }
+
+        *total_requests_by_channel.entry(channel_id).or_insert(0) += 1;
+    }
+
+    if by_day_channel.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let top_channel_ids = graphql_select_top_channel_ids(total_requests_by_channel, limit);
+    let channel_names = query_channel_name_map(&connection, &top_channel_ids.iter().copied().collect::<Vec<_>>()).await?;
+
+    let mut results = by_day_channel
+        .into_iter()
+        .filter(|((_, channel_id), _)| top_channel_ids.contains(channel_id))
+        .map(|((date, channel_id), acc)| {
+            let throughput = if acc.effective_latency_ms > 0 {
+                let value = acc.tokens_count as f64 * 1000.0 / acc.effective_latency_ms as f64;
+                (value > 0.0).then_some(value)
+            } else {
+                None
+            };
+            let ttft_ms = if acc.first_token_count > 0 {
+                let value = acc.first_token_sum as f64 / acc.first_token_count as f64;
+                (value > 0.0).then_some(value)
+            } else {
+                None
+            };
+
+            AdminGraphqlChannelPerformanceStat {
+                date,
+                channel_id: channel_id.to_string(),
+                channel_name: channel_names
+                    .get(&channel_id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("channel-{channel_id}")),
+                throughput,
+                ttft_ms,
+                request_count: i64_to_i32(acc.request_count),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    results.sort_by(|left, right| left.date.cmp(&right.date).then_with(|| left.channel_id.cmp(&right.channel_id)));
+    Ok(results)
+}
+
+fn graphql_select_top_channel_ids(
+    total_requests_by_channel: HashMap<i64, i64>,
+    limit: usize,
+) -> std::collections::HashSet<i64> {
+    #[derive(Clone)]
+    struct RankedChannel {
+        channel_id: i64,
+        request_count: i64,
+        confidence_score: i32,
+    }
+
+    let request_counts = total_requests_by_channel.values().copied().collect::<Vec<_>>();
+    let mut sorted_counts = request_counts;
+    sorted_counts.sort_unstable();
+    let mid = sorted_counts.len() / 2;
+    let median = if sorted_counts.len() % 2 == 0 {
+        (sorted_counts[mid - 1] + sorted_counts[mid]) as f64 / 2.0
+    } else {
+        sorted_counts[mid] as f64
+    };
+
+    let mut ranked_channels = total_requests_by_channel
+        .into_iter()
+        .map(|(channel_id, request_count)| {
+            let confidence_level = graphql_calculate_confidence_level(request_count, median);
+            let confidence_score = match confidence_level.as_str() {
+                "high" => 3,
+                "medium" => 2,
+                _ => 1,
+            };
+            RankedChannel {
+                channel_id,
+                request_count,
+                confidence_score,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let high_medium_count = ranked_channels
+        .iter()
+        .filter(|item| item.confidence_score >= 2)
+        .count();
+    if high_medium_count >= limit {
+        ranked_channels.retain(|item| item.confidence_score >= 2);
+    }
+    ranked_channels.sort_by(|left, right| {
+        right
+            .confidence_score
+            .cmp(&left.confidence_score)
+            .then_with(|| right.request_count.cmp(&left.request_count))
+            .then_with(|| left.channel_id.cmp(&right.channel_id))
+    });
+    ranked_channels.truncate(limit);
+
+    ranked_channels
+        .into_iter()
+        .map(|item| item.channel_id)
+        .collect::<std::collections::HashSet<_>>()
+}
+
+async fn query_channel_name_map(
+    connection: &sea_orm::DatabaseConnection,
+    channel_ids: &[i64],
+) -> Result<HashMap<i64, String>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    if channel_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    Ok(channels::Entity::find()
+        .filter(channels::Column::Id.is_in(channel_ids.to_vec()))
+        .all(connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|channel| (channel.id, channel.name))
+        .collect())
+}
+
+async fn query_daily_request_stats_connection(
+    connection: sea_orm::DatabaseConnection,
+) -> Result<Vec<AdminGraphqlDailyRequestStats>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let timezone = query_graphql_general_settings_timezone(&connection)
+        .await?
+        .unwrap_or_else(|| "UTC".to_owned());
+    let tz: Tz = timezone.parse().unwrap_or(chrono_tz::UTC);
+
+    let days_count = 30_i64;
+    let now_utc = chrono::Utc::now();
+    let now_local = now_utc.with_timezone(&tz);
+    let start_date_local = now_local.date_naive() - chrono::Duration::days(days_count - 1);
+    let start_of_window_local = resolve_tz_local_datetime(
+        tz,
+        start_date_local.and_hms_opt(0, 0, 0).unwrap(),
+        timezone.as_str(),
+    )?;
+
+    let start_utc = start_of_window_local.with_timezone(&chrono::Utc);
+    let start_utc_string = start_utc.format("%Y-%m-%d %H:%M:%S").to_string();
+    let now_utc_string = now_utc.format("%Y-%m-%d %H:%M:%S").to_string();
+    let rows = usage_logs::Entity::find()
+        .filter(usage_logs::Column::CreatedAt.gte(start_utc_string.as_str()))
+        .filter(usage_logs::Column::CreatedAt.lt(now_utc_string.as_str()))
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut daily_map = HashMap::<String, (i64, i64, f64)>::new();
+    for row in rows {
+        let naive = chrono::NaiveDateTime::parse_from_str(row.created_at.as_str(), "%Y-%m-%d %H:%M:%S")
+            .map_err(|error| format!("failed to parse usage log timestamp {:?}: {error}", row.created_at))?;
+        let local_date = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc)
+            .with_timezone(&tz)
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
+        let entry = daily_map.entry(local_date).or_insert((0, 0, 0.0));
+        entry.0 += 1;
+        entry.1 += row.total_tokens;
+        entry.2 += row.total_cost.unwrap_or(0.0);
+    }
+
+    Ok((0..days_count)
+        .map(|offset| {
+            let date = start_date_local + chrono::Duration::days(offset);
+            let date_string = date.format("%Y-%m-%d").to_string();
+            let (count, tokens, cost) = daily_map
+                .get(date_string.as_str())
+                .copied()
+                .unwrap_or((0, 0, 0.0));
+
+            AdminGraphqlDailyRequestStats {
+                date: date_string,
+                count: i64_to_i32(count),
+                tokens: i64_to_i32(tokens),
+                cost,
+            }
+        })
+        .collect())
+}
+
+async fn query_graphql_general_settings_timezone(
+    connection: &sea_orm::DatabaseConnection,
+) -> Result<Option<String>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+
+    let value = axonhub_db_entity::systems::Entity::find()
+        .filter(axonhub_db_entity::systems::Column::Key.eq("system_general_settings"))
+        .filter(axonhub_db_entity::systems::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<axonhub_db_entity::systems::KeyValue>()
+        .one(connection)
+        .await
+        .map_err(|error| error.to_string())?
+        .map(|row| row.value);
+
+    Ok(value.and_then(|raw| {
+        serde_json::from_str::<AdminGraphqlGeneralSettings>(&raw)
+            .ok()
+            .map(|settings| settings.timezone.trim().to_owned())
+            .filter(|timezone| !timezone.is_empty())
+    }))
+}
+
+fn resolve_tz_local_datetime(
+    tz: Tz,
+    naive: chrono::NaiveDateTime,
+    timezone_name: &str,
+) -> Result<chrono::DateTime<Tz>, String> {
+    tz.from_local_datetime(&naive)
+        .single()
+        .or_else(|| tz.from_local_datetime(&naive).earliest())
+        .or_else(|| tz.from_local_datetime(&naive).latest())
+        .ok_or_else(|| format!("failed to resolve local datetime for timezone {timezone_name:?}"))
+}
+
+async fn query_token_stats_aggregate(
+    connection: &sea_orm::DatabaseConnection,
+    since: Option<&str>,
+) -> Result<AdminGraphqlTokenStatsAggregateRow, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect};
+
+    let query = usage_logs::Entity::find().select_only().column_as(
+        sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_tokens), 0)"),
+        "input_tokens",
+    )
+    .column_as(
+        sea_orm::sea_query::Expr::cust("COALESCE(SUM(completion_tokens), 0)"),
+        "output_tokens",
+    )
+    .column_as(
+        sea_orm::sea_query::Expr::cust("COALESCE(SUM(prompt_cached_tokens), 0)"),
+        "cached_tokens",
+    )
+    .column_as(
+        sea_orm::sea_query::Expr::cust("MAX(created_at)"),
+        "last_updated",
+    );
+
+    let query = if let Some(since) = since {
+        query.filter(usage_logs::Column::CreatedAt.gte(since))
+    } else {
+        query
+    };
+
+    query
+        .into_model::<AdminGraphqlTokenStatsAggregateRow>()
+        .one(connection)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|row| row.unwrap_or(AdminGraphqlTokenStatsAggregateRow {
+            input_tokens: Some(0),
+            output_tokens: Some(0),
+            cached_tokens: Some(0),
+            last_updated: None,
+        }))
+}
+
+fn normalize_usage_log_last_updated(value: &str) -> String {
+    chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
+        .map(|naive| {
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc)
+                .to_rfc3339()
+        })
+        .unwrap_or_else(|_| value.to_owned())
+}
+
+fn parse_admin_graphql_time_window(time_window: Option<&str>) -> Result<Option<String>, String> {
+    let time_window = time_window.map(str::trim).filter(|value| !value.is_empty());
+    let Some(time_window) = time_window else {
+        return Ok(None);
+    };
+
+    if time_window == "allTime" {
+        return Ok(None);
+    }
+
+    let now = chrono::Utc::now();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    let since = match time_window {
+        "day" => today_start,
+        "week" => today_start - chrono::Duration::days(now.weekday().num_days_from_monday() as i64),
+        "month" => now
+            .date_naive()
+            .with_day(1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap(),
+        other => {
+            return Err(format!(
+                "unsupported timeWindow value: {other:?} (expected day, week, month, allTime)"
+            ));
+        }
+    };
+
+    Ok(Some(since.format("%Y-%m-%d %H:%M:%S").to_string()))
+}
+
+async fn query_request_stats_connection(
+    connection: sea_orm::DatabaseConnection,
+) -> Result<AdminGraphqlRequestStats, String> {
+    use chrono::Datelike;
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+
+    let now = chrono::Utc::now();
+    let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+    let this_week_start = today_start
+        - chrono::Duration::days(now.weekday().num_days_from_monday() as i64);
+    let last_week_start = this_week_start - chrono::Duration::days(7);
+    let this_month_start = now
+        .date_naive()
+        .with_day(1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+
+    let today_start = today_start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let this_week_start = this_week_start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let last_week_start = last_week_start.format("%Y-%m-%d %H:%M:%S").to_string();
+    let this_month_start = this_month_start.format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let requests_today = usage_logs::Entity::find()
+        .filter(usage_logs::Column::CreatedAt.gte(today_start.as_str()))
+        .count(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let requests_this_week = usage_logs::Entity::find()
+        .filter(usage_logs::Column::CreatedAt.gte(this_week_start.as_str()))
+        .count(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let requests_last_week = usage_logs::Entity::find()
+        .filter(usage_logs::Column::CreatedAt.gte(last_week_start.as_str()))
+        .filter(usage_logs::Column::CreatedAt.lt(this_week_start.as_str()))
+        .count(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let requests_this_month = usage_logs::Entity::find()
+        .filter(usage_logs::Column::CreatedAt.gte(this_month_start.as_str()))
+        .count(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(AdminGraphqlRequestStats {
+        requests_today: requests_today as i32,
+        requests_this_week: requests_this_week as i32,
+        requests_last_week: requests_last_week as i32,
+        requests_this_month: requests_this_month as i32,
+    })
+}
+
+async fn query_check_for_update_seaorm(
+    update_checker: AdminGraphqlUpdateChecker,
+) -> Result<GraphqlExecutionResult, String> {
+    let current_version = BuildInfo::current().version().to_owned();
+    let version_check = tokio::task::spawn_blocking(move || {
+        update_checker.check_for_update(current_version.as_str())
+    })
+    .await
+    .map_err(|error| format!("failed to join update check task: {error}"))??;
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "checkForUpdate": version_check,
+            }
+        }),
+    })
+}
+
+impl AdminGraphqlUpdateChecker {
+    fn github() -> Self {
+        Self {
+            releases_api_url: ADMIN_GRAPHQL_RELEASES_API_URL.to_owned(),
+            release_url_prefix: ADMIN_GRAPHQL_RELEASE_URL_PREFIX.to_owned(),
+        }
+    }
+
+    #[cfg(test)]
+    fn new(
+        releases_api_url: impl Into<String>,
+        release_url_prefix: impl Into<String>,
+    ) -> Self {
+        Self {
+            releases_api_url: releases_api_url.into(),
+            release_url_prefix: release_url_prefix.into(),
+        }
+    }
+
+    fn check_for_update(&self, current_version: &str) -> Result<AdminGraphqlVersionCheck, String> {
+        let latest_version = self.fetch_latest_release()?;
+        Ok(AdminGraphqlVersionCheck {
+            current_version: current_version.to_owned(),
+            release_url: format!("{}{}", self.release_url_prefix, latest_version),
+            has_update: is_newer_version(current_version, latest_version.as_str()),
+            latest_version,
+        })
+    }
+
+    fn fetch_latest_release(&self) -> Result<String, String> {
+        let mut api_url = reqwest::Url::parse(self.releases_api_url.as_str())
+            .map_err(|error| format!("failed to parse URL: {error}"))?;
+        {
+            let mut query = api_url.query_pairs_mut();
+            query.append_pair("per_page", "10");
+            query.append_pair("page", "1");
+        }
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|error| format!("failed to build HTTP client: {error}"))?;
+        let response = client
+            .get(api_url)
+            .header(ACCEPT, "application/vnd.github.v3+json")
+            .header(USER_AGENT, ADMIN_GRAPHQL_VERSION_CHECK_USER_AGENT)
+            .send()
+            .map_err(|error| format!("failed to fetch releases: {error}"))?;
+
+        if response.status() != reqwest::StatusCode::OK {
+            return Err(format!("GitHub API returned status {}", response.status().as_u16()));
+        }
+
+        let releases = response
+            .json::<Vec<AdminGraphqlGitHubRelease>>()
+            .map_err(|error| format!("failed to decode releases: {error}"))?;
+        let now = SystemTime::now();
+
+        for release in releases {
+            if release.is_stable(now)? {
+                return Ok(release.tag_name);
+            }
+        }
+
+        Err("no stable release found".to_owned())
+    }
+}
+
+impl AdminGraphqlGitHubRelease {
+    fn is_stable(&self, now: SystemTime) -> Result<bool, String> {
+        if self.draft || self.prerelease {
+            return Ok(false);
+        }
+
+        if !is_axonhub_tag(self.tag_name.as_str()) || is_pre_release_tag(self.tag_name.as_str()) {
+            return Ok(false);
+        }
+
+        let published_at = self.published_at()?;
+        let elapsed = now.duration_since(published_at).unwrap_or_default();
+        Ok(elapsed >= ADMIN_GRAPHQL_RELEASE_COOLDOWN)
+    }
+
+    fn published_at(&self) -> Result<SystemTime, String> {
+        match self.published_at.as_deref().map(str::trim) {
+            Some("") | None => Ok(UNIX_EPOCH),
+            Some(value) => humantime::parse_rfc3339_weak(value).map_err(|error| {
+                format!(
+                    "failed to parse release published_at `{value}` for tag `{}`: {error}",
+                    self.tag_name
+                )
+            }),
+        }
+    }
+}
+
+pub(crate) fn is_axonhub_tag(tag: &str) -> bool {
+    tag.starts_with('v')
+}
+
+pub(crate) fn is_pre_release_tag(tag: &str) -> bool {
+    let lower = tag.to_ascii_lowercase();
+    ["-beta", "-rc", "-alpha", "-dev", "-preview", "-snapshot"]
+        .into_iter()
+        .any(|pattern| lower.contains(pattern))
+}
+
+pub(crate) fn is_newer_version(current: &str, latest: &str) -> bool {
+    let Ok(current) = parse_semantic_version(current) else {
+        return false;
+    };
+    let Ok(latest) = parse_semantic_version(latest) else {
+        return false;
+    };
+
+    latest > current
+}
+
+fn parse_semantic_version(raw: &str) -> Result<SemanticVersion, String> {
+    let trimmed = raw.trim();
+    let trimmed = trimmed.strip_prefix('v').unwrap_or(trimmed);
+    let without_build = trimmed.split_once('+').map_or(trimmed, |(value, _)| value);
+    let (core, prerelease_raw) = without_build
+        .split_once('-')
+        .map_or((without_build, None), |(value, prerelease)| {
+            (value, Some(prerelease))
+        });
+    let mut core_parts = core.split('.');
+    let major = parse_semantic_numeric_identifier(core_parts.next(), raw, "major")?;
+    let minor = parse_semantic_numeric_identifier(core_parts.next(), raw, "minor")?;
+    let patch = parse_semantic_numeric_identifier(core_parts.next(), raw, "patch")?;
+    if core_parts.next().is_some() {
+        return Err(format!("invalid semantic version `{raw}`"));
+    }
+
+    let prerelease = prerelease_raw
+        .map(|value| {
+            value
+                .split('.')
+                .map(|identifier| {
+                    if identifier.is_empty() {
+                        return Err(format!("invalid semantic version `{raw}`"));
+                    }
+                    Ok(identifier
+                        .parse::<u64>()
+                        .map(SemanticVersionIdentifier::Numeric)
+                        .unwrap_or_else(|_| {
+                            SemanticVersionIdentifier::AlphaNumeric(identifier.to_owned())
+                        }))
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    Ok(SemanticVersion {
+        major,
+        minor,
+        patch,
+        prerelease,
+    })
+}
+
+fn parse_semantic_numeric_identifier(
+    value: Option<&str>,
+    raw: &str,
+    part_name: &str,
+) -> Result<u64, String> {
+    value
+        .filter(|segment| !segment.is_empty())
+        .ok_or_else(|| format!("invalid semantic version `{raw}`"))?
+        .parse::<u64>()
+        .map_err(|_| format!("invalid {part_name} version segment in `{raw}`"))
+}
+
+impl PartialOrd for SemanticVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SemanticVersion {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.major, self.minor, self.patch)
+            .cmp(&(other.major, other.minor, other.patch))
+            .then_with(|| compare_semantic_prerelease(self.prerelease.as_slice(), other.prerelease.as_slice()))
+    }
+}
+
+fn compare_semantic_prerelease(
+    left: &[SemanticVersionIdentifier],
+    right: &[SemanticVersionIdentifier],
+) -> std::cmp::Ordering {
+    match (left.is_empty(), right.is_empty()) {
+        (true, true) => std::cmp::Ordering::Equal,
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        (false, false) => {
+            for (left_identifier, right_identifier) in left.iter().zip(right.iter()) {
+                let ordering = match (left_identifier, right_identifier) {
+                    (SemanticVersionIdentifier::Numeric(left), SemanticVersionIdentifier::Numeric(right)) => left.cmp(right),
+                    (SemanticVersionIdentifier::Numeric(_), SemanticVersionIdentifier::AlphaNumeric(_)) => {
+                        std::cmp::Ordering::Less
+                    }
+                    (SemanticVersionIdentifier::AlphaNumeric(_), SemanticVersionIdentifier::Numeric(_)) => {
+                        std::cmp::Ordering::Greater
+                    }
+                    (
+                        SemanticVersionIdentifier::AlphaNumeric(left),
+                        SemanticVersionIdentifier::AlphaNumeric(right),
+                    ) => left.cmp(right),
+                };
+
+                if ordering != std::cmp::Ordering::Equal {
+                    return ordering;
+                }
+            }
+
+            left.len().cmp(&right.len())
+        }
+    }
 }
 
 fn query_proxy_presets_seaorm(
@@ -1207,6 +5079,53 @@ fn update_storage_policy_seaorm(
     Ok(GraphqlExecutionResult {
         status: 200,
         body: json!({"data": {"updateStoragePolicy": true}}),
+    })
+}
+
+fn update_retry_policy_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdateRetryPolicyInput>(
+        variables,
+        "input",
+        "retry policy input is required",
+    )?;
+    let mut policy = load_retry_policy_seaorm(repository)?;
+    if let Some(enabled) = input.enabled {
+        policy.enabled = enabled;
+    }
+    if let Some(max_channel_retries) = input.max_channel_retries {
+        policy.max_channel_retries = max_channel_retries;
+    }
+    if let Some(max_single_channel_retries) = input.max_single_channel_retries {
+        policy.max_single_channel_retries = max_single_channel_retries;
+    }
+    if let Some(retry_delay_ms) = input.retry_delay_ms {
+        policy.retry_delay_ms = retry_delay_ms;
+    }
+    if let Some(load_balancer_strategy) = input.load_balancer_strategy {
+        policy.load_balancer_strategy = normalize_retry_policy_load_balancer_strategy(&load_balancer_strategy);
+    }
+    if let Some(auto_disable_channel) = input.auto_disable_channel {
+        if let Some(enabled) = auto_disable_channel.enabled {
+            policy.auto_disable_channel.enabled = enabled;
+        }
+        if let Some(statuses) = auto_disable_channel.statuses {
+            policy.auto_disable_channel.statuses = statuses
+                .into_iter()
+                .map(|status| super::admin::StoredAutoDisableChannelStatus {
+                    status: status.status,
+                    times: status.times,
+                })
+                .collect();
+        }
+    }
+
+    SeaOrmOperationalService::new(repository.db()).update_retry_policy(policy)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateRetryPolicy": true}}),
     })
 }
 
@@ -1359,6 +5278,66 @@ fn update_system_channel_settings_seaorm(
     })
 }
 
+fn update_system_general_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdateSystemGeneralSettingsInput>(
+        variables,
+        "input",
+        "input is required",
+    )?;
+    let mut settings = load_system_general_settings_seaorm(repository)?;
+    let defaults = default_system_general_settings();
+
+    if let Some(currency_code) = input.currency_code {
+        let trimmed = currency_code.trim();
+        settings.currency_code = if trimmed.is_empty() {
+            defaults.currency_code.clone()
+        } else {
+            trimmed.to_owned()
+        };
+    }
+    if let Some(timezone) = input.timezone {
+        let trimmed = timezone.trim();
+        settings.timezone = if trimmed.is_empty() {
+            defaults.timezone.clone()
+        } else {
+            trimmed.to_owned()
+        };
+    }
+
+    repository.upsert_system_general_settings(
+        serde_json::to_string(&serde_json::json!({
+            "currencyCode": settings.currency_code,
+            "timezone": settings.timezone,
+        }))
+        .map_err(|error| error.to_string())?
+        .as_str(),
+    )?;
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateSystemGeneralSettings": true}}),
+    })
+}
+
+fn update_video_storage_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdateVideoStorageSettingsInput>(
+        variables,
+        "input",
+        "input is required",
+    )?;
+    SeaOrmOperationalService::new(repository.db()).update_video_storage_settings(input)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateVideoStorageSettings": true}}),
+    })
+}
+
 fn save_proxy_preset_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
     variables: Value,
@@ -1433,6 +5412,144 @@ fn trigger_auto_backup_seaorm(
                 }
             }
         }),
+    })
+}
+
+fn query_projects_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let edges = repository
+        .query_projects()?
+        .into_iter()
+        .map(|project| {
+            json!({
+                "cursor": Value::Null,
+                "node": project_json(&project),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "projects": {
+                    "edges": edges,
+                    "pageInfo": {
+                        "hasNextPage": false,
+                        "hasPreviousPage": false,
+                        "startCursor": Value::Null,
+                        "endCursor": Value::Null,
+                    }
+                }
+            }
+        }),
+    })
+}
+
+fn query_my_projects_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    user: &AuthUserContext,
+) -> Result<GraphqlExecutionResult, String> {
+    let active_projects_by_id = repository
+        .query_projects()?
+        .into_iter()
+        .filter(|project| project.status.eq_ignore_ascii_case("active"))
+        .map(|project| (project.id, project))
+        .collect::<HashMap<_, _>>();
+
+    let projects = repository
+        .query_user_projects(user.id)?
+        .into_iter()
+        .filter_map(|membership| active_projects_by_id.get(&membership.project_id))
+        .map(project_json)
+        .collect::<Vec<_>>();
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "myProjects": projects,
+            }
+        }),
+    })
+}
+
+fn query_roles_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let edges = repository
+        .query_roles()?
+        .into_iter()
+        .map(|role| {
+            json!({
+                "cursor": Value::Null,
+                "node": role_json(&role),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "roles": {
+                    "edges": edges,
+                    "pageInfo": {
+                        "hasNextPage": false,
+                        "hasPreviousPage": false,
+                        "startCursor": Value::Null,
+                        "endCursor": Value::Null,
+                    }
+                }
+            }
+        }),
+    })
+}
+
+fn query_api_keys_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<GraphqlExecutionResult, String> {
+    let edges = repository
+        .query_api_keys()?
+        .into_iter()
+        .map(|api_key| {
+            json!({
+                "cursor": Value::Null,
+                "node": api_key_json(&api_key),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "apiKeys": {
+                    "edges": edges,
+                    "pageInfo": {
+                        "hasNextPage": false,
+                        "hasPreviousPage": false,
+                        "startCursor": Value::Null,
+                        "endCursor": Value::Null,
+                    }
+                }
+            }
+        }),
+    })
+}
+
+fn request_summary_json(request: &StoredRequestSummary) -> Value {
+    json!({
+        "id": graphql_gid("request", request.id),
+        "projectID": graphql_gid("project", request.project_id),
+        "traceID": request.trace_id.map(|id| graphql_gid("trace", id)),
+        "channelID": request.channel_id.map(|id| graphql_gid("channel", id)),
+        "modelID": request.model_id,
+        "format": request.format,
+        "status": request.status,
+        "source": request.source,
+        "externalID": request.external_id,
     })
 }
 
@@ -2518,10 +6635,25 @@ fn load_storage_policy_seaorm(
     deserialize_setting_or_default(repository.query_storage_policy()?, default_storage_policy)
 }
 
+fn load_retry_policy_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<StoredRetryPolicy, String> {
+    deserialize_setting_or_default(repository.query_retry_policy()?, default_retry_policy)
+}
+
 fn load_auto_backup_settings_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
 ) -> Result<StoredAutoBackupSettings, String> {
     deserialize_setting_or_default(repository.query_auto_backup_settings()?, default_auto_backup_settings)
+}
+
+fn load_video_storage_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<StoredVideoStorageSettings, String> {
+    deserialize_setting_or_default(
+        repository.query_video_storage_settings()?,
+        default_video_storage_settings,
+    )
 }
 
 fn load_system_channel_settings_seaorm(
@@ -2531,6 +6663,23 @@ fn load_system_channel_settings_seaorm(
         repository.query_system_channel_settings()?,
         default_system_channel_settings,
     )
+}
+
+fn load_system_general_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<StoredSystemGeneralSettings, String> {
+    let defaults = default_system_general_settings();
+    let mut settings = deserialize_setting_or_default(
+        repository.query_system_general_settings()?,
+        default_system_general_settings,
+    )?;
+    if settings.currency_code.trim().is_empty() {
+        settings.currency_code = defaults.currency_code;
+    }
+    if settings.timezone.trim().is_empty() {
+        settings.timezone = defaults.timezone;
+    }
+    Ok(settings)
 }
 
 fn load_default_data_storage_id_seaorm(
@@ -2664,7 +6813,19 @@ impl IntoGraphqlSettingValue for GraphqlStoragePolicyRecord {
     }
 }
 
+impl IntoGraphqlSettingValue for GraphqlRetryPolicyRecord {
+    fn setting_value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
 impl IntoGraphqlSettingValue for GraphqlAutoBackupSettingsRecord {
+    fn setting_value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl IntoGraphqlSettingValue for GraphqlVideoStorageSettingsRecord {
     fn setting_value(&self) -> &str {
         self.value.as_str()
     }
@@ -2677,6 +6838,12 @@ impl IntoGraphqlSettingValue for GraphqlDefaultDataStorageRecord {
 }
 
 impl IntoGraphqlSettingValue for GraphqlSystemChannelSettingsRecord {
+    fn setting_value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
+impl IntoGraphqlSettingValue for GraphqlSystemGeneralSettingsRecord {
     fn setting_value(&self) -> &str {
         self.value.as_str()
     }
@@ -2712,6 +6879,34 @@ fn storage_policy_json(policy: &StoredStoragePolicy) -> Value {
     })
 }
 
+fn retry_policy_json(policy: &StoredRetryPolicy) -> Value {
+    json!({
+        "enabled": policy.enabled,
+        "maxChannelRetries": policy.max_channel_retries,
+        "maxSingleChannelRetries": policy.max_single_channel_retries,
+        "retryDelayMs": policy.retry_delay_ms,
+        "loadBalancerStrategy": policy.load_balancer_strategy,
+        "autoDisableChannel": {
+            "enabled": policy.auto_disable_channel.enabled,
+            "statuses": policy.auto_disable_channel.statuses.iter().map(|status| {
+                json!({
+                    "status": status.status,
+                    "times": status.times,
+                })
+            }).collect::<Vec<_>>(),
+        },
+    })
+}
+
+fn video_storage_settings_json(settings: &StoredVideoStorageSettings) -> Value {
+    json!({
+        "enabled": settings.enabled,
+        "dataStorageID": settings.data_storage_id,
+        "scanIntervalMinutes": settings.scan_interval_minutes,
+        "scanLimit": settings.scan_limit,
+    })
+}
+
 fn auto_backup_settings_json(settings: &StoredAutoBackupSettings) -> Value {
     json!({
         "enabled": settings.enabled,
@@ -2740,6 +6935,20 @@ fn system_channel_settings_json(settings: &StoredSystemChannelSettings) -> Value
         "autoSync": {
             "frequency": auto_sync_frequency_graphql_name(settings.auto_sync.frequency),
         },
+        "queryAllChannelModels": settings.query_all_channel_models,
+    })
+}
+
+fn system_general_settings_json(settings: &StoredSystemGeneralSettings) -> Value {
+    json!({
+        "currencyCode": settings.currency_code,
+        "timezone": settings.timezone,
+    })
+}
+
+fn system_model_settings_json(settings: &StoredSystemChannelSettings) -> Value {
+    json!({
+        "fallbackToChannelsOnModelNotFound": true,
         "queryAllChannelModels": settings.query_all_channel_models,
     })
 }
@@ -3038,11 +7247,39 @@ fn first_graphql_field_name(query: &str) -> Option<String> {
     Some(token.to_owned())
 }
 
+fn graphql_string_argument(query: &str, argument_name: &str) -> Option<String> {
+    let marker = format!("{argument_name}:");
+    let start = query.find(&marker)? + marker.len();
+    let remainder = query.get(start..)?.trim_start();
+    let first_quote = remainder.find('"')? + 1;
+    let after_first = remainder.get(first_quote..)?;
+    let end_quote = after_first.find('"')?;
+    let value = after_first[..end_quote].trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn graphql_input_string(variables: &Value, query: &str, argument_name: &str) -> Option<String> {
+    variables
+        .get(argument_name)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| graphql_string_argument(query, argument_name))
+}
+
 #[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "Project", rename_fields = "camelCase")]
 pub(crate) struct GraphqlProject {
     pub(crate) id: String,
     pub(crate) name: String,
+    pub(crate) status: String,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "AdminProject", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlProject {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) description: String,
     pub(crate) status: String,
 }
 
@@ -3135,6 +7372,30 @@ impl From<StoredStoragePolicy> for AdminGraphqlStoragePolicy {
     }
 }
 
+impl From<StoredRetryPolicy> for AdminGraphqlRetryPolicy {
+    fn from(value: StoredRetryPolicy) -> Self {
+        Self {
+            enabled: value.enabled,
+            max_channel_retries: value.max_channel_retries,
+            max_single_channel_retries: value.max_single_channel_retries,
+            retry_delay_ms: value.retry_delay_ms,
+            load_balancer_strategy: value.load_balancer_strategy,
+            auto_disable_channel: AdminGraphqlAutoDisableChannel {
+                enabled: value.auto_disable_channel.enabled,
+                statuses: value
+                    .auto_disable_channel
+                    .statuses
+                    .into_iter()
+                    .map(|status| AdminGraphqlAutoDisableChannelStatus {
+                        status: status.status,
+                        times: status.times,
+                    })
+                    .collect(),
+            },
+        }
+    }
+}
+
 impl From<StoredAutoBackupSettings> for AdminGraphqlAutoBackupSettings {
     fn from(value: StoredAutoBackupSettings) -> Self {
         Self {
@@ -3152,6 +7413,17 @@ impl From<StoredAutoBackupSettings> for AdminGraphqlAutoBackupSettings {
             } else {
                 Some(value.last_backup_error)
             },
+        }
+    }
+}
+
+impl From<StoredVideoStorageSettings> for AdminGraphqlVideoStorageSettings {
+    fn from(value: StoredVideoStorageSettings) -> Self {
+        Self {
+            enabled: value.enabled,
+            data_storage_id: i64_to_i32(value.data_storage_id),
+            scan_interval_minutes: value.scan_interval_minutes,
+            scan_limit: value.scan_limit,
         }
     }
 }
@@ -3335,11 +7607,97 @@ pub(crate) struct AdminGraphqlUserConnection {
 }
 
 #[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "ProjectEdge", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlProjectEdge {
+    pub(crate) cursor: Option<String>,
+    pub(crate) node: Option<AdminGraphqlProject>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "ProjectConnection", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlProjectConnection {
+    pub(crate) edges: Vec<AdminGraphqlProjectEdge>,
+    pub(crate) page_info: AdminGraphqlPageInfo,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
 #[graphql(name = "ScopeInfo", rename_fields = "camelCase")]
 pub(crate) struct AdminGraphqlScopeInfo {
     pub(crate) scope: String,
     pub(crate) description: String,
     pub(crate) levels: Vec<String>,
+}
+
+fn admin_graphql_scope_info_list() -> Vec<AdminGraphqlScopeInfo> {
+    vec![
+        AdminGraphqlScopeInfo {
+            scope: "read_settings".to_string(),
+            description: "Read system settings".to_string(),
+            levels: vec!["system".to_string()],
+        },
+        AdminGraphqlScopeInfo {
+            scope: "write_settings".to_string(),
+            description: "Write system settings".to_string(),
+            levels: vec!["system".to_string()],
+        },
+        AdminGraphqlScopeInfo {
+            scope: "read_channels".to_string(),
+            description: "Read channel configurations".to_string(),
+            levels: vec!["system".to_string()],
+        },
+        AdminGraphqlScopeInfo {
+            scope: "write_channels".to_string(),
+            description: "Write channel configurations".to_string(),
+            levels: vec!["system".to_string()],
+        },
+        AdminGraphqlScopeInfo {
+            scope: "read_requests".to_string(),
+            description: "Read request data".to_string(),
+            levels: vec!["system".to_string(), "project".to_string()],
+        },
+        AdminGraphqlScopeInfo {
+            scope: "write_requests".to_string(),
+            description: "Write request data".to_string(),
+            levels: vec!["system".to_string(), "project".to_string()],
+        },
+        AdminGraphqlScopeInfo {
+            scope: "read_users".to_string(),
+            description: "Read user data".to_string(),
+            levels: vec!["system".to_string()],
+        },
+        AdminGraphqlScopeInfo {
+            scope: "write_users".to_string(),
+            description: "Write user data".to_string(),
+            levels: vec!["system".to_string()],
+        },
+        AdminGraphqlScopeInfo {
+            scope: "read_api_keys".to_string(),
+            description: "Read API keys".to_string(),
+            levels: vec!["system".to_string()],
+        },
+        AdminGraphqlScopeInfo {
+            scope: "write_api_keys".to_string(),
+            description: "Write API keys".to_string(),
+            levels: vec!["system".to_string()],
+        },
+    ]
+}
+
+fn filter_admin_graphql_scope_info(level: Option<&str>) -> Result<Vec<AdminGraphqlScopeInfo>, String> {
+    let all_scopes = admin_graphql_scope_info_list();
+
+    match level {
+        Some("system") => Ok(all_scopes
+            .into_iter()
+            .filter(|scope| scope.levels.iter().any(|value| value == "system"))
+            .collect()),
+        Some("project") => Ok(all_scopes
+            .into_iter()
+            .filter(|scope| scope.levels.iter().any(|value| value == "project"))
+            .collect()),
+        Some(invalid) => Err(format!("invalid level: {}", invalid)),
+        None => Ok(all_scopes),
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
@@ -3668,6 +8026,8 @@ pub(crate) struct AdminGraphqlModelIdentityWithStatus {
 fn project_json(project: &GraphqlProjectRecord) -> Value {
     json!({
         "id": graphql_gid("project", project.id),
+        "createdAt": project.created_at,
+        "updatedAt": project.updated_at,
         "name": project.name,
         "description": project.description,
         "status": project.status,
@@ -3687,10 +8047,9 @@ fn role_json(role: &GraphqlRoleRecord) -> Value {
 fn api_key_json(api_key: &GraphqlApiKeyRecord) -> Value {
     json!({
         "id": graphql_gid("api_key", api_key.id),
-        "projectID": graphql_gid("project", api_key.project_id),
         "key": api_key.key,
         "name": api_key.name,
-        "keyType": api_key.key_type,
+        "type": api_key.key_type,
         "status": api_key.status,
         "scopes": parse_scope_json(api_key.scopes.as_str()),
     })
@@ -4104,6 +8463,83 @@ pub(crate) mod sqlite_test_support {
             Ok(AdminGraphqlSystemStatus { is_initialized })
         }
 
+        async fn system_version(
+            &self,
+            _ctx: &Context<'_>,
+        ) -> async_graphql::Result<AdminGraphqlSystemVersion> {
+            let build = BuildInfo::current();
+            let version = self
+                .foundation
+                .system_settings()
+                .value(crate::foundation::shared::SYSTEM_KEY_VERSION)
+                .map_err(|error| {
+                    async_graphql::Error::new(format!("failed to read system version: {error}"))
+                })?
+                .unwrap_or_else(|| build.version().to_owned());
+
+            Ok(AdminGraphqlSystemVersion {
+                version,
+                commit: build.commit().unwrap_or_default().to_owned(),
+                build_time: build.build_time().unwrap_or_default().to_owned(),
+                go_version: build
+                    .go_version()
+                    .unwrap_or("n/a (Rust build)")
+                    .to_owned(),
+                platform: build.platform().to_owned(),
+                uptime: build.uptime().to_owned(),
+            })
+        }
+
+        async fn onboarding_info(
+            &self,
+            ctx: &Context<'_>,
+        ) -> async_graphql::Result<AdminGraphqlOnboardingInfo> {
+            require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
+            let onboarding = self
+                .foundation
+                .system_settings()
+                .value(crate::foundation::shared::SYSTEM_KEY_ONBOARDED)
+                .map_err(|error| {
+                    async_graphql::Error::new(format!("failed to read onboarding info: {error}"))
+                })?
+                .map(|raw| {
+                    crate::foundation::request_context::parse_onboarding_record(&raw)
+                        .map_err(|error| {
+                            async_graphql::Error::new(format!("failed to parse onboarding info: {error}"))
+                        })
+                })
+                .transpose()?
+                .unwrap_or_default();
+
+            Ok(AdminGraphqlOnboardingInfo::from(onboarding))
+        }
+
+        async fn brand_settings(
+            &self,
+            ctx: &Context<'_>,
+        ) -> async_graphql::Result<AdminGraphqlBrandSettings> {
+            require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
+            let brand_name = self
+                .foundation
+                .system_settings()
+                .value(crate::foundation::shared::SYSTEM_KEY_BRAND_NAME)
+            .map_err(|error| {
+                async_graphql::Error::new(format!("failed to read brand settings: {error}"))
+            })?;
+            let brand_logo = self
+                .foundation
+                .system_settings()
+                .value(crate::foundation::shared::SYSTEM_KEY_BRAND_LOGO)
+                .map_err(|error| {
+                    async_graphql::Error::new(format!("failed to read brand settings: {error}"))
+                })?;
+
+            Ok(AdminGraphqlBrandSettings {
+                brand_name,
+                brand_logo,
+            })
+        }
+
         async fn channels(
             &self,
             ctx: &Context<'_>,
@@ -4145,6 +8581,29 @@ pub(crate) mod sqlite_test_support {
                 .map_err(async_graphql::Error::new)
         }
 
+        async fn retry_policy(
+            &self,
+            ctx: &Context<'_>,
+        ) -> async_graphql::Result<AdminGraphqlRetryPolicy> {
+            require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
+            let retry_policy = self
+                .foundation
+                .system_settings()
+                .value("retry_policy")
+                .map_err(|error| {
+                    async_graphql::Error::new(format!("failed to read retry policy: {error}"))
+                })?
+                .map(|raw| {
+                    serde_json::from_str::<StoredRetryPolicy>(raw.as_str()).map_err(|error| {
+                        async_graphql::Error::new(format!("failed to parse retry policy: {error}"))
+                    })
+                })
+                .transpose()?
+                .unwrap_or_else(default_retry_policy);
+
+            Ok(AdminGraphqlRetryPolicy::from(retry_policy))
+        }
+
         async fn auto_backup_settings(
             &self,
             ctx: &Context<'_>,
@@ -4164,6 +8623,31 @@ pub(crate) mod sqlite_test_support {
             self.operational
                 .system_channel_settings()
                 .map(AdminGraphqlSystemChannelSettings::from)
+                .map_err(async_graphql::Error::new)
+        }
+
+        async fn video_storage_settings(
+            &self,
+            ctx: &Context<'_>,
+        ) -> async_graphql::Result<AdminGraphqlVideoStorageSettings> {
+            require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
+            self.operational
+                .video_storage_settings()
+                .map(AdminGraphqlVideoStorageSettings::from)
+                .map_err(async_graphql::Error::new)
+        }
+
+        async fn system_model_settings(
+            &self,
+            ctx: &Context<'_>,
+        ) -> async_graphql::Result<AdminGraphqlSystemModelSettings> {
+            require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
+            self.operational
+                .system_channel_settings()
+                .map(|settings| AdminGraphqlSystemModelSettings {
+                    fallback_to_channels_on_model_not_found: true,
+                    query_all_channel_models: settings.query_all_channel_models,
+                })
                 .map_err(async_graphql::Error::new)
         }
 
@@ -4327,75 +8811,7 @@ pub(crate) mod sqlite_test_support {
             level: Option<String>,
         ) -> async_graphql::Result<Vec<AdminGraphqlScopeInfo>> {
             require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
-
-            let all_scopes = vec![
-                AdminGraphqlScopeInfo {
-                    scope: "read_settings".to_string(),
-                    description: "Read system settings".to_string(),
-                    levels: vec!["system".to_string()],
-                },
-                AdminGraphqlScopeInfo {
-                    scope: "write_settings".to_string(),
-                    description: "Write system settings".to_string(),
-                    levels: vec!["system".to_string()],
-                },
-                AdminGraphqlScopeInfo {
-                    scope: "read_channels".to_string(),
-                    description: "Read channel configurations".to_string(),
-                    levels: vec!["system".to_string()],
-                },
-                AdminGraphqlScopeInfo {
-                    scope: "write_channels".to_string(),
-                    description: "Write channel configurations".to_string(),
-                    levels: vec!["system".to_string()],
-                },
-                AdminGraphqlScopeInfo {
-                    scope: "read_requests".to_string(),
-                    description: "Read request data".to_string(),
-                    levels: vec!["system".to_string(), "project".to_string()],
-                },
-                AdminGraphqlScopeInfo {
-                    scope: "write_requests".to_string(),
-                    description: "Write request data".to_string(),
-                    levels: vec!["system".to_string(), "project".to_string()],
-                },
-                AdminGraphqlScopeInfo {
-                    scope: "read_users".to_string(),
-                    description: "Read user data".to_string(),
-                    levels: vec!["system".to_string()],
-                },
-                AdminGraphqlScopeInfo {
-                    scope: "write_users".to_string(),
-                    description: "Write user data".to_string(),
-                    levels: vec!["system".to_string()],
-                },
-                AdminGraphqlScopeInfo {
-                    scope: "read_api_keys".to_string(),
-                    description: "Read API keys".to_string(),
-                    levels: vec!["system".to_string()],
-                },
-                AdminGraphqlScopeInfo {
-                    scope: "write_api_keys".to_string(),
-                    description: "Write API keys".to_string(),
-                    levels: vec!["system".to_string()],
-                },
-            ];
-
-            let result = match level.as_deref() {
-                Some("system") => all_scopes
-                    .into_iter()
-                    .filter(|s| s.levels.contains(&"system".to_string()))
-                    .collect(),
-                Some("project") => all_scopes
-                    .into_iter()
-                    .filter(|s| s.levels.contains(&"project".to_string()))
-                    .collect(),
-                Some(invalid) => {
-                    return Err(async_graphql::Error::new(format!("invalid level: {}", invalid)))
-                }
-                None => all_scopes,
-            };
-            Ok(result)
+            filter_admin_graphql_scope_info(level.as_deref()).map_err(async_graphql::Error::new)
         }
 
         async fn query_models(
@@ -4574,6 +8990,97 @@ pub(crate) mod sqlite_test_support {
                 .update_storage_policy(input)
                 .map(|_| true)
                 .map_err(async_graphql::Error::new)
+        }
+
+        async fn update_retry_policy(
+            &self,
+            ctx: &Context<'_>,
+            input: AdminGraphqlUpdateRetryPolicyInput,
+        ) -> async_graphql::Result<bool> {
+            require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
+            let foundation = &self.operational.foundation;
+            let mut policy = foundation
+                .system_settings()
+                .value("retry_policy")
+                .map_err(|error| {
+                    async_graphql::Error::new(format!("failed to read retry policy: {error}"))
+                })?
+                .map(|raw: String| {
+                    serde_json::from_str::<StoredRetryPolicy>(raw.as_str()).map_err(|error| {
+                        async_graphql::Error::new(format!("failed to parse retry policy: {error}"))
+                    })
+                })
+                .transpose()?
+                .unwrap_or_else(default_retry_policy);
+
+            if let Some(enabled) = input.enabled {
+                policy.enabled = enabled;
+            }
+            if let Some(max_channel_retries) = input.max_channel_retries {
+                policy.max_channel_retries = max_channel_retries;
+            }
+            if let Some(max_single_channel_retries) = input.max_single_channel_retries {
+                policy.max_single_channel_retries = max_single_channel_retries;
+            }
+            if let Some(retry_delay_ms) = input.retry_delay_ms {
+                policy.retry_delay_ms = retry_delay_ms;
+            }
+            if let Some(load_balancer_strategy) = input.load_balancer_strategy {
+                policy.load_balancer_strategy = normalize_retry_policy_load_balancer_strategy(&load_balancer_strategy);
+            }
+            if let Some(auto_disable_channel) = input.auto_disable_channel {
+                if let Some(enabled) = auto_disable_channel.enabled {
+                    policy.auto_disable_channel.enabled = enabled;
+                }
+                if let Some(statuses) = auto_disable_channel.statuses {
+                    policy.auto_disable_channel.statuses = statuses
+                        .into_iter()
+                        .map(|status| crate::foundation::admin::StoredAutoDisableChannelStatus {
+                            status: status.status,
+                            times: status.times,
+                        })
+                        .collect();
+                }
+            }
+
+            self.operational
+                .foundation
+                .system_settings()
+                .set_value("retry_policy", &serde_json::to_string(&policy).map_err(|error| {
+                    async_graphql::Error::new(format!("failed to serialize retry policy: {error}"))
+                })?)
+                .map_err(|error| async_graphql::Error::new(format!("failed to persist retry policy: {error}")))?;
+            Ok(true)
+        }
+
+        async fn update_brand_settings(
+            &self,
+            ctx: &Context<'_>,
+            input: AdminGraphqlUpdateBrandSettingsInput,
+        ) -> async_graphql::Result<bool> {
+            require_admin_system_scope(ctx, SCOPE_WRITE_SETTINGS)?;
+
+            if let Some(brand_name) = input.brand_name {
+                self.operational
+                    .foundation
+                    .system_settings()
+                    .set_value(crate::foundation::shared::SYSTEM_KEY_BRAND_NAME, &brand_name)
+                    .map_err(|error| {
+                        async_graphql::Error::new(format!("failed to persist brand name: {error}"))
+                    })?;
+            }
+
+            if let Some(brand_logo) = input.brand_logo {
+                self.operational
+                    .foundation
+                    .system_settings()
+                    .set_value(crate::foundation::shared::SYSTEM_KEY_BRAND_LOGO, &brand_logo)
+                    .map_err(|error| {
+                        async_graphql::Error::new(format!("failed to persist brand logo: {error}"))
+                    })?;
+            }
+
+            Ok(true)
         }
 
         async fn update_auto_backup_settings(

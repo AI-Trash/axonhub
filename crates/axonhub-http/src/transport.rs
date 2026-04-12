@@ -422,6 +422,11 @@ pub(crate) fn extract_trace_id(headers: &TransportHeaders, config: &TraceConfig)
                 .iter()
                 .find_map(|header| request_header_value(headers, header).map(ToOwned::to_owned))
         })
+        .or_else(|| {
+            config
+                .codex_trace_enabled
+                .then(|| request_header_value(headers, "Session_id").map(ToOwned::to_owned))?
+        })
 }
 
 #[allow(dead_code)]

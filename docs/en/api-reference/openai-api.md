@@ -54,16 +54,19 @@ fmt.Println(responseText)
 
 ### OpenAI Responses API
 
-AxonHub provides partial support for the OpenAI Responses API. This API offers a simplified interface for single-turn interactions.
+AxonHub provides partial support for the OpenAI Responses API.
 
 **Endpoints:**
 - `POST /v1/responses` - Generate a response
 - `POST /v1/responses/compact` - Generate a compact response
+- `GET /v1/responses/{response_id}` - Retrieve a stored response by ID
 
-**Limitations:**
-- ❌ `previous_response_id` is **not supported** - conversation history must be managed client-side
-- ✅ Basic response generation is fully functional
+**Current support and boundaries:**
+- ✅ `previous_response_id` is supported for Responses chaining
+- ✅ `GET /v1/responses/{response_id}` is supported
 - ✅ Streaming responses are supported
+- ⚠️ This is not full OpenAI Responses parity. Keep unsupported or provider-specific features explicit in your integration design.
+- ⚠️ `instructions` cannot be used together with `previous_response_id`
 
 **Example Request:**
 ```go
@@ -85,7 +88,7 @@ client := openai.NewClient(
 
 ctx := context.Background()
 
-// Generate a response (previous_response_id not supported)
+// Generate a response
 params := responses.ResponseNewParams{
     Model: shared.ResponsesModel("gpt-4o"),
     Input: responses.ResponseNewParamsInputUnion{
@@ -101,6 +104,30 @@ if err != nil {
 }
 
 fmt.Println(response.OutputText())
+
+// Continue the conversation with previous_response_id
+nextParams := responses.ResponseNewParams{
+    Model: shared.ResponsesModel("gpt-4o"),
+    PreviousResponseID: openai.String(response.ID),
+    Input: responses.ResponseNewParamsInputUnion{
+        OfString: openai.String("Can you summarize your last reply in one sentence?"),
+    },
+}
+
+nextResponse, err := client.Responses.New(ctx, nextParams)
+if err != nil {
+    panic(err)
+}
+
+fmt.Println(nextResponse.OutputText())
+
+// Retrieve a prior response by ID
+stored, err := client.Responses.Get(ctx, response.ID)
+if err != nil {
+    panic(err)
+}
+
+fmt.Println(stored.OutputText())
 ```
 
 **Example: Streaming Response**

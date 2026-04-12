@@ -12,9 +12,11 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::fmt;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use futures_util::stream;
 use tokio::runtime::Builder as RuntimeBuilder;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::Registry;
@@ -313,17 +315,65 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         state: Mutex<FakeAuthState>,
     }
 
-    struct FakeOpenAiV1Port;
+    #[derive(Default)]
+    struct FakeOpenAiV1State {
+        executions: Vec<RecordedOpenAiExecution>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct RecordedOpenAiExecution {
+        route: OpenAiV1Route,
+        trace_id: Option<String>,
+    }
+
+    struct FakeOpenAiV1Port {
+        state: Mutex<FakeOpenAiV1State>,
+    }
 
     struct FakeAdminPort;
 
-    struct FakeProviderEdgeAdminPort;
+    #[derive(Default)]
+    struct FakeProviderEdgeAdminState {
+        last_codex_exchange_request: Option<ExchangeCallbackOAuthRequest>,
+    }
+
+    struct FakeProviderEdgeAdminPort {
+        state: Mutex<FakeProviderEdgeAdminState>,
+    }
+
+    impl FakeProviderEdgeAdminPort {
+        fn new() -> Self {
+            Self {
+                state: Mutex::new(FakeProviderEdgeAdminState::default()),
+            }
+        }
+
+        fn last_codex_exchange_request(&self) -> Option<ExchangeCallbackOAuthRequest> {
+            self.state
+                .lock()
+                .unwrap()
+                .last_codex_exchange_request
+                .clone()
+        }
+    }
 
     impl FakeAuthPort {
         fn new() -> Self {
             Self {
                 state: Mutex::new(FakeAuthState::default()),
             }
+        }
+    }
+
+    impl FakeOpenAiV1Port {
+        fn new() -> Self {
+            Self {
+                state: Mutex::new(FakeOpenAiV1State::default()),
+            }
+        }
+
+        fn executions(&self) -> Vec<RecordedOpenAiExecution> {
+            self.state.lock().unwrap().executions.clone()
         }
     }
 
@@ -418,6 +468,19 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                     scopes: vec!["write_requests".to_owned()],
                     profiles_json: None,
                 }),
+                Some("response-reader-key-123") => Ok(AuthApiKeyContext {
+                    id: 14,
+                    key: "response-reader-key-123".to_owned(),
+                    name: "Response Reader Key".to_owned(),
+                    key_type: ApiKeyType::User,
+                    project: ProjectContext {
+                        id: 1,
+                        name: "Default Project".to_owned(),
+                        status: "active".to_owned(),
+                    },
+                    scopes: vec!["read_channels".to_owned(), "read_requests".to_owned()],
+                    profiles_json: None,
+                }),
                 Some("service-key-123") => Ok(AuthApiKeyContext {
                     id: 11,
                     key: "service-key-123".to_owned(),
@@ -508,7 +571,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             if state.trace_internal {
                 return Err(ContextResolveError::Internal);
             }
-            Ok((project_id == 1 && trace_id == "trace-1").then(|| TraceContext {
+            Ok((project_id == 1 && !trace_id.trim().is_empty()).then(|| TraceContext {
                 id: 200,
                 trace_id: trace_id.to_owned(),
                 project_id,
@@ -559,14 +622,14 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                     message: "permission denied".to_owned(),
                 });
             }
-            if model_id != "gpt-4o" {
+            if model_id != "gpt-4o" && model_id != "deepseek/deepseek-chat" {
                 return Err(OpenAiV1Error::InvalidRequest {
                     message: format!("The model `{model_id}` does not exist or you do not have access to it."),
                 });
             }
             let include_all = include == Some("all");
             Ok(OpenAiModel {
-                id: "gpt-4o".to_owned(),
+                id: model_id.to_owned(),
                 object: "model",
                 created: 1,
                 owned_by: "openai".to_owned(),
@@ -579,6 +642,27 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                 capabilities: None,
                 pricing: None,
             })
+        }
+
+        fn retrieve_response(
+            &self,
+            response_id: &str,
+            api_key: &AuthApiKeyContext,
+        ) -> Result<Option<Value>, OpenAiV1Error> {
+            if !api_key.has_scope("read_requests") {
+                return Err(OpenAiV1Error::InvalidRequest {
+                    message: "permission denied".to_owned(),
+                });
+            }
+            Ok((response_id == "resp_rust").then(|| {
+                json!({
+                    "id": "resp_rust",
+                    "object": "response",
+                    "output_text": "hello from rust responses",
+                    "project_id": api_key.project.id,
+                    "api_key_id": api_key.id,
+                })
+            }))
         }
 
         fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
@@ -622,6 +706,10 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                     message: "permission denied".to_owned(),
                 });
             }
+            self.state.lock().unwrap().executions.push(RecordedOpenAiExecution {
+                route,
+                trace_id: request.trace.as_ref().map(|trace| trace.trace_id.clone()),
+            });
             Ok(OpenAiV1ExecutionResponse {
                 status: 200,
                 body: match route {
@@ -698,6 +786,100 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                         "path_params": request.path_params,
                     }),
                 },
+                stream: request
+                    .body
+                    .as_json()
+                    .and_then(|body| body.get("stream").and_then(Value::as_bool))
+                    .filter(|stream| *stream)
+                    .map(|_| match route {
+                        OpenAiV1Route::ChatCompletions => OpenAiV1EventStream {
+                            content_type: "text/event-stream; charset=utf-8",
+                            frames: Box::pin(stream::iter(vec![
+                                Ok(json!({
+                                    "id": "chatcmpl_rust",
+                                    "object": "chat.completion.chunk",
+                                    "created": 1,
+                                    "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {"role": "assistant", "content": ""},
+                                        "finish_reason": Value::Null,
+                                    }]
+                                }).to_string()),
+                                Ok(json!({
+                                    "id": "chatcmpl_rust",
+                                    "object": "chat.completion.chunk",
+                                    "created": 1,
+                                    "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {"content": "hello from rust chat"},
+                                        "finish_reason": Value::Null,
+                                    }]
+                                }).to_string()),
+                                Ok(json!({
+                                    "id": "chatcmpl_rust",
+                                    "object": "chat.completion.chunk",
+                                    "created": 1,
+                                    "model": request.body.as_json().and_then(|body| body.get("model")).cloned().unwrap_or(Value::Null),
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {},
+                                        "finish_reason": "stop",
+                                    }]
+                                }).to_string()),
+                                Ok("[DONE]".to_owned()),
+                            ])),
+                        },
+                        OpenAiV1Route::Responses | OpenAiV1Route::ResponsesCompact => {
+                            let response_id = if route == OpenAiV1Route::ResponsesCompact {
+                                "resp_compact_rust"
+                            } else {
+                                "resp_rust"
+                            };
+                            let output_text = if route == OpenAiV1Route::ResponsesCompact {
+                                "hello from rust responses compact"
+                            } else {
+                                "hello from rust responses"
+                            };
+                            OpenAiV1EventStream {
+                                content_type: "text/event-stream; charset=utf-8",
+                                frames: Box::pin(stream::iter(vec![
+                                    Ok(json!({
+                                        "type": "response.created",
+                                        "response": {"id": response_id, "object": "response", "status": "in_progress"}
+                                    })
+                                    .to_string()),
+                                    Ok(json!({
+                                        "type": "response.output_text.delta",
+                                        "response_id": response_id,
+                                        "output_index": 0,
+                                        "content_index": 0,
+                                        "delta": output_text,
+                                    })
+                                    .to_string()),
+                                    Ok(json!({
+                                        "type": "response.completed",
+                                        "response": {
+                                            "id": response_id,
+                                            "object": "response",
+                                            "status": "completed",
+                                            "output_text": output_text,
+                                            "output": [{
+                                                "type": "message",
+                                                "role": "assistant",
+                                                "content": [{"type": "output_text", "text": output_text}],
+                                                "status": "completed"
+                                            }]
+                                        }
+                                    })
+                                    .to_string()),
+                                    Ok("[DONE]".to_owned()),
+                                ])),
+                            }
+                        }
+                        _ => unreachable!("unexpected streaming route in HTTP test fixture"),
+                    }),
             })
         }
 
@@ -773,7 +955,11 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                 CompatibilityRoute::DoubaoDeleteTask => json!({"task_param": request.path_params.get("id").cloned()}),
             };
 
-            Ok(OpenAiV1ExecutionResponse { status: 200, body })
+            Ok(OpenAiV1ExecutionResponse {
+                status: 200,
+                body,
+                stream: None,
+            })
         }
 
         fn create_realtime_session(
@@ -945,8 +1131,9 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
 
         fn exchange_codex_oauth(
             &self,
-            _request: &ExchangeCallbackOAuthRequest,
+            request: &ExchangeCallbackOAuthRequest,
         ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+            self.state.lock().unwrap().last_codex_exchange_request = Some(request.clone());
             Ok(ExchangeOAuthResponse {
                 credentials: "codex-credentials".to_owned(),
             })
@@ -1108,9 +1295,21 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     fn test_state_with_openai(system_bootstrap: SystemBootstrapCapability, allow_no_auth: bool) -> HttpState {
         let mut state = test_state(system_bootstrap, allow_no_auth);
         state.openai_v1 = OpenAiV1Capability::Available {
-            openai: Arc::new(FakeOpenAiV1Port),
+            openai: Arc::new(FakeOpenAiV1Port::new()),
         };
         state
+    }
+
+    fn test_state_with_recording_openai(
+        system_bootstrap: SystemBootstrapCapability,
+        allow_no_auth: bool,
+    ) -> (HttpState, Arc<FakeOpenAiV1Port>) {
+        let openai = Arc::new(FakeOpenAiV1Port::new());
+        let mut state = test_state(system_bootstrap, allow_no_auth);
+        state.openai_v1 = OpenAiV1Capability::Available {
+            openai: openai.clone(),
+        };
+        (state, openai)
     }
 
     fn test_state_with_provider_edge(
@@ -1119,9 +1318,21 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     ) -> HttpState {
         let mut state = test_state(system_bootstrap, allow_no_auth);
         state.provider_edge_admin = ProviderEdgeAdminCapability::Available {
-            provider_edge: Arc::new(FakeProviderEdgeAdminPort),
+            provider_edge: Arc::new(FakeProviderEdgeAdminPort::new()),
         };
         state
+    }
+
+    fn test_state_with_recording_provider_edge(
+        system_bootstrap: SystemBootstrapCapability,
+        allow_no_auth: bool,
+    ) -> (HttpState, Arc<FakeProviderEdgeAdminPort>) {
+        let provider_edge = Arc::new(FakeProviderEdgeAdminPort::new());
+        let mut state = test_state(system_bootstrap, allow_no_auth);
+        state.provider_edge_admin = ProviderEdgeAdminCapability::Available {
+            provider_edge: provider_edge.clone(),
+        };
+        (state, provider_edge)
     }
 
 async fn read_json<B>(response: ServiceResponse<B>) -> Value
@@ -1995,6 +2206,32 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[tokio::test]
+    async fn v1_model_retrieval_supports_slash_containing_ids() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/models/deepseek/deepseek-chat?include=all")
+                    .method(Method::GET)
+                    .header("X-API-Key", "response-reader-key-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = assert_json_response(response, StatusCode::OK).await;
+        assert_eq!(json["id"], "deepseek/deepseek-chat");
+        assert_eq!(json["object"], "model");
+    }
+
+    #[tokio::test]
     async fn v1_runtime_routes_require_write_requests_scope() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
@@ -2019,6 +2256,132 @@ fn assert_go_duration_shape(value: &str) {
 
         let denied_json = assert_rest_error_response(denied, StatusCode::BAD_REQUEST, "permission denied").await;
         assert_eq!(denied_json["error"]["message"], "permission denied");
+    }
+
+    #[tokio::test]
+    async fn admin_playground_chat_reuses_openai_path_for_streaming_and_channel_override() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/playground/chat?project_id=gid://axonhub/project/1&channel_id=gid://axonhub/channel/99")
+                    .method(Method::POST)
+                    .header("Authorization", "Bearer valid-admin-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("content-type").unwrap(), "text/plain; charset=utf-8");
+        assert_eq!(response.headers().get("x-vercel-ai-data-stream").unwrap(), "v1");
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-cache");
+        assert_eq!(response.headers().get("connection").unwrap(), "keep-alive");
+
+        let (_, response) = response.into_parts();
+        let mut body = response.into_body();
+        let first = futures_util::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)).await;
+        let first = first.expect("first chunk").expect("first chunk ok");
+        let first_text = std::str::from_utf8(&first).unwrap();
+        assert!(first_text.contains("0:\"hello from rust chat\""), "{first_text}");
+
+        let second = futures_util::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)).await;
+        let second = second.expect("second chunk").expect("second chunk ok");
+        let second_text = std::str::from_utf8(&second).unwrap();
+        assert!(second_text.contains("e:{\"finishReason\":\"stop\"}"), "{second_text}");
+
+        let remaining = futures_util::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)).await;
+        assert!(remaining.is_none(), "stream should finish after finish event");
+    }
+
+    #[tokio::test]
+    async fn aisdk_data_stream_requests_forward_native_chat_stream_frames() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .header("X-Vercel-AI-Data-Stream", "v1")
+                    .body(Body::from(
+                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("content-type").unwrap(), "text/plain; charset=utf-8");
+        assert_eq!(response.headers().get("x-vercel-ai-data-stream").unwrap(), "v1");
+        assert_eq!(response.headers().get("cache-control").unwrap(), "no-cache");
+        assert_eq!(response.headers().get("connection").unwrap(), "keep-alive");
+
+        let (_, response) = response.into_parts();
+        let mut body = response.into_body();
+        let first = futures_util::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)).await;
+        let first = first.expect("first chunk").expect("first chunk ok");
+        let first_text = std::str::from_utf8(&first).unwrap();
+        assert!(first_text.contains("0:\"hello from rust chat\""), "{first_text}");
+
+        let second = futures_util::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)).await;
+        let second = second.expect("second chunk").expect("second chunk ok");
+        let second_text = std::str::from_utf8(&second).unwrap();
+        assert!(second_text.contains("e:{\"finishReason\":\"stop\"}"), "{second_text}");
+
+        let remaining = futures_util::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)).await;
+        assert!(remaining.is_none(), "stream should finish after finish event");
+    }
+
+    #[tokio::test]
+    async fn admin_playground_chat_preserves_non_streaming_channel_override() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/playground/chat?project_id=gid://axonhub/project/1")
+                    .method(Method::POST)
+                    .header("Authorization", "Bearer valid-admin-token")
+                    .header("X-Channel-ID", "gid://axonhub/channel/77")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        assert_eq!(json["id"], "chatcmpl_rust");
+        assert_eq!(json["path"], "/admin/playground/chat");
+        assert_eq!(json["project_id"], 1);
+        assert_eq!(json["channel_hint_id"], 77);
     }
 
     #[tokio::test]
@@ -2061,6 +2424,54 @@ fn assert_go_duration_shape(value: &str) {
         assert_eq!(invalid_response.status(), StatusCode::UNAUTHORIZED);
         let json = read_json(invalid_response).await;
         assert_eq!(json["error"]["message"], "Invalid token");
+    }
+
+    #[tokio::test]
+    async fn admin_codex_oauth_exchange_accepts_optional_proxy_payload() {
+        let (state, provider_edge) = test_state_with_recording_provider_edge(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        );
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/codex/oauth/exchange")
+                    .method(Method::POST)
+                    .header("Authorization", "Bearer valid-admin-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({
+                            "session_id": "codex-session",
+                            "callback_url": "http://localhost/callback?code=test&state=codex-session",
+                            "proxy": {
+                                "type": "url",
+                                "url": "http://proxy.internal:8080",
+                                "username": "tester",
+                                "password": "secret"
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = assert_json_response(response, StatusCode::OK).await;
+        assert_eq!(json["credentials"], "codex-credentials");
+
+        let request = provider_edge
+            .last_codex_exchange_request()
+            .expect("recorded codex exchange request");
+        let proxy = request.proxy.expect("proxy payload should be recorded");
+        assert_eq!(proxy.proxy_type, OAuthProxyType::Url);
+        assert_eq!(proxy.url, "http://proxy.internal:8080");
+        assert_eq!(proxy.username, "tester");
+        assert_eq!(proxy.password, "secret");
     }
 
     #[tokio::test]
@@ -3135,6 +3546,55 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[tokio::test]
+    async fn codex_session_header_resolves_stable_trace_across_repeated_requests_when_enabled() {
+        let (mut state, openai) = test_state_with_recording_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        );
+        state.trace_config.codex_trace_enabled = true;
+        let app = router(state);
+
+        for _ in 0..2 {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/chat/completions")
+                        .method(Method::POST)
+                        .header("content-type", "application/json")
+                        .header("X-API-Key", "api-key-123")
+                        .header("X-Project-ID", "gid://axonhub/project/1")
+                        .header("Session_id", "codex-session-stable")
+                        .body(Body::from(
+                            r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let json = read_json(response).await;
+            assert_eq!(json["id"], "chatcmpl_rust");
+        }
+
+        assert_eq!(
+            openai.executions(),
+            vec![
+                RecordedOpenAiExecution {
+                    route: OpenAiV1Route::ChatCompletions,
+                    trace_id: Some("codex-session-stable".to_owned()),
+                },
+                RecordedOpenAiExecution {
+                    route: OpenAiV1Route::ChatCompletions,
+                    trace_id: Some("codex-session-stable".to_owned()),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn debug_context_uses_extra_trace_header_before_body_fields() {
         let mut state = test_state(
             SystemBootstrapCapability::Available {
@@ -3405,6 +3865,84 @@ fn assert_go_duration_shape(value: &str) {
     }
 
     #[tokio::test]
+    async fn openai_response_retrieval_route_uses_read_requests_scope() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        let retrieved = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/responses/resp_rust")
+                    .method(Method::GET)
+                    .header("X-API-Key", "response-reader-key-123")
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(retrieved.status(), StatusCode::OK);
+        let retrieved_json = read_json(retrieved).await;
+        assert_eq!(retrieved_json["id"], "resp_rust");
+        assert_eq!(retrieved_json["project_id"], 1);
+        assert_eq!(retrieved_json["api_key_id"], 14);
+
+        let denied = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/responses/resp_rust")
+                    .method(Method::GET)
+                    .header("X-API-Key", "api-key-123")
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_rest_error_response(denied, StatusCode::BAD_REQUEST, "permission denied").await;
+
+        let missing = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/responses/resp_missing")
+                    .method(Method::GET)
+                    .header("X-API-Key", "response-reader-key-123")
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_rest_error_response(missing, StatusCode::NOT_FOUND, "Response not found").await;
+
+        let chat = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "api-key-123")
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .body(Body::from(
+                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"still works"}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(chat.status(), StatusCode::OK);
+        let chat_json = read_json(chat).await;
+        assert_eq!(chat_json["id"], "chatcmpl_rust");
+    }
+
+    #[tokio::test]
     async fn image_edit_route_uses_openai_v1_execution_path() {
         let app = router(test_state_with_openai(
             SystemBootstrapCapability::Available {
@@ -3622,6 +4160,115 @@ fn assert_go_duration_shape(value: &str) {
         let payload = String::from_utf8(body.to_vec()).unwrap();
         assert!(payload.contains("0:\"hello from rust responses compact\""), "{payload}");
         assert!(payload.contains("e:{\"finishReason\":\"stop\"}"), "{payload}");
+    }
+
+    #[tokio::test]
+    async fn native_responses_stream_requests_return_openai_sse_frames() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        for (path, expected_id, expected_text) in [
+            ("/v1/responses", "resp_rust", "hello from rust responses"),
+            (
+                "/v1/responses/compact",
+                "resp_compact_rust",
+                "hello from rust responses compact",
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .method(Method::POST)
+                        .header("content-type", "application/json")
+                        .header("X-API-Key", "api-key-123")
+                        .body(Body::from(format!(r#"{{"model":"gpt-4o","input":"hi","stream":true}}"#)))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(response.headers().get("content-type").unwrap(), "text/event-stream; charset=utf-8", "{path}");
+            assert_eq!(response.headers().get("cache-control").unwrap(), "no-cache", "{path}");
+            assert_eq!(response.headers().get("connection").unwrap(), "keep-alive", "{path}");
+
+            let body = actix_web::body::to_bytes(response.into_body()).await.unwrap();
+            let payload = String::from_utf8(body.to_vec()).unwrap();
+            let frames = payload
+                .split("\n\n")
+                .filter(|chunk| !chunk.trim().is_empty())
+                .collect::<Vec<_>>();
+            assert_eq!(frames.len(), 4, "{path}: {payload}");
+            let created = serde_json::from_str::<Value>(frames[0].trim_start_matches("data: ")).unwrap();
+            assert_eq!(created["type"], "response.created", "{path}: {payload}");
+            assert_eq!(created["response"]["id"], expected_id, "{path}: {payload}");
+            let delta = serde_json::from_str::<Value>(frames[1].trim_start_matches("data: ")).unwrap();
+            assert_eq!(delta["type"], "response.output_text.delta", "{path}: {payload}");
+            assert_eq!(delta["delta"], expected_text, "{path}: {payload}");
+            let completed = serde_json::from_str::<Value>(frames[2].trim_start_matches("data: ")).unwrap();
+            assert_eq!(completed["type"], "response.completed", "{path}: {payload}");
+            assert_eq!(completed["response"]["status"], "completed", "{path}: {payload}");
+            assert_eq!(completed["response"]["output_text"], expected_text, "{path}: {payload}");
+            assert_eq!(frames[3], "data: [DONE]", "{path}: {payload}");
+        }
+    }
+
+    #[tokio::test]
+    async fn native_responses_stream_requests_use_streaming_body_transport() {
+        let app = router(test_state_with_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        ));
+
+        for path in ["/v1/responses", "/v1/responses/compact"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .method(Method::POST)
+                        .header("content-type", "application/json")
+                        .header("X-API-Key", "api-key-123")
+                        .body(Body::from(r#"{"model":"gpt-4o","input":"hi","stream":true}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(response.headers().get("content-type").unwrap(), "text/event-stream; charset=utf-8", "{path}");
+
+            let (_, response) = response.into_parts();
+            let mut body = response.into_body();
+            let first = futures_util::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)).await;
+            let first = first.expect("first chunk").expect("first chunk ok");
+            let first_text = std::str::from_utf8(&first).unwrap();
+            assert!(first_text.contains("response.created"), "{path}: {first_text}");
+
+            let second = futures_util::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)).await;
+            let second = second.expect("second chunk").expect("second chunk ok");
+            let second_text = std::str::from_utf8(&second).unwrap();
+            assert!(second_text.contains("response.output_text.delta"), "{path}: {second_text}");
+
+            let mut remaining = Vec::new();
+            while let Some(chunk) = futures_util::future::poll_fn(|cx| Pin::new(&mut body).poll_next(cx)).await {
+                remaining.push(chunk.expect("remaining chunk ok"));
+            }
+            let remaining_text = remaining
+                .into_iter()
+                .map(|chunk| String::from_utf8(chunk.to_vec()).unwrap())
+                .collect::<String>();
+            assert!(remaining_text.contains("response.completed"), "{path}: {remaining_text}");
+            assert!(remaining_text.contains("[DONE]"), "{path}: {remaining_text}");
+        }
     }
 
     #[tokio::test]

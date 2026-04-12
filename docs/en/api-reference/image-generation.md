@@ -110,22 +110,13 @@ if (result.data) {
 | `moderation` | string | Content moderation level: `"low"` or `"auto"`. | - |
 | `partial_images` | number | Number of partial images to generate. | 1 |
 
-## Image Edit Boundary (`/v1/images/edits`)
+## Image Edits (`/v1/images/edits`)
 
-`POST /v1/images/edits` currently remains an explicit unsupported boundary in the accepted Rust-canonical backend state. Requests to this endpoint return a structured `501 Not Implemented` response instead of performing inpainting or multipart image editing.
+`POST /v1/images/edits` is wired in the current Rust backend and does not map to a fixed `501 Not Implemented` boundary.
 
-If your client calls `/v1/images/edits`, expect a boundary response shaped like the other accepted explicit unsupported surfaces:
+This endpoint expects a valid multipart image-edit request body, for example fields such as `model`, `prompt`, and `image`. Malformed or incomplete payloads can still fail with request errors such as `400 Bad Request`.
 
-```json
-{
-  "error": "not_implemented",
-  "message": "The requested image edit surface is not implemented in the current Rust backend.",
-  "path": "/v1/images/edits",
-  "status": 501
-}
-```
-
-This documentation is intentionally limited to the current accepted state. Use `/v1/images/generations` for the supported image-generation flow; do not treat `/v1/images/edits` as a usable endpoint in the current backend.
+Support remains provider and model dependent, so treat image edits as a supported route family with normal upstream capability limits, not as guaranteed parity across every configured channel.
 
 ## Supported Providers
 

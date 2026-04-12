@@ -3,10 +3,11 @@ use crate::models::{
     ExchangeCallbackOAuthRequest, ExchangeOAuthResponse, GeminiModelListResponse,
     GraphqlExecutionResult, GraphqlRequestPayload, InitializeSystemRequest, ModelListResponse,
     OpenAiModel, OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Route,
-    PollCopilotOAuthRequest, PollCopilotOAuthResponse, ProjectContext, RealtimeSessionCreateRequest,
-    RealtimeSessionPatchRequest, RealtimeSessionRecord, SignInRequest, SignInSuccess,
-    StartAntigravityOAuthRequest, StartCopilotOAuthRequest, StartCopilotOAuthResponse,
-    StartPkceOAuthRequest, StartPkceOAuthResponse, ThreadContext, TraceContext,
+    PollCopilotOAuthRequest, PollCopilotOAuthResponse, ProjectContext,
+    RealtimeSessionCreateRequest, RealtimeSessionPatchRequest, RealtimeSessionRecord,
+    SignInRequest, SignInSuccess, StartAntigravityOAuthRequest, StartCopilotOAuthRequest,
+    StartCopilotOAuthResponse, StartPkceOAuthRequest, StartPkceOAuthResponse, ThreadContext,
+    TraceContext,
 };
 use serde_json::Value;
 use std::future::Future;
@@ -66,6 +67,12 @@ pub trait OpenAiV1Port: Send + Sync {
         include: Option<&str>,
         api_key: &AuthApiKeyContext,
     ) -> Result<OpenAiModel, OpenAiV1Error>;
+
+    fn retrieve_response(
+        &self,
+        response_id: &str,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<Option<Value>, OpenAiV1Error>;
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error>;
 

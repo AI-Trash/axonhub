@@ -15,9 +15,9 @@ The Rust backend implements the following verified SQLite- and PostgreSQL-backed
 - **Health & system**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
 - **Identity & context**: authentication, request context, JWT handling
 - **Admin read routes**: `GET /admin/requests/:request_id/content`
-- **Admin GraphQL**: `POST /admin/graphql` with playground, the current supported settings-management subset, and OAuth flows (Codex, Claude Code, Antigravity, Copilot)
+- **Admin GraphQL**: `POST /admin/graphql` with playground, a broader verified admin query and mutation subset, and OAuth flows (Codex, Claude Code, Antigravity, Copilot)
 - **OpenAPI GraphQL**: `POST /openapi/v1/graphql` with playground
-- **OpenAI-compatible `/v1` inference (standard JSON requests only)**: `/models`, `/chat/completions`, `/responses`, `/responses/compact`, `/embeddings`, `/messages`, `/rerank`, JSON-only `POST /v1/realtime`
+- **OpenAI-compatible `/v1` inference**: `/models`, `/chat/completions`, `/responses`, `/responses/compact`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`, `/images/edits`, `POST /v1/realtime`, and realtime session-family routes
 - **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as configured
 - **Database support**: SQLite and PostgreSQL fully verified for the Rust target-state contract
@@ -32,10 +32,8 @@ The legacy Go tree remains in-repo as historical reference/oracle material. It i
 
 Accepted route families outside the current verified Rust surface return structured `501 Not Implemented` JSON:
 
-- `POST /v1/images/edits`
-- Realtime API transport beyond JSON-only `POST /v1/realtime` (including upgrade/WebSocket-style traffic and session-family routes, which stay on explicit `/v1/*` `501` boundaries)
 - Gemini `countTokens` requests on the accepted explicit compatibility boundary
-- Vercel AI SDK protocol marker headers on `/v1/*` requests (for example `X-Vercel-Ai-Ui-Message-Stream: v1` or `X-Vercel-AI-Data-Stream: v1`)
+- Additional parity-pinned route families that remain explicitly outside the verified Rust surface
 
 Use the Rust backend and Rust-tagged release artifacts for the current supported product surface. Keep the legacy Go tree only for historical reference/oracle work when a task explicitly requires it.
 
@@ -108,9 +106,9 @@ Current Rust behavior is intentionally limited:
 
 - `/health` returns a truthful health payload
 - `/admin/system/status` and `/admin/system/initialize` work on the supported SQLite- and PostgreSQL-backed Rust paths
-- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/responses/compact`, `/v1/embeddings`, and JSON-only `POST /v1/realtime` run through the current Rust backend with auth/context, routing, and SQLite- and PostgreSQL-backed persistence side effects
+- `/v1/models`, `/v1/chat/completions`, `/v1/responses`, `/v1/responses/compact`, `/v1/embeddings`, `/v1/images/generations`, `/v1/images/edits`, `POST /v1/realtime`, and realtime session-family routes run through the current Rust backend with auth/context, routing, and SQLite- and PostgreSQL-backed persistence side effects
 - SQLite and PostgreSQL are the Rust target-state databases in this repository; TiDB and Neon DB remain legacy-reference dialect material in the Go tree
-- `POST /v1/images/edits`, realtime upgrade/WebSocket/session-family traffic under `/v1/*`, Gemini `countTokens`, and AiSDK-marked `/v1/*` requests remain explicit structured `501 Not Implemented` JSON boundaries
+- Gemini `countTokens` and other remaining parity-pinned out-of-scope `/v1/*` route families remain explicit structured `501 Not Implemented` JSON boundaries
 - config file paths and `AXONHUB_*` env keys mirror the preserved operator-facing contract from `conf/conf.go`
 
 ## Frontend Development

@@ -46,6 +46,30 @@ impl BuildInfo {
             uptime: humantime::format_duration(start_time().elapsed()).to_string(),
         }
     }
+
+    pub(crate) fn version(&self) -> &str {
+        self.version
+    }
+
+    pub(crate) fn commit(&self) -> Option<&str> {
+        self.commit
+    }
+
+    pub(crate) fn build_time(&self) -> Option<&str> {
+        self.build_time
+    }
+
+    pub(crate) fn go_version(&self) -> Option<&str> {
+        self.go_version
+    }
+
+    pub(crate) fn platform(&self) -> &str {
+        self.platform.as_str()
+    }
+
+    pub(crate) fn uptime(&self) -> &str {
+        self.uptime.as_str()
+    }
 }
 
 fn start_time() -> &'static Instant {

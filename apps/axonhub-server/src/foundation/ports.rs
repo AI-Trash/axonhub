@@ -5,11 +5,11 @@ use axonhub_http::{
     AdminAuthError, AdminContentDownload, AdminError, AnthropicModelListResponse, ApiKeyAuthError,
     AuthApiKeyContext, AuthUserContext, CompatibilityRoute, ContextResolveError,
     GeminiModelListResponse, GraphqlExecutionResult, GraphqlRequestPayload,
-    InitializeSystemRequest, ModelListResponse, OpenAiV1Error, OpenAiV1ExecutionRequest,
-    OpenAiV1ExecutionResponse, OpenAiV1Route, OpenAiModel, ProjectContext,
-    RealtimeSessionCreateRequest, RealtimeSessionPatchRequest, RealtimeSessionRecord,
-    SignInError, SignInRequest, SignInSuccess, SystemInitializeError, SystemQueryError,
-    ThreadContext, TraceContext,
+    InitializeSystemRequest, ModelListResponse, OpenAiModel, OpenAiV1Error,
+    OpenAiV1ExecutionRequest, OpenAiV1ExecutionResponse, OpenAiV1Route, ProjectContext,
+    RealtimeSessionCreateRequest, RealtimeSessionPatchRequest, RealtimeSessionRecord, SignInError,
+    SignInRequest, SignInSuccess, SystemInitializeError, SystemQueryError, ThreadContext,
+    TraceContext,
 };
 
 pub(crate) trait SystemBootstrapRepository: Send + Sync {
@@ -68,6 +68,12 @@ pub(crate) trait OpenAiV1Repository: Send + Sync {
         include: Option<&str>,
         api_key: &AuthApiKeyContext,
     ) -> Result<OpenAiModel, OpenAiV1Error>;
+
+    fn retrieve_response(
+        &self,
+        response_id: &str,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<Option<serde_json::Value>, OpenAiV1Error>;
 
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error>;
 

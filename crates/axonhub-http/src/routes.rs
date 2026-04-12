@@ -131,7 +131,7 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
     cfg.service(web::resource("/debug/context").route(web::to(handlers::debug_context)))
         .service(web::resource("/models").route(web::get().to(handlers::openai_v1::list_openai_models)))
         .service(
-            web::resource("/models/{model}")
+            web::resource("/models/{model:.*}")
                 .route(web::get().to(handlers::openai_v1::retrieve_openai_model)),
         )
         .service(
@@ -144,6 +144,10 @@ fn configure_openai_v1(cfg: &mut ServiceConfig) {
         .service(
             web::resource("/responses/compact")
                 .route(web::post().to(handlers::openai_v1::openai_responses_compact)),
+        )
+        .service(
+            web::resource("/responses/{response_id}")
+                .route(web::get().to(handlers::openai_v1::retrieve_openai_response)),
         )
         .service(
             web::resource("/embeddings").route(web::post().to(handlers::openai_v1::openai_embeddings)),

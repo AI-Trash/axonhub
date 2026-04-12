@@ -1,4 +1,4 @@
-mod build_info;
+pub(crate) mod build_info;
 mod capabilities;
 mod cli;
 mod metrics;

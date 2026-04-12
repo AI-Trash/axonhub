@@ -138,6 +138,14 @@ impl OpenAiV1Port for OpenAiV1ApplicationService {
         self.repository.retrieve_model(model_id, include, api_key)
     }
 
+    fn retrieve_response(
+        &self,
+        response_id: &str,
+        api_key: &AuthApiKeyContext,
+    ) -> Result<Option<serde_json::Value>, OpenAiV1Error> {
+        self.repository.retrieve_response(response_id, api_key)
+    }
+
     fn list_anthropic_models(&self) -> Result<AnthropicModelListResponse, OpenAiV1Error> {
         self.repository.list_anthropic_models()
     }

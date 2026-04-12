@@ -1,5 +1,9 @@
+use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fmt;
+
+use crate::ports::OpenAiV1Error;
 use std::collections::HashMap;
 use std::env;
 use std::sync::OnceLock;
@@ -285,10 +289,25 @@ pub struct OpenAiV1ExecutionRequest {
     pub channel_hint_id: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OpenAiV1ExecutionResponse {
     pub status: u16,
     pub body: Value,
+    pub stream: Option<OpenAiV1EventStream>,
+}
+
+pub struct OpenAiV1EventStream {
+    pub content_type: &'static str,
+    pub frames: BoxStream<'static, Result<String, OpenAiV1Error>>,
+}
+
+impl fmt::Debug for OpenAiV1EventStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpenAiV1EventStream")
+            .field("content_type", &self.content_type)
+            .field("frames", &"<stream>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -373,6 +392,28 @@ pub struct StartPkceOAuthResponse {
 pub struct ExchangeCallbackOAuthRequest {
     pub session_id: String,
     pub callback_url: String,
+    #[serde(default)]
+    pub proxy: Option<OAuthProxyConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OAuthProxyType {
+    Disabled,
+    Environment,
+    Url,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct OAuthProxyConfig {
+    #[serde(rename = "type")]
+    pub proxy_type: OAuthProxyType,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

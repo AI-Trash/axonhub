@@ -83,6 +83,39 @@ pub(crate) async fn retrieve_openai_model(
     }
 }
 
+pub(crate) async fn retrieve_openai_response(
+    state: web::Data<HttpState>,
+    request: HttpRequest,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let openai = match &state.openai_v1 {
+        OpenAiV1Capability::Unsupported { message } => {
+            return not_implemented_response("/v1/*", Method::GET, request.uri().clone(), None)
+                .with_message(message)
+        }
+        OpenAiV1Capability::Available { openai } => openai,
+    };
+
+    let api_key = request
+        .extensions()
+        .get::<crate::state::RequestContextState>()
+        .and_then(|context| context.auth.as_ref())
+        .and_then(|auth| match auth {
+            crate::state::RequestAuthContext::ApiKey(key) => Some(key.clone()),
+            crate::state::RequestAuthContext::Admin(_) => None,
+        });
+    let api_key = match api_key {
+        Some(api_key) => api_key,
+        None => return error_response(StatusCode::UNAUTHORIZED, "Unauthorized", "Invalid API key"),
+    };
+
+    match openai.retrieve_response(path.as_str(), &api_key) {
+        Ok(Some(response)) => HttpResponse::Ok().json(response),
+        Ok(None) => error_response(StatusCode::NOT_FOUND, "Not Found", "Response not found"),
+        Err(error) => openai_error_response(error),
+    }
+}
+
 pub async fn openai_chat_completions(
     state: web::Data<HttpState>,
     request: HttpRequest,

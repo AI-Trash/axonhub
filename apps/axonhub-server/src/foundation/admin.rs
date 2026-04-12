@@ -27,6 +27,36 @@ pub(crate) struct StoredStoragePolicy {
     pub(crate) cleanup_options: Vec<StoredCleanupOption>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) struct StoredAutoDisableChannelStatus {
+    pub(crate) status: i32,
+    pub(crate) times: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) struct StoredAutoDisableChannel {
+    pub(crate) enabled: bool,
+    pub(crate) statuses: Vec<StoredAutoDisableChannelStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct StoredRetryPolicy {
+    pub(crate) enabled: bool,
+    pub(crate) max_channel_retries: i32,
+    pub(crate) max_single_channel_retries: i32,
+    pub(crate) retry_delay_ms: i32,
+    pub(crate) load_balancer_strategy: String,
+    #[serde(default)]
+    pub(crate) auto_disable_channel: StoredAutoDisableChannel,
+}
+
+impl Default for StoredRetryPolicy {
+    fn default() -> Self {
+        default_retry_policy()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Enum)]
 #[serde(rename_all = "lowercase")]
 #[graphql(rename_items = "lowercase")]
@@ -183,6 +213,28 @@ pub(crate) struct StoredAutoBackupSettings {
     pub(crate) retention_days: i32,
     pub(crate) last_backup_at: Option<i64>,
     pub(crate) last_backup_error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct StoredVideoStorageSettings {
+    pub(crate) enabled: bool,
+    pub(crate) data_storage_id: i64,
+    pub(crate) scan_interval_minutes: i32,
+    pub(crate) scan_limit: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct StoredSystemGeneralSettings {
+    #[serde(alias = "currencyCode")]
+    pub(crate) currency_code: String,
+    pub(crate) timezone: String,
+}
+
+impl Default for StoredSystemGeneralSettings {
+    fn default() -> Self {
+        default_system_general_settings()
+    }
 }
 
 impl ProbeFrequencySetting {
@@ -475,6 +527,30 @@ pub(crate) fn default_storage_policy() -> StoredStoragePolicy {
     }
 }
 
+pub(crate) fn default_retry_policy() -> StoredRetryPolicy {
+    StoredRetryPolicy {
+        enabled: true,
+        max_channel_retries: 3,
+        max_single_channel_retries: 2,
+        retry_delay_ms: 1000,
+        load_balancer_strategy: "adaptive".to_owned(),
+        auto_disable_channel: StoredAutoDisableChannel::default(),
+    }
+}
+
+pub(crate) fn normalize_retry_policy_load_balancer_strategy(strategy: &str) -> String {
+    let trimmed = strategy.trim();
+    if trimmed.is_empty() {
+        return default_retry_policy().load_balancer_strategy;
+    }
+
+    if trimmed.eq_ignore_ascii_case("weighted") {
+        return "failover".to_owned();
+    }
+
+    trimmed.to_owned()
+}
+
 pub(crate) fn default_auto_backup_settings() -> StoredAutoBackupSettings {
     StoredAutoBackupSettings {
         enabled: false,
@@ -490,6 +566,15 @@ pub(crate) fn default_auto_backup_settings() -> StoredAutoBackupSettings {
     }
 }
 
+pub(crate) fn default_video_storage_settings() -> StoredVideoStorageSettings {
+    StoredVideoStorageSettings {
+        enabled: false,
+        data_storage_id: 0,
+        scan_interval_minutes: 5,
+        scan_limit: 100,
+    }
+}
+
 pub(crate) fn default_system_channel_settings() -> StoredSystemChannelSettings {
     StoredSystemChannelSettings {
         probe: StoredChannelProbeSettings {
@@ -500,6 +585,13 @@ pub(crate) fn default_system_channel_settings() -> StoredSystemChannelSettings {
             frequency: AutoSyncFrequencySetting::OneHour,
         },
         query_all_channel_models: true,
+    }
+}
+
+pub(crate) fn default_system_general_settings() -> StoredSystemGeneralSettings {
+    StoredSystemGeneralSettings {
+        currency_code: "USD".to_owned(),
+        timezone: "UTC".to_owned(),
     }
 }
 

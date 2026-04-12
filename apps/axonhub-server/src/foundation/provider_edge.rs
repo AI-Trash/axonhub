@@ -1,8 +1,8 @@
 use axonhub_http::{
-    ExchangeCallbackOAuthRequest, ExchangeOAuthResponse, PollCopilotOAuthRequest,
-    PollCopilotOAuthResponse, ProviderEdgeAdminError, ProviderEdgeAdminPort,
-    StartAntigravityOAuthRequest, StartCopilotOAuthRequest, StartCopilotOAuthResponse,
-    StartPkceOAuthRequest, StartPkceOAuthResponse,
+    ExchangeCallbackOAuthRequest, ExchangeOAuthResponse, OAuthProxyConfig, OAuthProxyType,
+    PollCopilotOAuthRequest, PollCopilotOAuthResponse, ProviderEdgeAdminError,
+    ProviderEdgeAdminPort, StartAntigravityOAuthRequest, StartCopilotOAuthRequest,
+    StartCopilotOAuthResponse, StartPkceOAuthRequest, StartPkceOAuthResponse,
 };
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use serde::Deserialize;
@@ -12,14 +12,13 @@ use std::env;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
+use super::shared::{
+    current_unix_timestamp, format_unix_timestamp, PROVIDER_EDGE_COPILOT_COMPLETE_MESSAGE,
+    PROVIDER_EDGE_COPILOT_DEVICE_GRANT_TYPE, PROVIDER_EDGE_COPILOT_PENDING_MESSAGE,
+    PROVIDER_EDGE_COPILOT_SLOW_DOWN_MESSAGE, PROVIDER_EDGE_PKCE_SESSION_TTL_SECONDS,
+};
 use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
-use super::shared::{
-    current_unix_timestamp, format_unix_timestamp,
-    PROVIDER_EDGE_COPILOT_COMPLETE_MESSAGE, PROVIDER_EDGE_COPILOT_DEVICE_GRANT_TYPE,
-    PROVIDER_EDGE_COPILOT_PENDING_MESSAGE, PROVIDER_EDGE_COPILOT_SLOW_DOWN_MESSAGE,
-    PROVIDER_EDGE_PKCE_SESSION_TTL_SECONDS,
-};
 
 pub struct SqliteProviderEdgeAdminService {
     config: ProviderEdgeAdminConfig,
@@ -188,6 +187,19 @@ impl SqliteProviderEdgeAdminService {
         provider_edge_default_http_client()
     }
 
+    fn codex_exchange_http_client(
+        &self,
+        proxy: Option<&OAuthProxyConfig>,
+    ) -> Result<CodexExchangeHttpClient<'_>, ProviderEdgeAdminError> {
+        match proxy {
+            Some(proxy) => match build_codex_exchange_http_client(proxy)? {
+                Some(client) => Ok(CodexExchangeHttpClient::Owned(client)),
+                None => Ok(CodexExchangeHttpClient::Borrowed(self.http_client())),
+            },
+            None => Ok(CodexExchangeHttpClient::Borrowed(self.http_client())),
+        }
+    }
+
     fn run_copilot_http_task<T, Task>(&self, task: Task) -> Result<T, ProviderEdgeAdminError>
     where
         T: Send + 'static,
@@ -276,11 +288,20 @@ impl SqliteProviderEdgeAdminService {
             return Err(provider_edge_invalid_request("oauth state mismatch"));
         }
 
+        let codex_client = if provider == PkceProvider::Codex {
+            Some(self.codex_exchange_http_client(request.proxy.as_ref())?)
+        } else {
+            None
+        };
+
         let token = self.exchange_provider_token(
             provider,
             callback.code.as_str(),
             callback.state.as_str(),
             code_verifier.as_str(),
+            codex_client
+                .as_ref()
+                .map(CodexExchangeHttpClient::as_client),
         )?;
 
         let credentials = match provider {
@@ -426,6 +447,7 @@ impl SqliteProviderEdgeAdminService {
         code: &str,
         state: &str,
         code_verifier: &str,
+        codex_client: Option<&reqwest::blocking::Client>,
     ) -> Result<OAuthTokenResponse, ProviderEdgeAdminError> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
@@ -490,7 +512,7 @@ impl SqliteProviderEdgeAdminService {
                         self.config.antigravity_client_secret.clone(),
                     ));
                 }
-                self.http_client()
+                self.token_exchange_http_client(provider, codex_client)
                     .post(self.provider_token_endpoint(provider))
                     .headers(headers)
                     .body(form_urlencode(params))
@@ -527,6 +549,17 @@ impl SqliteProviderEdgeAdminService {
             ));
         }
         Ok(token)
+    }
+
+    fn token_exchange_http_client<'a>(
+        &'a self,
+        provider: PkceProvider,
+        codex_client: Option<&'a reqwest::blocking::Client>,
+    ) -> &'a reqwest::blocking::Client {
+        match provider {
+            PkceProvider::Codex => codex_client.unwrap_or_else(|| self.http_client()),
+            PkceProvider::ClaudeCode | PkceProvider::Antigravity => self.http_client(),
+        }
     }
 
     fn resolve_antigravity_project_id(
@@ -991,14 +1024,18 @@ pub(crate) fn generate_provider_edge_session_id() -> Result<String, ProviderEdge
     let mut bytes = [0_u8; 32];
     getrandom(&mut bytes)
         .map(|_| hex_encode(bytes))
-        .map_err(|error| provider_edge_internal_error(format!("failed to generate oauth state: {error}")))
+        .map_err(|error| {
+            provider_edge_internal_error(format!("failed to generate oauth state: {error}"))
+        })
 }
 
 pub(crate) fn generate_provider_edge_code_verifier() -> Result<String, ProviderEdgeAdminError> {
     let mut bytes = [0_u8; 64];
     getrandom(&mut bytes)
         .map(|_| hex_encode(bytes))
-        .map_err(|error| provider_edge_internal_error(format!("failed to generate code verifier: {error}")))
+        .map_err(|error| {
+            provider_edge_internal_error(format!("failed to generate code verifier: {error}"))
+        })
 }
 
 pub(crate) fn provider_edge_code_challenge(code_verifier: &str) -> String {
@@ -1125,6 +1162,61 @@ pub(crate) fn provider_edge_default_http_client() -> &'static reqwest::blocking:
             .join()
             .unwrap_or_else(|_| reqwest::blocking::Client::new())
     })
+}
+
+enum CodexExchangeHttpClient<'a> {
+    Borrowed(&'a reqwest::blocking::Client),
+    Owned(reqwest::blocking::Client),
+}
+
+impl CodexExchangeHttpClient<'_> {
+    fn as_client(&self) -> &reqwest::blocking::Client {
+        match self {
+            Self::Borrowed(client) => client,
+            Self::Owned(client) => client,
+        }
+    }
+}
+
+fn build_codex_exchange_http_client(
+    proxy: &OAuthProxyConfig,
+) -> Result<Option<reqwest::blocking::Client>, ProviderEdgeAdminError> {
+    let builder = reqwest::blocking::Client::builder();
+    match proxy.proxy_type {
+        OAuthProxyType::Disabled => {
+            builder.no_proxy().build().map(Some).map_err(|error| {
+                provider_edge_bad_gateway(format!("token exchange failed: {error}"))
+            })
+        }
+        OAuthProxyType::Environment => builder
+            .build()
+            .map(Some)
+            .map_err(|error| provider_edge_bad_gateway(format!("token exchange failed: {error}"))),
+        OAuthProxyType::Url => {
+            if proxy.url.trim().is_empty() {
+                return Ok(None);
+            }
+
+            let mut reqwest_proxy = reqwest::Proxy::all(proxy.url.as_str()).map_err(|error| {
+                provider_edge_bad_gateway(format!(
+                    "token exchange failed: invalid proxy URL: {error}"
+                ))
+            })?;
+
+            if !proxy.username.is_empty() && !proxy.password.is_empty() {
+                reqwest_proxy =
+                    reqwest_proxy.basic_auth(proxy.username.as_str(), proxy.password.as_str());
+            }
+
+            builder
+                .proxy(reqwest_proxy)
+                .build()
+                .map(Some)
+                .map_err(|error| {
+                    provider_edge_bad_gateway(format!("token exchange failed: {error}"))
+                })
+        }
+    }
 }
 
 fn required_env(key: &str) -> Option<String> {
@@ -1284,7 +1376,7 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     fn env_lock() -> &'static Mutex<()> {
@@ -1538,6 +1630,23 @@ mod tests {
         )
     }
 
+    fn start_proxy_server<F>(handler: F) -> String
+    where
+        F: Fn(String, Vec<u8>) -> String + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind proxy server");
+        let address = listener.local_addr().expect("read proxy local addr");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept proxy request");
+            let (request, body) = read_http_request(&mut stream);
+            let response = handler(request, body);
+            stream
+                .write_all(response.as_bytes())
+                .expect("write proxy response");
+        });
+        format!("http://{address}")
+    }
+
     fn test_provider_edge_config() -> ProviderEdgeAdminConfig {
         ProviderEdgeAdminConfig {
             codex_authorize_url: "https://example.test/codex/authorize".to_owned(),
@@ -1611,6 +1720,7 @@ mod tests {
                 session_id: start.session_id.clone(),
                 callback_url: "http://localhost:1455/auth/callback?code=test-code&state=mismatch"
                     .to_owned(),
+                proxy: None,
             })
             .expect_err("state mismatch should fail");
 
@@ -1627,6 +1737,7 @@ mod tests {
                 callback_url:
                     "http://localhost:1455/auth/callback?code=test-code&state=unused-session"
                         .to_owned(),
+                proxy: None,
             })
             .expect_err("replay after mismatch should fail");
 
@@ -1636,6 +1747,116 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn codex_exchange_without_proxy_posts_form_and_returns_credentials_json() {
+        let token_server_url = start_http_server(|request, body| {
+            assert!(request.starts_with("POST /token HTTP/1.1"));
+            assert!(
+                request.contains("content-type: application/x-www-form-urlencoded")
+                    || request.contains("Content-Type: application/x-www-form-urlencoded")
+            );
+            assert!(
+                request.contains("user-agent: codex-test-agent")
+                    || request.contains("User-Agent: codex-test-agent")
+            );
+            let body = String::from_utf8(body).expect("form body");
+            assert!(body.contains("grant_type=authorization_code"));
+            assert!(body.contains("client_id=codex-client-id"));
+            assert!(body.contains("code=test-code"));
+            assert!(body.contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"));
+
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"access_token":"codex-access","refresh_token":"codex-refresh","id_token":"codex-id","expires_in":3600,"token_type":"bearer","scope":"openid profile email offline_access"}"#,
+            )
+        });
+
+        let mut config = test_provider_edge_config();
+        config.codex_token_url = format!("{token_server_url}/token");
+        let service = SqliteProviderEdgeAdminService::new(config);
+        let start = service
+            .start_codex_oauth(&StartPkceOAuthRequest {})
+            .expect("start codex oauth");
+
+        let response = service
+            .exchange_codex_oauth(&ExchangeCallbackOAuthRequest {
+                session_id: start.session_id.clone(),
+                callback_url: format!(
+                    "http://localhost:1455/auth/callback?code=test-code&state={}",
+                    start.session_id
+                ),
+                proxy: None,
+            })
+            .expect("exchange codex oauth");
+
+        let credentials: Value =
+            serde_json::from_str(&response.credentials).expect("credentials json");
+        assert_eq!(credentials["client_id"], "codex-client-id");
+        assert_eq!(credentials["access_token"], "codex-access");
+        assert_eq!(credentials["refresh_token"], "codex-refresh");
+        assert_eq!(credentials["id_token"], "codex-id");
+        assert_eq!(credentials["token_type"], "bearer");
+        assert_eq!(
+            credentials["scopes"],
+            serde_json::json!(["openid", "profile", "email", "offline_access"])
+        );
+        assert!(credentials["expires_at"]
+            .as_str()
+            .is_some_and(|value| value.ends_with('Z')));
+    }
+
+    #[test]
+    fn codex_exchange_uses_request_scoped_proxy_override_when_present() {
+        let proxy_hits = Arc::new(Mutex::new(0_u32));
+        let proxy_hits_for_server = Arc::clone(&proxy_hits);
+        let proxy_url = start_proxy_server(move |request, body| {
+            *proxy_hits_for_server.lock().unwrap() += 1;
+            assert!(request.starts_with("POST http://codex-upstream.invalid/token HTTP/1.1"));
+            assert!(
+                request.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ=")
+                    || request.contains("Proxy-Authorization: Basic dXNlcjpzZWNyZXQ=")
+            );
+            let body = String::from_utf8(body).expect("form body");
+            assert!(body.contains("grant_type=authorization_code"));
+            assert!(body.contains("client_id=codex-client-id"));
+            assert!(body.contains("code=test-code"));
+
+            http_json_response(
+                "HTTP/1.1 200 OK",
+                r#"{"access_token":"proxy-access","refresh_token":"proxy-refresh","expires_in":3600,"token_type":"bearer"}"#,
+            )
+        });
+
+        let mut config = test_provider_edge_config();
+        config.codex_token_url = "http://codex-upstream.invalid/token".to_owned();
+        let service = SqliteProviderEdgeAdminService::new(config);
+        let start = service
+            .start_codex_oauth(&StartPkceOAuthRequest {})
+            .expect("start codex oauth");
+
+        let response = service
+            .exchange_codex_oauth(&ExchangeCallbackOAuthRequest {
+                session_id: start.session_id.clone(),
+                callback_url: format!(
+                    "http://localhost:1455/auth/callback?code=test-code&state={}",
+                    start.session_id
+                ),
+                proxy: Some(OAuthProxyConfig {
+                    proxy_type: OAuthProxyType::Url,
+                    url: proxy_url,
+                    username: "user".to_owned(),
+                    password: "secret".to_owned(),
+                }),
+            })
+            .expect("exchange codex oauth through proxy");
+
+        let credentials: Value =
+            serde_json::from_str(&response.credentials).expect("credentials json");
+        assert_eq!(credentials["access_token"], "proxy-access");
+        assert_eq!(credentials["refresh_token"], "proxy-refresh");
+        assert_eq!(*proxy_hits.lock().unwrap(), 1);
     }
 
     #[test]
@@ -1683,6 +1904,7 @@ mod tests {
                 callback_url: format!(
                     "http://localhost:54545/callback?code=test-code#{session_id}"
                 ),
+                proxy: None,
             })
             .expect("exchange claudecode oauth");
 
@@ -1741,6 +1963,7 @@ mod tests {
                     "http://localhost:51121/oauth-callback?code=test-code&state={}",
                     start_with_project.session_id
                 ),
+                proxy: None,
             })
             .expect("exchange antigravity oauth");
         assert_eq!(response.credentials, "ag-refresh|project-123");
@@ -1767,6 +1990,7 @@ mod tests {
                     "http://localhost:51121/oauth-callback?code=test-code&state={}",
                     start_without_project.session_id
                 ),
+                proxy: None,
             })
             .expect_err("missing endpoints should fail");
 

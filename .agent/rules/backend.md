@@ -10,7 +10,7 @@ globs: "**/*.{go,rs}"
 - Rust workspace is the canonical backend implementation.
 - `apps/axonhub-server`, `crates/axonhub-config`, and `crates/axonhub-http` preserve the operator-facing backend contract that CI must keep parity-tested.
 - `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/` remain historical reference/oracle material, not the canonical build/release/deployment path.
-- Named explicit unsupported boundaries remain truthful and deliberate: `/v1/images/edits`, `/v1/realtime`, Gemini `countTokens`, and AiSDK header-triggered `/v1/*` requests where the Rust tests currently pin them.
+- Named explicit unsupported boundaries remain truthful and deliberate for route families that are still intentionally unimplemented in current Rust verification, including Gemini `countTokens` and any remaining parity-pinned `501` boundaries in the Rust test suite.
 
 ## Execution Rules
 

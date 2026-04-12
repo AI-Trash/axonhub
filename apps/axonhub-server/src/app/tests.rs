@@ -3512,6 +3512,12 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
         "password123",
         &[],
     );
+    let project_reader_user_id = insert_sqlite_user(
+        &foundation,
+        "project-reader@example.com",
+        "password123",
+        &[],
+    );
     let owner_user_id = insert_sqlite_user(
         &foundation,
         "owner-ops@example.com",
@@ -3526,6 +3532,7 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
 
     insert_sqlite_project_membership(&foundation, system_user_id, 1, false, &[]);
     insert_sqlite_project_membership(&foundation, no_scope_user_id, 1, false, &[]);
+    insert_sqlite_project_membership(&foundation, project_reader_user_id, 1, false, &["read_requests"]);
     insert_sqlite_project_membership(&foundation, owner_user_id, 1, false, &[]);
 
     connection
@@ -3541,6 +3548,24 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
                 "openai",
                 "{}"
             ],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO requests (
+                created_at, updated_at, api_key_id, project_id, trace_id, data_storage_id,
+                source, model_id, format, request_headers, request_body, response_body, response_chunks,
+                channel_id, external_id, status, stream, client_ip, metrics_latency_ms,
+                metrics_first_token_latency_ms, content_saved, content_storage_id, content_storage_key,
+                content_saved_at
+            ) VALUES (
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, 1, NULL, NULL,
+                'api', 'gpt-4o', 'openai/chat_completions', '{}', '{}', NULL, NULL,
+                NULL, 'req_task18', 'completed', 0, '', NULL,
+                NULL, 0, NULL, NULL,
+                NULL
+            )",
+            [],
         )
         .unwrap();
 
@@ -3593,6 +3618,16 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
         IdentityCapability::Available { identity } => identity
             .admin_signin(&SignInRequest {
                 email: "no-scope@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap()
+            .token,
+        IdentityCapability::Unsupported { message } => panic!("Expected identity capability: {message}"),
+    };
+    let project_reader_token = match build_identity_capability("sqlite3", &db_path.display().to_string(), false) {
+        IdentityCapability::Available { identity } => identity
+            .admin_signin(&SignInRequest {
+                email: "project-reader@example.com".to_owned(),
                 password: "password123".to_owned(),
             })
             .unwrap()
@@ -3658,7 +3693,7 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
     assert!(denied_no_scope_json["data"]["queryModels"].is_null());
     assert_eq!(denied_no_scope_json["errors"][0]["message"], "permission denied");
 
-    let unsupported_owner = app
+    let supported_owner = app
         .clone()
         .oneshot(
             Request::builder()
@@ -3671,14 +3706,41 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
         )
         .await
         .unwrap();
-    assert_eq!(unsupported_owner.status(), StatusCode::NOT_IMPLEMENTED);
-    let unsupported_owner_json =
-        serde_json::from_slice::<serde_json::Value>(&read_body(unsupported_owner).await).unwrap();
-    assert_eq!(unsupported_owner_json["error"], "not_implemented");
-    assert_eq!(unsupported_owner_json["route_family"], "/admin/graphql");
-    assert!(unsupported_owner_json["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("allScopes")));
+    assert_eq!(supported_owner.status(), StatusCode::OK);
+    let supported_owner_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(supported_owner).await).unwrap();
+    assert!(supported_owner_json["errors"].is_null() || supported_owner_json.get("errors").is_none());
+    assert!(supported_owner_json["data"]["allScopes"]
+        .as_array()
+        .is_some_and(|scopes| !scopes.is_empty()));
+
+    let project_reader_requests = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {project_reader_token}"))
+                .header("X-Project-ID", "gid://axonhub/project/1")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"query":"{ requests { id projectID status } }"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(project_reader_requests.status(), StatusCode::OK);
+    let project_reader_requests_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(project_reader_requests).await).unwrap();
+    assert!(
+        project_reader_requests_json["errors"].is_null()
+            || project_reader_requests_json.get("errors").is_none()
+    );
+    let requests = project_reader_requests_json["data"]["requests"]
+        .as_array()
+        .expect("expected requests array");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["projectID"], "gid://axonhub/project/1");
+    assert_eq!(requests[0]["status"], "completed");
 
     let model_count: i64 = foundation
         .open_connection(true)
@@ -4126,6 +4188,46 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
     assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["queryAllChannelModels"], false);
     assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["enabled"], false);
     assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["frequency"], "ONE_HOUR");
+
+    let model_settings_query = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {settings_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"{ systemModelSettings { fallbackToChannelsOnModelNotFound queryAllChannelModels } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let model_settings_query_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(model_settings_query).await).unwrap();
+    assert_eq!(model_settings_query_json["data"]["systemModelSettings"]["fallbackToChannelsOnModelNotFound"], true);
+    assert_eq!(model_settings_query_json["data"]["systemModelSettings"]["queryAllChannelModels"], false);
+
+    let denied_model_settings = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/admin/graphql")
+                .method(Method::POST.as_str())
+                .header("Authorization", format!("Bearer {no_scope_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"query":"{ systemModelSettings { fallbackToChannelsOnModelNotFound queryAllChannelModels } }"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let denied_model_settings_json =
+        serde_json::from_slice::<serde_json::Value>(&read_body(denied_model_settings).await).unwrap();
+    assert_eq!(denied_model_settings_json["data"]["systemModelSettings"], serde_json::Value::Null);
+    assert_eq!(denied_model_settings_json["errors"][0]["message"], "permission denied");
 
     let trigger_backup = app
         .clone()

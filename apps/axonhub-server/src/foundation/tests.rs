@@ -6,7 +6,8 @@ use super::{
     admin_operational::{RestoreOptions, SeaOrmOperationalService},
     authz::{
         scope_strings, serialize_scope_slugs, ScopeLevel, ScopeSlug, ROLE_LEVEL_PROJECT,
-        ROLE_LEVEL_SYSTEM, SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS,
+        ROLE_LEVEL_SYSTEM, SCOPE_READ_CHANNELS, SCOPE_READ_DASHBOARD, SCOPE_READ_PROJECTS, SCOPE_READ_REQUESTS,
+        SCOPE_READ_ROLES, SCOPE_READ_API_KEYS,
         SCOPE_READ_PROMPTS, SCOPE_READ_USERS, SCOPE_READ_SETTINGS, SCOPE_WRITE_API_KEYS,
         SCOPE_WRITE_PROMPTS, SCOPE_WRITE_SETTINGS, SCOPE_WRITE_REQUESTS, SCOPE_WRITE_USERS,
     },
@@ -23,7 +24,7 @@ use super::{
         NewUsageLogRecord, SeaOrmOpenAiV1Service,
     },
     openai_v1::sqlite_test_support::SqliteOpenAiV1Service,
-    request_context::parse_onboarding_record,
+    request_context::{parse_onboarding_record, serialize_onboarding_record, OnboardingModule, OnboardingRecord},
     request_context_service::SeaOrmRequestContextService,
     request_context_service::sqlite_test_support::SqliteRequestContextService,
     repositories::identity::sqlite_test_support::{query_project, query_user_by_id},
@@ -41,6 +42,7 @@ use super::{
         SeaOrmBootstrapService,
     },
 };
+use crate::app::build_info::BuildInfo;
 use axonhub_http::{
     AdminCapability, AdminError, AdminGraphqlCapability, AdminGraphqlPort, AdminPort,
     AuthUserContext, GraphqlRequestPayload, HttpCorsSettings, HttpState, IdentityCapability,
@@ -56,6 +58,7 @@ use actix_web::dev::ServiceResponse;
 use actix_web::http::{Method, StatusCode};
 use actix_web::http::header;
 use actix_web::test as actix_test;
+use chrono::{Datelike, Duration as ChronoDuration, TimeZone, Utc};
 use pg_embed::pg_enums::PgAuthMethod;
 use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
 use pg_embed::postgres::{PgEmbed, PgSettings};
@@ -500,6 +503,127 @@ struct TestHttpRequest {
         })
     }
 
+    fn seaorm_graphql_test_app(
+        foundation: Arc<SqliteFoundation>,
+        bootstrap: SqliteBootstrapService,
+        db: SeaOrmConnectionFactory,
+    ) -> TestApp {
+        seaorm_graphql_test_app_with_service(
+            foundation,
+            bootstrap,
+            Arc::new(SeaOrmAdminGraphqlService::new(db)),
+        )
+    }
+
+    fn seaorm_graphql_test_app_with_service(
+        foundation: Arc<SqliteFoundation>,
+        bootstrap: SqliteBootstrapService,
+        graphql: Arc<dyn AdminGraphqlPort>,
+    ) -> TestApp {
+        router(HttpState {
+            service_name: "AxonHub".to_owned(),
+            version: "v0.9.20".to_owned(),
+            config_source: None,
+            system_bootstrap: SystemBootstrapCapability::Available {
+                system: Arc::new(bootstrap),
+            },
+            identity: IdentityCapability::Available {
+                identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+            },
+            request_context: RequestContextCapability::Available {
+                request_context: Arc::new(SqliteRequestContextService::new(
+                    foundation.clone(),
+                    false,
+                )),
+            },
+            openai_v1: OpenAiV1Capability::Unsupported {
+                message: "test-only unsupported openai".to_owned(),
+            },
+            admin: AdminCapability::Available {
+                admin: Arc::new(seaorm_admin_service(&foundation)),
+            },
+            admin_graphql: AdminGraphqlCapability::Available {
+                graphql,
+            },
+            openapi_graphql: OpenApiGraphqlCapability::Available {
+                graphql: Arc::new(SqliteOpenApiGraphqlService::new(foundation)),
+            },
+            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+                message: "test-only unsupported provider-edge admin".to_owned(),
+            },
+            allow_no_auth: false,
+            cors: disabled_test_cors(),
+            trace_config: TraceConfig {
+                thread_header: Some("AH-Thread-Id".to_owned()),
+                trace_header: Some("AH-Trace-Id".to_owned()),
+                request_header: Some("X-Request-Id".to_owned()),
+                extra_trace_headers: Vec::new(),
+                extra_trace_body_fields: Vec::new(),
+                claude_code_trace_enabled: false,
+                codex_trace_enabled: false,
+            },
+        })
+    }
+
+    fn mock_github_releases_server_url() -> &'static str {
+        static SERVER_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        SERVER_URL
+            .get_or_init(|| {
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let address = listener.local_addr().unwrap();
+                thread::spawn(move || {
+                    for stream in listener.incoming() {
+                        let mut stream = match stream {
+                            Ok(stream) => stream,
+                            Err(_) => continue,
+                        };
+                        let mut buffer = [0_u8; 8192];
+                        let size = match stream.read(&mut buffer) {
+                            Ok(size) => size,
+                            Err(_) => continue,
+                        };
+                        let request = String::from_utf8_lossy(&buffer[..size]);
+                        let path = request
+                            .lines()
+                            .next()
+                            .and_then(|line| line.split_whitespace().nth(1))
+                            .unwrap_or("/");
+                        let (status_line, body) = match path {
+                            "/releases?per_page=10&page=1" => (
+                                "HTTP/1.1 200 OK",
+                                r#"[
+                                    {"tag_name":"v0.9.99","prerelease":false,"draft":false,"published_at":"2026-04-11T10:00:00Z"},
+                                    {"tag_name":"v0.9.22-rc1","prerelease":false,"draft":false,"published_at":"2026-04-11T09:00:00Z"},
+                                    {"tag_name":"service/v9.9.9","prerelease":false,"draft":false,"published_at":"2026-04-11T08:00:00Z"}
+                                ]"#,
+                            ),
+                            "/releases-error?per_page=10&page=1" => (
+                                "HTTP/1.1 500 Internal Server Error",
+                                r#"{"message":"upstream failed"}"#,
+                            ),
+                            "/releases-none?per_page=10&page=1" => (
+                                "HTTP/1.1 200 OK",
+                                r#"[
+                                    {"tag_name":"v0.9.22-rc1","prerelease":false,"draft":false,"published_at":"2026-04-11T10:00:00Z"},
+                                    {"tag_name":"v0.9.23","prerelease":false,"draft":false,"published_at":"2999-01-01T00:00:00Z"},
+                                    {"tag_name":"service/v9.9.9","prerelease":false,"draft":false,"published_at":"2026-04-11T08:00:00Z"}
+                                ]"#,
+                            ),
+                            _ => ("HTTP/1.1 404 Not Found", r#"{"message":"not found"}"#),
+                        };
+                        let response = format!(
+                            "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                    }
+                });
+                format!("http://{address}")
+            })
+            .as_str()
+    }
+
     fn bootstrap_postgres_auth_fixture(connection: &mut PostgresClient) {
         connection
             .execute(
@@ -884,15 +1008,16 @@ struct TestHttpRequest {
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
         let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
 
-        bootstrap
-            .initialize(&InitializeSystemRequest {
-                owner_email: "owner@example.com".to_owned(),
-                owner_password: "password123".to_owned(),
-                owner_first_name: "System".to_owned(),
-                owner_last_name: "Owner".to_owned(),
-                brand_name: "AxonHub".to_owned(),
-            })
-            .unwrap();
+        match bootstrap.initialize(&InitializeSystemRequest {
+            owner_email: "owner@example.com".to_owned(),
+            owner_password: "password123".to_owned(),
+            owner_first_name: "System".to_owned(),
+            owner_last_name: "Owner".to_owned(),
+            brand_name: "AxonHub".to_owned(),
+        }) {
+            Ok(()) | Err(axonhub_http::SystemInitializeError::AlreadyInitialized) => {}
+            Err(error) => panic!("initialize retry policy denied fixture: {error:?}"),
+        }
 
         let raw = foundation
             .system_settings()
@@ -1281,7 +1406,8 @@ struct TestHttpRequest {
             &[],
         );
 
-        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
 
         // Sign in as admin
         let token = signin_token(foundation.clone(), "admin@example.com", "password123");
@@ -1369,7 +1495,8 @@ struct TestHttpRequest {
         let _project_id = 1;
         let role_id = insert_role(&connection, "Test Role", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_SETTINGS]);
 
-        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
 
         // Sign in as admin
         let token = signin_token(foundation.clone(), "admin@example.com", "password123");
@@ -1513,7 +1640,8 @@ struct TestHttpRequest {
             params![target_user_id, old_role_id],
         ).unwrap();
 
-        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
 
         // Sign in as admin
         let token = signin_token(foundation.clone(), "admin@example.com", "password123");
@@ -1636,7 +1764,8 @@ struct TestHttpRequest {
         let project_id = 1;
         insert_project_membership(&connection, user_id, project_id, false, &[SCOPE_READ_REQUESTS]);
 
-        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
         let token = signin_token(foundation.clone(), "testuser@example.com", "password123");
 
         let response = app
@@ -1760,6 +1889,135 @@ struct TestHttpRequest {
         assert_eq!(policy.cleanup_options[0].resource_type, "requests");
         assert!(policy.cleanup_options[0].enabled);
         assert_eq!(policy.cleanup_options[0].cleanup_days, 7);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_update_retry_policy_mutation_and_readback() {
+        let db_path = temp_sqlite_path("task9-update-retry-policy");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation UpdateRetryPolicy($input: UpdateRetryPolicyInput!) { updateRetryPolicy(input: $input) }",
+                            "variables": {
+                                "input": {
+                                    "enabled": false,
+                                    "maxChannelRetries": 5,
+                                    "maxSingleChannelRetries": 1,
+                                    "retryDelayMs": 250,
+                                    "loadBalancerStrategy": "weighted",
+                                    "autoDisableChannel": {
+                                        "enabled": true,
+                                        "statuses": [{"status": 429, "times": 2}]
+                                    }
+                                }
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["updateRetryPolicy"], true);
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ retryPolicy { enabled maxChannelRetries maxSingleChannelRetries retryDelayMs loadBalancerStrategy autoDisableChannel { enabled statuses { status times } } } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["retryPolicy"]["enabled"], false);
+        assert_eq!(query_json["data"]["retryPolicy"]["maxChannelRetries"], 5);
+        assert_eq!(query_json["data"]["retryPolicy"]["maxSingleChannelRetries"], 1);
+        assert_eq!(query_json["data"]["retryPolicy"]["retryDelayMs"], 250);
+        assert_eq!(query_json["data"]["retryPolicy"]["loadBalancerStrategy"], "failover");
+        assert_eq!(query_json["data"]["retryPolicy"]["autoDisableChannel"]["enabled"], true);
+        assert_eq!(query_json["data"]["retryPolicy"]["autoDisableChannel"]["statuses"], serde_json::json!([{"status": 429, "times": 2}]));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_update_retry_policy_without_write_settings_scope() {
+        let db_path = temp_sqlite_path("task9-update-retry-policy-denied");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "user@example.com", "password123", &[SCOPE_READ_SETTINGS]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "user@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"mutation UpdateRetryPolicy($input: UpdateRetryPolicyInput!) { updateRetryPolicy(input: $input) }","variables":{"input":{"enabled":true}}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["updateRetryPolicy"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
 
         std::fs::remove_file(db_path).ok();
     }
@@ -1925,6 +2183,953 @@ struct TestHttpRequest {
             settings.auto_sync.frequency,
             super::admin::AutoSyncFrequencySetting::SixHours
         );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_queries_brand_settings() {
+        let db_path = temp_sqlite_path("task9-brand-settings");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+        connection
+            .execute(
+                "UPDATE users SET is_owner = 1 WHERE email = ?1 AND deleted_at = 0",
+                params!["admin@example.com"],
+            )
+            .unwrap();
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"{ brandSettings { brandName brandLogo } }"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["brandSettings"]["brandName"], "AxonHub");
+        assert_eq!(query_json["data"]["brandSettings"]["brandLogo"], Value::Null);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_updates_brand_settings_and_reads_back_logo() {
+        let db_path = temp_sqlite_path("task-brand-settings-update");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS, SCOPE_WRITE_SETTINGS],
+        );
+        connection
+            .execute(
+                "UPDATE users SET is_owner = 1 WHERE email = ?1 AND deleted_at = 0",
+                params!["admin@example.com"],
+            )
+            .unwrap();
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateBrandSettings($input: UpdateBrandSettingsInput!) { updateBrandSettings(input: $input) }","variables":{"input":{"brandName":"AxonHub Pro","brandLogo":"https://example.com/logo.svg"}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["updateBrandSettings"], true);
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ brandSettings { brandName brandLogo } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["brandSettings"]["brandName"], "AxonHub Pro");
+        assert_eq!(
+            query_json["data"]["brandSettings"]["brandLogo"],
+            "https://example.com/logo.svg"
+        );
+
+        let db_connection = foundation.open_connection(true).unwrap();
+        let brand_name: String = db_connection
+            .query_row(
+                "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+                [crate::foundation::shared::SYSTEM_KEY_BRAND_NAME],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let brand_logo: String = db_connection
+            .query_row(
+                "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+                [crate::foundation::shared::SYSTEM_KEY_BRAND_LOGO],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(brand_name, "AxonHub Pro");
+        assert_eq!(brand_logo, "https://example.com/logo.svg");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_brand_settings_without_read_settings_scope() {
+        let db_path = temp_sqlite_path("task9-brand-settings-denied");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "user@example.com", "password123", &[]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "user@example.com", "password123");
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"{ brandSettings { brandName brandLogo } }"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["brandSettings"], Value::Null);
+        assert_eq!(query_json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_update_brand_settings_without_write_scope() {
+        let db_path = temp_sqlite_path("task-brand-settings-write-denied");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "user@example.com", "password123", &[SCOPE_READ_SETTINGS]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "user@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateBrandSettings($input: UpdateBrandSettingsInput!) { updateBrandSettings(input: $input) }","variables":{"input":{"brandName":"Denied","brandLogo":"https://example.com/denied.svg"}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["updateBrandSettings"], Value::Null);
+        assert_eq!(update_json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_queries_video_storage_settings() {
+        let db_path = temp_sqlite_path("task-video-storage-settings");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+        connection
+            .execute(
+                "UPDATE users SET is_owner = 1 WHERE email = ?1 AND deleted_at = 0",
+                params!["admin@example.com"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at) VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+                params![
+                    200,
+                    "Task12 Video Storage",
+                    "task12 video storage",
+                    serde_json::json!({"directory": "/tmp/video-storage"}).to_string(),
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "system_video_storage_settings",
+                    serde_json::json!({
+                        "enabled": true,
+                        "data_storage_id": 200,
+                        "scan_interval_minutes": 1,
+                        "scan_limit": 50
+                    })
+                    .to_string(),
+                ],
+            )
+            .unwrap();
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ videoStorageSettings { enabled dataStorageID scanIntervalMinutes scanLimit } }"}"#))
+                    .unwrap(),
+        )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["videoStorageSettings"]["enabled"], true);
+        assert_eq!(query_json["data"]["videoStorageSettings"]["dataStorageID"], 200);
+        assert_eq!(query_json["data"]["videoStorageSettings"]["scanIntervalMinutes"], 1);
+        assert_eq!(query_json["data"]["videoStorageSettings"]["scanLimit"], 50);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_video_storage_settings_without_read_settings_scope() {
+        let db_path = temp_sqlite_path("task-video-storage-settings-denied");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "user@example.com", "password123", &[]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "user@example.com", "password123");
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ videoStorageSettings { enabled } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["videoStorageSettings"], Value::Null);
+        assert_eq!(query_json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_update_video_storage_settings_mutation_and_readback() {
+        let db_path = temp_sqlite_path("task-update-video-storage-settings");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "video-storage-writer@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS, SCOPE_WRITE_SETTINGS],
+        );
+        connection
+            .execute(
+                "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at) VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+                params![
+                    200,
+                    "Task Video Storage",
+                    "task video storage",
+                    serde_json::json!({"directory": "/tmp/video-storage"}).to_string(),
+                ],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "video-storage-writer@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateVideoStorageSettings($input: UpdateVideoStorageSettingsInput!) { updateVideoStorageSettings(input: $input) }","variables":{"input":{"enabled":true,"dataStorageID":200,"scanIntervalMinutes":3,"scanLimit":40}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["updateVideoStorageSettings"], true);
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ videoStorageSettings { enabled dataStorageID scanIntervalMinutes scanLimit } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["videoStorageSettings"]["enabled"], true);
+        assert_eq!(query_json["data"]["videoStorageSettings"]["dataStorageID"], 200);
+        assert_eq!(query_json["data"]["videoStorageSettings"]["scanIntervalMinutes"], 3);
+        assert_eq!(query_json["data"]["videoStorageSettings"]["scanLimit"], 40);
+
+        let stored: String = connection
+            .query_row(
+                "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+                params!["system_video_storage_settings"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stored_json: Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(stored_json["enabled"], true);
+        assert_eq!(stored_json["data_storage_id"], 200);
+        assert_eq!(stored_json["scan_interval_minutes"], 3);
+        assert_eq!(stored_json["scan_limit"], 40);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_normalizes_non_positive_video_storage_values() {
+        let db_path = temp_sqlite_path("task-update-video-storage-settings-normalize");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "video-storage-normalize@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS, SCOPE_WRITE_SETTINGS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "video-storage-normalize@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateVideoStorageSettings($input: UpdateVideoStorageSettingsInput!) { updateVideoStorageSettings(input: $input) }","variables":{"input":{"enabled":false,"scanIntervalMinutes":0,"scanLimit":0}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["updateVideoStorageSettings"], true);
+
+        let query_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ videoStorageSettings { enabled dataStorageID scanIntervalMinutes scanLimit } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["videoStorageSettings"]["enabled"], false);
+        assert_eq!(query_json["data"]["videoStorageSettings"]["scanIntervalMinutes"], 5);
+        assert_eq!(query_json["data"]["videoStorageSettings"]["scanLimit"], 100);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_update_video_storage_settings_without_data_storage_when_enabled() {
+        let db_path = temp_sqlite_path("task-update-video-storage-settings-missing-storage");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "video-storage-missing@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "video-storage-missing@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateVideoStorageSettings($input: UpdateVideoStorageSettingsInput!) { updateVideoStorageSettings(input: $input) }","variables":{"input":{"enabled":true}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["updateVideoStorageSettings"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "Failed to execute GraphQL request: dataStorageID is required when video storage is enabled");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_update_video_storage_settings_for_database_storage() {
+        let db_path = temp_sqlite_path("task-update-video-storage-settings-database");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "video-storage-database@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "video-storage-database@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateVideoStorageSettings($input: UpdateVideoStorageSettingsInput!) { updateVideoStorageSettings(input: $input) }","variables":{"input":{"enabled":true,"dataStorageID":1}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["updateVideoStorageSettings"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "Failed to execute GraphQL request: video storage must use a non-database data storage");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_update_video_storage_settings_without_write_settings_scope() {
+        let db_path = temp_sqlite_path("task-update-video-storage-settings-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "video-storage-denied@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "video-storage-denied@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateVideoStorageSettings($input: UpdateVideoStorageSettingsInput!) { updateVideoStorageSettings(input: $input) }","variables":{"input":{"enabled":true,"dataStorageID":200}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["updateVideoStorageSettings"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_queries_retry_policy_defaults_and_stored_value() {
+        let db_path = temp_sqlite_path("task-retry-policy");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+        connection
+            .execute(
+                "UPDATE users SET is_owner = 1 WHERE email = ?1 AND deleted_at = 0",
+                params!["admin@example.com"],
+            )
+            .unwrap();
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let default_query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ retryPolicy { enabled maxChannelRetries maxSingleChannelRetries retryDelayMs loadBalancerStrategy autoDisableChannel { enabled statuses { status times } } } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let default_query_json = read_json_response(default_query_response).await;
+        assert_eq!(default_query_json["data"]["retryPolicy"]["enabled"], true);
+        assert_eq!(default_query_json["data"]["retryPolicy"]["maxChannelRetries"], 3);
+        assert_eq!(default_query_json["data"]["retryPolicy"]["maxSingleChannelRetries"], 2);
+        assert_eq!(default_query_json["data"]["retryPolicy"]["retryDelayMs"], 1000);
+        assert_eq!(default_query_json["data"]["retryPolicy"]["loadBalancerStrategy"], "adaptive");
+        assert_eq!(default_query_json["data"]["retryPolicy"]["autoDisableChannel"]["enabled"], false);
+        assert_eq!(default_query_json["data"]["retryPolicy"]["autoDisableChannel"]["statuses"], Value::Array(vec![]));
+
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "retry_policy",
+                    serde_json::json!({
+                        "enabled": false,
+                        "max_channel_retries": 7,
+                        "max_single_channel_retries": 4,
+                        "retry_delay_ms": 250,
+                        "load_balancer_strategy": "failover",
+                        "auto_disable_channel": {
+                            "enabled": true,
+                            "statuses": [
+                                {"status": 401, "times": 3},
+                                {"status": 429, "times": 5}
+                            ]
+                        }
+                    })
+                    .to_string(),
+                ],
+            )
+            .unwrap();
+
+        let stored_query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ retryPolicy { enabled maxChannelRetries maxSingleChannelRetries retryDelayMs loadBalancerStrategy autoDisableChannel { enabled statuses { status times } } } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let stored_query_json = read_json_response(stored_query_response).await;
+        assert_eq!(stored_query_json["data"]["retryPolicy"]["enabled"], false);
+        assert_eq!(stored_query_json["data"]["retryPolicy"]["maxChannelRetries"], 7);
+        assert_eq!(stored_query_json["data"]["retryPolicy"]["maxSingleChannelRetries"], 4);
+        assert_eq!(stored_query_json["data"]["retryPolicy"]["retryDelayMs"], 250);
+        assert_eq!(stored_query_json["data"]["retryPolicy"]["loadBalancerStrategy"], "failover");
+        assert_eq!(stored_query_json["data"]["retryPolicy"]["autoDisableChannel"]["enabled"], true);
+        assert_eq!(
+            stored_query_json["data"]["retryPolicy"]["autoDisableChannel"]["statuses"],
+            serde_json::json!([
+                {"status": 401, "times": 3},
+                {"status": 429, "times": 5}
+            ])
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_retry_policy_without_read_settings_scope() {
+        let db_path = temp_sqlite_path("task-retry-policy-denied");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "user@example.com", "password123", &[]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "user@example.com", "password123");
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ retryPolicy { enabled } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["retryPolicy"], Value::Null);
+        assert_eq!(query_json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_queries_onboarding_info_from_shared_record() {
+        let db_path = temp_sqlite_path("task-parity-onboarding-info");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let record = OnboardingRecord {
+            onboarded: true,
+            completed_at: Some("2026-04-11T00:00:00Z".to_owned()),
+            system_model_setting: Some(OnboardingModule {
+                onboarded: true,
+                completed_at: Some("2026-04-11T00:00:01Z".to_owned()),
+            }),
+            auto_disable_channel: None,
+        };
+        let encoded = serialize_onboarding_record(&record).unwrap();
+        foundation
+            .system_settings()
+            .set_value(SYSTEM_KEY_ONBOARDED, &encoded)
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"{ onboardingInfo { onboarded completedAt systemModelSetting { onboarded completedAt } autoDisableChannel { onboarded completedAt } } }"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+
+        assert_eq!(query_json["data"]["onboardingInfo"]["onboarded"], true);
+        assert_eq!(query_json["data"]["onboardingInfo"]["completedAt"], "2026-04-11T00:00:00Z");
+        assert_eq!(query_json["data"]["onboardingInfo"]["systemModelSetting"]["onboarded"], true);
+        assert_eq!(query_json["data"]["onboardingInfo"]["systemModelSetting"]["completedAt"], "2026-04-11T00:00:01Z");
+        assert_eq!(query_json["data"]["onboardingInfo"]["autoDisableChannel"]["onboarded"], true);
+        assert_eq!(query_json["data"]["onboardingInfo"]["autoDisableChannel"]["completedAt"], "2026-04-11T00:00:00Z");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_onboarding_info_without_read_settings_scope() {
+        let db_path = temp_sqlite_path("task-parity-onboarding-info-denied");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "user@example.com", "password123", &[]);
+
+        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let token = signin_token(foundation.clone(), "user@example.com", "password123");
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"{ onboardingInfo { onboarded completedAt } }"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+
+        assert_eq!(query_json["data"]["onboardingInfo"], Value::Null);
+        assert_eq!(query_json["errors"][0]["message"], "permission denied");
 
         std::fs::remove_file(db_path).ok();
     }
@@ -2523,7 +3728,7 @@ struct TestHttpRequest {
                 ready_api_key,
                 "Task16 Ready User Key",
                 "user",
-                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+                &[SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS],
             );
             connection.execute(
                 "INSERT INTO provider_quota_statuses (channel_id, provider_type, status, quota_data, next_reset_at, ready, next_check_at)
@@ -2678,7 +3883,7 @@ struct TestHttpRequest {
                 exhausted_api_key,
                 "Task16 Exhausted User Key",
                 "user",
-                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+                &[SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS],
             );
             connection.execute(
                 "INSERT INTO provider_quota_statuses (channel_id, provider_type, status, quota_data, next_reset_at, ready, next_check_at)
@@ -5071,6 +6276,1426 @@ struct TestHttpRequest {
     }
 
     #[tokio::test]
+    async fn openai_v1_responses_previous_response_id_replays_persisted_context() {
+        let db_path = temp_sqlite_path("task16-responses-previous-response-id");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let api_key_id = {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task16 User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            )
+        };
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task16 Responses Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 16 responses channel",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 16 responses model",
+            })
+            .unwrap();
+
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let project = ProjectContext {
+            id: 1,
+            name: "Default Project".to_owned(),
+            status: "active".to_owned(),
+        };
+        let api_key = axonhub_http::AuthApiKeyContext {
+            id: api_key_id,
+            key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+            name: "Task16 User Key".to_owned(),
+            key_type: axonhub_http::ApiKeyType::User,
+            project: project.clone(),
+            scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+            profiles_json: None,
+        };
+
+        let first_response = service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "input": "Hello, my favorite color is blue.",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: project.clone(),
+                    trace: None,
+                    api_key: api_key.clone(),
+                    api_key_id: Some(api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(first_response.status, StatusCode::OK.as_u16());
+        assert_eq!(first_response.body["id"], "resp_mock");
+
+        let second_response = service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "previous_response_id": "resp_mock",
+                        "input": "What is my favorite color?",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: project.clone(),
+                    trace: None,
+                    api_key: api_key.clone(),
+                    api_key_id: Some(api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(second_response.status, StatusCode::OK.as_u16());
+
+        let connection = foundation.open_connection(false).unwrap();
+        let first_request_body: String = connection
+            .query_row(
+                "SELECT request_body FROM requests ORDER BY id ASC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let first_request_json: Value = serde_json::from_str(first_request_body.as_str()).unwrap();
+        assert_eq!(first_request_json["input"], "Hello, my favorite color is blue.");
+        assert!(first_request_json.get("previous_response_id").is_none());
+
+        let request_body: String = connection
+            .query_row(
+                "SELECT request_body FROM requests ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let request_json: Value = serde_json::from_str(request_body.as_str()).unwrap();
+        let input = request_json["input"].as_array().unwrap();
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
+        assert_eq!(input[0]["content"][0]["text"], "Hello, my favorite color is blue.");
+        assert_eq!(input[1]["role"], "assistant");
+        assert_eq!(input[1]["content"][0]["type"], "output_text");
+        assert_eq!(input[1]["content"][0]["text"], "hi");
+        assert_eq!(input[2]["role"], "user");
+        assert_eq!(input[2]["content"][0]["type"], "input_text");
+        assert_eq!(input[2]["content"][0]["text"], "What is my favorite color?");
+        assert!(request_json.get("previous_response_id").is_none());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_v1_responses_compact_previous_response_id_replays_persisted_context() {
+        let db_path = temp_sqlite_path("task16-responses-compact-previous-response-id");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let api_key_id = {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task16 Compact User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS],
+            )
+        };
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task16 Compact Responses Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 16 compact responses channel",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 16 compact responses model",
+            })
+            .unwrap();
+
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let project = ProjectContext {
+            id: 1,
+            name: "Default Project".to_owned(),
+            status: "active".to_owned(),
+        };
+        let api_key = axonhub_http::AuthApiKeyContext {
+            id: api_key_id,
+            key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+            name: "Task16 Compact User Key".to_owned(),
+            key_type: axonhub_http::ApiKeyType::User,
+            project: project.clone(),
+            scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+            profiles_json: None,
+        };
+
+        let first_response = service
+            .execute(
+                OpenAiV1Route::ResponsesCompact,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "input": "compact first turn",
+                    })),
+                    path: "/v1/responses/compact".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: project.clone(),
+                    trace: None,
+                    api_key: api_key.clone(),
+                    api_key_id: Some(api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(first_response.body["id"], "resp_compact_mock");
+
+        service
+            .execute(
+                OpenAiV1Route::ResponsesCompact,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "previous_response_id": "resp_compact_mock",
+                        "input": "compact second turn",
+                    })),
+                    path: "/v1/responses/compact".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project,
+                    trace: None,
+                    api_key,
+                    api_key_id: Some(api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+
+        let connection = foundation.open_connection(false).unwrap();
+        let route_and_body: (String, String) = connection
+            .query_row(
+                "SELECT format, request_body FROM requests ORDER BY id DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(route_and_body.0, "openai/responses_compact");
+        let request_json: Value = serde_json::from_str(route_and_body.1.as_str()).unwrap();
+        let input = request_json["input"].as_array().unwrap();
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[0]["content"][0]["text"], "compact first turn");
+        assert_eq!(input[1]["content"][0]["text"], "hi");
+        assert_eq!(input[2]["content"][0]["text"], "compact second turn");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_v1_responses_previous_response_id_rejects_missing_request() {
+        let db_path = temp_sqlite_path("task16-responses-previous-response-id-missing");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let api_key_id = {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task16 Missing User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS],
+            )
+        };
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task16 Missing Responses Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 16 missing responses channel",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 16 missing responses model",
+            })
+            .unwrap();
+
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let project = ProjectContext {
+            id: 1,
+            name: "Default Project".to_owned(),
+            status: "active".to_owned(),
+        };
+        let error = service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "previous_response_id": "resp_missing",
+                        "input": "hello",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: project.clone(),
+                    trace: None,
+                    api_key: axonhub_http::AuthApiKeyContext {
+                        id: api_key_id,
+                        key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+                        name: "Task16 Missing User Key".to_owned(),
+                        key_type: axonhub_http::ApiKeyType::User,
+                        project,
+                    scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
+                    },
+                    api_key_id: Some(api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap_err();
+
+        match error {
+            axonhub_http::OpenAiV1Error::InvalidRequest { message } => {
+                assert_eq!(message, "previous_response_id `resp_missing` was not found");
+            }
+            other => panic!("expected invalid request, got {other:?}"),
+        }
+
+        let request_count: i64 = foundation
+            .open_connection(false)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM requests", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(request_count, 0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_v1_responses_previous_response_id_rejects_cross_project_chaining() {
+        let db_path = temp_sqlite_path("task16-responses-previous-response-id-cross-project");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let (second_project_id, first_api_key_id, second_api_key_id) = {
+            let connection = foundation.open_connection(true).unwrap();
+            let first_api_key_id = insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task16 Cross Project User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS],
+            );
+            connection
+                .execute(
+                    "INSERT INTO projects (created_at, updated_at, deleted_at, name, description, status)
+                     VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?1, '', 'active')",
+                    params!["Cross Project"],
+                )
+                .unwrap();
+            let project_id = connection.last_insert_rowid();
+            connection
+                .execute(
+                    "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes, deleted_at)
+                     VALUES (?1, 'activated', 'en', ?2, 'Cross', 'Project', '', 0, '[]', 0)",
+                    params!["cross-project@example.com", hash_password("password123").unwrap()],
+                )
+                .unwrap();
+            let second_user_id = connection.last_insert_rowid();
+            insert_project_membership(&connection, second_user_id, project_id, false, &[]);
+            let second_api_key_id = insert_api_key(
+                &connection,
+                second_user_id,
+                project_id,
+                "task16-cross-project-key",
+                "Task16 Cross Project Second Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS],
+            );
+            (project_id, first_api_key_id, second_api_key_id)
+        };
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task16 Cross Project Responses Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 16 cross-project responses channel",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 16 cross-project responses model",
+            })
+            .unwrap();
+
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let first_response = service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "input": "remember me",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: ProjectContext {
+                        id: 1,
+                        name: "Default Project".to_owned(),
+                        status: "active".to_owned(),
+                    },
+                    trace: None,
+                    api_key: axonhub_http::AuthApiKeyContext {
+                        id: first_api_key_id,
+                        key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+                        name: "Task16 Cross Project User Key".to_owned(),
+                        key_type: axonhub_http::ApiKeyType::User,
+                        project: ProjectContext {
+                            id: 1,
+                            name: "Default Project".to_owned(),
+                            status: "active".to_owned(),
+                        },
+                        scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
+                    },
+                    api_key_id: Some(first_api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(first_response.body["id"], "resp_mock");
+
+        let error = service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "previous_response_id": "resp_mock",
+                        "input": "should fail",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: ProjectContext {
+                        id: second_project_id,
+                        name: "Cross Project".to_owned(),
+                        status: "active".to_owned(),
+                    },
+                    trace: None,
+                    api_key: axonhub_http::AuthApiKeyContext {
+                        id: second_api_key_id,
+                        key: "task16-cross-project-key".to_owned(),
+                        name: "Task16 Cross Project Second Key".to_owned(),
+                        key_type: axonhub_http::ApiKeyType::User,
+                        project: ProjectContext {
+                            id: second_project_id,
+                            name: "Cross Project".to_owned(),
+                            status: "active".to_owned(),
+                        },
+                        scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
+                    },
+                    api_key_id: Some(second_api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap_err();
+
+        match error {
+            axonhub_http::OpenAiV1Error::InvalidRequest { message } => {
+                assert_eq!(message, "previous_response_id `resp_mock` was not found");
+            }
+            other => panic!("expected invalid request, got {other:?}"),
+        }
+
+        let request_count: i64 = foundation
+            .open_connection(false)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM requests", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(request_count, 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_v1_responses_previous_response_id_rejects_different_api_key_same_project() {
+        let db_path = temp_sqlite_path("task16-responses-previous-response-id-different-api-key");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let (first_api_key_id, second_api_key_id) = {
+            let connection = foundation.open_connection(true).unwrap();
+            let first_api_key_id = insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task16 Same Project First Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+            let second_api_key_id = insert_api_key(
+                &connection,
+                1,
+                1,
+                "task16-same-project-second-key",
+                "Task16 Same Project Second Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+            (first_api_key_id, second_api_key_id)
+        };
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task16 Same Project Responses Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 16 same-project responses channel",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 16 same-project responses model",
+            })
+            .unwrap();
+
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let project = ProjectContext {
+            id: 1,
+            name: "Default Project".to_owned(),
+            status: "active".to_owned(),
+        };
+
+        let first_response = service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "input": "same project first key",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: project.clone(),
+                    trace: None,
+                    api_key: axonhub_http::AuthApiKeyContext {
+                        id: first_api_key_id,
+                        key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+                        name: "Task16 Same Project First Key".to_owned(),
+                        key_type: axonhub_http::ApiKeyType::User,
+                        project: project.clone(),
+                        scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
+                    },
+                    api_key_id: Some(first_api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(first_response.body["id"], "resp_mock");
+
+        let error = service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "previous_response_id": "resp_mock",
+                        "input": "same project second key should fail",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project,
+                    trace: None,
+                    api_key: axonhub_http::AuthApiKeyContext {
+                        id: second_api_key_id,
+                        key: "task16-same-project-second-key".to_owned(),
+                        name: "Task16 Same Project Second Key".to_owned(),
+                        key_type: axonhub_http::ApiKeyType::User,
+                        project: ProjectContext {
+                            id: 1,
+                            name: "Default Project".to_owned(),
+                            status: "active".to_owned(),
+                        },
+                        scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
+                    },
+                    api_key_id: Some(second_api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap_err();
+
+        match error {
+            axonhub_http::OpenAiV1Error::InvalidRequest { message } => {
+                assert_eq!(message, "previous_response_id `resp_mock` was not found");
+            }
+            other => panic!("expected invalid request, got {other:?}"),
+        }
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_v1_retrieve_response_returns_persisted_body_for_same_project_and_api_key() {
+        let db_path = temp_sqlite_path("task17-responses-retrieve-same-scope");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let api_key_id = {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task17 Retrieval User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            )
+        };
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task17 Retrieval Responses Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 17 retrieval responses channel",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 17 retrieval responses model",
+            })
+            .unwrap();
+
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let project = ProjectContext {
+            id: 1,
+            name: "Default Project".to_owned(),
+            status: "active".to_owned(),
+        };
+        let api_key = axonhub_http::AuthApiKeyContext {
+            id: api_key_id,
+            key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+            name: "Task17 Retrieval User Key".to_owned(),
+            key_type: axonhub_http::ApiKeyType::User,
+            project: project.clone(),
+            scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+            profiles_json: None,
+        };
+
+        let response = service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "input": "persist me",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: project.clone(),
+                    trace: None,
+                    api_key: api_key.clone(),
+                    api_key_id: Some(api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(response.body["id"], "resp_mock");
+
+        let retrieved = service.retrieve_response("resp_mock", &api_key).unwrap();
+        let retrieved = retrieved.expect("persisted response");
+        assert_eq!(retrieved["id"], "resp_mock");
+        assert_eq!(retrieved["object"], "response");
+        assert_eq!(retrieved["output"][0]["role"], "assistant");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_v1_retrieve_response_returns_none_for_unknown_response_id() {
+        let db_path = temp_sqlite_path("task17-responses-retrieve-missing");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let api_key_id = {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task17 Missing Retrieval User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            )
+        };
+
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let missing = service
+            .retrieve_response(
+                "resp_missing",
+                &axonhub_http::AuthApiKeyContext {
+                    id: api_key_id,
+                    key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+                    name: "Task17 Missing Retrieval User Key".to_owned(),
+                    key_type: axonhub_http::ApiKeyType::User,
+                    project: ProjectContext {
+                        id: 1,
+                        name: "Default Project".to_owned(),
+                        status: "active".to_owned(),
+                    },
+                    scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+                    profiles_json: None,
+                },
+            )
+            .unwrap();
+        assert!(missing.is_none());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_v1_retrieve_response_rejects_cross_project_and_cross_api_key_access() {
+        let db_path = temp_sqlite_path("task17-responses-retrieve-scoping");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let (second_project_id, first_api_key_id, same_project_second_api_key_id, second_project_api_key_id) = {
+            let connection = foundation.open_connection(true).unwrap();
+            let first_api_key_id = insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task17 Scoped First Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS],
+            );
+            let same_project_second_api_key_id = insert_api_key(
+                &connection,
+                1,
+                1,
+                "task17-same-project-second-key",
+                "Task17 Scoped Same Project Second Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS],
+            );
+            connection
+                .execute(
+                    "INSERT INTO projects (created_at, updated_at, deleted_at, name, description, status)
+                     VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?1, '', 'active')",
+                    params!["Task17 Cross Project"],
+                )
+                .unwrap();
+            let second_project_id = connection.last_insert_rowid();
+            connection
+                .execute(
+                    "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes, deleted_at)
+                     VALUES (?1, 'activated', 'en', ?2, 'Task17', 'Cross', '', 0, '[]', 0)",
+                    params!["task17-cross@example.com", hash_password("password123").unwrap()],
+                )
+                .unwrap();
+            let second_user_id = connection.last_insert_rowid();
+            insert_project_membership(&connection, second_user_id, second_project_id, false, &[]);
+            let second_project_api_key_id = insert_api_key(
+                &connection,
+                second_user_id,
+                second_project_id,
+                "task17-cross-project-key",
+                "Task17 Scoped Cross Project Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+            (
+                second_project_id,
+                first_api_key_id,
+                same_project_second_api_key_id,
+                second_project_api_key_id,
+            )
+        };
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task17 Scoped Retrieval Responses Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 17 scoped retrieval responses channel",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 17 scoped retrieval responses model",
+            })
+            .unwrap();
+
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let first_api_key = axonhub_http::AuthApiKeyContext {
+            id: first_api_key_id,
+            key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+            name: "Task17 Scoped First Key".to_owned(),
+            key_type: axonhub_http::ApiKeyType::User,
+            project: ProjectContext {
+                id: 1,
+                name: "Default Project".to_owned(),
+                status: "active".to_owned(),
+            },
+            scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+            profiles_json: None,
+        };
+        let first_response = service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "input": "private response",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: first_api_key.project.clone(),
+                    trace: None,
+                    api_key: first_api_key.clone(),
+                    api_key_id: Some(first_api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(first_response.body["id"], "resp_mock");
+
+        let cross_project = service
+            .retrieve_response(
+                "resp_mock",
+                &axonhub_http::AuthApiKeyContext {
+                    id: second_project_api_key_id,
+                    key: "task17-cross-project-key".to_owned(),
+                    name: "Task17 Scoped Cross Project Key".to_owned(),
+                    key_type: axonhub_http::ApiKeyType::User,
+                    project: ProjectContext {
+                        id: second_project_id,
+                        name: "Task17 Cross Project".to_owned(),
+                        status: "active".to_owned(),
+                    },
+                    scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+                    profiles_json: None,
+                },
+            )
+            .unwrap();
+        assert!(cross_project.is_none());
+
+        let cross_api_key = service
+            .retrieve_response(
+                "resp_mock",
+                &axonhub_http::AuthApiKeyContext {
+                    id: same_project_second_api_key_id,
+                    key: "task17-same-project-second-key".to_owned(),
+                    name: "Task17 Scoped Same Project Second Key".to_owned(),
+                    key_type: axonhub_http::ApiKeyType::User,
+                    project: ProjectContext {
+                        id: 1,
+                        name: "Default Project".to_owned(),
+                        status: "active".to_owned(),
+                    },
+                    scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+                    profiles_json: None,
+                },
+            )
+            .unwrap();
+        assert!(cross_api_key.is_none());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn openai_v1_response_retrieval_http_route_returns_not_found_when_scoped_out() {
+        let db_path = temp_sqlite_path("task17-responses-retrieve-http-scoping");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let first_api_key_id = {
+            let connection = foundation.open_connection(true).unwrap();
+            let first_api_key_id = insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task17 HTTP Retrieval First Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                "task17-http-second-key",
+                "Task17 HTTP Retrieval Second Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+            first_api_key_id
+        };
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task17 HTTP Retrieval Responses Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 17 HTTP retrieval responses channel",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 17 HTTP retrieval responses model",
+            })
+            .unwrap();
+
+        let service = SqliteOpenAiV1Service::new(foundation.clone());
+        let first_key_project = ProjectContext {
+            id: 1,
+            name: "Default Project".to_owned(),
+            status: "active".to_owned(),
+        };
+        service
+            .execute(
+                OpenAiV1Route::Responses,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "input": "http scoping",
+                    })),
+                    path: "/v1/responses".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project: first_key_project.clone(),
+                    trace: None,
+                    api_key: axonhub_http::AuthApiKeyContext {
+                        id: first_api_key_id,
+                        key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+                        name: "Task17 HTTP Retrieval First Key".to_owned(),
+                        key_type: axonhub_http::ApiKeyType::User,
+                        project: first_key_project,
+                    scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
+                    },
+                    api_key_id: Some(first_api_key_id),
+                    client_ip: None,
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(seaorm_admin_service(&foundation)),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: false,
+        },  });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/responses/resp_mock")
+                    .method(Method::GET)
+                    .header("X-API-Key", "task17-http-second-key")
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let json = read_json_response(response).await;
+        assert_eq!(json["error"]["message"], "permission denied");
+
+        let chat = app
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .header("X-API-Key", "task17-http-second-key")
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .body(Body::from(
+                        r#"{"model":"gpt-4o","messages":[{"role":"user","content":"still OK"}]}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(chat.status(), StatusCode::OK);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn openai_v1_chat_completions_ignore_previous_response_id_passthrough() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (mut embedded_pg, dsn, data_dir) =
+            runtime.block_on(start_embedded_postgres("task16-postgres-chat-previous-response-id"));
+
+        let factory = SeaOrmConnectionFactory::postgres(dsn.clone());
+        runtime.block_on(factory.connect_migrated()).unwrap();
+
+        let bootstrap = SeaOrmBootstrapService::new(factory.clone().into(), "v0.9.20".to_owned());
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
+        bootstrap_postgres_auth_fixture(&mut connection);
+
+        connection
+            .execute(
+                "INSERT INTO channels (
+                    created_at, updated_at, deleted_at, type, base_url, name, status, credentials,
+                    disabled_api_keys, supported_models, manual_models, auto_sync_supported_models,
+                    auto_sync_model_pattern, tags, default_test_model, policies, settings,
+                    ordering_weight, error_message, remark
+                ) VALUES (
+                    NOW(), NOW(), 0, $1, $2, $3, 'enabled', $4,
+                    '[]', $5, '[]', FALSE,
+                    '', '[]', $6, '{}', '{}',
+                    100, '', 'Task 16 SeaORM chat channel'
+                )",
+                &[
+                    &"openai",
+                    &mock_openai_server_url(),
+                    &"SeaORM Chat Previous Response Channel",
+                    &r#"{"apiKey":"test-upstream-key"}"#,
+                    &r#"["gpt-4o"]"#,
+                    &"gpt-4o",
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO models (
+                    created_at, updated_at, deleted_at, developer, model_id, type, name, icon,
+                    \"group\", model_card, settings, status, remark
+                ) VALUES (
+                    NOW(), NOW(), 0, $1, $2, $3, $4, $5,
+                    $6, $7, '{}', 'enabled', $8
+                )",
+                &[
+                    &"openai",
+                    &"gpt-4o",
+                    &"chat",
+                    &"GPT-4o",
+                    &"OpenAI",
+                    &"openai",
+                    &r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                    &"Task 16 SeaORM chat model",
+                ],
+            )
+            .unwrap();
+
+        let project_row = connection
+            .query_one("SELECT id, name, status FROM projects WHERE id = 1", &[])
+            .unwrap();
+        let project = ProjectContext {
+            id: project_row.get(0),
+            name: project_row.get(1),
+            status: project_row.get(2),
+        };
+        let api_key_project = project.clone();
+        let service = SeaOrmOpenAiV1Service::new(factory.clone());
+        let response = service
+            .execute(
+                OpenAiV1Route::ChatCompletions,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "gpt-4o",
+                        "previous_response_id": "resp_passthrough",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    })),
+                    path: "/v1/chat/completions".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project,
+                    trace: None,
+                    api_key: axonhub_http::AuthApiKeyContext {
+                        id: 1,
+                        key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+                        name: "Task16 User Key".to_owned(),
+                        key_type: axonhub_http::ApiKeyType::User,
+                        project: api_key_project,
+                    scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
+                    },
+                    api_key_id: Some(1),
+                    client_ip: Some("127.0.0.1".to_owned()),
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(response.status, StatusCode::OK.as_u16());
+
+        let request_row = connection
+            .query_one("SELECT request_body FROM requests ORDER BY id DESC LIMIT 1", &[])
+            .unwrap();
+        let request_body: String = request_row.get(0);
+        let request_json: Value = serde_json::from_str(request_body.as_str()).unwrap();
+        assert_eq!(request_json["previous_response_id"], "resp_passthrough");
+        assert_eq!(request_json["messages"][0]["content"], "hello");
+
+        runtime.block_on(embedded_pg.stop_db()).ok();
+        std::fs::remove_dir_all(data_dir).ok();
+    }
+
+    #[tokio::test]
     async fn openai_image_generation_rejects_invalid_request_without_persistence_side_effects() {
         let db_path = temp_sqlite_path("task13-openai-image-invalid");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
@@ -6222,6 +8847,182 @@ struct TestHttpRequest {
         std::fs::remove_file(db_path).ok();
     }
 
+    #[tokio::test]
+    async fn openai_v1_reuses_same_channel_for_repeated_codex_session_trace_when_enabled() {
+        let db_path = temp_sqlite_path("task8-openai-codex-session-affinity");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task8 Codex Session Affinity User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            );
+        }
+
+        let preferred_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Codex Session Affinity A",
+                channel_type: "openai",
+                base_url: format!("{}/affinity-a", mock_openai_server_url()).as_str(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 8 codex session affinity preferred",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "OpenAI Codex Session Affinity B",
+                channel_type: "openai",
+                base_url: format!("{}/affinity-b", mock_openai_server_url()).as_str(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 8 codex session affinity backup",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 8 codex session affinity model",
+            })
+            .unwrap();
+
+        let app = router(HttpState { service_name: "AxonHub".to_owned(),
+        version: "v0.9.20".to_owned(),
+        config_source: None,
+        system_bootstrap: SystemBootstrapCapability::Available {
+            system: Arc::new(bootstrap),
+        },
+        identity: IdentityCapability::Available {
+            identity: Arc::new(SqliteIdentityService::new(foundation.clone(), false)),
+        },
+        request_context: RequestContextCapability::Available {
+            request_context: Arc::new(SqliteRequestContextService::new(
+                foundation.clone(),
+                false,
+            )),
+        },
+        openai_v1: OpenAiV1Capability::Available {
+            openai: Arc::new(SqliteOpenAiV1Service::new(foundation.clone())),
+        },
+        admin: AdminCapability::Available {
+            admin: Arc::new(seaorm_admin_service(&foundation)),
+        },
+        admin_graphql: AdminGraphqlCapability::Unsupported {
+            message: "test-only unsupported admin graphql".to_owned(),
+        },
+        openapi_graphql: OpenApiGraphqlCapability::Unsupported {
+            message: "test-only unsupported openapi graphql".to_owned(),
+        },
+        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            message: "test-only unsupported provider-edge admin".to_owned(),
+        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+            thread_header: Some("AH-Thread-Id".to_owned()),
+            trace_header: Some("AH-Trace-Id".to_owned()),
+            request_header: Some("X-Request-Id".to_owned()),
+            extra_trace_headers: Vec::new(),
+            extra_trace_body_fields: Vec::new(),
+            claude_code_trace_enabled: false,
+            codex_trace_enabled: true,
+        },  });
+
+        for expected_id in ["chatcmpl_affinity_a", "chatcmpl_affinity_a"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/chat/completions")
+                        .method(Method::POST)
+                        .header("content-type", "application/json")
+                        .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
+                        .header("X-Project-ID", "gid://axonhub/project/1")
+                        .header("Session_id", "codex-session-task8-affinity")
+                        .body(Body::from(
+                            r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let json = read_json_response(response).await;
+            assert_eq!(json["id"], expected_id);
+        }
+
+        let connection = foundation.open_connection(false).unwrap();
+        let trace_rows: Vec<(String, Option<i64>)> = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT t.trace_id, t.thread_id FROM traces t ORDER BY id ASC",
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(trace_rows, vec![("codex-session-task8-affinity".to_owned(), None)]);
+
+        let request_trace_channels: Vec<(i64, i64)> = {
+            let mut statement = connection
+                .prepare("SELECT trace_id, channel_id FROM requests ORDER BY id ASC")
+                .unwrap();
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(request_trace_channels.len(), 2);
+        assert!(request_trace_channels
+            .iter()
+            .all(|(trace_id, channel_id)| *trace_id == request_trace_channels[0].0 && *channel_id == preferred_channel_id));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
     #[test]
     fn openai_v1_prefers_requested_channel_hint_over_higher_priority_channel() {
         let db_path = temp_sqlite_path("task16-openai-channel-hint");
@@ -6322,7 +9123,7 @@ struct TestHttpRequest {
                         name: "Task8 User Key".to_owned(),
                         key_type: axonhub_http::ApiKeyType::User,
                         project: api_key_project,
-                        scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        scopes: vec!["read_channels".to_owned(), "read_requests".to_owned(), "write_requests".to_owned()],
                         profiles_json: None,
                     },
                     api_key_id: None,
@@ -7254,6 +10055,29 @@ struct TestHttpRequest {
         assert_eq!(system_status_json["data"]["systemStatus"]["isInitialized"], true);
         assert!(system_status_json.get("errors").is_none_or(|v| v.is_null()));
 
+        let system_version_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {no_scope_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ systemVersion { version commit buildTime goVersion platform uptime } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(system_version_response.status(), StatusCode::OK);
+        let system_version_json = read_json_response(system_version_response).await;
+        assert_eq!(system_version_json["data"]["systemVersion"]["version"], "v0.9.20");
+        assert_eq!(system_version_json["data"]["systemVersion"]["commit"], "");
+        assert_eq!(system_version_json["data"]["systemVersion"]["buildTime"], "");
+        assert_eq!(system_version_json["data"]["systemVersion"]["goVersion"], "n/a (Rust build)");
+        assert!(!system_version_json["data"]["systemVersion"]["platform"].as_str().unwrap().is_empty());
+        assert!(!system_version_json["data"]["systemVersion"]["uptime"].as_str().unwrap().is_empty());
+        assert!(system_version_json.get("errors").is_none_or(|v| v.is_null()));
+
         // Query channels - should fail with permission denied
         let channels_response = app
             .clone()
@@ -7443,6 +10267,142 @@ struct TestHttpRequest {
         assert_eq!(deleted.body["data"]["deletePromptProtectionRule"], true);
 
         std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn seaorm_admin_graphql_check_for_update_returns_latest_stable_release() {
+        let db_path = temp_sqlite_path("task15-check-for-update-success");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "admin@example.com", "password123", &[]);
+
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let base_url = mock_github_releases_server_url();
+        let graphql = Arc::new(SeaOrmAdminGraphqlService::new_with_update_checker_urls(
+            db,
+            format!("{base_url}/releases"),
+            "https://github.com/looplj/axonhub/releases/tag/",
+        ));
+        let app = seaorm_graphql_test_app_with_service(foundation.clone(), bootstrap, graphql);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"{ checkForUpdate { currentVersion latestVersion hasUpdate releaseUrl } }"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(
+            json["data"]["checkForUpdate"]["currentVersion"],
+            BuildInfo::current().version()
+        );
+        assert_eq!(json["data"]["checkForUpdate"]["latestVersion"], "v0.9.99");
+        assert_eq!(json["data"]["checkForUpdate"]["hasUpdate"], true);
+        assert_eq!(
+            json["data"]["checkForUpdate"]["releaseUrl"],
+            "https://github.com/looplj/axonhub/releases/tag/v0.9.99"
+        );
+        assert!(json.get("errors").is_none_or(|value| value.is_null()));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn seaorm_admin_graphql_check_for_update_surfaces_upstream_failure() {
+        let db_path = temp_sqlite_path("task15-check-for-update-error");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let base_url = mock_github_releases_server_url();
+        let service = SeaOrmAdminGraphqlService::new_with_update_checker_urls(
+            db,
+            format!("{base_url}/releases-error"),
+            "https://github.com/looplj/axonhub/releases/tag/",
+        );
+
+        let response = service
+            .execute_graphql(
+                GraphqlRequestPayload {
+                    query: "{ checkForUpdate { currentVersion latestVersion hasUpdate releaseUrl } }"
+                        .to_owned(),
+                    operation_name: None,
+                    variables: serde_json::json!({}),
+                },
+                None,
+                test_admin_user(),
+            )
+            .await;
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body["data"], Value::Null);
+        assert!(response.body["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("GitHub API returned status 500"));
+    }
+
+    #[test]
+    fn admin_graphql_update_checker_semver_and_release_filtering_match_contract() {
+        assert!(super::graphql::is_newer_version("v0.9.20", "v0.9.21"));
+        assert!(!super::graphql::is_newer_version("v0.9.21", "v0.9.21"));
+        assert!(!super::graphql::is_newer_version("v0.9.21", "v0.9.21-rc.1"));
+        assert!(super::graphql::is_pre_release_tag("v0.9.21-rc1"));
+        assert!(!super::graphql::is_pre_release_tag("v0.9.21"));
+        assert!(super::graphql::is_axonhub_tag("v0.9.21"));
+        assert!(!super::graphql::is_axonhub_tag("service/v0.9.21"));
+    }
+
+    #[tokio::test]
+    async fn seaorm_admin_graphql_check_for_update_returns_no_stable_release_error() {
+        let db_path = temp_sqlite_path("task15-check-for-update-none");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let base_url = mock_github_releases_server_url();
+        let service = SeaOrmAdminGraphqlService::new_with_update_checker_urls(
+            db,
+            format!("{base_url}/releases-none"),
+            "https://github.com/looplj/axonhub/releases/tag/",
+        );
+
+        let response = service
+            .execute_graphql(
+                GraphqlRequestPayload {
+                    query: "{ checkForUpdate { currentVersion latestVersion hasUpdate releaseUrl } }"
+                        .to_owned(),
+                    operation_name: None,
+                    variables: serde_json::json!({}),
+                },
+                None,
+                test_admin_user(),
+            )
+            .await;
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body["data"], Value::Null);
+        assert!(response.body["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no stable release found"));
     }
 
     #[test]
@@ -7898,6 +10858,7730 @@ struct TestHttpRequest {
     }
 
     #[tokio::test]
+    async fn admin_graphql_dashboard_overview_returns_summary() {
+        let db_path = temp_sqlite_path("task-dashboard-overview");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "dashboard-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        foundation.requests().ensure_schema().unwrap();
+        let request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_dashboard"),
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let _failed_request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_dashboard_failed"),
+                status: "failed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        connection.execute(
+            "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            params![request_id],
+        ).unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ dashboardOverview { totalRequests requestStats { requestsToday requestsThisWeek requestsLastWeek requestsThisMonth } failedRequests averageResponseTime } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["dashboardOverview"]["totalRequests"], 2);
+        assert_eq!(json["data"]["dashboardOverview"]["failedRequests"], 1);
+        assert_eq!(json["data"]["dashboardOverview"]["requestStats"]["requestsToday"], 1);
+        assert!(json["data"]["dashboardOverview"]["averageResponseTime"].is_null());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_dashboard_overview_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-dashboard-overview-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ dashboardOverview { totalRequests } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["dashboardOverview"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_request_stats_query() {
+        let db_path = temp_sqlite_path("task-request-stats-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_request_stats"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_id],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "owner@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStats { requestsToday requestsThisWeek requestsLastWeek requestsThisMonth } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["requestStats"]["requestsToday"], 1);
+        assert_eq!(json["data"]["requestStats"]["requestsThisWeek"], 1);
+        assert_eq!(json["data"]["requestStats"]["requestsLastWeek"], 0);
+        assert_eq!(json["data"]["requestStats"]["requestsThisMonth"], 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_request_stats_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-request-stats-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "request-stats-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "request-stats-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStats { requestsToday } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["requestStats"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_request_stats_by_channel_query() {
+        let db_path = temp_sqlite_path("task-request-stats-by-channel-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let active_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Active Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task request stats channel test",
+            })
+            .unwrap();
+
+        let deleted_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Deleted Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 90,
+                error_message: "",
+                remark: "task request stats channel test",
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "UPDATE channels SET deleted_at = 1 WHERE id = ?1",
+                params![deleted_channel_id],
+            )
+            .unwrap();
+
+        let active_request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(active_channel_id),
+                external_id: Some("req_request_stats_channel_active"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let deleted_request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(deleted_channel_id),
+                external_id: Some("req_request_stats_channel_deleted"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![active_request_id, active_channel_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![deleted_request_id, deleted_channel_id],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStatsByChannel(timeWindow: \"allTime\") { channelName count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert!(json["data"]["requestStatsByChannel"].is_array());
+        let items = json["data"]["requestStatsByChannel"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["channelName"], "Active Channel");
+        assert_eq!(items[0]["count"], 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_request_stats_by_channel_with_unknown_time_window() {
+        let db_path = temp_sqlite_path("task-request-stats-by-channel-invalid-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStatsByChannel(timeWindow: \"fortnight\") { channelName count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["requestStatsByChannel"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "Failed to execute GraphQL request: unsupported timeWindow value: \"fortnight\" (expected day, week, month, allTime)"
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_request_stats_by_channel_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-request-stats-by-channel-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-channel-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStatsByChannel(timeWindow: \"day\") { channelName count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["requestStatsByChannel"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_request_stats_by_model_query() {
+        let db_path = temp_sqlite_path("task-request-stats-by-model-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let request_one = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_request_stats_model_one"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_two = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_request_stats_model_two"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_one],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o-mini', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_two],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStatsByModel(timeWindow: \"allTime\") { modelId count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["requestStatsByModel"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["modelId"], "gpt-4o");
+        assert_eq!(items[0]["count"], 1);
+        assert_eq!(items[1]["modelId"], "gpt-4o-mini");
+        assert_eq!(items[1]["count"], 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_request_stats_by_model_with_unknown_time_window() {
+        let db_path = temp_sqlite_path("task-request-stats-by-model-invalid-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStatsByModel(timeWindow: \"fortnight\") { modelId count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["requestStatsByModel"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "Failed to execute GraphQL request: unsupported timeWindow value: \"fortnight\" (expected day, week, month, allTime)"
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_request_stats_by_model_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-request-stats-by-model-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-model-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStatsByModel(timeWindow: \"day\") { modelId count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["requestStatsByModel"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_request_stats_by_api_key_query() {
+        let db_path = temp_sqlite_path("task-request-stats-by-api-key-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-api-key-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+        let api_key_one_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-one",
+            "Primary Dashboard Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+        let api_key_two_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-two",
+            "Secondary Dashboard Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+
+        let request_one = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(api_key_one_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_request_stats_api_key_one"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_two = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(api_key_two_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_request_stats_api_key_two"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_one, api_key_one_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o-mini', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_two, api_key_two_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o-mini', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_two, api_key_two_id],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStatsByAPIKey(timeWindow: \"allTime\") { apiKeyId apiKeyName count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["requestStatsByAPIKey"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["apiKeyName"], "Secondary Dashboard Key");
+        assert_eq!(items[0]["count"], 2);
+        assert_eq!(items[1]["apiKeyName"], "Primary Dashboard Key");
+        assert_eq!(items[1]["count"], 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_request_stats_by_api_key_with_unknown_time_window() {
+        let db_path = temp_sqlite_path("task-request-stats-by-api-key-invalid-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-api-key-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStatsByAPIKey(timeWindow: \"fortnight\") { apiKeyId apiKeyName count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["requestStatsByAPIKey"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "Failed to execute GraphQL request: unsupported timeWindow value: \"fortnight\" (expected day, week, month, allTime)"
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_request_stats_by_api_key_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-request-stats-by-api-key-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-api-key-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requestStatsByAPIKey(timeWindow: \"day\") { apiKeyId apiKeyName count } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["requestStatsByAPIKey"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_cost_stats_by_api_key_query() {
+        let db_path = temp_sqlite_path("task-cost-stats-by-api-key-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-api-key-cost-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+        let api_key_one_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-cost-one",
+            "Primary Cost Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+        let api_key_two_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-cost-two",
+            "Secondary Cost Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+
+        let request_one = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(api_key_one_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_cost_stats_api_key_one"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_two = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(api_key_two_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_cost_stats_api_key_two"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.5, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_one, api_key_one_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o-mini', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.5, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_two, api_key_two_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o-mini', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.75, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_two, api_key_two_id],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-cost-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ costStatsByAPIKey(timeWindow: \"allTime\") { apiKeyId apiKeyName cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["costStatsByAPIKey"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["apiKeyName"], "Secondary Cost Key");
+        assert_eq!(items[0]["cost"], 1.25);
+        assert_eq!(items[1]["apiKeyName"], "Primary Cost Key");
+        assert_eq!(items[1]["cost"], 0.5);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_cost_stats_by_api_key_with_unknown_time_window() {
+        let db_path = temp_sqlite_path("task-cost-stats-by-api-key-invalid-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-api-key-cost-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-cost-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ costStatsByAPIKey(timeWindow: \"fortnight\") { apiKeyId apiKeyName cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["costStatsByAPIKey"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "Failed to execute GraphQL request: unsupported timeWindow value: \"fortnight\" (expected day, week, month, allTime)"
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_cost_stats_by_api_key_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-cost-stats-by-api-key-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-api-key-cost-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-cost-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ costStatsByAPIKey(timeWindow: \"day\") { apiKeyId apiKeyName cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["costStatsByAPIKey"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_token_stats_by_api_key_query() {
+        let db_path = temp_sqlite_path("task-token-stats-by-api-key-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-api-key-token-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let api_key_one_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-token-one",
+            "Primary Token Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+        let api_key_two_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-token-two",
+            "Secondary Token Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+        let api_key_three_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-token-three",
+            "Tertiary Token Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+        let api_key_four_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-token-four",
+            "Filtered Token Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+
+        let request_one = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(api_key_one_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_api_key_one"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_two = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(api_key_two_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_api_key_two"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_three = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(api_key_three_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4.1",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_api_key_three"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_four = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(api_key_four_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4.1-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_api_key_four"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 2, 0, 0, 0, 0, 3, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_one, api_key_one_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o-mini', 7, 8, 15, 0, 1, 0, 0, 0, 0, 1, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_two, api_key_two_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4.1', 6, 4, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_three, api_key_three_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4.1-mini', 1, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_four, api_key_four_id],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-token-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByAPIKey(timeWindow: \"allTime\") { apiKeyId apiKeyName inputTokens outputTokens cachedTokens reasoningTokens totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["tokenStatsByAPIKey"].as_array().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["apiKeyName"], "Primary Token Key");
+        assert_eq!(items[0]["inputTokens"], 10);
+        assert_eq!(items[0]["outputTokens"], 5);
+        assert_eq!(items[0]["cachedTokens"], 2);
+        assert_eq!(items[0]["reasoningTokens"], 3);
+        assert_eq!(items[0]["totalTokens"], 20);
+        assert_eq!(items[1]["apiKeyName"], "Secondary Token Key");
+        assert_eq!(items[1]["totalTokens"], 17);
+        assert_eq!(items[2]["apiKeyName"], "Tertiary Token Key");
+        assert_eq!(items[2]["totalTokens"], 10);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_returns_empty_token_stats_by_api_key_without_usage() {
+        let db_path = temp_sqlite_path("task-token-stats-by-api-key-empty");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-api-key-token-empty@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-token-empty@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByAPIKey(timeWindow: \"allTime\") { apiKeyId apiKeyName totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStatsByAPIKey"], Value::Array(Vec::new()));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_token_stats_by_api_key_with_unknown_time_window() {
+        let db_path = temp_sqlite_path("task-token-stats-by-api-key-invalid-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-api-key-token-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-token-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByAPIKey(timeWindow: \"fortnight\") { apiKeyId apiKeyName totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStatsByAPIKey"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "Failed to execute GraphQL request: unsupported timeWindow value: \"fortnight\" (expected day, week, month, allTime)"
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_token_stats_by_api_key_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-token-stats-by-api-key-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-api-key-token-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-api-key-token-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByAPIKey(timeWindow: \"day\") { apiKeyId } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStatsByAPIKey"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_token_stats_by_channel_query() {
+        let db_path = temp_sqlite_path("task-token-stats-by-channel-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-token-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let active_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Active Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task token stats channel test",
+            })
+            .unwrap();
+
+        let deleted_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Deleted Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 90,
+                error_message: "",
+                remark: "task token stats channel test",
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "UPDATE channels SET deleted_at = 1 WHERE id = ?1",
+                params![deleted_channel_id],
+            )
+            .unwrap();
+
+        let active_request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(active_channel_id),
+                external_id: Some("req_token_stats_channel_active"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let deleted_request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(deleted_channel_id),
+                external_id: Some("req_token_stats_channel_deleted"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 10, 5, 15, 0, 2, 0, 0, 0, 0, 3, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![active_request_id, active_channel_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 20, 5, 25, 0, 1, 0, 0, 0, 0, 4, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![deleted_request_id, deleted_channel_id],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-token-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByChannel(timeWindow: \"allTime\") { channelName inputTokens outputTokens cachedTokens reasoningTokens totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert!(json["data"]["tokenStatsByChannel"].is_array());
+        let items = json["data"]["tokenStatsByChannel"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["channelName"], "Active Channel");
+        assert_eq!(items[0]["inputTokens"], 10);
+        assert_eq!(items[0]["outputTokens"], 5);
+        assert_eq!(items[0]["cachedTokens"], 2);
+        assert_eq!(items[0]["reasoningTokens"], 3);
+        assert_eq!(items[0]["totalTokens"], 20);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_returns_empty_token_stats_by_channel_without_usage() {
+        let db_path = temp_sqlite_path("task-token-stats-by-channel-empty");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-token-empty@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-token-empty@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByChannel(timeWindow: \"allTime\") { channelName totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStatsByChannel"], Value::Array(Vec::new()));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_token_stats_by_channel_with_unknown_time_window() {
+        let db_path = temp_sqlite_path("task-token-stats-by-channel-invalid-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-token-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-token-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByChannel(timeWindow: \"fortnight\") { channelName totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStatsByChannel"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "Failed to execute GraphQL request: unsupported timeWindow value: \"fortnight\" (expected day, week, month, allTime)"
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_token_stats_by_channel_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-token-stats-by-channel-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-channel-token-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-token-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByChannel(timeWindow: \"day\") { channelName } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStatsByChannel"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_daily_request_stats_query() {
+        let db_path = temp_sqlite_path("task-daily-request-stats-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let now = Utc::now();
+        let today_at = now.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        let yesterday_at = (now - ChronoDuration::days(1))
+            .naive_utc()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-daily-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "system_general_settings",
+                    serde_json::json!({
+                        "currencyCode": "USD",
+                        "timezone": "UTC"
+                    })
+                    .to_string()
+                ],
+            )
+            .unwrap();
+
+        let today_request = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_daily_stats_today"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let yesterday_request = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_daily_stats_yesterday"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 1.25, '[]', '', ?2, ?2)",
+                params![today_request, today_at],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o-mini', 7, 3, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.50, '[]', '', ?2, ?2)",
+                params![yesterday_request, yesterday_at],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-daily-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ dailyRequestStats { date count tokens cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["dailyRequestStats"].as_array().unwrap();
+        assert_eq!(items.len(), 30);
+
+        let today_date = now.format("%Y-%m-%d").to_string();
+        let yesterday_date = (now - ChronoDuration::days(1)).format("%Y-%m-%d").to_string();
+        let first_date = (now - ChronoDuration::days(29)).format("%Y-%m-%d").to_string();
+
+        assert_eq!(items.first().unwrap()["date"], first_date);
+        assert_eq!(items.last().unwrap()["date"], today_date);
+
+        let today_row = items.iter().find(|item| item["date"] == today_date).unwrap();
+        assert_eq!(today_row["count"], 1);
+        assert_eq!(today_row["tokens"], 15);
+        assert_eq!(today_row["cost"], 1.25);
+
+        let yesterday_row = items.iter().find(|item| item["date"] == yesterday_date).unwrap();
+        assert_eq!(yesterday_row["count"], 1);
+        assert_eq!(yesterday_row["tokens"], 10);
+        assert_eq!(yesterday_row["cost"], 0.5);
+
+        let empty_row = items
+            .iter()
+            .find(|item| item["date"] == (now - ChronoDuration::days(2)).format("%Y-%m-%d").to_string())
+            .unwrap();
+        assert_eq!(empty_row["count"], 0);
+        assert_eq!(empty_row["tokens"], 0);
+        assert_eq!(empty_row["cost"], 0.0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_returns_empty_daily_request_stats_without_usage() {
+        let db_path = temp_sqlite_path("task-daily-request-stats-empty");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-daily-empty@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-daily-empty@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ dailyRequestStats { date count tokens cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["dailyRequestStats"].as_array().unwrap();
+        assert_eq!(items.len(), 30);
+        assert!(items.iter().all(|item| item["count"] == 0 && item["tokens"] == 0 && item["cost"] == 0.0));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_buckets_daily_request_stats_by_system_timezone() {
+        let db_path = temp_sqlite_path("task-daily-request-stats-timezone");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let tz = chrono_tz::Asia::Shanghai;
+        let now_local = Utc::now().with_timezone(&tz);
+        let base_local_date = now_local.date_naive() - ChronoDuration::days(2);
+        let first_local = tz
+            .from_local_datetime(&base_local_date.and_hms_opt(23, 30, 0).unwrap())
+            .single()
+            .unwrap();
+        let second_local = tz
+            .from_local_datetime(&(base_local_date + ChronoDuration::days(1)).and_hms_opt(0, 30, 0).unwrap())
+            .single()
+            .unwrap();
+        let first_utc = first_local.with_timezone(&Utc).format("%Y-%m-%d %H:%M:%S").to_string();
+        let second_utc = second_local.with_timezone(&Utc).format("%Y-%m-%d %H:%M:%S").to_string();
+        let first_date = base_local_date.format("%Y-%m-%d").to_string();
+        let second_date = (base_local_date + ChronoDuration::days(1)).format("%Y-%m-%d").to_string();
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-daily-tz@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "system_general_settings",
+                    serde_json::json!({
+                        "currencyCode": "USD",
+                        "timezone": "Asia/Shanghai"
+                    })
+                    .to_string()
+                ],
+            )
+            .unwrap();
+
+        let request_one = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_daily_stats_tz_one"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_two = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_daily_stats_tz_two"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 1.0, '[]', '', ?2, ?2)",
+                params![request_one, first_utc],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o-mini', 4, 6, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.5, '[]', '', ?2, ?2)",
+                params![request_two, second_utc],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-daily-tz@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ dailyRequestStats { date count tokens cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["dailyRequestStats"].as_array().unwrap();
+        let jan20_row = items.iter().find(|item| item["date"] == first_date).unwrap();
+        let jan21_row = items.iter().find(|item| item["date"] == second_date).unwrap();
+
+        assert_eq!(jan20_row["count"], 1);
+        assert_eq!(jan20_row["tokens"], 15);
+        assert_eq!(jan20_row["cost"], 1.0);
+        assert_eq!(jan21_row["count"], 1);
+        assert_eq!(jan21_row["tokens"], 10);
+        assert_eq!(jan21_row["cost"], 0.5);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_daily_request_stats_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-daily-request-stats-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-daily-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-daily-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ dailyRequestStats { date } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["dailyRequestStats"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_token_stats_by_model_query() {
+        let db_path = temp_sqlite_path("task-token-stats-by-model-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-token-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let request_one = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_model_one"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_two = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_model_two"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_three = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4.1",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_model_three"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_four = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4.1-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_model_four"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 2, 0, 0, 0, 0, 3, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_one],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o-mini', 7, 8, 15, 0, 1, 0, 0, 0, 0, 1, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_two],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4.1', 6, 4, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_three],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4.1-mini', 1, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_four],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-token-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByModel(timeWindow: \"allTime\") { modelId inputTokens outputTokens cachedTokens reasoningTokens totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["tokenStatsByModel"].as_array().unwrap();
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0]["modelId"], "gpt-4o");
+        assert_eq!(items[0]["inputTokens"], 10);
+        assert_eq!(items[0]["outputTokens"], 5);
+        assert_eq!(items[0]["cachedTokens"], 2);
+        assert_eq!(items[0]["reasoningTokens"], 3);
+        assert_eq!(items[0]["totalTokens"], 20);
+        assert_eq!(items[1]["modelId"], "gpt-4o-mini");
+        assert_eq!(items[1]["totalTokens"], 17);
+        assert_eq!(items[2]["modelId"], "gpt-4.1");
+        assert_eq!(items[2]["totalTokens"], 10);
+        assert_eq!(items[3]["modelId"], "gpt-4.1-mini");
+        assert_eq!(items[3]["totalTokens"], 2);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_returns_empty_token_stats_by_model_without_usage() {
+        let db_path = temp_sqlite_path("task-token-stats-by-model-empty");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-token-empty@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-token-empty@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByModel(timeWindow: \"allTime\") { modelId totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStatsByModel"], Value::Array(Vec::new()));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_token_stats_by_model_with_unknown_time_window() {
+        let db_path = temp_sqlite_path("task-token-stats-by-model-invalid-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-token-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-token-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByModel(timeWindow: \"fortnight\") { modelId totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStatsByModel"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "Failed to execute GraphQL request: unsupported timeWindow value: \"fortnight\" (expected day, week, month, allTime)"
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_filters_token_stats_by_model_by_time_window() {
+        let db_path = temp_sqlite_path("task-token-stats-by-model-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let now = Utc::now();
+        let today_at = now.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        let old_at = (now - ChronoDuration::days(40))
+            .naive_utc()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-token-window@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let recent_request = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_model_recent"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let old_request = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4.1",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_model_old"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 2, 0, 0, 0, 0, 3, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![recent_request, today_at],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4.1', 20, 30, 50, 0, 4, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![old_request, old_at],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-token-window@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByModel(timeWindow: \"month\") { modelId totalTokens } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["tokenStatsByModel"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["modelId"], "gpt-4o");
+        assert_eq!(items[0]["totalTokens"], 20);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_token_stats_by_model_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-token-stats-by-model-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-model-token-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-token-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStatsByModel(timeWindow: \"day\") { modelId } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStatsByModel"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_fastest_channels_query() {
+        let db_path = temp_sqlite_path("task-fastest-channels-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-fastest-channel-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let fast_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Fast Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task fastest channels test",
+            })
+            .unwrap();
+        let slow_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Slow Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 90,
+                error_message: "",
+                remark: "task fastest channels test",
+            })
+            .unwrap();
+
+        for idx in 0..120 {
+            let request_id = foundation
+                .requests()
+                .create_request(&NewRequestRecord {
+                    api_key_id: Some(1),
+                    project_id: 1,
+                    trace_id: None,
+                    data_storage_id: None,
+                    source: "api",
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_headers_json: "{}",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    channel_id: Some(fast_channel_id),
+                    external_id: Some(Box::leak(format!("req_fast_channel_{idx}").into_boxed_str())),
+                    status: "completed",
+                    stream: false,
+                    client_ip: "",
+                    metrics_latency_ms: None,
+                    metrics_first_token_latency_ms: None,
+                    content_saved: false,
+                    content_storage_id: None,
+                    content_storage_key: None,
+                    content_saved_at: None,
+                })
+                .unwrap();
+
+            connection
+                .execute(
+                    "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 0, 100, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    params![request_id, fast_channel_id],
+                )
+                .unwrap();
+
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(fast_channel_id),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_fast_channel_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(50),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+        }
+
+        for idx in 0..20 {
+            let request_id = foundation
+                .requests()
+                .create_request(&NewRequestRecord {
+                    api_key_id: Some(1),
+                    project_id: 1,
+                    trace_id: None,
+                    data_storage_id: None,
+                    source: "api",
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_headers_json: "{}",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    channel_id: Some(slow_channel_id),
+                    external_id: Some(Box::leak(format!("req_slow_channel_{idx}").into_boxed_str())),
+                    status: "completed",
+                    stream: false,
+                    client_ip: "",
+                    metrics_latency_ms: None,
+                    metrics_first_token_latency_ms: None,
+                    content_saved: false,
+                    content_storage_id: None,
+                    content_storage_key: None,
+                    content_saved_at: None,
+                })
+                .unwrap();
+
+            connection
+                .execute(
+                    "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 0, 10, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    params![request_id, slow_channel_id],
+                )
+                .unwrap();
+
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(slow_channel_id),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_slow_channel_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(200),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+        }
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-fastest-channel-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"query GetFastestChannels($input: FastestChannelsInput!) { fastestChannels(input: $input) { channelId channelName channelType throughput tokensCount latencyMs requestCount confidenceLevel } }","variables":{"input":{"timeWindow":"day","limit":5}}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["fastestChannels"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["channelName"], "Fast Channel");
+        assert_eq!(items[0]["channelType"], "openai");
+        assert_eq!(items[0]["tokensCount"], 12000);
+        assert_eq!(items[0]["latencyMs"], 6000);
+        assert_eq!(items[0]["requestCount"], 120);
+        assert_eq!(items[0]["confidenceLevel"], "medium");
+        assert!(items[0]["throughput"].as_f64().unwrap() > 1990.0);
+        assert!(items[0]["channelId"].as_str().unwrap().contains("channel"));
+        assert_eq!(items[1]["channelName"], "Slow Channel");
+        assert_eq!(items[1]["confidenceLevel"], "low");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_uses_latest_completed_execution_for_fastest_channels() {
+        let db_path = temp_sqlite_path("task-fastest-channels-latest-completed");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-fastest-latest@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Latest Exec Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task fastest channels latest test",
+            })
+            .unwrap();
+
+        for idx in 0..120 {
+            let request_id = foundation
+                .requests()
+                .create_request(&NewRequestRecord {
+                    api_key_id: Some(1),
+                    project_id: 1,
+                    trace_id: None,
+                    data_storage_id: None,
+                    source: "api",
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_headers_json: "{}",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    channel_id: Some(channel_id),
+                    external_id: Some(Box::leak(format!("req_fastest_latest_{idx}").into_boxed_str())),
+                    status: "completed",
+                    stream: false,
+                    client_ip: "",
+                    metrics_latency_ms: None,
+                    metrics_first_token_latency_ms: None,
+                    content_saved: false,
+                    content_storage_id: None,
+                    content_storage_key: None,
+                    content_saved_at: None,
+                })
+                .unwrap();
+
+            connection
+                .execute(
+                    "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 0, 100, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    params![request_id, channel_id],
+                )
+                .unwrap();
+
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(channel_id),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_fastest_old_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(500),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(channel_id),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_fastest_new_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(50),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+        }
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-fastest-latest@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"query GetFastestChannels($input: FastestChannelsInput!) { fastestChannels(input: $input) { latencyMs throughput requestCount } }","variables":{"input":{"timeWindow":"day","limit":5}}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let item = &json["data"]["fastestChannels"][0];
+        assert_eq!(item["latencyMs"], 6000);
+        assert_eq!(item["requestCount"], 120);
+        assert!(item["throughput"].as_f64().unwrap() > 1990.0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_defaults_fastest_channels_to_day_for_invalid_time_window() {
+        let db_path = temp_sqlite_path("task-fastest-channels-invalid-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-fastest-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Invalid Window Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task fastest channels invalid test",
+            })
+            .unwrap();
+
+        for idx in 0..120 {
+            let request_id = foundation
+                .requests()
+                .create_request(&NewRequestRecord {
+                    api_key_id: Some(1),
+                    project_id: 1,
+                    trace_id: None,
+                    data_storage_id: None,
+                    source: "api",
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_headers_json: "{}",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    channel_id: Some(channel_id),
+                    external_id: Some(Box::leak(format!("req_fastest_invalid_{idx}").into_boxed_str())),
+                    status: "completed",
+                    stream: false,
+                    client_ip: "",
+                    metrics_latency_ms: None,
+                    metrics_first_token_latency_ms: None,
+                    content_saved: false,
+                    content_storage_id: None,
+                    content_storage_key: None,
+                    content_saved_at: None,
+                })
+                .unwrap();
+
+            connection
+                .execute(
+                    "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 0, 50, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    params![request_id, channel_id],
+                )
+                .unwrap();
+
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(channel_id),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_fastest_invalid_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(25),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+        }
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-fastest-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"query GetFastestChannels($input: FastestChannelsInput!) { fastestChannels(input: $input) { channelId } }","variables":{"input":{"timeWindow":"year","limit":5}}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = assert_graphql_success_field(&json, "fastestChannels").as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["channelName"], "Invalid Window Channel");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_fastest_channels_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-fastest-channels-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-fastest-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-fastest-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"query GetFastestChannels($input: FastestChannelsInput!) { fastestChannels(input: $input) { channelId } }","variables":{"input":{"timeWindow":"day","limit":5}}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["fastestChannels"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_fastest_models_query() {
+        let db_path = temp_sqlite_path("task-fastest-models-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-fastest-model-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        for idx in 0..120 {
+            let request_id = foundation
+                .requests()
+                .create_request(&NewRequestRecord {
+                    api_key_id: Some(1),
+                    project_id: 1,
+                    trace_id: None,
+                    data_storage_id: None,
+                    source: "api",
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_headers_json: "{}",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    channel_id: Some(1),
+                    external_id: Some(Box::leak(format!("req_fast_model_{idx}").into_boxed_str())),
+                    status: "completed",
+                    stream: false,
+                    client_ip: "",
+                    metrics_latency_ms: None,
+                    metrics_first_token_latency_ms: None,
+                    content_saved: false,
+                    content_storage_id: None,
+                    content_storage_key: None,
+                    content_saved_at: None,
+                })
+                .unwrap();
+
+            connection
+                .execute(
+                    "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, 'gpt-4o', 0, 100, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    params![request_id],
+                )
+                .unwrap();
+
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(1),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_fast_model_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(50),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+        }
+
+        for idx in 0..20 {
+            let request_id = foundation
+                .requests()
+                .create_request(&NewRequestRecord {
+                    api_key_id: Some(1),
+                    project_id: 1,
+                    trace_id: None,
+                    data_storage_id: None,
+                    source: "api",
+                    model_id: "gpt-4o-mini",
+                    format: "openai/chat_completions",
+                    request_headers_json: "{}",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    channel_id: Some(1),
+                    external_id: Some(Box::leak(format!("req_slow_model_{idx}").into_boxed_str())),
+                    status: "completed",
+                    stream: false,
+                    client_ip: "",
+                    metrics_latency_ms: None,
+                    metrics_first_token_latency_ms: None,
+                    content_saved: false,
+                    content_storage_id: None,
+                    content_storage_key: None,
+                    content_saved_at: None,
+                })
+                .unwrap();
+
+            connection
+                .execute(
+                    "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, 'gpt-4o-mini', 0, 10, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    params![request_id],
+                )
+                .unwrap();
+
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(1),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_slow_model_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o-mini",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(200),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+        }
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-fastest-model-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"query GetFastestModels($input: FastestChannelsInput!) { fastestModels(input: $input) { modelId modelName throughput tokensCount latencyMs requestCount confidenceLevel } }","variables":{"input":{"timeWindow":"day","limit":5}}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["fastestModels"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["modelId"], "gpt-4o");
+        assert_eq!(items[0]["modelName"], "gpt-4o");
+        assert_eq!(items[0]["tokensCount"], 12000);
+        assert_eq!(items[0]["latencyMs"], 6000);
+        assert_eq!(items[0]["requestCount"], 120);
+        assert_eq!(items[0]["confidenceLevel"], "medium");
+        assert!(items[0]["throughput"].as_f64().unwrap() > 1990.0);
+        assert_eq!(items[1]["modelId"], "gpt-4o-mini");
+        assert_eq!(items[1]["confidenceLevel"], "low");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_uses_latest_completed_execution_for_fastest_models() {
+        let db_path = temp_sqlite_path("task-fastest-models-latest-completed");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-fastest-model-latest@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        for idx in 0..120 {
+            let request_id = foundation
+                .requests()
+                .create_request(&NewRequestRecord {
+                    api_key_id: Some(1),
+                    project_id: 1,
+                    trace_id: None,
+                    data_storage_id: None,
+                    source: "api",
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_headers_json: "{}",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    channel_id: Some(1),
+                    external_id: Some(Box::leak(format!("req_fastest_model_latest_{idx}").into_boxed_str())),
+                    status: "completed",
+                    stream: false,
+                    client_ip: "",
+                    metrics_latency_ms: None,
+                    metrics_first_token_latency_ms: None,
+                    content_saved: false,
+                    content_storage_id: None,
+                    content_storage_key: None,
+                    content_saved_at: None,
+                })
+                .unwrap();
+
+            connection
+                .execute(
+                    "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, 'gpt-4o', 0, 100, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    params![request_id],
+                )
+                .unwrap();
+
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(1),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_fastest_model_old_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(500),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(1),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_fastest_model_new_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(50),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+        }
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-fastest-model-latest@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"query GetFastestModels($input: FastestChannelsInput!) { fastestModels(input: $input) { latencyMs throughput requestCount } }","variables":{"input":{"timeWindow":"day","limit":5}}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let item = &json["data"]["fastestModels"][0];
+        assert_eq!(item["latencyMs"], 6000);
+        assert_eq!(item["requestCount"], 120);
+        assert!(item["throughput"].as_f64().unwrap() > 1990.0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_defaults_fastest_models_to_day_for_invalid_time_window() {
+        let db_path = temp_sqlite_path("task-fastest-models-invalid-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-fastest-model-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        for idx in 0..120 {
+            let request_id = foundation
+                .requests()
+                .create_request(&NewRequestRecord {
+                    api_key_id: Some(1),
+                    project_id: 1,
+                    trace_id: None,
+                    data_storage_id: None,
+                    source: "api",
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_headers_json: "{}",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    channel_id: Some(1),
+                    external_id: Some(Box::leak(format!("req_fastest_model_invalid_{idx}").into_boxed_str())),
+                    status: "completed",
+                    stream: false,
+                    client_ip: "",
+                    metrics_latency_ms: None,
+                    metrics_first_token_latency_ms: None,
+                    content_saved: false,
+                    content_storage_id: None,
+                    content_storage_key: None,
+                    content_saved_at: None,
+                })
+                .unwrap();
+
+            connection
+                .execute(
+                    "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, 'gpt-4o', 0, 50, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    params![request_id],
+                )
+                .unwrap();
+
+            foundation
+                .requests()
+                .create_request_execution(&NewRequestExecutionRecord {
+                    project_id: 1,
+                    request_id,
+                    channel_id: Some(1),
+                    data_storage_id: None,
+                    external_id: Some(Box::leak(format!("exec_fastest_model_invalid_{idx}").into_boxed_str())),
+                    model_id: "gpt-4o",
+                    format: "openai/chat_completions",
+                    request_body_json: "{}",
+                    response_body_json: Some("{}"),
+                    response_chunks_json: Some("[]"),
+                    error_message: "",
+                    response_status_code: Some(200),
+                    status: "completed",
+                    stream: false,
+                    metrics_latency_ms: Some(25),
+                    metrics_first_token_latency_ms: None,
+                    request_headers_json: "{}",
+                })
+                .unwrap();
+        }
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-fastest-model-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"query GetFastestModels($input: FastestChannelsInput!) { fastestModels(input: $input) { modelId modelName } }","variables":{"input":{"timeWindow":"year","limit":5}}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = assert_graphql_success_field(&json, "fastestModels").as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["modelId"], "gpt-4o");
+        assert_eq!(items[0]["modelName"], "gpt-4o");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_fastest_models_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-fastest-models-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-fastest-model-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-fastest-model-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"query GetFastestModels($input: FastestChannelsInput!) { fastestModels(input: $input) { modelId } }","variables":{"input":{"timeWindow":"day","limit":5}}}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["fastestModels"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_model_performance_stats_query() {
+        let db_path = temp_sqlite_path("task-model-performance-stats-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let now = Utc::now();
+        let today_at = now.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-performance-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "system_general_settings",
+                    serde_json::json!({
+                        "currencyCode": "USD",
+                        "timezone": "UTC"
+                    })
+                    .to_string()
+                ],
+            )
+            .unwrap();
+
+        let model_specs = [
+            ("gpt-4o", "GPT-4o", 7_i32, 10_i64, 100_i64, 20_i64),
+            ("gpt-4o-mini", "GPT-4o Mini", 6_i32, 8_i64, 120_i64, 0_i64),
+            ("gpt-4.1", "GPT-4.1", 5_i32, 6_i64, 150_i64, 0_i64),
+            ("gpt-4.1-mini", "GPT-4.1 Mini", 4_i32, 5_i64, 180_i64, 0_i64),
+            ("o3", "o3", 3_i32, 4_i64, 200_i64, 0_i64),
+            ("o4-mini", "o4-mini", 2_i32, 3_i64, 220_i64, 0_i64),
+            ("gpt-3.5-turbo", "GPT-3.5 Turbo", 1_i32, 2_i64, 250_i64, 0_i64),
+        ];
+
+        for (model_id, model_name, request_total, completion_tokens, latency_ms, first_token_ms) in model_specs {
+            foundation
+                .channel_models()
+                .upsert_model(&NewModelRecord {
+                    developer: "openai",
+                    model_id,
+                    model_type: "chat",
+                    name: model_name,
+                    icon: "OpenAI",
+                    group: "openai",
+                    model_card_json: "{}",
+                    settings_json: "{}",
+                    status: "enabled",
+                    remark: "task model performance stats test",
+                })
+                .unwrap();
+
+            for idx in 0..request_total {
+                let request_id = foundation
+                    .requests()
+                    .create_request(&NewRequestRecord {
+                        api_key_id: Some(1),
+                        project_id: 1,
+                        trace_id: None,
+                        data_storage_id: None,
+                        source: "api",
+                        model_id,
+                        format: "openai/chat_completions",
+                        request_headers_json: "{}",
+                        request_body_json: "{}",
+                        response_body_json: Some("{}"),
+                        response_chunks_json: Some("[]"),
+                        channel_id: Some(1),
+                        external_id: Some(Box::leak(format!("req_model_perf_{model_id}_{idx}").into_boxed_str())),
+                        status: "completed",
+                        stream: first_token_ms > 0,
+                        client_ip: "",
+                        metrics_latency_ms: None,
+                        metrics_first_token_latency_ms: None,
+                        content_saved: false,
+                        content_storage_id: None,
+                        content_storage_key: None,
+                        content_saved_at: None,
+                    })
+                    .unwrap();
+
+                connection
+                    .execute(
+                        "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, ?2, 0, ?3, ?3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?4, ?4)",
+                        params![request_id, model_id, completion_tokens, today_at],
+                    )
+                    .unwrap();
+
+                foundation
+                    .requests()
+                    .create_request_execution(&NewRequestExecutionRecord {
+                        project_id: 1,
+                        request_id,
+                        channel_id: Some(1),
+                        data_storage_id: None,
+                        external_id: Some(Box::leak(format!("exec_model_perf_{model_id}_{idx}").into_boxed_str())),
+                        model_id,
+                        format: "openai/chat_completions",
+                        request_body_json: "{}",
+                        response_body_json: Some("{}"),
+                        response_chunks_json: Some("[]"),
+                        error_message: "",
+                        response_status_code: Some(200),
+                        status: "completed",
+                        stream: first_token_ms > 0,
+                        metrics_latency_ms: Some(latency_ms),
+                        metrics_first_token_latency_ms: if first_token_ms > 0 { Some(first_token_ms) } else { None },
+                        request_headers_json: "{}",
+                    })
+                    .unwrap();
+            }
+        }
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-performance-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ modelPerformanceStats { date modelId throughput ttftMs requestCount } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["modelPerformanceStats"].as_array().unwrap();
+        let model_ids = items
+            .iter()
+            .map(|item| item["modelId"].as_str().unwrap().to_owned())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(model_ids.len(), 6);
+        assert!(model_ids.contains("gpt-4o"));
+        assert!(!model_ids.contains("gpt-3.5-turbo"));
+
+        let today_date = now.format("%Y-%m-%d").to_string();
+        let gpt4o = items
+            .iter()
+            .find(|item| item["modelId"] == "gpt-4o" && item["date"] == today_date)
+            .unwrap();
+        assert_eq!(gpt4o["requestCount"], 7);
+        assert_eq!(gpt4o["ttftMs"], 20.0);
+        assert!((gpt4o["throughput"].as_f64().unwrap() - 125.0).abs() < 0.001);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_uses_latest_completed_execution_for_model_performance_stats() {
+        let db_path = temp_sqlite_path("task-model-performance-stats-latest");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let now = Utc::now();
+        let today_at = now.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-performance-latest@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: "{}",
+                settings_json: "{}",
+                status: "enabled",
+                remark: "task model performance latest test",
+            })
+            .unwrap();
+
+        let request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(1),
+                external_id: Some("req_model_perf_latest"),
+                status: "completed",
+                stream: true,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, 'gpt-4o', 0, 90, 90, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![request_id, today_at],
+            )
+            .unwrap();
+
+        foundation
+            .requests()
+            .create_request_execution(&NewRequestExecutionRecord {
+                project_id: 1,
+                request_id,
+                channel_id: Some(1),
+                data_storage_id: None,
+                external_id: Some("exec_model_perf_old"),
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                error_message: "",
+                response_status_code: Some(200),
+                status: "completed",
+                stream: true,
+                metrics_latency_ms: Some(500),
+                metrics_first_token_latency_ms: Some(50),
+                request_headers_json: "{}",
+            })
+            .unwrap();
+        foundation
+            .requests()
+            .create_request_execution(&NewRequestExecutionRecord {
+                project_id: 1,
+                request_id,
+                channel_id: Some(1),
+                data_storage_id: None,
+                external_id: Some("exec_model_perf_new"),
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                error_message: "",
+                response_status_code: Some(200),
+                status: "completed",
+                stream: true,
+                metrics_latency_ms: Some(100),
+                metrics_first_token_latency_ms: Some(10),
+                request_headers_json: "{}",
+            })
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-performance-latest@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ modelPerformanceStats { modelId throughput ttftMs requestCount } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let item = &json["data"]["modelPerformanceStats"][0];
+        assert_eq!(item["modelId"], "gpt-4o");
+        assert_eq!(item["requestCount"], 1);
+        assert_eq!(item["ttftMs"], 10.0);
+        assert!((item["throughput"].as_f64().unwrap() - 1000.0).abs() < 0.001);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_buckets_model_performance_stats_by_system_timezone() {
+        let db_path = temp_sqlite_path("task-model-performance-stats-timezone");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let tz = chrono_tz::Asia::Shanghai;
+        let now_local = Utc::now().with_timezone(&tz);
+        let base_local_date = now_local.date_naive() - ChronoDuration::days(2);
+        let first_local = tz
+            .from_local_datetime(&base_local_date.and_hms_opt(23, 30, 0).unwrap())
+            .single()
+            .unwrap();
+        let second_local = tz
+            .from_local_datetime(&(base_local_date + ChronoDuration::days(1)).and_hms_opt(0, 30, 0).unwrap())
+            .single()
+            .unwrap();
+        let first_utc = first_local.with_timezone(&Utc).format("%Y-%m-%d %H:%M:%S").to_string();
+        let second_utc = second_local.with_timezone(&Utc).format("%Y-%m-%d %H:%M:%S").to_string();
+        let first_date = base_local_date.format("%Y-%m-%d").to_string();
+        let second_date = (base_local_date + ChronoDuration::days(1)).format("%Y-%m-%d").to_string();
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-performance-tz@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "system_general_settings",
+                    serde_json::json!({
+                        "currencyCode": "USD",
+                        "timezone": "Asia/Shanghai"
+                    })
+                    .to_string()
+                ],
+            )
+            .unwrap();
+
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: "{}",
+                settings_json: "{}",
+                status: "enabled",
+                remark: "task model performance timezone test",
+            })
+            .unwrap();
+
+        let request_one = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(1),
+                external_id: Some("req_model_perf_tz_one"),
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_two = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(1),
+                external_id: Some("req_model_perf_tz_two"),
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, 'gpt-4o', 0, 50, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![request_one, first_utc],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, 'gpt-4o', 0, 50, 50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![request_two, second_utc],
+            )
+            .unwrap();
+
+        let exec_one_id = foundation
+            .requests()
+            .create_request_execution(&NewRequestExecutionRecord {
+                project_id: 1,
+                request_id: request_one,
+                channel_id: Some(1),
+                data_storage_id: None,
+                external_id: Some("exec_model_perf_tz_one"),
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                error_message: "",
+                response_status_code: Some(200),
+                status: "completed",
+                stream: false,
+                metrics_latency_ms: Some(100),
+                metrics_first_token_latency_ms: None,
+                request_headers_json: "{}",
+            })
+            .unwrap();
+        let exec_two_id = foundation
+            .requests()
+            .create_request_execution(&NewRequestExecutionRecord {
+                project_id: 1,
+                request_id: request_two,
+                channel_id: Some(1),
+                data_storage_id: None,
+                external_id: Some("exec_model_perf_tz_two"),
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                error_message: "",
+                response_status_code: Some(200),
+                status: "completed",
+                stream: false,
+                metrics_latency_ms: Some(100),
+                metrics_first_token_latency_ms: None,
+                request_headers_json: "{}",
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "UPDATE request_executions SET created_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![exec_one_id, first_utc],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE request_executions SET created_at = ?2, updated_at = ?2 WHERE id = ?1",
+                params![exec_two_id, second_utc],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-performance-tz@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ modelPerformanceStats { date modelId throughput ttftMs requestCount } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["modelPerformanceStats"].as_array().unwrap();
+        let first_row = items.iter().find(|item| item["date"] == first_date).unwrap();
+        let second_row = items.iter().find(|item| item["date"] == second_date).unwrap();
+        assert_eq!(first_row["modelId"], "gpt-4o");
+        assert_eq!(first_row["requestCount"], 1);
+        assert_eq!(second_row["modelId"], "gpt-4o");
+        assert_eq!(second_row["requestCount"], 1);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_model_performance_stats_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-model-performance-stats-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-model-performance-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-performance-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ modelPerformanceStats { date } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["modelPerformanceStats"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_channel_performance_stats_query() {
+        let db_path = temp_sqlite_path("task-channel-performance-stats-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let tz = chrono_tz::UTC;
+        let now_local = Utc::now().with_timezone(&tz);
+        let base_local_date = now_local.date_naive() - ChronoDuration::days(2);
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        ensure_operational_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-performance-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "system_general_settings",
+                    serde_json::json!({
+                        "currencyCode": "USD",
+                        "timezone": "UTC"
+                    })
+                    .to_string()
+                ],
+            )
+            .unwrap();
+
+        let channel_specs = [
+            (1_i64, "Fast Channel", 7_i32, 100.0_f64, 10.0_f64),
+            (2_i64, "Second Channel", 6_i32, 90.0_f64, 15.0_f64),
+            (3_i64, "Third Channel", 5_i32, 80.0_f64, 20.0_f64),
+            (4_i64, "Fourth Channel", 4_i32, 70.0_f64, 25.0_f64),
+            (5_i64, "Fifth Channel", 3_i32, 60.0_f64, 30.0_f64),
+            (6_i64, "Sixth Channel", 2_i32, 50.0_f64, 35.0_f64),
+            (7_i64, "Seventh Channel", 1_i32, 40.0_f64, 40.0_f64),
+        ];
+
+        for (channel_id, channel_name, request_count, throughput, ttft_ms) in channel_specs {
+            foundation
+                .channel_models()
+                .upsert_channel(&NewChannelRecord {
+                    name: channel_name,
+                    channel_type: "openai",
+                    base_url: "https://api.openai.com/v1",
+                    status: "enabled",
+                    credentials_json: "{}",
+                    supported_models_json: "[\"gpt-4o\"]",
+                    auto_sync_supported_models: false,
+                    default_test_model: "gpt-4o",
+                    settings_json: "{}",
+                    tags_json: "[]",
+                    ordering_weight: 100 - channel_id,
+                    error_message: "",
+                    remark: "task channel performance stats test",
+                })
+                .unwrap();
+
+            for day_offset in 0..2_i64 {
+                let local_date = base_local_date + ChronoDuration::days(day_offset);
+                let timestamp = tz
+                    .from_local_datetime(&local_date.and_hms_opt(12, 0, 0).unwrap())
+                    .single()
+                    .unwrap()
+                    .timestamp();
+                connection
+                    .execute(
+                        "INSERT INTO channel_probes (channel_id, timestamp, total_request_count, success_request_count, avg_tokens_per_second, avg_time_to_first_token_ms) VALUES (?1, ?2, ?3, ?3, ?4, ?5)",
+                        params![channel_id, timestamp, request_count, throughput, ttft_ms],
+                    )
+                    .unwrap();
+            }
+        }
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-performance-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ channelPerformanceStats { date channelId channelName throughput ttftMs requestCount } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["channelPerformanceStats"].as_array().unwrap();
+        let channel_ids = items
+            .iter()
+            .map(|item| item["channelId"].as_str().unwrap().to_owned())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(channel_ids.len(), 6);
+        assert!(channel_ids.contains("1"));
+        assert!(!channel_ids.contains("7"));
+
+        let first_date = base_local_date.format("%Y-%m-%d").to_string();
+        let first_row = items
+            .iter()
+            .find(|item| item["date"] == first_date && item["channelId"] == "1")
+            .unwrap();
+        assert_eq!(first_row["channelName"], "Fast Channel");
+        assert_eq!(first_row["requestCount"], 7);
+        assert_eq!(first_row["throughput"], 100.0);
+        assert_eq!(first_row["ttftMs"], 10.0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_prefers_channel_probe_stats_when_present() {
+        let db_path = temp_sqlite_path("task-channel-performance-stats-probe-first");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let now = Utc::now();
+        let today_at = now.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        let timestamp = now.timestamp();
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        ensure_operational_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-performance-probe@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Probe Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task channel performance probe test",
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO channel_probes (channel_id, timestamp, total_request_count, success_request_count, avg_tokens_per_second, avg_time_to_first_token_ms) VALUES (1, ?1, 200, 200, 321.0, 12.0)",
+                params![timestamp],
+            )
+            .unwrap();
+
+        let request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(1),
+                external_id: Some("req_channel_perf_probe"),
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, 'gpt-4o', 0, 10, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![request_id, today_at],
+            )
+            .unwrap();
+        foundation
+            .requests()
+            .create_request_execution(&NewRequestExecutionRecord {
+                project_id: 1,
+                request_id,
+                channel_id: Some(1),
+                data_storage_id: None,
+                external_id: Some("exec_channel_perf_probe"),
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                error_message: "",
+                response_status_code: Some(200),
+                status: "completed",
+                stream: false,
+                metrics_latency_ms: Some(50),
+                metrics_first_token_latency_ms: None,
+                request_headers_json: "{}",
+            })
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-performance-probe@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ channelPerformanceStats { channelId channelName throughput ttftMs requestCount } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let row = &json["data"]["channelPerformanceStats"][0];
+        assert_eq!(row["channelId"], "1");
+        assert_eq!(row["channelName"], "Probe Channel");
+        assert_eq!(row["requestCount"], 200);
+        assert_eq!(row["throughput"], 321.0);
+        assert_eq!(row["ttftMs"], 12.0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_falls_back_to_executions_for_channel_performance_stats_when_no_probes_exist() {
+        let db_path = temp_sqlite_path("task-channel-performance-stats-fallback");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let now = Utc::now();
+        let today_at = now.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        ensure_operational_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-performance-fallback@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Fallback Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task channel performance fallback test",
+            })
+            .unwrap();
+
+        let request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(1),
+                external_id: Some("req_channel_perf_fallback"),
+                status: "completed",
+                stream: true,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, 1, 'gpt-4o', 0, 90, 90, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![request_id, today_at],
+            )
+            .unwrap();
+        foundation
+            .requests()
+            .create_request_execution(&NewRequestExecutionRecord {
+                project_id: 1,
+                request_id,
+                channel_id: Some(1),
+                data_storage_id: None,
+                external_id: Some("exec_channel_perf_fallback"),
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                error_message: "",
+                response_status_code: Some(200),
+                status: "completed",
+                stream: true,
+                metrics_latency_ms: Some(100),
+                metrics_first_token_latency_ms: Some(10),
+                request_headers_json: "{}",
+            })
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-performance-fallback@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ channelPerformanceStats { channelId channelName throughput ttftMs requestCount } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let row = &json["data"]["channelPerformanceStats"][0];
+        assert_eq!(row["channelId"], "1");
+        assert_eq!(row["channelName"], "Fallback Channel");
+        assert_eq!(row["requestCount"], 1);
+        assert_eq!(row["ttftMs"], 10.0);
+        assert!((row["throughput"].as_f64().unwrap() - 1000.0).abs() < 0.001);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_buckets_channel_performance_stats_by_system_timezone() {
+        let db_path = temp_sqlite_path("task-channel-performance-stats-timezone");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let tz = chrono_tz::Asia::Shanghai;
+        let now_local = Utc::now().with_timezone(&tz);
+        let base_local_date = now_local.date_naive() - ChronoDuration::days(2);
+        let first_local = tz
+            .from_local_datetime(&base_local_date.and_hms_opt(23, 30, 0).unwrap())
+            .single()
+            .unwrap();
+        let second_local = tz
+            .from_local_datetime(&(base_local_date + ChronoDuration::days(1)).and_hms_opt(0, 30, 0).unwrap())
+            .single()
+            .unwrap();
+        let first_ts = first_local.timestamp();
+        let second_ts = second_local.timestamp();
+        let first_date = base_local_date.format("%Y-%m-%d").to_string();
+        let second_date = (base_local_date + ChronoDuration::days(1)).format("%Y-%m-%d").to_string();
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        ensure_operational_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-performance-tz@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "system_general_settings",
+                    serde_json::json!({
+                        "currencyCode": "USD",
+                        "timezone": "Asia/Shanghai"
+                    })
+                    .to_string()
+                ],
+            )
+            .unwrap();
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "TZ Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task channel performance timezone test",
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO channel_probes (channel_id, timestamp, total_request_count, success_request_count, avg_tokens_per_second, avg_time_to_first_token_ms) VALUES (1, ?1, 10, 10, 111.0, 11.0)",
+                params![first_ts],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO channel_probes (channel_id, timestamp, total_request_count, success_request_count, avg_tokens_per_second, avg_time_to_first_token_ms) VALUES (1, ?1, 20, 20, 222.0, 22.0)",
+                params![second_ts],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-performance-tz@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ channelPerformanceStats { date channelId channelName throughput ttftMs requestCount } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["channelPerformanceStats"].as_array().unwrap();
+        let first_row = items.iter().find(|item| item["date"] == first_date).unwrap();
+        let second_row = items.iter().find(|item| item["date"] == second_date).unwrap();
+        assert_eq!(first_row["channelId"], "1");
+        assert_eq!(first_row["channelName"], "TZ Channel");
+        assert_eq!(first_row["requestCount"], 10);
+        assert_eq!(second_row["channelId"], "1");
+        assert_eq!(second_row["requestCount"], 20);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_channel_performance_stats_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-channel-performance-stats-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-channel-performance-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-performance-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ channelPerformanceStats { date } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["channelPerformanceStats"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_channel_probe_data_query_for_channel_reader() {
+        let db_path = temp_sqlite_path("task-channel-probe-data-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        ensure_operational_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "channels-probe-reader@example.com",
+            "password123",
+            &[SCOPE_READ_CHANNELS],
+        );
+
+        let channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Probe Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task channel probe data test",
+            })
+            .unwrap();
+
+        let now = Utc::now().timestamp();
+        let probe_timestamp = (now - (now % 300)) - 300;
+        connection
+            .execute(
+                "INSERT INTO channel_probes (channel_id, timestamp, total_request_count, success_request_count, avg_tokens_per_second, avg_time_to_first_token_ms) VALUES (?1, ?2, 12, 10, 123.5, 45.0)",
+                params![channel_id, probe_timestamp],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "channels-probe-reader@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"query":"query GetChannelProbeData($input: GetChannelProbeDataInput!) {{ channelProbeData(input: $input) {{ channelID points {{ timestamp totalRequestCount successRequestCount avgTokensPerSecond avgTimeToFirstTokenMs }} }} }}","variables":{{"input":{{"channelIDs":["{}"]}}}}}}"#,
+                        graphql_gid("channel", channel_id)
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = assert_graphql_success_field(&json, "channelProbeData").as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["channelID"], graphql_gid("channel", channel_id));
+        let points = items[0]["points"].as_array().unwrap();
+        assert!(!points.is_empty());
+        let non_zero = points.iter().find(|point| point["totalRequestCount"] == 12).unwrap();
+        assert_eq!(non_zero["totalRequestCount"], 12);
+        assert_eq!(non_zero["successRequestCount"], 10);
+        assert_eq!(non_zero["avgTokensPerSecond"], 123.5);
+        assert_eq!(non_zero["avgTimeToFirstTokenMs"], 45.0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_channel_probe_data_without_read_channels_scope() {
+        let db_path = temp_sqlite_path("task-channel-probe-data-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "channels-probe-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "channels-probe-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"query GetChannelProbeData($input: GetChannelProbeDataInput!) { channelProbeData(input: $input) { channelID } }","variables":{"input":{"channelIDs":["gid://axonhub/channel/1"]}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["channelProbeData"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_channel_probe_data_rejects_invalid_channel_id() {
+        let db_path = temp_sqlite_path("task-channel-probe-data-invalid-id");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "channels-probe-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_CHANNELS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "channels-probe-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"query GetChannelProbeData($input: GetChannelProbeDataInput!) { channelProbeData(input: $input) { channelID } }","variables":{"input":{"channelIDs":["gid://axonhub/project/1"]}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_graphql_error_field(&json, "channelProbeData", "Failed to execute GraphQL request: invalid channel id");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_returns_default_system_general_settings_when_missing() {
+        let db_path = temp_sqlite_path("task-system-general-settings-defaults");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "general-settings-reader@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "general-settings-reader@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ systemGeneralSettings { currencyCode timezone } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["systemGeneralSettings"]["currencyCode"], "USD");
+        assert_eq!(json["data"]["systemGeneralSettings"]["timezone"], "UTC");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_reads_system_general_settings_from_system_record() {
+        let db_path = temp_sqlite_path("task-system-general-settings-stored");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "general-settings-stored@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "system_general_settings",
+                    serde_json::json!({
+                        "currencyCode": "EUR",
+                        "timezone": "Asia/Shanghai"
+                    })
+                    .to_string()
+                ],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "general-settings-stored@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ systemGeneralSettings { currencyCode timezone } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["systemGeneralSettings"]["currencyCode"], "EUR");
+        assert_eq!(json["data"]["systemGeneralSettings"]["timezone"], "Asia/Shanghai");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_fills_missing_general_settings_fields_with_defaults() {
+        let db_path = temp_sqlite_path("task-system-general-settings-partial");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "general-settings-partial@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+        connection
+            .execute(
+                "INSERT INTO systems (key, value, deleted_at) VALUES (?1, ?2, 0)",
+                params![
+                    "system_general_settings",
+                    serde_json::json!({
+                        "timezone": "Asia/Shanghai"
+                    })
+                    .to_string()
+                ],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "general-settings-partial@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ systemGeneralSettings { currencyCode timezone } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["systemGeneralSettings"]["currencyCode"], "USD");
+        assert_eq!(json["data"]["systemGeneralSettings"]["timezone"], "Asia/Shanghai");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_update_system_general_settings_mutation_and_readback() {
+        let db_path = temp_sqlite_path("task-system-general-settings-update");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "general-settings-writer@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS, SCOPE_WRITE_SETTINGS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "general-settings-writer@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateSystemGeneralSettings($input: UpdateSystemGeneralSettingsInput!) { updateSystemGeneralSettings(input: $input) }","variables":{"input":{"currencyCode":"EUR","timezone":"Asia/Shanghai"}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["updateSystemGeneralSettings"], true);
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ systemGeneralSettings { currencyCode timezone } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["systemGeneralSettings"]["currencyCode"], "EUR");
+        assert_eq!(query_json["data"]["systemGeneralSettings"]["timezone"], "Asia/Shanghai");
+
+        let stored: String = connection
+            .query_row(
+                "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+                params!["system_general_settings"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stored_json: Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(stored_json["currencyCode"], "EUR");
+        assert_eq!(stored_json["timezone"], "Asia/Shanghai");
+
+        let partial_update_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateSystemGeneralSettings($input: UpdateSystemGeneralSettingsInput!) { updateSystemGeneralSettings(input: $input) }","variables":{"input":{"timezone":"UTC"}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let partial_update_json = read_json_response(partial_update_response).await;
+        assert_eq!(partial_update_json["data"]["updateSystemGeneralSettings"], true);
+
+        let readback_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ systemGeneralSettings { currencyCode timezone } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let readback_json = read_json_response(readback_response).await;
+        assert_eq!(readback_json["data"]["systemGeneralSettings"]["currencyCode"], "EUR");
+        assert_eq!(readback_json["data"]["systemGeneralSettings"]["timezone"], "UTC");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_system_general_settings_without_read_settings_scope() {
+        let db_path = temp_sqlite_path("task-system-general-settings-read-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "general-settings-read-denied@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "general-settings-read-denied@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ systemGeneralSettings { currencyCode timezone } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["systemGeneralSettings"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_update_system_general_settings_without_write_settings_scope() {
+        let db_path = temp_sqlite_path("task-system-general-settings-write-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "general-settings-write-denied@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "general-settings-write-denied@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"query":"mutation UpdateSystemGeneralSettings($input: UpdateSystemGeneralSettingsInput!) { updateSystemGeneralSettings(input: $input) }","variables":{"input":{"currencyCode":"EUR"}}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["updateSystemGeneralSettings"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_returns_api_key_token_usage_stats_for_selected_api_key() {
+        let db_path = temp_sqlite_path("task-api-key-token-usage-stats-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "api-key-token-usage-admin@example.com",
+            "password123",
+            &[SCOPE_READ_API_KEYS],
+        );
+
+        let selected_api_key_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-usage-one",
+            "Primary Usage Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+        let other_api_key_id = insert_api_key(
+            &connection,
+            1,
+            1,
+            "api-key-usage-two",
+            "Other Usage Key",
+            "service",
+            &[SCOPE_READ_REQUESTS],
+        );
+
+        let req_one = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(selected_api_key_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_api_key_usage_one"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let req_two = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(selected_api_key_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_api_key_usage_two"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let req_other = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(other_api_key_id),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4.1",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_api_key_usage_other"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection.execute("INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 2, 0, 0, 0, 0, 3, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", params![req_one, selected_api_key_id]).unwrap();
+        connection.execute("INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o-mini', 7, 8, 15, 0, 1, 0, 0, 0, 0, 1, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", params![req_two, selected_api_key_id]).unwrap();
+        connection.execute("INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4.1', 100, 100, 200, 0, 10, 0, 0, 0, 0, 10, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", params![req_other, other_api_key_id]).unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "api-key-token-usage-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"query":"query APIKeyTokenUsageStats($input: APIKeyTokenUsageStatsInput) {{ apiKeyTokenUsageStats(input: $input) {{ apiKeyId inputTokens outputTokens cachedTokens reasoningTokens topModels {{ modelId inputTokens outputTokens cachedTokens reasoningTokens }} }} }}","variables":{{"input":{{"apiKeyIds":["{}"]}}}}}}"#,
+                        graphql_gid("api_key", selected_api_key_id)
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = assert_graphql_success_field(&json, "apiKeyTokenUsageStats").as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["apiKeyId"], graphql_gid("api_key", selected_api_key_id));
+        assert_eq!(items[0]["inputTokens"], 17);
+        assert_eq!(items[0]["outputTokens"], 13);
+        assert_eq!(items[0]["cachedTokens"], 3);
+        assert_eq!(items[0]["reasoningTokens"], 4);
+        let top_models = items[0]["topModels"].as_array().unwrap();
+        assert_eq!(top_models.len(), 2);
+        assert_eq!(top_models[0]["modelId"], "gpt-4o");
+        assert_eq!(top_models[1]["modelId"], "gpt-4o-mini");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_filters_api_key_token_usage_stats_by_created_at_range() {
+        let db_path = temp_sqlite_path("task-api-key-token-usage-stats-range");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let now = Utc::now();
+        let recent_at = now.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        let recent_gte = (now - ChronoDuration::days(1)).naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        let recent_lte = (now + ChronoDuration::days(1)).naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        let old_at = (now - ChronoDuration::days(40)).naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        bootstrap.initialize(&InitializeSystemRequest {
+            owner_email: "owner@example.com".to_owned(),
+            owner_password: "password123".to_owned(),
+            owner_first_name: "System".to_owned(),
+            owner_last_name: "Owner".to_owned(),
+            brand_name: "AxonHub".to_owned(),
+        }).unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+        let _user_id = insert_test_user(&connection, "api-key-token-range@example.com", "password123", &[SCOPE_READ_API_KEYS]);
+        let api_key_id = insert_api_key(&connection, 1, 1, "api-key-range", "Range Key", "service", &[SCOPE_READ_REQUESTS]);
+
+        let recent_request = foundation.requests().create_request(&NewRequestRecord { api_key_id: Some(api_key_id), project_id: 1, trace_id: None, data_storage_id: None, source: "api", model_id: "gpt-4o", format: "openai/chat_completions", request_headers_json: "{}", request_body_json: "{}", response_body_json: Some("{}"), response_chunks_json: Some("[]"), channel_id: None, external_id: Some("req_api_key_range_recent"), status: "success", stream: false, client_ip: "", metrics_latency_ms: None, metrics_first_token_latency_ms: None, content_saved: false, content_storage_id: None, content_storage_key: None, content_saved_at: None }).unwrap();
+        let old_request = foundation.requests().create_request(&NewRequestRecord { api_key_id: Some(api_key_id), project_id: 1, trace_id: None, data_storage_id: None, source: "api", model_id: "gpt-4.1", format: "openai/chat_completions", request_headers_json: "{}", request_body_json: "{}", response_body_json: Some("{}"), response_chunks_json: Some("[]"), channel_id: None, external_id: Some("req_api_key_range_old"), status: "success", stream: false, client_ip: "", metrics_latency_ms: None, metrics_first_token_latency_ms: None, content_saved: false, content_storage_id: None, content_storage_key: None, content_saved_at: None }).unwrap();
+        connection.execute("INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 2, 0, 0, 0, 0, 3, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?3, ?3)", params![recent_request, api_key_id, recent_at]).unwrap();
+        connection.execute("INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, 'gpt-4.1', 100, 100, 200, 0, 10, 0, 0, 0, 0, 10, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?3, ?3)", params![old_request, api_key_id, old_at]).unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "api-key-token-range@example.com", "password123");
+        let response = app.oneshot(Request::builder().uri("/admin/graphql").method(Method::POST).header("Authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(format!(r#"{{"query":"query APIKeyTokenUsageStats($input: APIKeyTokenUsageStatsInput) {{ apiKeyTokenUsageStats(input: $input) {{ apiKeyId inputTokens outputTokens cachedTokens reasoningTokens topModels {{ modelId }} }} }}","variables":{{"input":{{"apiKeyIds":["{}"],"createdAtGTE":"{}","createdAtLTE":"{}"}}}}}}"#, graphql_gid("api_key", api_key_id), recent_gte, recent_lte))).unwrap()).await.unwrap();
+        let json = read_json_response(response).await;
+        let items = assert_graphql_success_field(&json, "apiKeyTokenUsageStats").as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["inputTokens"], 10);
+        assert_eq!(items[0]["outputTokens"], 5);
+        assert_eq!(items[0]["cachedTokens"], 2);
+        assert_eq!(items[0]["reasoningTokens"], 3);
+        assert_eq!(items[0]["topModels"][0]["modelId"], "gpt-4o");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_limits_top_models_to_three_per_api_key() {
+        let db_path = temp_sqlite_path("task-api-key-token-usage-top-models");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap.initialize(&InitializeSystemRequest { owner_email: "owner@example.com".to_owned(), owner_password: "password123".to_owned(), owner_first_name: "System".to_owned(), owner_last_name: "Owner".to_owned(), brand_name: "AxonHub".to_owned() }).unwrap();
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+        let _user_id = insert_test_user(&connection, "api-key-token-top-models@example.com", "password123", &[SCOPE_READ_API_KEYS]);
+        let api_key_id = insert_api_key(&connection, 1, 1, "api-key-top-models", "Top Models Key", "service", &[SCOPE_READ_REQUESTS]);
+
+        for (idx, model_id, prompt, completion, cached, reasoning) in [
+            (0, "gpt-4o", 10, 5, 2, 3),
+            (1, "gpt-4o-mini", 7, 8, 1, 1),
+            (2, "gpt-4.1", 6, 4, 0, 0),
+            (3, "gpt-4.1-mini", 1, 1, 0, 0),
+        ] {
+            let request_id = foundation.requests().create_request(&NewRequestRecord { api_key_id: Some(api_key_id), project_id: 1, trace_id: None, data_storage_id: None, source: "api", model_id, format: "openai/chat_completions", request_headers_json: "{}", request_body_json: "{}", response_body_json: Some("{}"), response_chunks_json: Some("[]"), channel_id: None, external_id: Some(Box::leak(format!("req_api_key_top_model_{idx}").into_boxed_str())), status: "success", stream: false, client_ip: "", metrics_latency_ms: None, metrics_first_token_latency_ms: None, content_saved: false, content_storage_id: None, content_storage_key: None, content_saved_at: None }).unwrap();
+            connection.execute("INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, ?2, 1, NULL, ?3, ?4, ?5, 0, 0, ?6, 0, 0, 0, 0, ?7, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", params![request_id, api_key_id, model_id, prompt, completion, cached, reasoning]).unwrap();
+        }
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "api-key-token-top-models@example.com", "password123");
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"query":"query APIKeyTokenUsageStats($input: APIKeyTokenUsageStatsInput) {{ apiKeyTokenUsageStats(input: $input) {{ topModels {{ modelId }} }} }}","variables":{{"input":{{"apiKeyIds":["{}"]}}}}}}"#,
+                        graphql_gid("api_key", api_key_id)
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = read_json_response(response).await;
+        let top_models = json["data"]["apiKeyTokenUsageStats"][0]["topModels"].as_array().unwrap();
+        assert_eq!(top_models.len(), 3);
+        assert_eq!(top_models[0]["modelId"], "gpt-4o");
+        assert_eq!(top_models[1]["modelId"], "gpt-4o-mini");
+        assert_eq!(top_models[2]["modelId"], "gpt-4.1");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_returns_empty_api_key_token_usage_stats_when_no_usage_matches() {
+        let db_path = temp_sqlite_path("task-api-key-token-usage-empty");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap.initialize(&InitializeSystemRequest { owner_email: "owner@example.com".to_owned(), owner_password: "password123".to_owned(), owner_first_name: "System".to_owned(), owner_last_name: "Owner".to_owned(), brand_name: "AxonHub".to_owned() }).unwrap();
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "api-key-token-empty@example.com", "password123", &[SCOPE_READ_API_KEYS]);
+        let api_key_id = insert_api_key(&connection, 1, 1, "api-key-empty", "Empty Key", "service", &[SCOPE_READ_REQUESTS]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "api-key-token-empty@example.com", "password123");
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"query":"query APIKeyTokenUsageStats($input: APIKeyTokenUsageStatsInput) {{ apiKeyTokenUsageStats(input: $input) {{ apiKeyId }} }}","variables":{{"input":{{"apiKeyIds":["{}"]}}}}}}"#,
+                        graphql_gid("api_key", api_key_id)
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["apiKeyTokenUsageStats"], Value::Array(Vec::new()));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_validates_api_key_token_usage_stats_input() {
+        let db_path = temp_sqlite_path("task-api-key-token-usage-validation");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap.initialize(&InitializeSystemRequest { owner_email: "owner@example.com".to_owned(), owner_password: "password123".to_owned(), owner_first_name: "System".to_owned(), owner_last_name: "Owner".to_owned(), brand_name: "AxonHub".to_owned() }).unwrap();
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "api-key-token-validation@example.com", "password123", &[SCOPE_READ_API_KEYS]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "api-key-token-validation@example.com", "password123");
+
+        let missing_input = app.clone().oneshot(Request::builder().uri("/admin/graphql").method(Method::POST).header("Authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(r#"{"query":"query APIKeyTokenUsageStats($input: APIKeyTokenUsageStatsInput) { apiKeyTokenUsageStats(input: $input) { apiKeyId } }","variables":{}}"#)).unwrap()).await.unwrap();
+        let missing_input_json = read_json_response(missing_input).await;
+        assert_graphql_error_field(&missing_input_json, "apiKeyTokenUsageStats", "Failed to execute GraphQL request: input is required");
+
+        let empty_ids = app.clone().oneshot(Request::builder().uri("/admin/graphql").method(Method::POST).header("Authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(r#"{"query":"query APIKeyTokenUsageStats($input: APIKeyTokenUsageStatsInput) { apiKeyTokenUsageStats(input: $input) { apiKeyId } }","variables":{"input":{"apiKeyIds":[]}}}"#)).unwrap()).await.unwrap();
+        let empty_ids_json = read_json_response(empty_ids).await;
+        assert_graphql_error_field(&empty_ids_json, "apiKeyTokenUsageStats", "Failed to execute GraphQL request: apiKeyIds is required and must contain at least one API key");
+
+        let too_many_ids = app.clone().oneshot(Request::builder().uri("/admin/graphql").method(Method::POST).header("Authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(format!(r#"{{"query":"query APIKeyTokenUsageStats($input: APIKeyTokenUsageStatsInput) {{ apiKeyTokenUsageStats(input: $input) {{ apiKeyId }} }}","variables":{{"input":{{"apiKeyIds":[{}]}}}}}}"#, (0..101).map(|_| format!("\"gid://axonhub/api_key/1\"")).collect::<Vec<_>>().join(",")))).unwrap()).await.unwrap();
+        let too_many_ids_json = read_json_response(too_many_ids).await;
+        assert_graphql_error_field(&too_many_ids_json, "apiKeyTokenUsageStats", "Failed to execute GraphQL request: apiKeyIds cannot exceed 100 items");
+
+        let invalid_id = app.oneshot(Request::builder().uri("/admin/graphql").method(Method::POST).header("Authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(r#"{"query":"query APIKeyTokenUsageStats($input: APIKeyTokenUsageStatsInput) { apiKeyTokenUsageStats(input: $input) { apiKeyId } }","variables":{"input":{"apiKeyIds":["gid://axonhub/project/1"]}}}"#)).unwrap()).await.unwrap();
+        let invalid_id_json = read_json_response(invalid_id).await;
+        assert_graphql_error_field(&invalid_id_json, "apiKeyTokenUsageStats", "Failed to execute GraphQL request: invalid api key id");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_api_key_token_usage_stats_without_read_api_keys_scope() {
+        let db_path = temp_sqlite_path("task-api-key-token-usage-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap.initialize(&InitializeSystemRequest { owner_email: "owner@example.com".to_owned(), owner_password: "password123".to_owned(), owner_first_name: "System".to_owned(), owner_last_name: "Owner".to_owned(), brand_name: "AxonHub".to_owned() }).unwrap();
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "api-key-token-denied@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "api-key-token-denied@example.com", "password123");
+        let response = app.oneshot(Request::builder().uri("/admin/graphql").method(Method::POST).header("Authorization", format!("Bearer {token}")).header("content-type", "application/json").body(Body::from(r#"{"query":"query APIKeyTokenUsageStats($input: APIKeyTokenUsageStatsInput) { apiKeyTokenUsageStats(input: $input) { apiKeyId } }","variables":{"input":{"apiKeyIds":["gid://axonhub/api_key/1"]}}}"#)).unwrap()).await.unwrap();
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["apiKeyTokenUsageStats"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_token_stats_query() {
+        let db_path = temp_sqlite_path("task-token-stats-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let now = Utc::now();
+        let today_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap();
+        let this_week_start =
+            today_start - ChronoDuration::days(now.weekday().num_days_from_monday() as i64);
+        let this_month_start = now
+            .date_naive()
+            .with_day(1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        let today_at = now.naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+        let yesterday_at = (now - ChronoDuration::days(1))
+            .naive_utc()
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let historical_at = "2000-01-01 00:00:00".to_owned();
+
+        let yesterday_naive = (now - ChronoDuration::days(1)).naive_utc();
+        let yesterday_in_this_week = yesterday_naive >= this_week_start;
+        let yesterday_in_this_month = yesterday_naive >= this_month_start;
+
+        let expected_week_input = 10 + if yesterday_in_this_week { 3 } else { 0 };
+        let expected_week_output = 5 + if yesterday_in_this_week { 7 } else { 0 };
+        let expected_week_cached = 2 + if yesterday_in_this_week { 1 } else { 0 };
+        let expected_month_input = 10 + if yesterday_in_this_month { 3 } else { 0 };
+        let expected_month_output = 5 + if yesterday_in_this_month { 7 } else { 0 };
+        let expected_month_cached = 2 + if yesterday_in_this_month { 1 } else { 0 };
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-token-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let today_request = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_today"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let month_request = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_month"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let historical_request = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4.1",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_token_stats_history"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 2, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![today_request, today_at],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o-mini', 3, 7, 10, 0, 1, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![month_request, yesterday_at],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4.1', 20, 30, 50, 0, 4, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.1, '[]', '', ?2, ?2)",
+                params![historical_request, historical_at],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-token-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStats { totalInputTokensToday totalOutputTokensToday totalCachedTokensToday totalInputTokensThisWeek totalOutputTokensThisWeek totalCachedTokensThisWeek totalInputTokensThisMonth totalOutputTokensThisMonth totalCachedTokensThisMonth totalInputTokensAllTime totalOutputTokensAllTime totalCachedTokensAllTime lastUpdated } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let stats = &json["data"]["tokenStats"];
+        assert_eq!(stats["totalInputTokensToday"], 10);
+        assert_eq!(stats["totalOutputTokensToday"], 5);
+        assert_eq!(stats["totalCachedTokensToday"], 2);
+        assert_eq!(stats["totalInputTokensThisWeek"], expected_week_input);
+        assert_eq!(stats["totalOutputTokensThisWeek"], expected_week_output);
+        assert_eq!(stats["totalCachedTokensThisWeek"], expected_week_cached);
+        assert_eq!(stats["totalInputTokensThisMonth"], expected_month_input);
+        assert_eq!(stats["totalOutputTokensThisMonth"], expected_month_output);
+        assert_eq!(stats["totalCachedTokensThisMonth"], expected_month_cached);
+        assert_eq!(stats["totalInputTokensAllTime"], 33);
+        assert_eq!(stats["totalOutputTokensAllTime"], 42);
+        assert_eq!(stats["totalCachedTokensAllTime"], 7);
+        assert_eq!(stats["lastUpdated"], Value::String(today_at.replace(' ', "T") + "+00:00"));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_token_stats_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-token-stats-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-token-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-token-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ tokenStats { totalInputTokensToday } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["tokenStats"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_cost_stats_by_model_query() {
+        let db_path = temp_sqlite_path("task-cost-stats-by-model-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-cost-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let request_one = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_cost_stats_model_one"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let request_two = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_cost_stats_model_two"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 1.0, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_one],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o-mini', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.75, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_two],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, NULL, 'gpt-4o-mini', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.50, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![request_two],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-cost-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ costStatsByModel(timeWindow: \"allTime\") { modelId cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["costStatsByModel"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["modelId"], "gpt-4o-mini");
+        assert_eq!(items[0]["cost"], 1.25);
+        assert_eq!(items[1]["modelId"], "gpt-4o");
+        assert_eq!(items[1]["cost"], 1.0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_cost_stats_by_model_with_unknown_time_window() {
+        let db_path = temp_sqlite_path("task-cost-stats-by-model-invalid-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-model-cost-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-cost-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ costStatsByModel(timeWindow: \"fortnight\") { modelId cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["costStatsByModel"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "Failed to execute GraphQL request: unsupported timeWindow value: \"fortnight\" (expected day, week, month, allTime)"
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_cost_stats_by_model_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-cost-stats-by-model-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-model-cost-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-model-cost-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ costStatsByModel(timeWindow: \"day\") { modelId cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["costStatsByModel"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_cost_stats_by_channel_query() {
+        let db_path = temp_sqlite_path("task-cost-stats-by-channel-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation.usage_costs().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-cost-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let active_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Active Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task cost stats channel test",
+            })
+            .unwrap();
+
+        let deleted_channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Deleted Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 90,
+                error_message: "",
+                remark: "task cost stats channel test",
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "UPDATE channels SET deleted_at = 1 WHERE id = ?1",
+                params![deleted_channel_id],
+            )
+            .unwrap();
+
+        let active_request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(active_channel_id),
+                external_id: Some("req_cost_stats_channel_active"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let deleted_request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(deleted_channel_id),
+                external_id: Some("req_cost_stats_channel_deleted"),
+                status: "success",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 1.5, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![active_request_id, active_channel_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (request_id, api_key_id, project_id, channel_id, model_id, prompt_tokens, completion_tokens, total_tokens, prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens, prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h, completion_audio_tokens, completion_reasoning_tokens, completion_accepted_prediction_tokens, completion_rejected_prediction_tokens, source, format, total_cost, cost_items, cost_price_reference_id, created_at, updated_at) VALUES (?1, 1, 1, ?2, 'gpt-4o', 10, 5, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'api', 'openai/chat_completions', 0.5, '[]', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                params![deleted_request_id, deleted_channel_id],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-cost-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ costStatsByChannel(timeWindow: \"allTime\") { channelName cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert!(json["data"]["costStatsByChannel"].is_array());
+        let items = json["data"]["costStatsByChannel"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["channelName"], "Active Channel");
+        assert_eq!(items[0]["cost"], 1.5);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_rejects_cost_stats_by_channel_with_unknown_time_window() {
+        let db_path = temp_sqlite_path("task-cost-stats-by-channel-invalid-time-window");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-cost-invalid@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-cost-invalid@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ costStatsByChannel(timeWindow: \"fortnight\") { channelName cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["costStatsByChannel"], Value::Null);
+        assert_eq!(
+            json["errors"][0]["message"],
+            "Failed to execute GraphQL request: unsupported timeWindow value: \"fortnight\" (expected day, week, month, allTime)"
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_cost_stats_by_channel_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-cost-stats-by-channel-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-channel-cost-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-cost-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ costStatsByChannel(timeWindow: \"day\") { channelName cost } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["costStatsByChannel"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_channel_success_rates_query() {
+        let db_path = temp_sqlite_path("task-channel-success-rates-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.channel_models().ensure_schema().unwrap();
+        foundation.requests().ensure_schema().unwrap();
+
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-success-admin@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Health Channel",
+                channel_type: "openai",
+                base_url: "https://api.openai.com/v1",
+                status: "enabled",
+                credentials_json: "{}",
+                supported_models_json: "[\"gpt-4o\"]",
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task channel success test",
+            })
+            .unwrap();
+
+        let completed_request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(channel_id),
+                external_id: Some("req_channel_success_completed"),
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        let failed_request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: Some(channel_id),
+                external_id: Some("req_channel_success_failed"),
+                status: "failed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        foundation
+            .requests()
+            .create_request_execution(&NewRequestExecutionRecord {
+                project_id: 1,
+                request_id: completed_request_id,
+                channel_id: Some(channel_id),
+                data_storage_id: None,
+                external_id: Some("exec_channel_success_completed"),
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                error_message: "",
+                response_status_code: Some(200),
+                status: "completed",
+                stream: false,
+                metrics_latency_ms: Some(100),
+                metrics_first_token_latency_ms: Some(40),
+                request_headers_json: "{}",
+            })
+            .unwrap();
+        foundation
+            .requests()
+            .create_request_execution(&NewRequestExecutionRecord {
+                project_id: 1,
+                request_id: failed_request_id,
+                channel_id: Some(channel_id),
+                data_storage_id: None,
+                external_id: Some("exec_channel_success_failed"),
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                error_message: "upstream failed",
+                response_status_code: Some(500),
+                status: "failed",
+                stream: false,
+                metrics_latency_ms: Some(120),
+                metrics_first_token_latency_ms: Some(60),
+                request_headers_json: "{}",
+            })
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-success-admin@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ channelSuccessRates { channelId channelName channelType successCount failedCount totalCount successRate } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let items = json["data"]["channelSuccessRates"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["channelName"], "Health Channel");
+        assert_eq!(items[0]["channelType"], "openai");
+        assert_eq!(items[0]["successCount"], 1);
+        assert_eq!(items[0]["failedCount"], 1);
+        assert_eq!(items[0]["totalCount"], 2);
+        assert_eq!(items[0]["successRate"], 50.0);
+        assert!(items[0]["channelId"].as_str().unwrap().contains("channel"));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_returns_empty_channel_success_rates_without_executions() {
+        let db_path = temp_sqlite_path("task-channel-success-rates-empty");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(
+            &connection,
+            "dashboard-channel-success-empty@example.com",
+            "password123",
+            &[SCOPE_READ_DASHBOARD],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-success-empty@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ channelSuccessRates { channelId channelName successCount } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["channelSuccessRates"], Value::Array(Vec::new()));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_channel_success_rates_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-channel-success-rates-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-channel-success-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-channel-success-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ channelSuccessRates { channelId } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["channelSuccessRates"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_projects_query() {
+        let db_path = temp_sqlite_path("task18-projects-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        let _user_id = insert_test_user(&connection, "projects-admin@example.com", "password123", &[SCOPE_READ_PROJECTS]);
+        connection
+            .execute(
+                "INSERT INTO projects (created_at, updated_at, deleted_at, name, description, status)
+                 VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?1, ?2, ?3)",
+                params!["Second Project", "Task18 secondary project", "inactive"],
+            )
+            .unwrap();
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "projects-admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ projects { edges { node { id name description status } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+
+        assert!(json["data"]["projects"].is_object());
+        let projects_conn = &json["data"]["projects"];
+        assert!(projects_conn["pageInfo"].is_object());
+        assert_eq!(projects_conn["pageInfo"]["hasNextPage"], false);
+        assert_eq!(projects_conn["pageInfo"]["hasPreviousPage"], false);
+        assert!(projects_conn["pageInfo"]["startCursor"].is_null());
+        assert!(projects_conn["pageInfo"]["endCursor"].is_null());
+
+        let edges = projects_conn["edges"].as_array().unwrap();
+        assert!(edges.len() >= 2);
+        let names = edges
+            .iter()
+            .map(|edge| {
+                assert!(edge["node"].is_object());
+                let node = &edge["node"];
+                assert!(node["id"].is_string());
+                assert!(node["name"].is_string());
+                assert!(node["description"].is_string());
+                assert!(node["status"].is_string());
+                node["name"].as_str().unwrap().to_owned()
+            })
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"Default Project".to_owned()));
+        assert!(names.contains(&"Second Project".to_owned()));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_projects_query_requires_read_projects_scope() {
+        let db_path = temp_sqlite_path("task18-projects-scope");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _denied_user_id = insert_test_user(&connection, "denied@example.com", "password123", &[]);
+        let _allowed_user_id = insert_test_user(
+            &connection,
+            "allowed@example.com",
+            "password123",
+            &[SCOPE_READ_PROJECTS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+
+        let denied_token = signin_token(foundation.clone(), "denied@example.com", "password123");
+        let denied = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {denied_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ projects { edges { node { id name description status } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let denied_json = read_json_response(denied).await;
+        assert_eq!(denied_json["data"]["projects"], Value::Null);
+        assert_eq!(denied_json["errors"][0]["message"], "permission denied");
+
+        let allowed_token = signin_token(foundation.clone(), "allowed@example.com", "password123");
+        let allowed = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {allowed_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ projects { edges { node { id name description status } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let allowed_json = read_json_response(allowed).await;
+        assert!(allowed_json["data"]["projects"]["edges"].is_array());
+        assert!(allowed_json["data"]["projects"]["pageInfo"].is_object());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_my_projects_returns_active_memberships() {
+        let db_path = temp_sqlite_path("task18-my-projects");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        let user_id = insert_test_user(&connection, "my-projects@example.com", "password123", &[]);
+        insert_project_membership(&connection, user_id, 1, false, &[SCOPE_READ_REQUESTS]);
+        connection
+            .execute(
+                "INSERT INTO projects (created_at, updated_at, deleted_at, name, description, status)
+                 VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?1, ?2, ?3)",
+                params!["Inactive Project", "Should be filtered out", "inactive"],
+            )
+            .unwrap();
+        let inactive_project_id = connection.last_insert_rowid();
+        insert_project_membership(&connection, user_id, inactive_project_id, false, &[SCOPE_READ_REQUESTS]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "my-projects@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ myProjects { id createdAt updatedAt name description status } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        let projects = json["data"]["myProjects"].as_array().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert!(projects[0]["id"].is_string());
+        assert!(projects[0]["createdAt"].is_string());
+        assert!(projects[0]["updatedAt"].is_string());
+        assert_eq!(projects[0]["name"], "Default Project");
+        assert_eq!(projects[0]["status"], "active");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_roles_query() {
+        let db_path = temp_sqlite_path("task18-roles-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        let _user_id = insert_test_user(&connection, "roles-admin@example.com", "password123", &[SCOPE_READ_ROLES]);
+        let _system_role_id = insert_role(
+            &connection,
+            "System Viewer",
+            ROLE_LEVEL_SYSTEM,
+            0,
+            &[SCOPE_READ_SETTINGS],
+        );
+        let project_role_id = insert_role(
+            &connection,
+            "Project Operator",
+            ROLE_LEVEL_PROJECT,
+            1,
+            &[SCOPE_READ_REQUESTS, SCOPE_READ_USERS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "roles-admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ roles { edges { node { id name level projectID scopes } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+
+        assert!(json["data"]["roles"].is_object());
+        let roles_conn = &json["data"]["roles"];
+        assert_eq!(roles_conn["pageInfo"]["hasNextPage"], false);
+        assert_eq!(roles_conn["pageInfo"]["hasPreviousPage"], false);
+        assert!(roles_conn["pageInfo"]["startCursor"].is_null());
+        assert!(roles_conn["pageInfo"]["endCursor"].is_null());
+
+        let edges = roles_conn["edges"].as_array().unwrap();
+        assert!(edges.len() >= 2);
+
+        let system_role = edges
+            .iter()
+            .find(|edge| edge["node"]["name"] == "System Viewer")
+            .expect("system role present");
+        assert!(system_role["node"]["id"].is_string());
+        assert_eq!(system_role["node"]["level"], "system");
+        assert_eq!(system_role["node"]["projectID"], graphql_gid("project", 1));
+        assert_eq!(system_role["node"]["scopes"], serde_json::json!(["read_settings"]));
+
+        let project_role = edges
+            .iter()
+            .find(|edge| edge["node"]["id"] == graphql_gid("role", project_role_id))
+            .expect("project role present");
+        assert_eq!(project_role["node"]["name"], "Project Operator");
+        assert_eq!(project_role["node"]["level"], "project");
+        assert_eq!(project_role["node"]["projectID"], graphql_gid("project", 1));
+        assert_eq!(
+            project_role["node"]["scopes"],
+            serde_json::json!(["read_requests", "read_users"])
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_roles_query_requires_read_roles_scope() {
+        let db_path = temp_sqlite_path("task18-roles-scope");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        insert_role(&connection, "System Viewer", ROLE_LEVEL_SYSTEM, 0, &[SCOPE_READ_SETTINGS]);
+        let _denied_user_id = insert_test_user(&connection, "roles-denied@example.com", "password123", &[]);
+        let _allowed_user_id = insert_test_user(
+            &connection,
+            "roles-allowed@example.com",
+            "password123",
+            &[SCOPE_READ_ROLES],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+
+        let denied_token = signin_token(foundation.clone(), "roles-denied@example.com", "password123");
+        let denied = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {denied_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ roles { edges { node { id name level projectID scopes } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let denied_json = read_json_response(denied).await;
+        assert_eq!(denied_json["data"]["roles"], Value::Null);
+        assert_eq!(denied_json["errors"][0]["message"], "permission denied");
+
+        let allowed_token = signin_token(foundation.clone(), "roles-allowed@example.com", "password123");
+        let allowed = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {allowed_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ roles { edges { node { id name level projectID scopes } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let allowed_json = read_json_response(allowed).await;
+        assert!(allowed_json["data"]["roles"]["edges"].is_array());
+        assert!(allowed_json["data"]["roles"]["pageInfo"].is_object());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_api_keys_query() {
+        let db_path = temp_sqlite_path("task18-api-keys-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        let owner_user_id = insert_test_user(
+            &connection,
+            "apikeys-admin@example.com",
+            "password123",
+            &[SCOPE_READ_API_KEYS],
+        );
+        let user_api_key_id = insert_api_key(
+            &connection,
+            owner_user_id,
+            1,
+            "ah-user-key-query-1",
+            "User Query Key",
+            "user",
+            &[SCOPE_READ_CHANNELS],
+        );
+        let service_api_key_id = insert_api_key(
+            &connection,
+            owner_user_id,
+            1,
+            "ah-service-key-query-1",
+            "Service Query Key",
+            "service_account",
+            &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "apikeys-admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ apiKeys { edges { node { id key name status type scopes } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+
+        assert!(json["data"]["apiKeys"].is_object());
+        let api_keys_conn = &json["data"]["apiKeys"];
+        assert_eq!(api_keys_conn["pageInfo"]["hasNextPage"], false);
+        assert_eq!(api_keys_conn["pageInfo"]["hasPreviousPage"], false);
+        assert!(api_keys_conn["pageInfo"]["startCursor"].is_null());
+        assert!(api_keys_conn["pageInfo"]["endCursor"].is_null());
+
+        let edges = api_keys_conn["edges"].as_array().unwrap();
+        assert!(edges.len() >= 2);
+
+        let user_api_key = edges
+            .iter()
+            .find(|edge| edge["node"]["id"] == graphql_gid("api_key", user_api_key_id))
+            .expect("user api key present");
+        assert_eq!(user_api_key["node"]["key"], "ah-user-key-query-1");
+        assert_eq!(user_api_key["node"]["name"], "User Query Key");
+        assert_eq!(user_api_key["node"]["status"], "enabled");
+        assert_eq!(user_api_key["node"]["type"], "user");
+        assert_eq!(user_api_key["node"]["scopes"], serde_json::json!(["read_channels"]));
+
+        let service_api_key = edges
+            .iter()
+            .find(|edge| edge["node"]["id"] == graphql_gid("api_key", service_api_key_id))
+            .expect("service api key present");
+        assert_eq!(service_api_key["node"]["key"], "ah-service-key-query-1");
+        assert_eq!(service_api_key["node"]["name"], "Service Query Key");
+        assert_eq!(service_api_key["node"]["status"], "enabled");
+        assert_eq!(service_api_key["node"]["type"], "service_account");
+        assert_eq!(
+            service_api_key["node"]["scopes"],
+            serde_json::json!(["read_channels", "write_requests"])
+        );
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_allows_requests_query_for_project_reader() {
+        let db_path = temp_sqlite_path("task18-requests-query");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+
+        foundation.requests().ensure_schema().unwrap();
+        let trace = foundation
+            .trace_contexts()
+            .get_or_create_trace(1, "task18-trace", None)
+            .unwrap();
+        let request_id = foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: Some(trace.id),
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: None,
+                response_chunks_json: None,
+                channel_id: Some(1),
+                external_id: Some("req_123"),
+                status: "completed",
+                stream: false,
+                client_ip: "127.0.0.1",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 2,
+                trace_id: None,
+                data_storage_id: None,
+                source: "admin",
+                model_id: "gpt-4o-mini",
+                format: "openai/responses",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: None,
+                response_chunks_json: None,
+                channel_id: None,
+                external_id: Some("req_other"),
+                status: "processing",
+                stream: true,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        let user_id = insert_test_user(&connection, "requests-admin@example.com", "password123", &[]);
+        insert_project_membership(&connection, user_id, 1, false, &[SCOPE_READ_REQUESTS]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "requests-admin@example.com", "password123");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ requests { id projectID traceID channelID modelID format status source externalID } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert!(json.get("errors").is_none_or(|value| value.is_null()));
+        let requests = json["data"]["requests"].as_array().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["id"], graphql_gid("request", request_id));
+        assert_eq!(requests[0]["projectID"], graphql_gid("project", 1));
+        assert_eq!(requests[0]["traceID"], graphql_gid("trace", trace.id));
+        assert_eq!(requests[0]["channelID"], graphql_gid("channel", 1));
+        assert_eq!(requests[0]["modelID"], "gpt-4o");
+        assert_eq!(requests[0]["format"], "openai/chat_completions");
+        assert_eq!(requests[0]["status"], "completed");
+        assert_eq!(requests[0]["source"], "api");
+        assert_eq!(requests[0]["externalID"], "req_123");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_requests_query_requires_project_read_requests_scope() {
+        let db_path = temp_sqlite_path("task18-requests-scope");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
+        foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: None,
+                response_chunks_json: None,
+                channel_id: None,
+                external_id: None,
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        let denied_user_id = insert_test_user(&connection, "requests-denied@example.com", "password123", &[]);
+        insert_project_membership(&connection, denied_user_id, 1, false, &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let denied_token = signin_token(foundation.clone(), "requests-denied@example.com", "password123");
+
+        let denied = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {denied_token}"))
+                    .header("X-Project-ID", "gid://axonhub/project/1")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ requests { id } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let denied_json = read_json_response(denied).await;
+        assert_eq!(denied_json["data"]["requests"], Value::Null);
+        assert_eq!(denied_json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_api_keys_query_requires_read_api_keys_scope() {
+        let db_path = temp_sqlite_path("task18-api-keys-scope");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let owner_user_id = insert_test_user(&connection, "apikeys-owner@example.com", "password123", &[]);
+        insert_api_key(
+            &connection,
+            owner_user_id,
+            1,
+            "ah-api-key-scope-check",
+            "Scope Check Key",
+            "user",
+            &[SCOPE_READ_CHANNELS],
+        );
+        let _denied_user_id = insert_test_user(&connection, "apikeys-denied@example.com", "password123", &[]);
+        let _allowed_user_id = insert_test_user(
+            &connection,
+            "apikeys-allowed@example.com",
+            "password123",
+            &[SCOPE_READ_API_KEYS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+
+        let denied_token = signin_token(foundation.clone(), "apikeys-denied@example.com", "password123");
+        let denied = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {denied_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ apiKeys { edges { node { id key name status type scopes } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let denied_json = read_json_response(denied).await;
+        assert_eq!(denied_json["data"]["apiKeys"], Value::Null);
+        assert_eq!(denied_json["errors"][0]["message"], "permission denied");
+
+        let allowed_token = signin_token(foundation.clone(), "apikeys-allowed@example.com", "password123");
+        let allowed = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {allowed_token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "{ apiKeys { edges { node { id key name status type scopes } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let allowed_json = read_json_response(allowed).await;
+        assert!(allowed_json["data"]["apiKeys"]["edges"].is_array());
+        assert!(allowed_json["data"]["apiKeys"]["pageInfo"].is_object());
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
     async fn admin_graphql_allows_me_query() {
         let db_path = temp_sqlite_path("task8-me-query");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
@@ -8004,6 +18688,7 @@ struct TestHttpRequest {
         let db_path = temp_sqlite_path("task8-all-scopes");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
         let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
 
         bootstrap
             .initialize(&InitializeSystemRequest {
@@ -8021,7 +18706,7 @@ struct TestHttpRequest {
         // Create a user with read_settings scope to authorize the query
         let _user_id = insert_test_user(&connection, "admin@example.com", "password123", &[SCOPE_READ_SETTINGS]);
 
-        let app = graphql_test_app(foundation.clone(), bootstrap);
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
 
         let token = signin_token(foundation.clone(), "admin@example.com", "password123");
 

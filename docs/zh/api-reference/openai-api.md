@@ -54,16 +54,19 @@ fmt.Println(responseText)
 
 ### OpenAI Responses API
 
-AxonHub 提供对 OpenAI Responses API 的部分支持。该 API 为单轮交互提供了简化的接口。
+AxonHub 提供对 OpenAI Responses API 的部分支持。
 
 **端点：**
 - `POST /v1/responses` - 生成响应
 - `POST /v1/responses/compact` - 生成 compact 响应
+- `GET /v1/responses/{response_id}` - 按响应 ID 获取已存储响应
 
-**限制：**
-- ❌ **不支持** `previous_response_id` - 对话历史需要在客户端管理
-- ✅ 基本响应生成完全可用
+**当前支持与边界：**
+- ✅ 支持 `previous_response_id`，可用于 Responses 链式对话
+- ✅ 支持 `GET /v1/responses/{response_id}`
 - ✅ 支持流式响应
+- ⚠️ 这不代表已完全覆盖 OpenAI Responses 全部能力，接入时仍需明确未支持或提供商特有能力
+- ⚠️ `instructions` 不能与 `previous_response_id` 同时使用
 
 **示例请求：**
 ```go
@@ -85,7 +88,7 @@ client := openai.NewClient(
 
 ctx := context.Background()
 
-// 生成响应（不支持 previous_response_id）
+// 生成响应
 params := responses.ResponseNewParams{
     Model: shared.ResponsesModel("gpt-4o"),
     Input: responses.ResponseNewParamsInputUnion{
@@ -101,6 +104,30 @@ if err != nil {
 }
 
 fmt.Println(response.OutputText())
+
+// 使用 previous_response_id 继续对话
+nextParams := responses.ResponseNewParams{
+    Model: shared.ResponsesModel("gpt-4o"),
+    PreviousResponseID: openai.String(response.ID),
+    Input: responses.ResponseNewParamsInputUnion{
+        OfString: openai.String("请用一句话总结你刚才的回答。"),
+    },
+}
+
+nextResponse, err := client.Responses.New(ctx, nextParams)
+if err != nil {
+    panic(err)
+}
+
+fmt.Println(nextResponse.OutputText())
+
+// 按 ID 获取历史响应
+stored, err := client.Responses.Get(ctx, response.ID)
+if err != nil {
+    panic(err)
+}
+
+fmt.Println(stored.OutputText())
 ```
 
 **示例：流式响应**
