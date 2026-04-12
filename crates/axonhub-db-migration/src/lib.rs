@@ -7,6 +7,7 @@ mod m20260326_000004_request_ledger_schema;
 mod m20260326_000005_operational_schema;
 mod m20260327_000006_persistence_extension_schema;
 mod m20260402_000007_operational_runtime_schema;
+mod m20260413_000008_identity_token_version;
 
 pub struct Migrator;
 
@@ -21,6 +22,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260326_000005_operational_schema::Migration),
             Box::new(m20260327_000006_persistence_extension_schema::Migration),
             Box::new(m20260402_000007_operational_runtime_schema::Migration),
+            Box::new(m20260413_000008_identity_token_version::Migration),
         ]
     }
 }
@@ -118,6 +120,7 @@ mod tests {
         assert!(column_exists(&db, "operational_runs", "operation_type").await);
         assert!(column_exists(&db, "operational_runs", "trigger_source").await);
         assert!(column_exists(&db, "operational_runs", "result_payload").await);
+        assert!(column_exists(&db, "users", "token_version").await);
     }
 
     #[test]

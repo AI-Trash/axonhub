@@ -145,7 +145,7 @@ impl SeaOrmIdentityService {
             return Err(SignInError::InvalidCredentials);
         }
 
-        let token = encode_jwt_token(user.id, secret)?;
+        let token = encode_jwt_token(user.id, user.token_version, secret)?;
         let user = self
             .repository
             .build_user_context(user)
@@ -164,6 +164,9 @@ impl SeaOrmIdentityService {
             .repository
             .query_user_by_id(decoded.user_id)
             .map_err(map_admin_auth_query_error)?;
+        if user.token_version != decoded.token_version.unwrap_or(0) {
+            return Err(AdminAuthError::InvalidToken);
+        }
         self.repository
             .build_user_context(user)
             .map_err(|_| AdminAuthError::Internal)
@@ -270,6 +273,8 @@ impl IdentityRepository for SeaOrmIdentityService {
 struct JwtClaims {
     user_id: i64,
     exp: usize,
+    #[serde(default)]
+    token_version: Option<i32>,
 }
 
 pub(crate) fn map_sign_in_query_error(error: QueryUserError) -> SignInError {
@@ -480,7 +485,7 @@ pub(crate) mod sqlite_test_support {
     }
 }
 
-fn encode_jwt_token(user_id: i64, secret: &str) -> Result<String, SignInError> {
+fn encode_jwt_token(user_id: i64, token_version: i32, secret: &str) -> Result<String, SignInError> {
     let claims = JwtClaims {
         user_id,
         exp: (std::time::SystemTime::now()
@@ -488,6 +493,7 @@ fn encode_jwt_token(user_id: i64, secret: &str) -> Result<String, SignInError> {
             .unwrap()
             .as_secs()
             + 60 * 60 * 24 * 7) as usize,
+        token_version: Some(token_version),
     };
 
     encode(

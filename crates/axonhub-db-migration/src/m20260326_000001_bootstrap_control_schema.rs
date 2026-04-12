@@ -250,6 +250,12 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(false),
                     )
+                    .col(
+                        ColumnDef::new(Users::TokenVersion)
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
                     .col(users_scopes)
                     .to_owned(),
             )
@@ -843,6 +849,7 @@ enum Users {
     LastName,
     Avatar,
     IsOwner,
+    TokenVersion,
     Scopes,
 }
 

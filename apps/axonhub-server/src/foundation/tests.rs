@@ -313,8 +313,8 @@ struct TestHttpRequest {
         let scopes_json = serialize_scope_slugs(scopes).unwrap();
         connection
             .execute(
-                "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes, deleted_at)
-                 VALUES (?1, 'activated', 'en', ?2, 'Test', 'User', '', 0, ?3, 0)",
+                "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, token_version, scopes, deleted_at)
+                 VALUES (?1, 'activated', 'en', ?2, 'Test', 'User', '', 0, 0, ?3, 0)",
                 params![email, hashed_password, scopes_json],
             )
             .unwrap();
@@ -2865,8 +2865,8 @@ struct TestHttpRequest {
     }
 
     #[tokio::test]
-    async fn admin_graphql_keeps_top_requests_projects_as_explicit_not_implemented_boundary() {
-        let db_path = temp_sqlite_path("task-update-video-storage-settings-deferred-sibling");
+    async fn admin_graphql_allows_top_requests_projects_query() {
+        let db_path = temp_sqlite_path("task-top-requests-projects-query");
         let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
         let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
@@ -2883,12 +2883,141 @@ struct TestHttpRequest {
 
         let connection = foundation.open_connection(true).unwrap();
         ensure_identity_tables(&connection).unwrap();
+        foundation.requests().ensure_schema().unwrap();
         let _user_id = insert_test_user(
             &connection,
             "dashboard-reader@example.com",
             "password123",
-            &[SCOPE_READ_SETTINGS],
+            &[SCOPE_READ_DASHBOARD],
         );
+
+        foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_top_projects_alpha_1"),
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 1,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o-mini",
+                format: "openai/responses",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_top_projects_alpha_2"),
+                status: "failed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 2,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_top_projects_beta_1"),
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO projects (id, created_at, updated_at, name, description, status, deleted_at) VALUES (?1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?2, ?3, ?4, 0)",
+                params![2, "Project Beta", "Second project", "active"],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO projects (id, created_at, updated_at, name, description, status, deleted_at) VALUES (?1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?2, ?3, ?4, 0)",
+                params![3, "Project Gamma", "Should be ignored", "active"],
+            )
+            .unwrap();
+        foundation
+            .requests()
+            .create_request(&NewRequestRecord {
+                api_key_id: Some(1),
+                project_id: 3,
+                trace_id: None,
+                data_storage_id: None,
+                source: "api",
+                model_id: "gpt-4o",
+                format: "openai/chat_completions",
+                request_headers_json: "{}",
+                request_body_json: "{}",
+                response_body_json: Some("{}"),
+                response_chunks_json: Some("[]"),
+                channel_id: None,
+                external_id: Some("req_top_projects_gamma_1"),
+                status: "completed",
+                stream: false,
+                client_ip: "",
+                metrics_latency_ms: None,
+                metrics_first_token_latency_ms: None,
+                content_saved: false,
+                content_storage_id: None,
+                content_storage_key: None,
+                content_saved_at: None,
+            })
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE projects SET deleted_at = 1 WHERE id = ?1",
+                params![3],
+            )
+            .unwrap();
 
         let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
         let token = signin_token(foundation.clone(), "dashboard-reader@example.com", "password123");
@@ -2900,19 +3029,134 @@ struct TestHttpRequest {
                     .method(Method::POST)
                     .header("Authorization", format!("Bearer {token}"))
                     .header("content-type", "application/json")
-                    .body(Body::from(r#"{"query":"{ topRequestsProjects { projectID count } }"}"#))
+                    .body(Body::from(r#"{"query":"{ topRequestsProjects { projectId projectName projectDescription requestCount } }"}"#))
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(response.status(), StatusCode::OK);
         let json = read_json_response(response).await;
-        assert_eq!(json["error"], "not_implemented");
-        assert_eq!(json["status"], 501);
-        assert_eq!(json["route_family"], "/admin/graphql");
-        assert_eq!(json["message"], "GraphQL field `topRequestsProjects` is not supported");
+        assert_eq!(json["errors"], Value::Null);
+        let items = json["data"]["topRequestsProjects"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["projectName"], "Default Project");
+        assert_eq!(items[0]["projectDescription"], "Default project");
+        assert_eq!(items[0]["requestCount"], 2);
+        assert_eq!(items[0]["projectId"], "gid://axonhub/project/1");
+        assert_eq!(items[1]["projectId"], "gid://axonhub/project/2");
+        assert_eq!(items[1]["projectName"], "Project Beta");
+        assert_eq!(items[1]["projectDescription"], "Second project");
+        assert_eq!(items[1]["requestCount"], 1);
 
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_denies_top_requests_projects_without_read_dashboard_scope() {
+        let db_path = temp_sqlite_path("task-top-requests-projects-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "dashboard-user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "dashboard-user@example.com", "password123");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ topRequestsProjects { projectId } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let json = read_json_response(response).await;
+        assert_eq!(json["data"]["topRequestsProjects"], Value::Null);
+        assert_eq!(json["errors"][0]["message"], "permission denied");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_jwt_is_invalid_after_graphql_password_update() {
+        let db_path = temp_sqlite_path("task-admin-jwt-token-version");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let user_id = insert_test_user(&connection, "jwt-user@example.com", "password123", &[SCOPE_WRITE_USERS]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "jwt-user@example.com", "password123");
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        format!(
+                            r#"{{"query":"mutation UpdateUser($id: ID!, $input: UpdateUserInput!) {{ updateUser(id: $id, input: $input) {{ email }} }}","variables":{{"id":"gid://axonhub/user/{user_id}","input":{{"password":"new-password-123"}}}}}}"#
+                        ),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(update_response.status(), StatusCode::OK);
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["errors"], Value::Null);
+        assert_eq!(update_json["data"]["updateUser"]["email"], "jwt-user@example.com");
+
+        let retry_policy_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ retryPolicy { enabled } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(retry_policy_response.status(), StatusCode::UNAUTHORIZED);
         std::fs::remove_file(db_path).ok();
     }
 
@@ -3362,6 +3606,252 @@ struct TestHttpRequest {
         assert_eq!(query_json["data"]["proxyPresets"][0]["url"], "http://proxy.internal");
         assert_eq!(query_json["data"]["proxyPresets"][0]["username"], "tester");
         assert_eq!(query_json["data"]["proxyPresets"][0]["password"], "secret");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_seaorm_proxy_presets_round_trip_update_and_delete() {
+        let db_path = temp_sqlite_path("task-proxy-presets-seaorm");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _admin_id = insert_test_user(
+            &connection,
+            "admin@example.com",
+            "password123",
+            &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
+        );
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "admin@example.com", "password123");
+
+        let save_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation SaveProxyPreset($input: SaveProxyPresetInput!) { saveProxyPreset(input: $input) }",
+                            "variables": {
+                                "input": {
+                                    "name": "Office Proxy",
+                                    "url": "http://proxy.internal",
+                                    "username": "tester",
+                                    "password": "secret"
+                                }
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let save_json = read_json_response(save_response).await;
+        assert_eq!(save_json["data"]["saveProxyPreset"], true);
+
+        let update_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation SaveProxyPreset($input: SaveProxyPresetInput!) { saveProxyPreset(input: $input) }",
+                            "variables": {
+                                "input": {
+                                    "name": "  Renamed Proxy  ",
+                                    "url": "http://proxy.internal",
+                                    "username": "   ",
+                                    "password": ""
+                                }
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let update_json = read_json_response(update_response).await;
+        assert_eq!(update_json["data"]["saveProxyPreset"], true);
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ proxyPresets { name url username password } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        let items = query_json["data"]["proxyPresets"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["name"], "Renamed Proxy");
+        assert_eq!(items[0]["url"], "http://proxy.internal");
+        assert_eq!(items[0]["username"], Value::Null);
+        assert_eq!(items[0]["password"], Value::Null);
+
+        let stored: String = connection
+            .query_row(
+                "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+                params!["system_proxy_presets"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stored_json: Value = serde_json::from_str(&stored).unwrap();
+        assert_eq!(
+            stored_json,
+            serde_json::json!([
+                {
+                    "name": "Renamed Proxy",
+                    "url": "http://proxy.internal",
+                    "username": "",
+                    "password": ""
+                }
+            ])
+        );
+
+        let delete_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation DeleteProxyPreset($url: String!) { deleteProxyPreset(url: $url) }",
+                            "variables": {
+                                "url": "  http://proxy.internal  "
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let delete_json = read_json_response(delete_response).await;
+        assert_eq!(delete_json["data"]["deleteProxyPreset"], true);
+
+        let final_query_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ proxyPresets { name url username password } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let final_query_json = read_json_response(final_query_response).await;
+        assert_eq!(final_query_json["data"]["proxyPresets"], Value::Array(vec![]));
+
+        let stored_after_delete: String = connection
+            .query_row(
+                "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
+                params!["system_proxy_presets"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stored_after_delete_json: Value = serde_json::from_str(&stored_after_delete).unwrap();
+        assert_eq!(stored_after_delete_json, Value::Array(vec![]));
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_seaorm_denies_proxy_presets_without_settings_scope() {
+        let db_path = temp_sqlite_path("task-proxy-presets-seaorm-denied");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        let _user_id = insert_test_user(&connection, "user@example.com", "password123", &[]);
+
+        let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
+        let token = signin_token(foundation.clone(), "user@example.com", "password123");
+
+        let query_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ proxyPresets { url } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let query_json = read_json_response(query_response).await;
+        assert_eq!(query_json["data"]["proxyPresets"], Value::Null);
+        assert_eq!(query_json["errors"][0]["message"], "permission denied");
+
+        let save_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "query": "mutation SaveProxyPreset($input: SaveProxyPresetInput!) { saveProxyPreset(input: $input) }",
+                            "variables": {
+                                "input": {
+                                    "url": "http://proxy.internal"
+                                }
+                            }
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let save_json = read_json_response(save_response).await;
+        assert_eq!(save_json["data"]["saveProxyPreset"], Value::Null);
+        assert_eq!(save_json["errors"][0]["message"], "permission denied");
 
         std::fs::remove_file(db_path).ok();
     }

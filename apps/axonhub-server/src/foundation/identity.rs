@@ -9,6 +9,7 @@ pub struct StoredUser {
     pub last_name: String,
     pub avatar: String,
     pub is_owner: bool,
+    pub token_version: i32,
     pub scopes: Vec<String>,
 }
 

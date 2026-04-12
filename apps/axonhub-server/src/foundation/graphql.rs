@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_graphql::{Enum, InputObject, SimpleObject};
 use chrono::{Datelike, TimeZone};
 use chrono_tz::Tz;
-use axonhub_db_entity::{api_keys, channel_probes, channels, request_executions, requests, usage_logs};
+use axonhub_db_entity::{api_keys, channel_probes, channels, projects, request_executions, requests, usage_logs};
 use axonhub_http::{
     AdminGraphqlPort, AuthApiKeyContext, AuthUserContext, GraphqlExecutionResult,
     GraphqlRequestPayload, OpenApiGraphqlPort, ProjectContext, TraceContext,
@@ -257,6 +257,16 @@ pub(crate) struct AdminGraphqlDailyRequestStats {
     pub(crate) count: i32,
     pub(crate) tokens: i32,
     pub(crate) cost: f64,
+}
+
+#[derive(Debug, Clone, Serialize, SimpleObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "TopRequestsProjects", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlTopRequestsProject {
+    pub(crate) project_id: String,
+    pub(crate) project_name: String,
+    pub(crate) project_description: String,
+    pub(crate) request_count: i32,
 }
 
 #[derive(Debug, Clone, Serialize, SimpleObject)]
@@ -1871,6 +1881,22 @@ async fn execute_admin_graphql_seaorm_request(
         });
     }
 
+    if first_graphql_field_name(query).as_deref() == Some("topRequestsProjects") {
+        if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
+            return graphql_permission_denied("topRequestsProjects");
+        }
+
+        let projects = query_top_requests_projects_seaorm(repository).await?;
+        return Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({
+                "data": {
+                    "topRequestsProjects": projects,
+                }
+            }),
+        });
+    }
+
     if first_graphql_field_name(query).as_deref() == Some("fastestChannels") {
         if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
             return graphql_permission_denied("fastestChannels");
@@ -2474,6 +2500,18 @@ async fn query_daily_request_stats_seaorm(
         .map_err(|error| error.to_string())?)
 }
 
+async fn query_top_requests_projects_seaorm(
+    repository: SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<Vec<AdminGraphqlTopRequestsProject>, String> {
+    let db = repository.db();
+    Ok(db
+        .run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_top_requests_projects_connection(connection).await
+        })
+        .map_err(|error| error.to_string())?)
+}
+
 async fn query_fastest_channels_seaorm(
     repository: SeaOrmAdminGraphqlSubsetRepository,
     input: AdminGraphqlFastestChannelsInput,
@@ -2695,6 +2733,54 @@ async fn query_request_stats_by_api_key_connection(
                 api_key_name: api_key_name.clone(),
                 count: row.request_count as i32,
             })
+        })
+        .collect())
+}
+
+async fn query_top_requests_projects_connection(
+    connection: sea_orm::DatabaseConnection,
+) -> Result<Vec<AdminGraphqlTopRequestsProject>, String> {
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, RelationTrait};
+
+    #[derive(sea_orm::FromQueryResult)]
+    struct TopRequestsProjectsRow {
+        project_id: i64,
+        project_name: String,
+        project_description: String,
+        request_count: i64,
+    }
+
+    let mut rows = requests::Entity::find()
+        .join(sea_orm::JoinType::InnerJoin, requests::Relation::Projects.def())
+        .filter(projects::Column::DeletedAt.eq(0_i64))
+        .select_only()
+        .column(requests::Column::ProjectId)
+        .column_as(projects::Column::Name, "project_name")
+        .column_as(projects::Column::Description, "project_description")
+        .column_as(sea_orm::sea_query::Expr::cust("COUNT(*)"), "request_count")
+        .group_by(requests::Column::ProjectId)
+        .group_by(projects::Column::Name)
+        .group_by(projects::Column::Description)
+        .into_model::<TopRequestsProjectsRow>()
+        .all(&connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    rows.sort_by(|left, right| {
+        right
+            .request_count
+            .cmp(&left.request_count)
+            .then_with(|| left.project_id.cmp(&right.project_id))
+    });
+    rows.truncate(10);
+
+    Ok(rows
+        .into_iter()
+        .map(|row| AdminGraphqlTopRequestsProject {
+            project_id: graphql_gid("project", row.project_id),
+            project_name: row.project_name,
+            project_description: row.project_description,
+            request_count: i64_to_i32(row.request_count),
         })
         .collect())
 }
@@ -6299,6 +6385,7 @@ fn update_user_seaorm(
         && input.last_name.is_none()
         && input.prefer_language.is_none()
         && input.avatar.is_none()
+        && input.password.is_none()
         && input.scopes.is_none()
         && input.role_ids.is_none()
     {
@@ -6322,6 +6409,14 @@ fn update_user_seaorm(
         .map(Some)
         .map(|ids| parse_graphql_id_list(ids, "role"))
         .transpose()?;
+    let password_hash = input
+        .password
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(hash_password)
+        .transpose()
+        .map_err(|error| format!("failed to hash password: {error}"))?;
 
     if !repository.update_user(
         user_id,
@@ -6329,6 +6424,7 @@ fn update_user_seaorm(
         input.last_name.as_deref(),
         input.prefer_language.as_deref(),
         input.avatar.as_deref(),
+        password_hash.as_deref(),
         scopes_json.as_deref(),
         role_ids.as_deref(),
     )? {
@@ -7748,6 +7844,8 @@ pub(crate) struct AdminGraphqlUpdateUserInput {
     pub(crate) prefer_language: Option<String>,
     #[graphql(name = "avatar")]
     pub(crate) avatar: Option<String>,
+    #[graphql(name = "password")]
+    pub(crate) password: Option<String>,
     #[graphql(name = "scopes")]
     pub(crate) scopes: Option<Vec<String>>,
     #[serde(rename = "roleIDs")]

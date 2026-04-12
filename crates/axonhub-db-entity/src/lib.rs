@@ -1578,6 +1578,7 @@ pub mod users {
         pub last_name: String,
         pub avatar: Option<String>,
         pub is_owner: bool,
+        pub token_version: i32,
         pub scopes: String,
         pub deleted_at: i64,
     }
@@ -1658,6 +1659,7 @@ pub mod users {
         pub last_name: String,
         pub avatar: Option<String>,
         pub is_owner: bool,
+        pub token_version: i32,
         pub scopes: String,
     }
 

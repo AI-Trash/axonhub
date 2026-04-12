@@ -212,6 +212,7 @@ where
         last_name: Set(request.owner_last_name.trim().to_owned()),
         avatar: Set(Some(String::new())),
         is_owner: Set(true),
+        token_version: Set(0),
         scopes: Set("[]".to_owned()),
         deleted_at: Set(0_i64),
         ..Default::default()

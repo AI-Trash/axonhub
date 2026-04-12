@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS users (
     last_name TEXT NOT NULL DEFAULT '',
     avatar TEXT NOT NULL DEFAULT '',
     is_owner INTEGER NOT NULL DEFAULT 0,
+    token_version INTEGER NOT NULL DEFAULT 0,
     scopes TEXT NOT NULL DEFAULT '[]'
 );
 ";

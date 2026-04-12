@@ -246,6 +246,7 @@ pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
         last_name: Option<&str>,
         prefer_language: Option<&str>,
         avatar: Option<&str>,
+        password_hash: Option<&str>,
         scopes_json: Option<&str>,
         role_ids: Option<&[i64]>,
     ) -> Result<bool, String>;
@@ -853,6 +854,7 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         last_name: Option<&str>,
         prefer_language: Option<&str>,
         avatar: Option<&str>,
+        password_hash: Option<&str>,
         scopes_json: Option<&str>,
         role_ids: Option<&[i64]>,
     ) -> Result<bool, String> {
@@ -861,6 +863,7 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         let last_name = last_name.map(ToOwned::to_owned);
         let prefer_language = prefer_language.map(ToOwned::to_owned);
         let avatar = avatar.map(ToOwned::to_owned);
+        let password_hash = password_hash.map(ToOwned::to_owned);
         let scopes_json = scopes_json.map(ToOwned::to_owned);
         let role_ids = role_ids.map(|ids| ids.to_vec());
         db.run_sync(move |db| async move {
@@ -872,6 +875,7 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
                 last_name.as_deref(),
                 prefer_language.as_deref(),
                 avatar.as_deref(),
+                password_hash.as_deref(),
                 scopes_json.as_deref(),
                 role_ids.as_deref(),
             )
@@ -1753,6 +1757,7 @@ async fn create_user_seaorm(
         last_name: Set(last_name.to_owned()),
         avatar: Set(Some(avatar.unwrap_or_default().to_owned())),
         is_owner: Set(is_owner),
+        token_version: Set(0),
         scopes: Set(scopes_json.to_owned()),
         deleted_at: Set(0_i64),
         ..Default::default()
@@ -1860,6 +1865,7 @@ async fn update_user_seaorm(
     last_name: Option<&str>,
     prefer_language: Option<&str>,
     avatar: Option<&str>,
+    password_hash: Option<&str>,
     scopes_json: Option<&str>,
     role_ids: Option<&[i64]>,
 ) -> Result<bool, String> {
@@ -1875,6 +1881,7 @@ async fn update_user_seaorm(
         return Ok(false);
     };
 
+    let existing_token_version = existing.token_version;
     let mut active_model: users::ActiveModel = existing.into();
     if let Some(first_name) = first_name {
         active_model.first_name = Set(first_name.to_owned());
@@ -1887,6 +1894,10 @@ async fn update_user_seaorm(
     }
     if let Some(avatar) = avatar {
         active_model.avatar = Set(Some(avatar.to_owned()));
+    }
+    if let Some(password_hash) = password_hash {
+        active_model.password = Set(password_hash.to_owned());
+        active_model.token_version = Set(existing_token_version.saturating_add(1));
     }
     if let Some(scopes_json) = scopes_json {
         active_model.scopes = Set(scopes_json.to_owned());

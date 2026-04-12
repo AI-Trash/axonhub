@@ -299,7 +299,7 @@ pub(crate) mod sqlite_test_support {
         connection
             .query_row(
                 "SELECT id, email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes
-                 FROM users WHERE email = ?1 AND deleted_at = 0 LIMIT 1",
+                 , token_version FROM users WHERE email = ?1 AND deleted_at = 0 LIMIT 1",
                 [email],
                 |row| {
                     Ok(StoredUser {
@@ -313,6 +313,7 @@ pub(crate) mod sqlite_test_support {
                         avatar: row.get(7)?,
                         is_owner: row.get::<_, i64>(8)? != 0,
                         scopes: parse_json_string_vec(row.get::<_, String>(9)?),
+                        token_version: row.get(10)?,
                     })
                 },
             )
@@ -330,7 +331,7 @@ pub(crate) mod sqlite_test_support {
         connection
             .query_row(
                 "SELECT id, email, status, prefer_language, password, first_name, last_name, avatar, is_owner, scopes
-                 FROM users WHERE id = ?1 AND deleted_at = 0 LIMIT 1",
+                 , token_version FROM users WHERE id = ?1 AND deleted_at = 0 LIMIT 1",
                 [user_id],
                 |row| {
                     Ok(StoredUser {
@@ -344,6 +345,7 @@ pub(crate) mod sqlite_test_support {
                         avatar: row.get(7)?,
                         is_owner: row.get::<_, i64>(8)? != 0,
                         scopes: parse_json_string_vec(row.get::<_, String>(9)?),
+                        token_version: row.get(10)?,
                     })
                 },
             )
@@ -439,6 +441,7 @@ fn stored_user_from_auth_lookup(user: users::AuthLookup) -> StoredUser {
         last_name: user.last_name,
         avatar: user.avatar.unwrap_or_default(),
         is_owner: user.is_owner,
+        token_version: user.token_version,
         scopes: parse_json_string_vec(user.scopes),
     }
 }
