@@ -1,7 +1,7 @@
 use axonhub_http::{
     ExchangeCallbackOAuthRequest, ExchangeOAuthResponse, OAuthProxyConfig, OAuthProxyType,
-    PollCopilotOAuthRequest, PollCopilotOAuthResponse, ProviderEdgeAdminError,
-    ProviderEdgeAdminPort, StartAntigravityOAuthRequest, StartCopilotOAuthRequest,
+    OauthProviderAdminError, OauthProviderAdminPort, PollCopilotOAuthRequest,
+    PollCopilotOAuthResponse, StartAntigravityOAuthRequest, StartCopilotOAuthRequest,
     StartCopilotOAuthResponse, StartPkceOAuthRequest, StartPkceOAuthResponse,
 };
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
@@ -12,20 +12,20 @@ use std::env;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 
-use super::shared::{
-    current_unix_timestamp, format_unix_timestamp, PROVIDER_EDGE_COPILOT_COMPLETE_MESSAGE,
-    PROVIDER_EDGE_COPILOT_DEVICE_GRANT_TYPE, PROVIDER_EDGE_COPILOT_PENDING_MESSAGE,
-    PROVIDER_EDGE_COPILOT_SLOW_DOWN_MESSAGE, PROVIDER_EDGE_PKCE_SESSION_TTL_SECONDS,
+use crate::foundation::shared::{
+    current_unix_timestamp, format_unix_timestamp, OAUTH_PROVIDER_COPILOT_COMPLETE_MESSAGE,
+    OAUTH_PROVIDER_COPILOT_DEVICE_GRANT_TYPE, OAUTH_PROVIDER_COPILOT_PENDING_MESSAGE,
+    OAUTH_PROVIDER_COPILOT_SLOW_DOWN_MESSAGE, OAUTH_PROVIDER_PKCE_SESSION_TTL_SECONDS,
 };
 use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
 
-pub struct SqliteProviderEdgeAdminService {
-    config: ProviderEdgeAdminConfig,
-    sessions: Arc<Mutex<HashMap<String, ProviderEdgeSession>>>,
+pub struct SqliteOauthProviderAdminService {
+    config: OAuthProviderAdminConfig,
+    sessions: Arc<Mutex<HashMap<String, OAuthProviderSession>>>,
 }
 
-pub(crate) const PROVIDER_EDGE_REQUIRED_ENV_VARS: &[&str] = &[
+pub(crate) const OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS: &[&str] = &[
     "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
     "AXONHUB_PROVIDER_EDGE_CODEX_TOKEN_URL",
     "AXONHUB_PROVIDER_EDGE_CODEX_CLIENT_ID",
@@ -54,7 +54,7 @@ pub(crate) const PROVIDER_EDGE_REQUIRED_ENV_VARS: &[&str] = &[
 ];
 
 #[derive(Debug, Clone)]
-pub struct ProviderEdgeAdminConfig {
+pub struct OAuthProviderAdminConfig {
     codex_authorize_url: String,
     codex_token_url: String,
     codex_client_id: String,
@@ -83,7 +83,7 @@ pub struct ProviderEdgeAdminConfig {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum ProviderEdgeSession {
+pub(crate) enum OAuthProviderSession {
     Pkce {
         provider: PkceProvider,
         code_verifier: String,
@@ -125,7 +125,7 @@ pub(crate) struct CopilotDeviceCodeResponse {
     interval: i64,
 }
 
-impl ProviderEdgeAdminConfig {
+impl OAuthProviderAdminConfig {
     fn from_env() -> Option<Self> {
         Some(Self {
             codex_authorize_url: required_env("AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL")?,
@@ -171,8 +171,8 @@ impl ProviderEdgeAdminConfig {
     }
 }
 
-impl SqliteProviderEdgeAdminService {
-    pub fn new(config: ProviderEdgeAdminConfig) -> Self {
+impl SqliteOauthProviderAdminService {
+    pub fn new(config: OAuthProviderAdminConfig) -> Self {
         Self {
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -180,17 +180,17 @@ impl SqliteProviderEdgeAdminService {
     }
 
     pub fn from_env() -> Option<Self> {
-        ProviderEdgeAdminConfig::from_env().map(Self::new)
+        OAuthProviderAdminConfig::from_env().map(Self::new)
     }
 
     fn http_client(&self) -> &reqwest::blocking::Client {
-        provider_edge_default_http_client()
+        oauth_provider_default_http_client()
     }
 
     fn codex_exchange_http_client(
         &self,
         proxy: Option<&OAuthProxyConfig>,
-    ) -> Result<CodexExchangeHttpClient<'_>, ProviderEdgeAdminError> {
+    ) -> Result<CodexExchangeHttpClient<'_>, OauthProviderAdminError> {
         match proxy {
             Some(proxy) => match build_codex_exchange_http_client(proxy)? {
                 Some(client) => Ok(CodexExchangeHttpClient::Owned(client)),
@@ -200,36 +200,39 @@ impl SqliteProviderEdgeAdminService {
         }
     }
 
-    fn run_copilot_http_task<T, Task>(&self, task: Task) -> Result<T, ProviderEdgeAdminError>
+    fn run_copilot_http_task<T, Task>(&self, task: Task) -> Result<T, OauthProviderAdminError>
     where
         T: Send + 'static,
-        Task:
-            FnOnce(reqwest::blocking::Client) -> Result<T, ProviderEdgeAdminError> + Send + 'static,
+        Task: FnOnce(reqwest::blocking::Client) -> Result<T, OauthProviderAdminError>
+            + Send
+            + 'static,
     {
         std::thread::spawn(move || {
             let client = reqwest::blocking::Client::new();
             task(client)
         })
         .join()
-        .map_err(|_| provider_edge_internal_error("copilot upstream task panicked"))?
+        .map_err(|_| oauth_provider_admin_internal_error("copilot upstream task panicked"))?
     }
 
     fn start_pkce_flow(
         &self,
         provider: PkceProvider,
         project_id: Option<String>,
-    ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
-        let session_id = generate_provider_edge_session_id()?;
-        let code_verifier = generate_provider_edge_code_verifier()?;
+    ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
+        let session_id = generate_oauth_provider_session_id()?;
+        let code_verifier = generate_oauth_provider_code_verifier()?;
         let auth_url =
             self.provider_authorize_url(provider, session_id.as_str(), code_verifier.as_str());
 
         self.sessions
             .lock()
-            .map_err(|_| provider_edge_internal_error("failed to lock provider-edge sessions"))?
+            .map_err(|_| {
+                oauth_provider_admin_internal_error("failed to lock oauth provider sessions")
+            })?
             .insert(
                 session_id.clone(),
-                ProviderEdgeSession::Pkce {
+                OAuthProviderSession::Pkce {
                     provider,
                     code_verifier,
                     project_id,
@@ -247,37 +250,37 @@ impl SqliteProviderEdgeAdminService {
         &self,
         provider: PkceProvider,
         request: &ExchangeCallbackOAuthRequest,
-    ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+    ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
         if request.session_id.trim().is_empty() || request.callback_url.trim().is_empty() {
-            return Err(provider_edge_invalid_request(
+            return Err(oauth_provider_admin_invalid_request(
                 "session_id and callback_url are required",
             ));
         }
 
         let session = self.take_session(request.session_id.as_str())?;
         let (code_verifier, project_id) = match session {
-            ProviderEdgeSession::Pkce {
+            OAuthProviderSession::Pkce {
                 provider: stored_provider,
                 code_verifier,
                 project_id,
                 created_at,
             } => {
                 if stored_provider != provider {
-                    return Err(provider_edge_invalid_request(
+                    return Err(oauth_provider_admin_invalid_request(
                         "invalid or expired oauth session",
                     ));
                 }
                 if current_unix_timestamp().saturating_sub(created_at)
-                    > PROVIDER_EDGE_PKCE_SESSION_TTL_SECONDS
+                    > OAUTH_PROVIDER_PKCE_SESSION_TTL_SECONDS
                 {
-                    return Err(provider_edge_invalid_request(
+                    return Err(oauth_provider_admin_invalid_request(
                         "invalid or expired oauth session",
                     ));
                 }
                 (code_verifier, project_id)
             }
-            ProviderEdgeSession::CopilotDevice { .. } => {
-                return Err(provider_edge_invalid_request(
+            OAuthProviderSession::CopilotDevice { .. } => {
+                return Err(oauth_provider_admin_invalid_request(
                     "invalid or expired oauth session",
                 ))
             }
@@ -285,7 +288,7 @@ impl SqliteProviderEdgeAdminService {
 
         let callback = parse_callback(provider, request.callback_url.as_str())?;
         if callback.state != request.session_id {
-            return Err(provider_edge_invalid_request("oauth state mismatch"));
+            return Err(oauth_provider_admin_invalid_request("oauth state mismatch"));
         }
 
         let codex_client = if provider == PkceProvider::Codex {
@@ -324,30 +327,36 @@ impl SqliteProviderEdgeAdminService {
     fn take_session(
         &self,
         session_id: &str,
-    ) -> Result<ProviderEdgeSession, ProviderEdgeAdminError> {
+    ) -> Result<OAuthProviderSession, OauthProviderAdminError> {
         self.sessions
             .lock()
-            .map_err(|_| provider_edge_internal_error("failed to lock provider-edge sessions"))?
+            .map_err(|_| {
+                oauth_provider_admin_internal_error("failed to lock oauth provider sessions")
+            })?
             .remove(session_id)
-            .ok_or_else(|| provider_edge_invalid_request("invalid or expired oauth session"))
+            .ok_or_else(|| oauth_provider_admin_invalid_request("invalid or expired oauth session"))
     }
 
     fn load_session(
         &self,
         session_id: &str,
-    ) -> Result<ProviderEdgeSession, ProviderEdgeAdminError> {
+    ) -> Result<OAuthProviderSession, OauthProviderAdminError> {
         self.sessions
             .lock()
-            .map_err(|_| provider_edge_internal_error("failed to lock provider-edge sessions"))?
+            .map_err(|_| {
+                oauth_provider_admin_internal_error("failed to lock oauth provider sessions")
+            })?
             .get(session_id)
             .cloned()
-            .ok_or_else(|| provider_edge_invalid_request("invalid or expired session"))
+            .ok_or_else(|| oauth_provider_admin_invalid_request("invalid or expired session"))
     }
 
-    fn delete_session(&self, session_id: &str) -> Result<(), ProviderEdgeAdminError> {
+    fn delete_session(&self, session_id: &str) -> Result<(), OauthProviderAdminError> {
         self.sessions
             .lock()
-            .map_err(|_| provider_edge_internal_error("failed to lock provider-edge sessions"))?
+            .map_err(|_| {
+                oauth_provider_admin_internal_error("failed to lock oauth provider sessions")
+            })?
             .remove(session_id);
         Ok(())
     }
@@ -368,7 +377,7 @@ impl SqliteProviderEdgeAdminService {
             ("scope", self.provider_scopes(provider).to_owned()),
             (
                 "code_challenge",
-                provider_edge_code_challenge(code_verifier),
+                oauth_provider_code_challenge(code_verifier),
             ),
             ("code_challenge_method", "S256".to_owned()),
             ("state", state.to_owned()),
@@ -448,14 +457,16 @@ impl SqliteProviderEdgeAdminService {
         state: &str,
         code_verifier: &str,
         codex_client: Option<&reqwest::blocking::Client>,
-    ) -> Result<OAuthTokenResponse, ProviderEdgeAdminError> {
+    ) -> Result<OAuthTokenResponse, OauthProviderAdminError> {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         if let Some(user_agent) = self.provider_user_agent(provider) {
             headers.insert(
                 USER_AGENT,
                 HeaderValue::from_str(user_agent).map_err(|error| {
-                    provider_edge_internal_error(format!("invalid user agent header: {error}"))
+                    oauth_provider_admin_internal_error(format!(
+                        "invalid user agent header: {error}"
+                    ))
                 })?,
             );
         }
@@ -488,7 +499,7 @@ impl SqliteProviderEdgeAdminService {
                     .json(&Value::Object(body))
                     .send()
                     .map_err(|error| {
-                        provider_edge_bad_gateway(format!("token exchange failed: {error}"))
+                        oauth_provider_admin_bad_gateway(format!("token exchange failed: {error}"))
                     })?
             }
             PkceProvider::Codex | PkceProvider::Antigravity => {
@@ -518,33 +529,33 @@ impl SqliteProviderEdgeAdminService {
                     .body(form_urlencode(params))
                     .send()
                     .map_err(|error| {
-                        provider_edge_bad_gateway(format!("token exchange failed: {error}"))
+                        oauth_provider_admin_bad_gateway(format!("token exchange failed: {error}"))
                     })?
             }
         };
 
         let status = response.status();
         let body = response.text().map_err(|error| {
-            provider_edge_bad_gateway(format!("token exchange failed: {error}"))
+            oauth_provider_admin_bad_gateway(format!("token exchange failed: {error}"))
         })?;
         if !status.is_success() {
-            return Err(provider_edge_bad_gateway(format!(
+            return Err(oauth_provider_admin_bad_gateway(format!(
                 "token exchange failed: upstream status {}: {body}",
                 status.as_u16()
             )));
         }
 
         let token: OAuthTokenResponse = serde_json::from_str(body.as_str()).map_err(|error| {
-            provider_edge_bad_gateway(format!("token exchange failed: {error}"))
+            oauth_provider_admin_bad_gateway(format!("token exchange failed: {error}"))
         })?;
         if let Some(error) = token.error.as_ref() {
             let description = token.error_description.clone().unwrap_or_default();
-            return Err(provider_edge_bad_gateway(format!(
+            return Err(oauth_provider_admin_bad_gateway(format!(
                 "token exchange failed: {error} - {description}"
             )));
         }
         if token.access_token.as_deref().unwrap_or_default().is_empty() {
-            return Err(provider_edge_bad_gateway(
+            return Err(oauth_provider_admin_bad_gateway(
                 "token exchange failed: token response missing access_token",
             ));
         }
@@ -565,9 +576,9 @@ impl SqliteProviderEdgeAdminService {
     fn resolve_antigravity_project_id(
         &self,
         access_token: &str,
-    ) -> Result<String, ProviderEdgeAdminError> {
+    ) -> Result<String, OauthProviderAdminError> {
         if self.config.antigravity_load_endpoints.is_empty() {
-            return Err(provider_edge_bad_gateway(
+            return Err(oauth_provider_admin_bad_gateway(
                 "failed to resolve project id and none provided: no load endpoints configured",
             ));
         }
@@ -612,7 +623,7 @@ impl SqliteProviderEdgeAdminService {
             }
 
             let body: Value = response.json().map_err(|error| {
-                provider_edge_bad_gateway(format!(
+                oauth_provider_admin_bad_gateway(format!(
                     "failed to resolve project id and none provided: {error}"
                 ))
             })?;
@@ -636,7 +647,7 @@ impl SqliteProviderEdgeAdminService {
             }
         }
 
-        Err(provider_edge_bad_gateway(format!(
+        Err(oauth_provider_admin_bad_gateway(format!(
             "failed to resolve project id and none provided: {}",
             last_error.unwrap_or_else(|| "unknown error".to_owned())
         )))
@@ -698,7 +709,7 @@ impl SqliteProviderEdgeAdminService {
 
     fn request_copilot_device_code(
         &self,
-    ) -> Result<CopilotDeviceCodeResponse, ProviderEdgeAdminError> {
+    ) -> Result<CopilotDeviceCodeResponse, OauthProviderAdminError> {
         let url = self.config.copilot_device_code_url.clone();
         let client_id = self.config.copilot_client_id.clone();
         let scope = self.config.copilot_scope.clone();
@@ -714,14 +725,16 @@ impl SqliteProviderEdgeAdminService {
                 ]))
                 .send()
                 .map_err(|error| {
-                    provider_edge_bad_gateway(format!("failed to request device code: {error}"))
+                    oauth_provider_admin_bad_gateway(format!(
+                        "failed to request device code: {error}"
+                    ))
                 })?;
             let status = response.status();
             let body = response.text().map_err(|error| {
-                provider_edge_bad_gateway(format!("failed to request device code: {error}"))
+                oauth_provider_admin_bad_gateway(format!("failed to request device code: {error}"))
             })?;
             if !status.is_success() {
-                return Err(provider_edge_bad_gateway(format!(
+                return Err(oauth_provider_admin_bad_gateway(format!(
                     "failed to request device code: device code request failed with status {}: {}",
                     status.as_u16(),
                     body
@@ -729,12 +742,12 @@ impl SqliteProviderEdgeAdminService {
             }
             let device: CopilotDeviceCodeResponse =
                 serde_json::from_str(body.as_str()).map_err(|error| {
-                    provider_edge_bad_gateway(format!(
+                    oauth_provider_admin_bad_gateway(format!(
                     "failed to request device code: failed to parse device code response: {error}"
                 ))
                 })?;
             if device.device_code.trim().is_empty() {
-                return Err(provider_edge_bad_gateway(
+                return Err(oauth_provider_admin_bad_gateway(
                     "failed to request device code: device code not received from GitHub",
                 ));
             }
@@ -745,7 +758,7 @@ impl SqliteProviderEdgeAdminService {
     fn poll_copilot_token_upstream(
         &self,
         device_code: &str,
-    ) -> Result<CopilotPollResponse, ProviderEdgeAdminError> {
+    ) -> Result<CopilotPollResponse, OauthProviderAdminError> {
         let url = self.config.copilot_access_token_url.clone();
         let client_id = self.config.copilot_client_id.clone();
         let device_code = device_code.to_owned();
@@ -760,15 +773,15 @@ impl SqliteProviderEdgeAdminService {
                     ("device_code", device_code),
                     (
                         "grant_type",
-                        PROVIDER_EDGE_COPILOT_DEVICE_GRANT_TYPE.to_owned(),
+                        OAUTH_PROVIDER_COPILOT_DEVICE_GRANT_TYPE.to_owned(),
                     ),
                 ]))
                 .send()
                 .map_err(|error| {
-                    provider_edge_bad_gateway(format!("token poll failed: {error}"))
+                    oauth_provider_admin_bad_gateway(format!("token poll failed: {error}"))
                 })?;
             if !response.status().is_success() {
-                return Err(provider_edge_bad_gateway(format!(
+                return Err(oauth_provider_admin_bad_gateway(format!(
                     "token poll failed: access token request failed with status {}",
                     response.status().as_u16()
                 )));
@@ -781,11 +794,11 @@ impl SqliteProviderEdgeAdminService {
                 .unwrap_or_default()
                 .to_owned();
             let body = response.text().map_err(|error| {
-                provider_edge_bad_gateway(format!("token poll failed: {error}"))
+                oauth_provider_admin_bad_gateway(format!("token poll failed: {error}"))
             })?;
             if content_type.contains("application/json") {
                 serde_json::from_str(body.as_str()).map_err(|error| {
-                    provider_edge_bad_gateway(format!(
+                    oauth_provider_admin_bad_gateway(format!(
                         "token poll failed: failed to parse access token JSON response: {error}"
                     ))
                 })
@@ -796,39 +809,39 @@ impl SqliteProviderEdgeAdminService {
     }
 }
 
-impl ProviderEdgeAdminPort for SqliteProviderEdgeAdminService {
+impl OauthProviderAdminPort for SqliteOauthProviderAdminService {
     fn start_codex_oauth(
         &self,
         _request: &StartPkceOAuthRequest,
-    ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+    ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
         self.start_pkce_flow(PkceProvider::Codex, None)
     }
 
     fn exchange_codex_oauth(
         &self,
         request: &ExchangeCallbackOAuthRequest,
-    ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+    ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
         self.exchange_pkce_flow(PkceProvider::Codex, request)
     }
 
     fn start_claudecode_oauth(
         &self,
         _request: &StartPkceOAuthRequest,
-    ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+    ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
         self.start_pkce_flow(PkceProvider::ClaudeCode, None)
     }
 
     fn exchange_claudecode_oauth(
         &self,
         request: &ExchangeCallbackOAuthRequest,
-    ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+    ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
         self.exchange_pkce_flow(PkceProvider::ClaudeCode, request)
     }
 
     fn start_antigravity_oauth(
         &self,
         request: &StartAntigravityOAuthRequest,
-    ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+    ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
         let project_id = request.project_id.trim();
         self.start_pkce_flow(
             PkceProvider::Antigravity,
@@ -843,22 +856,24 @@ impl ProviderEdgeAdminPort for SqliteProviderEdgeAdminService {
     fn exchange_antigravity_oauth(
         &self,
         request: &ExchangeCallbackOAuthRequest,
-    ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+    ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
         self.exchange_pkce_flow(PkceProvider::Antigravity, request)
     }
 
     fn start_copilot_oauth(
         &self,
         _request: &StartCopilotOAuthRequest,
-    ) -> Result<StartCopilotOAuthResponse, ProviderEdgeAdminError> {
-        let session_id = generate_provider_edge_session_id()?;
+    ) -> Result<StartCopilotOAuthResponse, OauthProviderAdminError> {
+        let session_id = generate_oauth_provider_session_id()?;
         let device = self.request_copilot_device_code()?;
         self.sessions
             .lock()
-            .map_err(|_| provider_edge_internal_error("failed to lock provider-edge sessions"))?
+            .map_err(|_| {
+                oauth_provider_admin_internal_error("failed to lock oauth provider sessions")
+            })?
             .insert(
                 session_id.clone(),
-                ProviderEdgeSession::CopilotDevice {
+                OAuthProviderSession::CopilotDevice {
                     device_code: device.device_code.clone(),
                     expires_in: device.expires_in,
                     created_at: current_unix_timestamp(),
@@ -876,22 +891,24 @@ impl ProviderEdgeAdminPort for SqliteProviderEdgeAdminService {
     fn poll_copilot_oauth(
         &self,
         request: &PollCopilotOAuthRequest,
-    ) -> Result<PollCopilotOAuthResponse, ProviderEdgeAdminError> {
+    ) -> Result<PollCopilotOAuthResponse, OauthProviderAdminError> {
         let session = self.load_session(request.session_id.as_str())?;
         let (device_code, expires_in, created_at) = match session {
-            ProviderEdgeSession::CopilotDevice {
+            OAuthProviderSession::CopilotDevice {
                 device_code,
                 expires_in,
                 created_at,
                 ..
             } => (device_code, expires_in, created_at),
-            ProviderEdgeSession::Pkce { .. } => {
-                return Err(provider_edge_invalid_request("invalid or expired session"))
+            OAuthProviderSession::Pkce { .. } => {
+                return Err(oauth_provider_admin_invalid_request(
+                    "invalid or expired session",
+                ))
             }
         };
         if current_unix_timestamp() > created_at.saturating_add(expires_in) {
             self.delete_session(request.session_id.as_str())?;
-            return Err(provider_edge_invalid_request("device code expired"));
+            return Err(oauth_provider_admin_invalid_request("device code expired"));
         }
 
         let response = self.poll_copilot_token_upstream(device_code.as_str())?;
@@ -902,24 +919,26 @@ impl ProviderEdgeAdminPort for SqliteProviderEdgeAdminService {
                     token_type: None,
                     scope: None,
                     status: "pending".to_owned(),
-                    message: Some(PROVIDER_EDGE_COPILOT_PENDING_MESSAGE.to_owned()),
+                    message: Some(OAUTH_PROVIDER_COPILOT_PENDING_MESSAGE.to_owned()),
                 }),
                 "slow_down" => Ok(PollCopilotOAuthResponse {
                     access_token: None,
                     token_type: None,
                     scope: None,
                     status: "slow_down".to_owned(),
-                    message: Some(PROVIDER_EDGE_COPILOT_SLOW_DOWN_MESSAGE.to_owned()),
+                    message: Some(OAUTH_PROVIDER_COPILOT_SLOW_DOWN_MESSAGE.to_owned()),
                 }),
                 "expired_token" => {
                     self.delete_session(request.session_id.as_str())?;
-                    Err(provider_edge_invalid_request("device code expired"))
+                    Err(oauth_provider_admin_invalid_request("device code expired"))
                 }
                 "access_denied" => {
                     self.delete_session(request.session_id.as_str())?;
-                    Err(provider_edge_invalid_request("access denied by user"))
+                    Err(oauth_provider_admin_invalid_request(
+                        "access denied by user",
+                    ))
                 }
-                other => Err(provider_edge_bad_gateway(format!(
+                other => Err(oauth_provider_admin_bad_gateway(format!(
                     "OAuth error: {other} - {}",
                     response.error_description.unwrap_or_default()
                 ))),
@@ -932,10 +951,10 @@ impl ProviderEdgeAdminPort for SqliteProviderEdgeAdminService {
                 token_type: response.token_type,
                 scope: response.scope,
                 status: "complete".to_owned(),
-                message: Some(PROVIDER_EDGE_COPILOT_COMPLETE_MESSAGE.to_owned()),
+                message: Some(OAUTH_PROVIDER_COPILOT_COMPLETE_MESSAGE.to_owned()),
             });
         }
-        Err(provider_edge_internal_error(
+        Err(oauth_provider_admin_internal_error(
             "unexpected response from GitHub",
         ))
     }
@@ -956,20 +975,26 @@ pub(crate) struct CopilotPollResponse {
     error_description: Option<String>,
 }
 
-pub(crate) fn provider_edge_invalid_request(message: impl Into<String>) -> ProviderEdgeAdminError {
-    ProviderEdgeAdminError::InvalidRequest {
+pub(crate) fn oauth_provider_admin_invalid_request(
+    message: impl Into<String>,
+) -> OauthProviderAdminError {
+    OauthProviderAdminError::InvalidRequest {
         message: message.into(),
     }
 }
 
-pub(crate) fn provider_edge_bad_gateway(message: impl Into<String>) -> ProviderEdgeAdminError {
-    ProviderEdgeAdminError::BadGateway {
+pub(crate) fn oauth_provider_admin_bad_gateway(
+    message: impl Into<String>,
+) -> OauthProviderAdminError {
+    OauthProviderAdminError::BadGateway {
         message: message.into(),
     }
 }
 
-pub(crate) fn provider_edge_internal_error(message: impl Into<String>) -> ProviderEdgeAdminError {
-    ProviderEdgeAdminError::Internal {
+pub(crate) fn oauth_provider_admin_internal_error(
+    message: impl Into<String>,
+) -> OauthProviderAdminError {
+    OauthProviderAdminError::Internal {
         message: message.into(),
     }
 }
@@ -977,21 +1002,24 @@ pub(crate) fn provider_edge_internal_error(message: impl Into<String>) -> Provid
 pub(crate) fn parse_callback(
     provider: PkceProvider,
     callback_url: &str,
-) -> Result<ParsedCallback, ProviderEdgeAdminError> {
+) -> Result<ParsedCallback, OauthProviderAdminError> {
     let trimmed = callback_url.trim();
     if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
-        return Err(provider_edge_invalid_request(
+        return Err(oauth_provider_admin_invalid_request(
             "callback_url must be a full URL",
         ));
     }
-    let url = reqwest::Url::parse(trimmed)
-        .map_err(|error| provider_edge_invalid_request(format!("invalid callback_url: {error}")))?;
+    let url = reqwest::Url::parse(trimmed).map_err(|error| {
+        oauth_provider_admin_invalid_request(format!("invalid callback_url: {error}"))
+    })?;
     let code = url
         .query_pairs()
         .find(|(key, _)| key == "code")
         .map(|(_, value)| value.into_owned())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| provider_edge_invalid_request("code parameter not found in callback_url"))?;
+        .ok_or_else(|| {
+            oauth_provider_admin_invalid_request("code parameter not found in callback_url")
+        })?;
     let state = match provider {
         PkceProvider::ClaudeCode => {
             if !url.fragment().unwrap_or_default().trim().is_empty() {
@@ -1002,7 +1030,7 @@ pub(crate) fn parse_callback(
                     .map(|(_, value)| value.into_owned())
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
-                        provider_edge_invalid_request(
+                        oauth_provider_admin_invalid_request(
                             "state parameter not found in callback_url (should be after # or in query)",
                         )
                     })?
@@ -1014,31 +1042,33 @@ pub(crate) fn parse_callback(
             .map(|(_, value)| value.into_owned())
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
-                provider_edge_invalid_request("state parameter not found in callback_url")
+                oauth_provider_admin_invalid_request("state parameter not found in callback_url")
             })?,
     };
     Ok(ParsedCallback { code, state })
 }
 
-pub(crate) fn generate_provider_edge_session_id() -> Result<String, ProviderEdgeAdminError> {
+pub(crate) fn generate_oauth_provider_session_id() -> Result<String, OauthProviderAdminError> {
     let mut bytes = [0_u8; 32];
     getrandom(&mut bytes)
         .map(|_| hex_encode(bytes))
         .map_err(|error| {
-            provider_edge_internal_error(format!("failed to generate oauth state: {error}"))
+            oauth_provider_admin_internal_error(format!("failed to generate oauth state: {error}"))
         })
 }
 
-pub(crate) fn generate_provider_edge_code_verifier() -> Result<String, ProviderEdgeAdminError> {
+pub(crate) fn generate_oauth_provider_code_verifier() -> Result<String, OauthProviderAdminError> {
     let mut bytes = [0_u8; 64];
     getrandom(&mut bytes)
         .map(|_| hex_encode(bytes))
         .map_err(|error| {
-            provider_edge_internal_error(format!("failed to generate code verifier: {error}"))
+            oauth_provider_admin_internal_error(format!(
+                "failed to generate code verifier: {error}"
+            ))
         })
 }
 
-pub(crate) fn provider_edge_code_challenge(code_verifier: &str) -> String {
+pub(crate) fn oauth_provider_code_challenge(code_verifier: &str) -> String {
     base64_url_no_padding(&sha256_digest(code_verifier.as_bytes()))
 }
 
@@ -1120,10 +1150,10 @@ pub(crate) fn extract_antigravity_default_tier(body: &Value) -> Option<String> {
 
 pub(crate) fn parse_copilot_form_response(
     body: &str,
-) -> Result<CopilotPollResponse, ProviderEdgeAdminError> {
+) -> Result<CopilotPollResponse, OauthProviderAdminError> {
     let url =
         reqwest::Url::parse(format!("http://localhost/?{body}").as_str()).map_err(|error| {
-            provider_edge_bad_gateway(format!(
+            oauth_provider_admin_bad_gateway(format!(
                 "token poll failed: failed to parse access token form response: {error}"
             ))
         })?;
@@ -1155,7 +1185,7 @@ pub(crate) fn parse_copilot_form_response(
     })
 }
 
-pub(crate) fn provider_edge_default_http_client() -> &'static reqwest::blocking::Client {
+pub(crate) fn oauth_provider_default_http_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         std::thread::spawn(reqwest::blocking::Client::new)
@@ -1180,25 +1210,22 @@ impl CodexExchangeHttpClient<'_> {
 
 fn build_codex_exchange_http_client(
     proxy: &OAuthProxyConfig,
-) -> Result<Option<reqwest::blocking::Client>, ProviderEdgeAdminError> {
+) -> Result<Option<reqwest::blocking::Client>, OauthProviderAdminError> {
     let builder = reqwest::blocking::Client::builder();
     match proxy.proxy_type {
-        OAuthProxyType::Disabled => {
-            builder.no_proxy().build().map(Some).map_err(|error| {
-                provider_edge_bad_gateway(format!("token exchange failed: {error}"))
-            })
-        }
-        OAuthProxyType::Environment => builder
-            .build()
-            .map(Some)
-            .map_err(|error| provider_edge_bad_gateway(format!("token exchange failed: {error}"))),
+        OAuthProxyType::Disabled => builder.no_proxy().build().map(Some).map_err(|error| {
+            oauth_provider_admin_bad_gateway(format!("token exchange failed: {error}"))
+        }),
+        OAuthProxyType::Environment => builder.build().map(Some).map_err(|error| {
+            oauth_provider_admin_bad_gateway(format!("token exchange failed: {error}"))
+        }),
         OAuthProxyType::Url => {
             if proxy.url.trim().is_empty() {
                 return Ok(None);
             }
 
             let mut reqwest_proxy = reqwest::Proxy::all(proxy.url.as_str()).map_err(|error| {
-                provider_edge_bad_gateway(format!(
+                oauth_provider_admin_bad_gateway(format!(
                     "token exchange failed: invalid proxy URL: {error}"
                 ))
             })?;
@@ -1213,7 +1240,7 @@ fn build_codex_exchange_http_client(
                 .build()
                 .map(Some)
                 .map_err(|error| {
-                    provider_edge_bad_gateway(format!("token exchange failed: {error}"))
+                    oauth_provider_admin_bad_gateway(format!("token exchange failed: {error}"))
                 })
         }
     }
@@ -1374,6 +1401,7 @@ pub(crate) fn base64_url_no_padding(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axonhub_http::OauthProviderAdminError;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::{Arc, Mutex};
@@ -1384,18 +1412,18 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
-    struct ProviderEdgeEnvFixture {
+    struct OAuthProviderEnvFixture {
         previous: Vec<(&'static str, Option<String>)>,
     }
 
-    impl ProviderEdgeEnvFixture {
+    impl OAuthProviderEnvFixture {
         fn new() -> Self {
-            let previous = PROVIDER_EDGE_REQUIRED_ENV_VARS
+            let previous = OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS
                 .iter()
                 .map(|key| (*key, env::var(key).ok()))
                 .collect::<Vec<_>>();
 
-            for key in PROVIDER_EDGE_REQUIRED_ENV_VARS {
+            for key in OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS {
                 env::remove_var(key);
             }
 
@@ -1403,13 +1431,13 @@ mod tests {
         }
 
         fn set_all(&self) {
-            for (key, value) in provider_edge_env_values() {
+            for (key, value) in oauth_provider_env_values() {
                 env::set_var(key, value);
             }
         }
     }
 
-    impl Drop for ProviderEdgeEnvFixture {
+    impl Drop for OAuthProviderEnvFixture {
         fn drop(&mut self) {
             for (key, value) in &self.previous {
                 match value {
@@ -1420,7 +1448,7 @@ mod tests {
         }
     }
 
-    fn provider_edge_env_values() -> Vec<(&'static str, &'static str)> {
+    fn oauth_provider_env_values() -> Vec<(&'static str, &'static str)> {
         vec![
             (
                 "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
@@ -1517,16 +1545,16 @@ mod tests {
     }
 
     #[test]
-    fn provider_edge_config_requires_secure_runtime_env() {
+    fn oauth_provider_config_requires_secure_runtime_env() {
         let _lock = env_lock().lock().unwrap();
-        let fixture = ProviderEdgeEnvFixture::new();
+        let fixture = OAuthProviderEnvFixture::new();
 
-        assert!(ProviderEdgeAdminConfig::from_env().is_none());
+        assert!(OAuthProviderAdminConfig::from_env().is_none());
 
         fixture.set_all();
 
         let config =
-            ProviderEdgeAdminConfig::from_env().expect("expected provider-edge env config");
+            OAuthProviderAdminConfig::from_env().expect("expected provider-edge env config");
         assert_eq!(config.codex_client_id, "codex-client-id");
         assert_eq!(
             config.antigravity_load_endpoints,
@@ -1539,15 +1567,15 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_provider_edge_service_is_env_gated() {
+    fn sqlite_oauth_provider_service_is_env_gated() {
         let _lock = env_lock().lock().unwrap();
-        let fixture = ProviderEdgeEnvFixture::new();
+        let fixture = OAuthProviderEnvFixture::new();
 
-        assert!(SqliteProviderEdgeAdminService::from_env().is_none());
+        assert!(SqliteOauthProviderAdminService::from_env().is_none());
 
         fixture.set_all();
 
-        assert!(SqliteProviderEdgeAdminService::from_env().is_some());
+        assert!(SqliteOauthProviderAdminService::from_env().is_some());
     }
 
     fn read_http_request(stream: &mut std::net::TcpStream) -> (String, Vec<u8>) {
@@ -1647,8 +1675,8 @@ mod tests {
         format!("http://{address}")
     }
 
-    fn test_provider_edge_config() -> ProviderEdgeAdminConfig {
-        ProviderEdgeAdminConfig {
+    fn test_oauth_provider_config() -> OAuthProviderAdminConfig {
+        OAuthProviderAdminConfig {
             codex_authorize_url: "https://example.test/codex/authorize".to_owned(),
             codex_token_url: "https://example.test/codex/token".to_owned(),
             codex_client_id: "codex-client-id".to_owned(),
@@ -1698,7 +1726,7 @@ mod tests {
         .expect_err("missing state should fail");
 
         match error {
-            ProviderEdgeAdminError::InvalidRequest { message } => {
+            OauthProviderAdminError::InvalidRequest { message } => {
                 assert_eq!(
                     message,
                     "state parameter not found in callback_url (should be after # or in query)"
@@ -1710,7 +1738,7 @@ mod tests {
 
     #[test]
     fn codex_exchange_consumes_session_after_state_mismatch() {
-        let service = SqliteProviderEdgeAdminService::new(test_provider_edge_config());
+        let service = SqliteOauthProviderAdminService::new(test_oauth_provider_config());
         let start = service
             .start_codex_oauth(&StartPkceOAuthRequest {})
             .expect("start codex oauth");
@@ -1725,7 +1753,7 @@ mod tests {
             .expect_err("state mismatch should fail");
 
         match mismatch {
-            ProviderEdgeAdminError::InvalidRequest { message } => {
+            OauthProviderAdminError::InvalidRequest { message } => {
                 assert_eq!(message, "oauth state mismatch");
             }
             other => panic!("unexpected error: {other:?}"),
@@ -1742,7 +1770,7 @@ mod tests {
             .expect_err("replay after mismatch should fail");
 
         match replay {
-            ProviderEdgeAdminError::InvalidRequest { message } => {
+            OauthProviderAdminError::InvalidRequest { message } => {
                 assert_eq!(message, "invalid or expired oauth session");
             }
             other => panic!("unexpected error: {other:?}"),
@@ -1773,9 +1801,9 @@ mod tests {
             )
         });
 
-        let mut config = test_provider_edge_config();
+        let mut config = test_oauth_provider_config();
         config.codex_token_url = format!("{token_server_url}/token");
-        let service = SqliteProviderEdgeAdminService::new(config);
+        let service = SqliteOauthProviderAdminService::new(config);
         let start = service
             .start_codex_oauth(&StartPkceOAuthRequest {})
             .expect("start codex oauth");
@@ -1829,9 +1857,9 @@ mod tests {
             )
         });
 
-        let mut config = test_provider_edge_config();
+        let mut config = test_oauth_provider_config();
         config.codex_token_url = "http://codex-upstream.invalid/token".to_owned();
-        let service = SqliteProviderEdgeAdminService::new(config);
+        let service = SqliteOauthProviderAdminService::new(config);
         let start = service
             .start_codex_oauth(&StartPkceOAuthRequest {})
             .expect("start codex oauth");
@@ -1890,9 +1918,9 @@ mod tests {
             )
         });
 
-        let mut config = test_provider_edge_config();
+        let mut config = test_oauth_provider_config();
         config.claudecode_token_url = format!("{token_server_url}/token");
-        let service = SqliteProviderEdgeAdminService::new(config);
+        let service = SqliteOauthProviderAdminService::new(config);
         let start = service
             .start_claudecode_oauth(&StartPkceOAuthRequest {})
             .expect("start claudecode oauth");
@@ -1945,10 +1973,10 @@ mod tests {
             )
         });
 
-        let mut config = test_provider_edge_config();
+        let mut config = test_oauth_provider_config();
         config.antigravity_token_url = format!("{token_server_url}/token");
         config.antigravity_load_endpoints = Vec::new();
-        let service = SqliteProviderEdgeAdminService::new(config.clone());
+        let service = SqliteOauthProviderAdminService::new(config.clone());
 
         let start_with_project = service
             .start_antigravity_oauth(&StartAntigravityOAuthRequest {
@@ -1976,7 +2004,7 @@ mod tests {
         });
         let mut config_without_project = config;
         config_without_project.antigravity_token_url = format!("{second_token_server_url}/token");
-        let service_without_project = SqliteProviderEdgeAdminService::new(config_without_project);
+        let service_without_project = SqliteOauthProviderAdminService::new(config_without_project);
         let start_without_project = service_without_project
             .start_antigravity_oauth(&StartAntigravityOAuthRequest {
                 project_id: String::new(),
@@ -1995,7 +2023,7 @@ mod tests {
             .expect_err("missing endpoints should fail");
 
         match error {
-            ProviderEdgeAdminError::BadGateway { message } => {
+            OauthProviderAdminError::BadGateway { message } => {
                 assert_eq!(
                     message,
                     "failed to resolve project id and none provided: no load endpoints configured"
@@ -2037,10 +2065,10 @@ mod tests {
             )
         });
 
-        let mut config = test_provider_edge_config();
+        let mut config = test_oauth_provider_config();
         config.copilot_device_code_url = format!("{device_server_url}/device");
         config.copilot_access_token_url = format!("{token_server_url}/token");
-        let service = SqliteProviderEdgeAdminService::new(config);
+        let service = SqliteOauthProviderAdminService::new(config);
 
         let start = service
             .start_copilot_oauth(&StartCopilotOAuthRequest {})
@@ -2066,7 +2094,7 @@ mod tests {
             })
             .expect_err("session should be deleted after success");
         match replay {
-            ProviderEdgeAdminError::InvalidRequest { message } => {
+            OauthProviderAdminError::InvalidRequest { message } => {
                 assert_eq!(message, "invalid or expired session");
             }
             other => panic!("unexpected error: {other:?}"),
@@ -2084,10 +2112,10 @@ mod tests {
                 r#"{"device_code":"device-code-456","user_code":"WXYZ-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}"#,
             )
         });
-        let mut config = test_provider_edge_config();
+        let mut config = test_oauth_provider_config();
         config.copilot_device_code_url = format!("{device_server_url}/device");
         config.copilot_access_token_url = format!("{pending_token_url}/token");
-        let pending_service = SqliteProviderEdgeAdminService::new(config);
+        let pending_service = SqliteOauthProviderAdminService::new(config);
         let pending_start = pending_service
             .start_copilot_oauth(&StartCopilotOAuthRequest {})
             .expect("start pending copilot oauth");
@@ -2099,7 +2127,7 @@ mod tests {
         assert_eq!(pending.status, "pending");
         assert_eq!(
             pending.message.as_deref(),
-            Some(PROVIDER_EDGE_COPILOT_PENDING_MESSAGE)
+            Some(OAUTH_PROVIDER_COPILOT_PENDING_MESSAGE)
         );
 
         let denied_token_url = start_http_server(|_, _| {
@@ -2114,10 +2142,10 @@ mod tests {
                 r#"{"device_code":"device-code-789","user_code":"QWER-9876","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}"#,
             )
         });
-        let mut config = test_provider_edge_config();
+        let mut config = test_oauth_provider_config();
         config.copilot_device_code_url = format!("{device_server_url}/device");
         config.copilot_access_token_url = format!("{denied_token_url}/token");
-        let denied_service = SqliteProviderEdgeAdminService::new(config);
+        let denied_service = SqliteOauthProviderAdminService::new(config);
         let denied_start = denied_service
             .start_copilot_oauth(&StartCopilotOAuthRequest {})
             .expect("start denied copilot oauth");
@@ -2127,7 +2155,7 @@ mod tests {
             })
             .expect_err("access denied should fail");
         match denied {
-            ProviderEdgeAdminError::InvalidRequest { message } => {
+            OauthProviderAdminError::InvalidRequest { message } => {
                 assert_eq!(message, "access denied by user");
             }
             other => panic!("unexpected error: {other:?}"),
@@ -2138,7 +2166,7 @@ mod tests {
             })
             .expect_err("denied session should be deleted");
         match replay {
-            ProviderEdgeAdminError::InvalidRequest { message } => {
+            OauthProviderAdminError::InvalidRequest { message } => {
                 assert_eq!(message, "invalid or expired session");
             }
             other => panic!("unexpected error: {other:?}"),

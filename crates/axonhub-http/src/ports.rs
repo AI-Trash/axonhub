@@ -138,46 +138,46 @@ pub trait OpenApiGraphqlPort: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>>;
 }
 
-pub trait ProviderEdgeAdminPort: Send + Sync {
+pub trait OauthProviderAdminPort: Send + Sync {
     fn start_codex_oauth(
         &self,
         request: &StartPkceOAuthRequest,
-    ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError>;
+    ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError>;
 
     fn exchange_codex_oauth(
         &self,
         request: &ExchangeCallbackOAuthRequest,
-    ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError>;
+    ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError>;
 
     fn start_claudecode_oauth(
         &self,
         request: &StartPkceOAuthRequest,
-    ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError>;
+    ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError>;
 
     fn exchange_claudecode_oauth(
         &self,
         request: &ExchangeCallbackOAuthRequest,
-    ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError>;
+    ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError>;
 
     fn start_antigravity_oauth(
         &self,
         request: &StartAntigravityOAuthRequest,
-    ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError>;
+    ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError>;
 
     fn exchange_antigravity_oauth(
         &self,
         request: &ExchangeCallbackOAuthRequest,
-    ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError>;
+    ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError>;
 
     fn start_copilot_oauth(
         &self,
         request: &StartCopilotOAuthRequest,
-    ) -> Result<StartCopilotOAuthResponse, ProviderEdgeAdminError>;
+    ) -> Result<StartCopilotOAuthResponse, OauthProviderAdminError>;
 
     fn poll_copilot_oauth(
         &self,
         request: &PollCopilotOAuthRequest,
-    ) -> Result<PollCopilotOAuthResponse, ProviderEdgeAdminError>;
+    ) -> Result<PollCopilotOAuthResponse, OauthProviderAdminError>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -231,7 +231,7 @@ pub enum AdminError {
 }
 
 #[derive(Debug, Clone)]
-pub enum ProviderEdgeAdminError {
+pub enum OauthProviderAdminError {
     InvalidRequest { message: String },
     BadGateway { message: String },
     Internal { message: String },

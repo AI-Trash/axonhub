@@ -5,6 +5,8 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+pub(crate) mod oauth;
+
 use super::{
     authz::{require_user_project_scope, SCOPE_READ_REQUESTS},
     ports::AdminRepository,

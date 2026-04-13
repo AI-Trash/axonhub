@@ -15,6 +15,9 @@ pub(crate) async fn run() -> Result<()> {
 }
 
 #[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
 mod parity_oracle;
 
 #[cfg(test)]
@@ -27,4 +30,4 @@ pub(crate) use tracing::{
 };
 
 #[cfg(test)]
-pub(crate) use parity_oracle::parity_oracle_helpers_preserve_contract_inner;
+pub(crate) use test_support::parity_oracle_helpers_preserve_contract_inner;

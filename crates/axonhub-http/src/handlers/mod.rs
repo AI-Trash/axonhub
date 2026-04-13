@@ -5,7 +5,6 @@ pub(crate) mod gemini;
 pub(crate) mod graphql;
 pub(crate) mod jina;
 pub(crate) mod openai_v1;
-pub(crate) mod provider_edge;
 pub(crate) mod static_files;
 
 use crate::errors::{
@@ -433,12 +432,14 @@ pub(crate) fn graphql_playground_html(endpoint: &str) -> String {
     )
 }
 
-pub(crate) fn provider_edge_admin_port(
+pub(crate) fn oauth_provider_admin_port(
     state: &HttpState,
-) -> Result<&Arc<dyn crate::ports::ProviderEdgeAdminPort>, String> {
-    match &state.provider_edge_admin {
-        crate::state::ProviderEdgeAdminCapability::Unsupported { message } => Err(message.clone()),
-        crate::state::ProviderEdgeAdminCapability::Available { provider_edge } => Ok(provider_edge),
+) -> Result<&Arc<dyn crate::ports::OauthProviderAdminPort>, String> {
+    match &state.oauth_provider_admin {
+        crate::state::OauthProviderAdminCapability::Unsupported { message } => Err(message.clone()),
+        crate::state::OauthProviderAdminCapability::Available { oauth_provider_admin } => {
+            Ok(oauth_provider_admin)
+        }
     }
 }
 

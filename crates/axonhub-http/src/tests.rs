@@ -333,18 +333,18 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     struct FakeAdminPort;
 
     #[derive(Default)]
-    struct FakeProviderEdgeAdminState {
+    struct FakeOauthProviderAdminState {
         last_codex_exchange_request: Option<ExchangeCallbackOAuthRequest>,
     }
 
-    struct FakeProviderEdgeAdminPort {
-        state: Mutex<FakeProviderEdgeAdminState>,
+    struct FakeOauthProviderAdminPort {
+        state: Mutex<FakeOauthProviderAdminState>,
     }
 
-    impl FakeProviderEdgeAdminPort {
+    impl FakeOauthProviderAdminPort {
         fn new() -> Self {
             Self {
-                state: Mutex::new(FakeProviderEdgeAdminState::default()),
+                state: Mutex::new(FakeOauthProviderAdminState::default()),
             }
         }
 
@@ -1118,11 +1118,11 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         }
     }
 
-    impl ProviderEdgeAdminPort for FakeProviderEdgeAdminPort {
+    impl OauthProviderAdminPort for FakeOauthProviderAdminPort {
         fn start_codex_oauth(
             &self,
             _request: &StartPkceOAuthRequest,
-        ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
             Ok(StartPkceOAuthResponse {
                 session_id: "codex-session".to_owned(),
                 auth_url: "https://example.com/codex/start".to_owned(),
@@ -1132,7 +1132,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         fn exchange_codex_oauth(
             &self,
             request: &ExchangeCallbackOAuthRequest,
-        ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
             self.state.lock().unwrap().last_codex_exchange_request = Some(request.clone());
             Ok(ExchangeOAuthResponse {
                 credentials: "codex-credentials".to_owned(),
@@ -1142,7 +1142,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         fn start_claudecode_oauth(
             &self,
             _request: &StartPkceOAuthRequest,
-        ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
             Ok(StartPkceOAuthResponse {
                 session_id: "claudecode-session".to_owned(),
                 auth_url: "https://example.com/claudecode/start".to_owned(),
@@ -1152,7 +1152,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         fn exchange_claudecode_oauth(
             &self,
             _request: &ExchangeCallbackOAuthRequest,
-        ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
             Ok(ExchangeOAuthResponse {
                 credentials: "claudecode-credentials".to_owned(),
             })
@@ -1161,7 +1161,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         fn start_antigravity_oauth(
             &self,
             _request: &StartAntigravityOAuthRequest,
-        ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
             Ok(StartPkceOAuthResponse {
                 session_id: "antigravity-session".to_owned(),
                 auth_url: "https://example.com/antigravity/start".to_owned(),
@@ -1171,7 +1171,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         fn exchange_antigravity_oauth(
             &self,
             _request: &ExchangeCallbackOAuthRequest,
-        ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
             Ok(ExchangeOAuthResponse {
                 credentials: "antigravity-credentials".to_owned(),
             })
@@ -1180,7 +1180,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         fn start_copilot_oauth(
             &self,
             _request: &StartCopilotOAuthRequest,
-        ) -> Result<StartCopilotOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<StartCopilotOAuthResponse, OauthProviderAdminError> {
             Ok(StartCopilotOAuthResponse {
                 session_id: "copilot-session".to_owned(),
                 user_code: "COPILOT-CODE".to_owned(),
@@ -1193,7 +1193,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         fn poll_copilot_oauth(
             &self,
             _request: &PollCopilotOAuthRequest,
-        ) -> Result<PollCopilotOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<PollCopilotOAuthResponse, OauthProviderAdminError> {
             Ok(PollCopilotOAuthResponse {
                 access_token: Some("copilot-access-token".to_owned()),
                 token_type: Some("Bearer".to_owned()),
@@ -1228,8 +1228,8 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             openapi_graphql: OpenApiGraphqlCapability::Unsupported {
                 message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
             },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+            oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+                message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
             },
             allow_no_auth,
             cors: disabled_test_cors(),
@@ -1273,8 +1273,8 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             openapi_graphql: OpenApiGraphqlCapability::Unsupported {
                 message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
             },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+            oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+                message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
             },
             allow_no_auth,
             cors: disabled_test_cors(),
@@ -1312,27 +1312,27 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         (state, openai)
     }
 
-    fn test_state_with_provider_edge(
+    fn test_state_with_oauth_provider_admin(
         system_bootstrap: SystemBootstrapCapability,
         allow_no_auth: bool,
     ) -> HttpState {
         let mut state = test_state(system_bootstrap, allow_no_auth);
-        state.provider_edge_admin = ProviderEdgeAdminCapability::Available {
-            provider_edge: Arc::new(FakeProviderEdgeAdminPort::new()),
+        state.oauth_provider_admin = OauthProviderAdminCapability::Available {
+            oauth_provider_admin: Arc::new(FakeOauthProviderAdminPort::new()),
         };
         state
     }
 
-    fn test_state_with_recording_provider_edge(
+    fn test_state_with_recording_oauth_provider_admin(
         system_bootstrap: SystemBootstrapCapability,
         allow_no_auth: bool,
-    ) -> (HttpState, Arc<FakeProviderEdgeAdminPort>) {
-        let provider_edge = Arc::new(FakeProviderEdgeAdminPort::new());
+    ) -> (HttpState, Arc<FakeOauthProviderAdminPort>) {
+        let oauth_provider_admin = Arc::new(FakeOauthProviderAdminPort::new());
         let mut state = test_state(system_bootstrap, allow_no_auth);
-        state.provider_edge_admin = ProviderEdgeAdminCapability::Available {
-            provider_edge: provider_edge.clone(),
+        state.oauth_provider_admin = OauthProviderAdminCapability::Available {
+            oauth_provider_admin: oauth_provider_admin.clone(),
         };
-        (state, provider_edge)
+        (state, oauth_provider_admin)
     }
 
 async fn read_json<B>(response: ServiceResponse<B>) -> Value
@@ -1896,8 +1896,8 @@ fn assert_go_duration_shape(value: &str) {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2140,7 +2140,7 @@ fn assert_go_duration_shape(value: &str) {
 
     #[tokio::test]
     async fn admin_provider_edge_oauth_requires_write_channels_scope() {
-        let app = router(test_state_with_provider_edge(
+        let app = router(test_state_with_oauth_provider_admin(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
             },
@@ -2428,7 +2428,7 @@ fn assert_go_duration_shape(value: &str) {
 
     #[tokio::test]
     async fn admin_codex_oauth_exchange_accepts_optional_proxy_payload() {
-        let (state, provider_edge) = test_state_with_recording_provider_edge(
+        let (state, oauth_provider_admin) = test_state_with_recording_oauth_provider_admin(
             SystemBootstrapCapability::Available {
                 system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
             },
@@ -2464,7 +2464,7 @@ fn assert_go_duration_shape(value: &str) {
         let json = assert_json_response(response, StatusCode::OK).await;
         assert_eq!(json["credentials"], "codex-credentials");
 
-        let request = provider_edge
+        let request = oauth_provider_admin
             .last_codex_exchange_request()
             .expect("recorded codex exchange request");
         let proxy = request.proxy.expect("proxy payload should be recorded");
@@ -2673,8 +2673,8 @@ fn assert_go_duration_shape(value: &str) {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2967,8 +2967,8 @@ fn assert_go_duration_shape(value: &str) {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3169,8 +3169,8 @@ fn assert_go_duration_shape(value: &str) {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "DB-backed OpenAPI GraphQL is not available for the configured dialect yet. Rust replacement for this surface is currently supported only on sqlite3.".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are not configured in this HTTP test fixture.".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),

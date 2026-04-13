@@ -44,7 +44,4 @@ axonhub-http.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-pg-embed.workspace = true
-postgres.workspace = true
-rusqlite.workspace = true
 tower.workspace = true

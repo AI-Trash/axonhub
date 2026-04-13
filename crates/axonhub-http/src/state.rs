@@ -3,8 +3,8 @@ use crate::models::{
     TraceConfig, TraceContext,
 };
 use crate::ports::{
-    AdminGraphqlPort, AdminPort, IdentityPort, OpenAiV1Port, OpenApiGraphqlPort,
-    ProviderEdgeAdminPort, RequestContextPort, SystemBootstrapPort,
+    AdminGraphqlPort, AdminPort, IdentityPort, OauthProviderAdminPort, OpenAiV1Port,
+    OpenApiGraphqlPort, RequestContextPort, SystemBootstrapPort,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -67,12 +67,12 @@ pub enum OpenApiGraphqlCapability {
 }
 
 #[derive(Clone)]
-pub enum ProviderEdgeAdminCapability {
+pub enum OauthProviderAdminCapability {
     Unsupported {
         message: String,
     },
     Available {
-        provider_edge: Arc<dyn ProviderEdgeAdminPort>,
+        oauth_provider_admin: Arc<dyn OauthProviderAdminPort>,
     },
 }
 
@@ -112,7 +112,7 @@ pub struct HttpState {
     pub admin: AdminCapability,
     pub admin_graphql: AdminGraphqlCapability,
     pub openapi_graphql: OpenApiGraphqlCapability,
-    pub provider_edge_admin: ProviderEdgeAdminCapability,
+    pub oauth_provider_admin: OauthProviderAdminCapability,
     pub allow_no_auth: bool,
     pub cors: HttpCorsSettings,
     pub trace_config: TraceConfig,

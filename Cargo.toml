@@ -38,12 +38,9 @@ opentelemetry = { version = "0.31", features = ["metrics"] }
 opentelemetry-otlp = { version = "0.31", features = ["metrics", "grpc-tonic", "http-proto", "reqwest-client"] }
 opentelemetry-stdout = { version = "0.31", features = ["metrics"] }
 opentelemetry_sdk = { version = "0.31", features = ["metrics"] }
-pg-embed = { version = "0.7", default-features = false, features = ["rt_tokio"] }
-postgres = "0.19"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "multipart", "rustls"] }
 regex = "1.12"
 rust-embed = "8.11"
-rusqlite = { version = "0.32", features = ["bundled"] }
 sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 sea-orm-migration = { version = "2.0.0-rc.37", default-features = false, features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 serde = { version = "1.0", features = ["derive"] }

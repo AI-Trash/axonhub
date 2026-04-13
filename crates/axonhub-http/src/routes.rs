@@ -90,35 +90,35 @@ fn configure_admin_protected(cfg: &mut ServiceConfig) {
         .service(web::resource("/graphql").route(web::post().to(handlers::graphql::admin_graphql)))
         .service(
             web::resource("/codex/oauth/start")
-                .route(web::post().to(handlers::provider_edge::start_codex_oauth)),
+                .route(web::post().to(handlers::admin::oauth::start_codex_oauth)),
         )
         .service(
             web::resource("/codex/oauth/exchange")
-                .route(web::post().to(handlers::provider_edge::exchange_codex_oauth)),
+                .route(web::post().to(handlers::admin::oauth::exchange_codex_oauth)),
         )
         .service(
             web::resource("/claudecode/oauth/start")
-                .route(web::post().to(handlers::provider_edge::start_claudecode_oauth)),
+                .route(web::post().to(handlers::admin::oauth::start_claudecode_oauth)),
         )
         .service(
             web::resource("/claudecode/oauth/exchange")
-                .route(web::post().to(handlers::provider_edge::exchange_claudecode_oauth)),
+                .route(web::post().to(handlers::admin::oauth::exchange_claudecode_oauth)),
         )
         .service(
             web::resource("/antigravity/oauth/start")
-                .route(web::post().to(handlers::provider_edge::start_antigravity_oauth)),
+                .route(web::post().to(handlers::admin::oauth::start_antigravity_oauth)),
         )
         .service(
             web::resource("/antigravity/oauth/exchange")
-                .route(web::post().to(handlers::provider_edge::exchange_antigravity_oauth)),
+                .route(web::post().to(handlers::admin::oauth::exchange_antigravity_oauth)),
         )
         .service(
             web::resource("/copilot/oauth/start")
-                .route(web::post().to(handlers::provider_edge::start_copilot_oauth)),
+                .route(web::post().to(handlers::admin::oauth::start_copilot_oauth)),
         )
         .service(
             web::resource("/copilot/oauth/poll")
-                .route(web::post().to(handlers::provider_edge::poll_copilot_oauth)),
+                .route(web::post().to(handlers::admin::oauth::poll_copilot_oauth)),
         )
         .service(
             web::resource("/requests/{request_id}/content")

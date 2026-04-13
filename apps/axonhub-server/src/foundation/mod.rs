@@ -16,8 +16,7 @@ pub(crate) mod prompt_protection;
 pub(crate) mod admin;
 pub(crate) mod admin_operational;
 pub(crate) mod graphql;
-#[allow(dead_code)]
-pub(crate) mod provider_edge;
+pub(crate) mod schema_governance;
 pub(crate) mod schema_ownership;
 
 #[cfg(test)]

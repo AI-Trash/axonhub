@@ -2,6 +2,8 @@ use crate::errors::{
     already_initialized_response, error_response, internal_error_response,
     invalid_initialize_request_response, not_implemented_response,
 };
+pub(crate) mod oauth;
+
 use crate::handlers::{
     AiSdkProtocol, execute_openai_request_with_body_and_api_key_and_protocol, parse_json_body,
 };

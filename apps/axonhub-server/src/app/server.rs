@@ -70,7 +70,7 @@ pub(crate) async fn start_server() -> Result<()> {
         admin: capabilities.admin,
         admin_graphql: capabilities.admin_graphql,
         openapi_graphql: capabilities.openapi_graphql,
-        provider_edge_admin: capabilities.provider_edge_admin,
+        oauth_provider_admin: capabilities.oauth_provider_admin,
         allow_no_auth: loaded.config.server.api.auth.allow_no_auth,
         cors: runtime_cors_settings(&loaded.config.server.cors),
         trace_config: TraceConfig {

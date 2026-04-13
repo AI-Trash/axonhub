@@ -7,9 +7,9 @@ AxonHub's canonical backend implementation is Rust.
 - **Canonical backend path:** Cargo workspace rooted at `Cargo.toml`
 - **Legacy reference/oracle tree:** `cmd/axonhub/main.go`, `conf/conf.go`, and `internal/server/`
 
-### Current Rust Coverage (Verified)
+### Current Rust Coverage
 
-The Rust backend implements the following verified SQLite- and PostgreSQL-backed surface:
+The Rust backend implements the following SQLite- and PostgreSQL-oriented surface. In the current repository, the strongest self-contained automated verification is on SQLite-backed Rust paths; PostgreSQL remains a supported canonical runtime target, but is not claimed here as equally fully verified across the same in-repo test suite.
 
 - **Config & CLI**: config loading, CLI compatibility (`config preview`, `config validate`, `config get`, `version`, `help`)
 - **Health & system**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
@@ -20,7 +20,7 @@ The Rust backend implements the following verified SQLite- and PostgreSQL-backed
 - **OpenAI-compatible `/v1` inference**: `/models`, `/chat/completions`, `/responses`, `/responses/compact`, `/embeddings`, `/messages`, `/rerank`, `/images/generations`, `/images/edits`, `POST /v1/realtime`, and realtime session-family routes
 - **Video generation**: `POST /v1/videos`, `GET /v1/videos/{id}`, `DELETE /v1/videos/{id}`
 - **Other provider APIs**: Jina, Anthropic, Gemini, Doubao routes as configured
-- **Database support**: SQLite and PostgreSQL fully verified for the Rust target-state contract
+- **Database support**: SQLite is the most comprehensively self-verified Rust path in-repo; PostgreSQL remains a supported canonical runtime target for the Rust target-state contract
 
 ### Remaining Follow-up Areas
 

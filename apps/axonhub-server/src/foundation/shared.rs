@@ -27,18 +27,18 @@ pub(crate) const DEFAULT_SERVICE_API_KEY_VALUE: &str = "service-key-123";
 pub(crate) const NO_AUTH_API_KEY_NAME: &str = "No Auth System Key";
 pub(crate) const NO_AUTH_API_KEY_VALUE: &str = "AXONHUB_API_KEY_NO_AUTH";
 #[allow(dead_code)]
-pub(crate) const PROVIDER_EDGE_PKCE_SESSION_TTL_SECONDS: i64 = 10 * 60;
+pub(crate) const OAUTH_PROVIDER_PKCE_SESSION_TTL_SECONDS: i64 = 10 * 60;
 #[allow(dead_code)]
-pub(crate) const PROVIDER_EDGE_COPILOT_DEVICE_GRANT_TYPE: &str =
+pub(crate) const OAUTH_PROVIDER_COPILOT_DEVICE_GRANT_TYPE: &str =
     "urn:ietf:params:oauth:grant-type:device_code";
 #[allow(dead_code)]
-pub(crate) const PROVIDER_EDGE_COPILOT_COMPLETE_MESSAGE: &str =
+pub(crate) const OAUTH_PROVIDER_COPILOT_COMPLETE_MESSAGE: &str =
     "Authorization complete. Access token received.";
 #[allow(dead_code)]
-pub(crate) const PROVIDER_EDGE_COPILOT_PENDING_MESSAGE: &str =
+pub(crate) const OAUTH_PROVIDER_COPILOT_PENDING_MESSAGE: &str =
     "Authorization pending. User has not yet authorized the device.";
 #[allow(dead_code)]
-pub(crate) const PROVIDER_EDGE_COPILOT_SLOW_DOWN_MESSAGE: &str =
+pub(crate) const OAUTH_PROVIDER_COPILOT_SLOW_DOWN_MESSAGE: &str =
     "Polling too fast. Please slow down.";
 pub(crate) const BACKUP_VERSION: &str = "1.1";
 pub(crate) const AUTO_BACKUP_PREFIX: &str = "axonhub-backup-";

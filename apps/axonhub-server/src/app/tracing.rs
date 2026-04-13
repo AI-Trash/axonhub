@@ -214,8 +214,8 @@ mod tests {
     use actix_web::test as actix_test;
     use axonhub_http::{
         router, AdminCapability, AdminGraphqlCapability, HttpCorsSettings, HttpState,
-        IdentityCapability, OpenAiV1Capability, OpenApiGraphqlCapability,
-        ProviderEdgeAdminCapability, RequestContextCapability, SystemBootstrapCapability,
+        IdentityCapability, OauthProviderAdminCapability, OpenAiV1Capability,
+        OpenApiGraphqlCapability, RequestContextCapability, SystemBootstrapCapability,
         TraceConfig,
     };
     use std::sync::{Mutex, MutexGuard};
@@ -255,7 +255,7 @@ mod tests {
             openapi_graphql: OpenApiGraphqlCapability::Unsupported {
                 message: "unsupported".to_owned(),
             },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
+            oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
                 message: "unsupported".to_owned(),
             },
             allow_no_auth: false,

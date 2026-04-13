@@ -1,5 +1,5 @@
-use crate::errors::{error_response, execute_provider_edge_admin_request};
-use crate::handlers::provider_edge_admin_port;
+use crate::errors::{error_response, execute_oauth_provider_admin_request};
+use crate::handlers::oauth_provider_admin_port;
 use crate::state::{HttpState, RequestAuthContext, RequestContextState};
 use actix_web::http::{Method, StatusCode, Uri};
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, web};
@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 const WRITE_CHANNELS_SCOPE: &str = "write_channels";
 
-fn require_provider_edge_write_channels_scope(request: &HttpRequest) -> Result<(), HttpResponse> {
+fn require_oauth_provider_admin_write_channels_scope(
+    request: &HttpRequest,
+) -> Result<(), HttpResponse> {
     let extensions = request.extensions();
     let user = extensions
         .get::<RequestContextState>()
@@ -30,14 +32,14 @@ fn require_provider_edge_write_channels_scope(request: &HttpRequest) -> Result<(
     ))
 }
 
-fn unsupported_provider_edge_response<'a>(
+fn unsupported_oauth_provider_admin_response<'a>(
     state: &'a HttpState,
     route_family: &'static str,
     method: Method,
     uri: Uri,
-) -> Result<&'a Arc<dyn crate::ports::ProviderEdgeAdminPort>, HttpResponse> {
-    match provider_edge_admin_port(state) {
-        Ok(provider_edge) => Ok(provider_edge),
+) -> Result<&'a Arc<dyn crate::ports::OauthProviderAdminPort>, HttpResponse> {
+    match oauth_provider_admin_port(state) {
+        Ok(oauth_provider_admin) => Ok(oauth_provider_admin),
         Err(message) => Err(
             crate::errors::not_implemented_response(route_family, method, uri, None)
                 .with_message(&message),
@@ -50,7 +52,7 @@ pub async fn start_codex_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
-    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+    if let Err(response) = require_oauth_provider_admin_write_channels_scope(&http_request) {
         return response;
     }
 
@@ -61,18 +63,18 @@ pub async fn start_codex_oauth(
         }
     };
 
-    let provider_edge = match unsupported_provider_edge_response(
+    let oauth_provider_admin = match unsupported_oauth_provider_admin_response(
         &state,
         "/admin/codex/oauth/start",
         Method::POST,
         http_request.uri().clone(),
     ) {
-        Ok(provider_edge) => provider_edge,
+        Ok(oauth_provider_admin) => oauth_provider_admin,
         Err(response) => return response,
     };
 
-    execute_provider_edge_admin_request(Arc::clone(provider_edge), move |provider_edge| {
-        provider_edge.start_codex_oauth(&request_payload)
+    execute_oauth_provider_admin_request(Arc::clone(oauth_provider_admin), move |oauth_provider_admin| {
+        oauth_provider_admin.start_codex_oauth(&request_payload)
     })
     .await
 }
@@ -82,7 +84,7 @@ pub(crate) async fn exchange_codex_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
-    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+    if let Err(response) = require_oauth_provider_admin_write_channels_scope(&http_request) {
         return response;
     }
 
@@ -93,18 +95,18 @@ pub(crate) async fn exchange_codex_oauth(
         }
     };
 
-    let provider_edge = match unsupported_provider_edge_response(
+    let oauth_provider_admin = match unsupported_oauth_provider_admin_response(
         &state,
         "/admin/codex/oauth/exchange",
         Method::POST,
         http_request.uri().clone(),
     ) {
-        Ok(provider_edge) => provider_edge,
+        Ok(oauth_provider_admin) => oauth_provider_admin,
         Err(response) => return response,
     };
 
-    execute_provider_edge_admin_request(Arc::clone(provider_edge), move |provider_edge| {
-        provider_edge.exchange_codex_oauth(&request_payload)
+    execute_oauth_provider_admin_request(Arc::clone(oauth_provider_admin), move |oauth_provider_admin| {
+        oauth_provider_admin.exchange_codex_oauth(&request_payload)
     })
     .await
 }
@@ -114,7 +116,7 @@ pub async fn start_claudecode_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
-    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+    if let Err(response) = require_oauth_provider_admin_write_channels_scope(&http_request) {
         return response;
     }
 
@@ -125,18 +127,18 @@ pub async fn start_claudecode_oauth(
         }
     };
 
-    let provider_edge = match unsupported_provider_edge_response(
+    let oauth_provider_admin = match unsupported_oauth_provider_admin_response(
         &state,
         "/admin/claudecode/oauth/start",
         Method::POST,
         http_request.uri().clone(),
     ) {
-        Ok(provider_edge) => provider_edge,
+        Ok(oauth_provider_admin) => oauth_provider_admin,
         Err(response) => return response,
     };
 
-    execute_provider_edge_admin_request(Arc::clone(provider_edge), move |provider_edge| {
-        provider_edge.start_claudecode_oauth(&request_payload)
+    execute_oauth_provider_admin_request(Arc::clone(oauth_provider_admin), move |oauth_provider_admin| {
+        oauth_provider_admin.start_claudecode_oauth(&request_payload)
     })
     .await
 }
@@ -146,7 +148,7 @@ pub(crate) async fn exchange_claudecode_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
-    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+    if let Err(response) = require_oauth_provider_admin_write_channels_scope(&http_request) {
         return response;
     }
 
@@ -157,18 +159,18 @@ pub(crate) async fn exchange_claudecode_oauth(
         }
     };
 
-    let provider_edge = match unsupported_provider_edge_response(
+    let oauth_provider_admin = match unsupported_oauth_provider_admin_response(
         &state,
         "/admin/claudecode/oauth/exchange",
         Method::POST,
         http_request.uri().clone(),
     ) {
-        Ok(provider_edge) => provider_edge,
+        Ok(oauth_provider_admin) => oauth_provider_admin,
         Err(response) => return response,
     };
 
-    execute_provider_edge_admin_request(Arc::clone(provider_edge), move |provider_edge| {
-        provider_edge.exchange_claudecode_oauth(&request_payload)
+    execute_oauth_provider_admin_request(Arc::clone(oauth_provider_admin), move |oauth_provider_admin| {
+        oauth_provider_admin.exchange_claudecode_oauth(&request_payload)
     })
     .await
 }
@@ -178,7 +180,7 @@ pub async fn start_antigravity_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
-    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+    if let Err(response) = require_oauth_provider_admin_write_channels_scope(&http_request) {
         return response;
     }
 
@@ -189,18 +191,18 @@ pub async fn start_antigravity_oauth(
         }
     };
 
-    let provider_edge = match unsupported_provider_edge_response(
+    let oauth_provider_admin = match unsupported_oauth_provider_admin_response(
         &state,
         "/admin/antigravity/oauth/start",
         Method::POST,
         http_request.uri().clone(),
     ) {
-        Ok(provider_edge) => provider_edge,
+        Ok(oauth_provider_admin) => oauth_provider_admin,
         Err(response) => return response,
     };
 
-    execute_provider_edge_admin_request(Arc::clone(provider_edge), move |provider_edge| {
-        provider_edge.start_antigravity_oauth(&request_payload)
+    execute_oauth_provider_admin_request(Arc::clone(oauth_provider_admin), move |oauth_provider_admin| {
+        oauth_provider_admin.start_antigravity_oauth(&request_payload)
     })
     .await
 }
@@ -210,7 +212,7 @@ pub(crate) async fn exchange_antigravity_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
-    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+    if let Err(response) = require_oauth_provider_admin_write_channels_scope(&http_request) {
         return response;
     }
 
@@ -221,18 +223,18 @@ pub(crate) async fn exchange_antigravity_oauth(
         }
     };
 
-    let provider_edge = match unsupported_provider_edge_response(
+    let oauth_provider_admin = match unsupported_oauth_provider_admin_response(
         &state,
         "/admin/antigravity/oauth/exchange",
         Method::POST,
         http_request.uri().clone(),
     ) {
-        Ok(provider_edge) => provider_edge,
+        Ok(oauth_provider_admin) => oauth_provider_admin,
         Err(response) => return response,
     };
 
-    execute_provider_edge_admin_request(Arc::clone(provider_edge), move |provider_edge| {
-        provider_edge.exchange_antigravity_oauth(&request_payload)
+    execute_oauth_provider_admin_request(Arc::clone(oauth_provider_admin), move |oauth_provider_admin| {
+        oauth_provider_admin.exchange_antigravity_oauth(&request_payload)
     })
     .await
 }
@@ -242,7 +244,7 @@ pub async fn start_copilot_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
-    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+    if let Err(response) = require_oauth_provider_admin_write_channels_scope(&http_request) {
         return response;
     }
 
@@ -261,18 +263,18 @@ pub async fn start_copilot_oauth(
         }
     };
 
-    let provider_edge = match unsupported_provider_edge_response(
+    let oauth_provider_admin = match unsupported_oauth_provider_admin_response(
         &state,
         "/admin/copilot/oauth/start",
         Method::POST,
         http_request.uri().clone(),
     ) {
-        Ok(provider_edge) => provider_edge,
+        Ok(oauth_provider_admin) => oauth_provider_admin,
         Err(response) => return response,
     };
 
-    execute_provider_edge_admin_request(Arc::clone(provider_edge), move |provider_edge| {
-        provider_edge.start_copilot_oauth(&request_payload)
+    execute_oauth_provider_admin_request(Arc::clone(oauth_provider_admin), move |oauth_provider_admin| {
+        oauth_provider_admin.start_copilot_oauth(&request_payload)
     })
     .await
 }
@@ -282,7 +284,7 @@ pub(crate) async fn poll_copilot_oauth(
     http_request: HttpRequest,
     body: Bytes,
 ) -> HttpResponse {
-    if let Err(response) = require_provider_edge_write_channels_scope(&http_request) {
+    if let Err(response) = require_oauth_provider_admin_write_channels_scope(&http_request) {
         return response;
     }
 
@@ -293,18 +295,18 @@ pub(crate) async fn poll_copilot_oauth(
         }
     };
 
-    let provider_edge = match unsupported_provider_edge_response(
+    let oauth_provider_admin = match unsupported_oauth_provider_admin_response(
         &state,
         "/admin/copilot/oauth/poll",
         Method::POST,
         http_request.uri().clone(),
     ) {
-        Ok(provider_edge) => provider_edge,
+        Ok(oauth_provider_admin) => oauth_provider_admin,
         Err(response) => return response,
     };
 
-    execute_provider_edge_admin_request(Arc::clone(provider_edge), move |provider_edge| {
-        provider_edge.poll_copilot_oauth(&request_payload)
+    execute_oauth_provider_admin_request(Arc::clone(oauth_provider_admin), move |oauth_provider_admin| {
+        oauth_provider_admin.poll_copilot_oauth(&request_payload)
     })
     .await
 }
@@ -316,10 +318,10 @@ mod tests {
         AuthUserContext, ExchangeOAuthResponse, PollCopilotOAuthResponse,
         StartCopilotOAuthResponse, StartPkceOAuthResponse, TraceConfig,
     };
-    use crate::ports::{ProviderEdgeAdminError, ProviderEdgeAdminPort};
+    use crate::ports::{OauthProviderAdminError, OauthProviderAdminPort};
     use crate::state::{
         AdminCapability, AdminGraphqlCapability, IdentityCapability, OpenAiV1Capability,
-        OpenApiGraphqlCapability, ProviderEdgeAdminCapability, RequestContextCapability,
+        OauthProviderAdminCapability, OpenApiGraphqlCapability, RequestContextCapability,
         RequestContextState, RequestAuthContext, SystemBootstrapCapability,
     };
     use actix_web::http::StatusCode;
@@ -327,13 +329,13 @@ mod tests {
     use serde_json::json;
 
     #[derive(Default)]
-    struct RecordingProviderEdgePort;
+    struct RecordingOauthProviderAdminPort;
 
-    impl ProviderEdgeAdminPort for RecordingProviderEdgePort {
+    impl OauthProviderAdminPort for RecordingOauthProviderAdminPort {
         fn start_codex_oauth(
             &self,
             _request: &crate::models::StartPkceOAuthRequest,
-        ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
             Ok(StartPkceOAuthResponse {
                 session_id: "codex-session".to_owned(),
                 auth_url: "https://example.test/codex/start".to_owned(),
@@ -343,7 +345,7 @@ mod tests {
         fn exchange_codex_oauth(
             &self,
             _request: &crate::models::ExchangeCallbackOAuthRequest,
-        ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
             Ok(ExchangeOAuthResponse {
                 credentials: "codex-credentials".to_owned(),
             })
@@ -352,7 +354,7 @@ mod tests {
         fn start_claudecode_oauth(
             &self,
             _request: &crate::models::StartPkceOAuthRequest,
-        ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
             Ok(StartPkceOAuthResponse {
                 session_id: "claudecode-session".to_owned(),
                 auth_url: "https://example.test/claudecode/start".to_owned(),
@@ -362,8 +364,8 @@ mod tests {
         fn exchange_claudecode_oauth(
             &self,
             _request: &crate::models::ExchangeCallbackOAuthRequest,
-        ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
-            Err(ProviderEdgeAdminError::BadGateway {
+        ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
+            Err(OauthProviderAdminError::BadGateway {
                 message: "claudecode upstream failure".to_owned(),
             })
         }
@@ -371,7 +373,7 @@ mod tests {
         fn start_antigravity_oauth(
             &self,
             _request: &crate::models::StartAntigravityOAuthRequest,
-        ) -> Result<StartPkceOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<StartPkceOAuthResponse, OauthProviderAdminError> {
             Ok(StartPkceOAuthResponse {
                 session_id: "antigravity-session".to_owned(),
                 auth_url: "https://example.test/antigravity/start".to_owned(),
@@ -381,7 +383,7 @@ mod tests {
         fn exchange_antigravity_oauth(
             &self,
             _request: &crate::models::ExchangeCallbackOAuthRequest,
-        ) -> Result<ExchangeOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<ExchangeOAuthResponse, OauthProviderAdminError> {
             Ok(ExchangeOAuthResponse {
                 credentials: "refresh-token|project-123".to_owned(),
             })
@@ -390,7 +392,7 @@ mod tests {
         fn start_copilot_oauth(
             &self,
             _request: &crate::models::StartCopilotOAuthRequest,
-        ) -> Result<StartCopilotOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<StartCopilotOAuthResponse, OauthProviderAdminError> {
             Ok(StartCopilotOAuthResponse {
                 session_id: "copilot-session".to_owned(),
                 user_code: "ABCD-EFGH".to_owned(),
@@ -403,7 +405,7 @@ mod tests {
         fn poll_copilot_oauth(
             &self,
             _request: &crate::models::PollCopilotOAuthRequest,
-        ) -> Result<PollCopilotOAuthResponse, ProviderEdgeAdminError> {
+        ) -> Result<PollCopilotOAuthResponse, OauthProviderAdminError> {
             Ok(PollCopilotOAuthResponse {
                 access_token: Some("gho_token".to_owned()),
                 token_type: Some("bearer".to_owned()),
@@ -440,8 +442,8 @@ mod tests {
             openapi_graphql: OpenApiGraphqlCapability::Unsupported {
                 message: "unused".to_owned(),
             },
-            provider_edge_admin: ProviderEdgeAdminCapability::Available {
-                provider_edge: Arc::new(RecordingProviderEdgePort),
+            oauth_provider_admin: OauthProviderAdminCapability::Available {
+                oauth_provider_admin: Arc::new(RecordingOauthProviderAdminPort),
             },
             allow_no_auth: false,
             cors: crate::state::HttpCorsSettings::default(),

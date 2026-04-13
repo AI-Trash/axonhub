@@ -1,8 +1,8 @@
 use crate::models::{CompatibilityRoute, InitializeSystemResponse, NotImplementedResponse};
-use crate::ports::{OpenAiV1Error, ProviderEdgeAdminError};
+use crate::ports::{OauthProviderAdminError, OpenAiV1Error};
 use crate::state::transport::{
     ErrorResponseSpec, JsonValueResponse, NotImplementedRoute, translate_compatibility_error,
-    translate_openai_error, translate_provider_edge_admin_error,
+    translate_oauth_provider_admin_error, translate_openai_error,
 };
 use actix_web::http::{Method, StatusCode, Uri};
 use actix_web::{HttpResponse, HttpResponseBuilder};
@@ -47,8 +47,8 @@ pub(crate) fn compatibility_internal_error_response(route: CompatibilityRoute) -
     )
 }
 
-pub(crate) fn provider_edge_admin_error_response(error: ProviderEdgeAdminError) -> HttpResponse {
-    response_from_json(translate_provider_edge_admin_error(error))
+pub(crate) fn oauth_provider_admin_error_response(error: OauthProviderAdminError) -> HttpResponse {
+    response_from_json(translate_oauth_provider_admin_error(error))
 }
 
 pub(crate) fn compatibility_error_response(
@@ -105,25 +105,26 @@ fn response_from_json(payload: JsonValueResponse) -> HttpResponse {
     HttpResponseBuilder::new(status).json(payload.body)
 }
 
-pub(crate) async fn execute_provider_edge_admin_request<T, Executor>(
-    provider_edge: std::sync::Arc<dyn crate::ports::ProviderEdgeAdminPort>,
+pub(crate) async fn execute_oauth_provider_admin_request<T, Executor>(
+    oauth_provider_admin: std::sync::Arc<dyn crate::ports::OauthProviderAdminPort>,
     executor: Executor,
 ) -> HttpResponse
 where
     T: Serialize + Send + 'static,
     Executor: FnOnce(
-            std::sync::Arc<dyn crate::ports::ProviderEdgeAdminPort>,
-        ) -> Result<T, ProviderEdgeAdminError>
+            std::sync::Arc<dyn crate::ports::OauthProviderAdminPort>,
+        ) -> Result<T, OauthProviderAdminError>
         + Send
         + 'static,
 {
-    let execution_result = tokio::task::spawn_blocking(move || executor(provider_edge)).await;
+    let execution_result =
+        tokio::task::spawn_blocking(move || executor(oauth_provider_admin)).await;
 
     match execution_result {
         Ok(Ok(response)) => HttpResponse::Ok().json(response),
-        Ok(Err(error)) => provider_edge_admin_error_response(error),
-        Err(_) => provider_edge_admin_error_response(ProviderEdgeAdminError::Internal {
-            message: "Provider-edge admin execution task failed".to_owned(),
+        Ok(Err(error)) => oauth_provider_admin_error_response(error),
+        Err(_) => oauth_provider_admin_error_response(OauthProviderAdminError::Internal {
+            message: "OAuth provider admin execution task failed".to_owned(),
         }),
     }
 }

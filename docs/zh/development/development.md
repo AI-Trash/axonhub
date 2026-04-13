@@ -7,9 +7,9 @@ AxonHub 在此仓库中的 canonical 后端实现已经是 Rust。
 - **Canonical 后端路径：** 以 `Cargo.toml` 为根的 Cargo workspace
 - **旧 Go 参考/oracle 树：** `cmd/axonhub/main.go`、`conf/conf.go`、`internal/server/`
 
-### Rust 切片当前覆盖范围（已验证）
+### Rust 切片当前覆盖范围
 
-Rust 切片实现了以下已验证的 SQLite 和 PostgreSQL 能力面：
+Rust 切片实现了以下面向 SQLite 和 PostgreSQL 的能力面。就当前仓库而言，最强的自包含自动化验证主要集中在 SQLite 支撑的 Rust 路径；PostgreSQL 仍然是 Rust 侧的 canonical 支持运行目标，但这里不再把它表述为与 SQLite 在同一套仓库内测试面上“同等完整已验证”。
 
 - **配置与 CLI**: 配置加载、CLI 兼容（`config preview`、`config validate`、`config get`、`version`、`help`）
 - **健康与系统**: `/health`、`GET /admin/system/status`、`POST /admin/system/initialize`
@@ -20,7 +20,7 @@ Rust 切片实现了以下已验证的 SQLite 和 PostgreSQL 能力面：
 - **OpenAI 兼容 `/v1` 推理**: `/models`、`/chat/completions`、`/responses`、`/responses/compact`、`/embeddings`、`/messages`、`/rerank`、`/images/generations`、`/images/edits`、`POST /v1/realtime` 以及 realtime session 系列路由
 - **视频生成**: `POST /v1/videos`、`GET /v1/videos/{id}`、`DELETE /v1/videos/{id}`
 - **其他提供商 API**: Jina、Anthropic、Gemini、Doubao 等路由（见 routes 文件）
-- **数据库支持**: SQLite 和 PostgreSQL 是 Rust 目标态契约中已完整验证的数据库
+- **数据库支持**: SQLite 是当前仓库内自验证最充分的 Rust 路径；PostgreSQL 仍然是 Rust 目标态契约中的 canonical 支持运行目标
 
 ### Rust 切片剩余工作（明确分桶）
 

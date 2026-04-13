@@ -1,6 +1,6 @@
 # AxonHub Helm Chart
 
-> **Important:** This Helm chart targets the canonical Rust container image. The default image is `ghcr.io/summpot/axonhub:latest`, and you can override it to a version tag such as `ghcr.io/summpot/axonhub:v0.9.27`. PostgreSQL is the verified production path for this chart; MySQL is outside the Rust target-state support contract in this repository.
+> **Important:** This Helm chart targets the canonical Rust container image. The default image is `ghcr.io/summpot/axonhub:latest`, and you can override it to a version tag such as `ghcr.io/summpot/axonhub:v0.9.27`. PostgreSQL is the intended and supported database path for this chart; MySQL is outside the Rust target-state support contract in this repository.
 
 This Helm chart deploys AxonHub on Kubernetes with PostgreSQL database.
 

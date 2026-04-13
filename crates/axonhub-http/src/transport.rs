@@ -3,7 +3,7 @@ use crate::models::{
     ProjectContext, TraceConfig,
 };
 use crate::ports::{
-    AdminAuthError, ApiKeyAuthError, ContextResolveError, OpenAiV1Error, ProviderEdgeAdminError,
+    AdminAuthError, ApiKeyAuthError, ContextResolveError, OauthProviderAdminError, OpenAiV1Error,
 };
 use crate::state::{
     IdentityCapability, RequestAuthContext, RequestContextCapability, RequestContextState,
@@ -632,17 +632,17 @@ pub(crate) fn translate_openai_error(error: OpenAiV1Error) -> JsonValueResponse 
     }
 }
 
-pub(crate) fn translate_provider_edge_admin_error(
-    error: ProviderEdgeAdminError,
+pub(crate) fn translate_oauth_provider_admin_error(
+    error: OauthProviderAdminError,
 ) -> JsonValueResponse {
     match error {
-        ProviderEdgeAdminError::InvalidRequest { message } => {
+        OauthProviderAdminError::InvalidRequest { message } => {
             ErrorResponseSpec::new(400, "Bad Request", message).into_json()
         }
-        ProviderEdgeAdminError::BadGateway { message } => {
+        OauthProviderAdminError::BadGateway { message } => {
             ErrorResponseSpec::new(502, "Bad Gateway", message).into_json()
         }
-        ProviderEdgeAdminError::Internal { message } => {
+        OauthProviderAdminError::Internal { message } => {
             ErrorResponseSpec::new(500, "Internal Server Error", message).into_json()
         }
     }

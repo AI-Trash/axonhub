@@ -2,7 +2,7 @@ use super::build_info::{version, BuildInfo};
 use super::capabilities::{
     build_admin_capability, build_admin_graphql_capability, build_identity_capability,
     build_openai_v1_capability, build_openapi_graphql_capability,
-    build_provider_edge_admin_capability, build_request_context_capability,
+    build_oauth_provider_admin_capability, build_request_context_capability,
     build_system_bootstrap_capability,
 };
 use super::cli::{
@@ -10,8 +10,8 @@ use super::cli::{
 };
 use super::server::startup_messages;
 use crate::foundation::{
+    admin::oauth::OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS,
     request_context::parse_onboarding_record,
-    provider_edge::PROVIDER_EDGE_REQUIRED_ENV_VARS,
     shared::{
         DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
         SYSTEM_KEY_BRAND_NAME, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_ONBOARDED,
@@ -20,7 +20,7 @@ use crate::foundation::{
     system::{hash_password, SqliteBootstrapService, SqliteFoundation},
 };
 use axonhub_http::{
-    HttpCorsSettings, HttpState, InitializeSystemRequest, ProviderEdgeAdminCapability,
+    HttpCorsSettings, HttpState, InitializeSystemRequest, OauthProviderAdminCapability,
     SystemBootstrapCapability, SystemBootstrapPort, SystemInitializeError, TraceConfig,
     router as http_router,
 };
@@ -34,18 +34,14 @@ use actix_web::dev::ServiceResponse;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
 use clap::{error::ErrorKind, CommandFactory};
-use pg_embed::pg_enums::PgAuthMethod;
-use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
-use pg_embed::postgres::{PgEmbed, PgSettings};
-use postgres::{Client as PostgresClient, NoTls};
-use rusqlite::OptionalExtension;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn disabled_test_cors() -> HttpCorsSettings {
     HttpCorsSettings::default()
@@ -258,73 +254,27 @@ fn temp_sqlite_path(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("axonhub-{name}-{unique}.db"))
 }
 
-fn temp_postgres_dir(name: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!("axonhub-{name}-{unique}"))
-}
-
-fn available_tcp_port() -> u16 {
-    TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("bind ephemeral port")
-        .local_addr()
-        .expect("read local addr")
-        .port()
-}
-
-async fn start_embedded_postgres(name: &str) -> (PgEmbed, String, PathBuf) {
-    let data_dir = temp_postgres_dir(name);
-    let port = available_tcp_port();
-    let settings = PgSettings {
-        database_dir: data_dir.clone(),
-        port,
-        user: "postgres".to_owned(),
-        password: "postgres".to_owned(),
-        auth_method: PgAuthMethod::Plain,
-        persistent: false,
-        timeout: Some(Duration::from_secs(60)),
-        migration_dir: None,
-    };
-
-    let mut pg = PgEmbed::new(
-        settings,
-        PgFetchSettings {
-            version: PG_V15,
-            ..Default::default()
-        },
-    )
-    .await
-    .expect("create embedded postgres");
-    pg.setup().await.expect("setup embedded postgres");
-    pg.start_db().await.expect("start embedded postgres");
-
-    let dsn = pg.full_db_uri("postgres");
-    (pg, dsn, data_dir)
-}
-
-fn provider_edge_env_lock() -> &'static Mutex<()> {
+fn oauth_provider_env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-struct ProviderEdgeEnvFixture {
+struct OAuthProviderEnvFixture {
     _guard: MutexGuard<'static, ()>,
     previous: Vec<(&'static str, Option<String>)>,
 }
 
-impl ProviderEdgeEnvFixture {
+impl OAuthProviderEnvFixture {
     fn new() -> Self {
-        let guard = provider_edge_env_lock()
+        let guard = oauth_provider_env_lock()
             .lock()
-            .expect("lock provider-edge env fixture");
-        let previous = PROVIDER_EDGE_REQUIRED_ENV_VARS
+            .expect("lock oauth provider env fixture");
+        let previous = OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS
             .iter()
             .map(|key| (*key, std::env::var(key).ok()))
             .collect::<Vec<_>>();
 
-        for key in PROVIDER_EDGE_REQUIRED_ENV_VARS {
+        for key in OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS {
             std::env::remove_var(key);
         }
 
@@ -335,13 +285,13 @@ impl ProviderEdgeEnvFixture {
     }
 
     fn set_all(&self) {
-        for (key, value) in provider_edge_env_values() {
+        for (key, value) in oauth_provider_env_values() {
             std::env::set_var(key, value);
         }
     }
 }
 
-impl Drop for ProviderEdgeEnvFixture {
+impl Drop for OAuthProviderEnvFixture {
     fn drop(&mut self) {
         for (key, value) in &self.previous {
             match value {
@@ -352,7 +302,7 @@ impl Drop for ProviderEdgeEnvFixture {
     }
 }
 
-fn provider_edge_env_values() -> Vec<(&'static str, &'static str)> {
+fn oauth_provider_env_values() -> Vec<(&'static str, &'static str)> {
     vec![
         (
             "AXONHUB_PROVIDER_EDGE_CODEX_AUTHORIZE_URL",
@@ -911,188 +861,6 @@ fn sqlite_bootstrap_returns_already_initialized_on_second_call() {
 }
 
 #[test]
-fn postgres_bootstrap_capability_is_available_and_persists_initialized_state() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut embedded_pg, dsn, data_dir) =
-        runtime.block_on(start_embedded_postgres("postgres-bootstrap-capability"));
-
-    let capability = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match capability {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-
-    assert!(!system.is_initialized().unwrap());
-
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    assert!(system.is_initialized().unwrap());
-
-    let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-    let row = connection
-        .query_one(
-            "SELECT value FROM systems WHERE key = $1 AND deleted_at = 0",
-            &[&SYSTEM_KEY_VERSION],
-        )
-        .unwrap();
-    let version: String = row.get(0);
-    assert_eq!(version, "v0.9.20");
-
-    runtime.block_on(embedded_pg.stop_db()).unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-}
-
-#[test]
-fn postgres_identity_capability_supports_signin_jwt_and_service_api_key_auth() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut embedded_pg, dsn, data_dir) =
-        runtime.block_on(start_embedded_postgres("postgres-identity-capability"));
-
-    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match bootstrap {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    let capability = build_identity_capability("postgresql", &dsn, false);
-    let identity = match capability {
-        IdentityCapability::Available { identity } => identity,
-        IdentityCapability::Unsupported { message } => {
-            panic!("Expected postgres identity capability to be available: {message}");
-        }
-    };
-
-    let signin = identity
-        .admin_signin(&SignInRequest {
-            email: "owner@example.com".to_owned(),
-            password: "password123".to_owned(),
-        })
-        .unwrap();
-    assert_eq!(signin.user.email, "owner@example.com");
-    assert!(signin.user.is_owner);
-    assert!(!signin.token.is_empty());
-
-    let jwt_user = identity.authenticate_admin_jwt(&signin.token).unwrap();
-    assert_eq!(jwt_user.email, "owner@example.com");
-    assert!(jwt_user.is_owner);
-
-    let api_key = identity
-        .authenticate_api_key(Some("service-key-123"), false)
-        .unwrap();
-    assert_eq!(api_key.project.id, 1);
-    assert_eq!(api_key.project.name, "Default Project");
-    assert_eq!(api_key.key_type, axonhub_http::ApiKeyType::ServiceAccount);
-
-    runtime.block_on(embedded_pg.stop_db()).unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-}
-
-#[test]
-fn postgres_request_context_capability_resolves_project_thread_and_trace() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut embedded_pg, dsn, data_dir) = runtime.block_on(start_embedded_postgres(
-        "postgres-request-context-capability",
-    ));
-
-    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match bootstrap {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    let capability = build_request_context_capability("postgres", &dsn, false);
-    let request_context = match capability {
-        RequestContextCapability::Available { request_context } => request_context,
-        RequestContextCapability::Unsupported { message } => {
-            panic!("Expected postgres request-context capability to be available: {message}");
-        }
-    };
-
-    let project = request_context.resolve_project(1).unwrap().unwrap();
-    assert_eq!(project.id, 1);
-    assert_eq!(project.name, "Default Project");
-
-    let thread = request_context
-        .resolve_thread(project.id, "thread-postgres-1")
-        .unwrap()
-        .unwrap();
-    let same_thread = request_context
-        .resolve_thread(project.id, "thread-postgres-1")
-        .unwrap()
-        .unwrap();
-    assert_eq!(same_thread.id, thread.id);
-    assert_eq!(same_thread.thread_id, "thread-postgres-1");
-
-    let trace = request_context
-        .resolve_trace(project.id, "trace-postgres-1", Some(thread.id))
-        .unwrap()
-        .unwrap();
-    let same_trace = request_context
-        .resolve_trace(project.id, "trace-postgres-1", Some(thread.id))
-        .unwrap()
-        .unwrap();
-    assert_eq!(same_trace.id, trace.id);
-    assert_eq!(same_trace.thread_id, Some(thread.id));
-    assert!(matches!(
-        request_context.resolve_trace(project.id, "trace-postgres-missing-thread", Some(thread.id + 10_000)),
-        Err(ContextResolveError::Internal)
-    ));
-
-    let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-    let thread_count: i64 = connection
-        .query_one(
-            "SELECT COUNT(*) FROM threads WHERE thread_id = $1",
-            &[&"thread-postgres-1"],
-        )
-        .unwrap()
-        .get(0);
-    let trace_count: i64 = connection
-        .query_one(
-            "SELECT COUNT(*) FROM traces WHERE trace_id = $1",
-            &[&"trace-postgres-1"],
-        )
-        .unwrap()
-        .get(0);
-    assert_eq!(thread_count, 1);
-    assert_eq!(trace_count, 1);
-
-    runtime.block_on(embedded_pg.stop_db()).unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-}
-
-#[test]
 fn sqlite_bootstrap_seeds_default_onboarding_baseline() {
     let db_path = temp_sqlite_path("sqlite-bootstrap-onboarding");
     let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
@@ -1108,1290 +876,25 @@ fn sqlite_bootstrap_seeds_default_onboarding_baseline() {
         })
         .unwrap();
 
-    let connection = foundation.open_connection(false).unwrap();
-    let onboarding_raw: String = connection
-        .query_row(
-            "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0 LIMIT 1",
-            [SYSTEM_KEY_ONBOARDED],
-            |row| row.get(0),
-        )
+    let onboarding_raw = foundation
+        .seaorm()
+        .run_sync(|db| async move {
+            let connection = db.connect_migrated().await.unwrap();
+            axonhub_db_entity::systems::Entity::find()
+                .filter(axonhub_db_entity::systems::Column::Key.eq(SYSTEM_KEY_ONBOARDED))
+                .filter(axonhub_db_entity::systems::Column::DeletedAt.eq(0_i64))
+                .into_partial_model::<axonhub_db_entity::systems::KeyValue>()
+                .one(&connection)
+                .await
+                .unwrap()
+                .map(|row| row.value)
+        })
         .unwrap();
+    let onboarding_raw = onboarding_raw.expect("onboarding record exists after bootstrap");
     let onboarding = parse_onboarding_record(&onboarding_raw).unwrap();
     assert_eq!(onboarding, Default::default());
 
     std::fs::remove_file(db_path).ok();
-}
-
-#[tokio::test]
-async fn postgres_router_signin_and_debug_context_routes_work_for_auth_and_context() {
-    let (mut embedded_pg, dsn, data_dir) =
-        start_embedded_postgres("postgres-auth-context-router").await;
-
-    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match bootstrap {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    let state = HttpState {
-        service_name: "AxonHub".to_owned(),
-        version: "v0.9.20".to_owned(),
-        config_source: None,
-        system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-        identity: build_identity_capability("postgres", &dsn, false),
-        request_context: build_request_context_capability("postgres", &dsn, false),
-        openai_v1: build_openai_v1_capability("postgres", &dsn),
-        admin: build_admin_capability("postgres", &dsn),
-        admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-        openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-        },
-        allow_no_auth: false,
-        cors: disabled_test_cors(),
-        trace_config: TraceConfig {
-            thread_header: Some("AH-Thread-Id".to_owned()),
-            trace_header: Some("AH-Trace-Id".to_owned()),
-            request_header: Some("X-Request-Id".to_owned()),
-            extra_trace_headers: Vec::new(),
-            extra_trace_body_fields: Vec::new(),
-            claude_code_trace_enabled: false,
-            codex_trace_enabled: false,
-        },
-    };
-
-    let app = router(state);
-
-    let signin_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/admin/auth/signin")
-                .method(Method::POST.as_str())
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{"email":"owner@example.com","password":"password123"}"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(signin_response.status(), StatusCode::OK);
-    let signin_body = read_body(signin_response).await;
-    let signin_json = serde_json::from_slice::<serde_json::Value>(&signin_body).unwrap();
-    let token = signin_json["token"]
-        .as_str()
-        .expect("expected jwt token")
-        .to_owned();
-    assert_eq!(signin_json["user"]["email"], "owner@example.com");
-
-    let admin_debug_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/admin/debug/context")
-                .method(Method::GET.as_str())
-                .header("Authorization", format!("Bearer {token}"))
-                .header("X-Project-ID", "gid://axonhub/project/1")
-                .header("AH-Thread-Id", "thread-router-postgres")
-                .header("AH-Trace-Id", "trace-router-postgres")
-                .header("X-Request-Id", "req-router-postgres")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(admin_debug_response.status(), StatusCode::OK);
-    let admin_debug_body = read_body(admin_debug_response).await;
-    let admin_debug_json = serde_json::from_slice::<serde_json::Value>(&admin_debug_body).unwrap();
-    assert_eq!(admin_debug_json["auth"]["mode"], "jwt");
-    assert_eq!(admin_debug_json["auth"]["user_id"], 1);
-    assert_eq!(admin_debug_json["project"]["id"], 1);
-    assert_eq!(
-        admin_debug_json["thread"]["threadId"],
-        "thread-router-postgres"
-    );
-    assert_eq!(
-        admin_debug_json["trace"]["traceId"],
-        "trace-router-postgres"
-    );
-    assert_eq!(admin_debug_json["requestId"], "req-router-postgres");
-
-    let openapi_debug_response = app
-        .oneshot(
-            Request::builder()
-                .uri("/openapi/debug/context")
-                .method(Method::GET.as_str())
-                .header("Authorization", "Bearer service-key-123")
-                .header("AH-Thread-Id", "thread-service-postgres")
-                .header("AH-Trace-Id", "trace-service-postgres")
-                .header("X-Request-Id", "req-service-postgres")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(openapi_debug_response.status(), StatusCode::OK);
-    let openapi_debug_body = read_body(openapi_debug_response).await;
-    let openapi_debug_json =
-        serde_json::from_slice::<serde_json::Value>(&openapi_debug_body).unwrap();
-    assert_eq!(openapi_debug_json["auth"]["mode"], "api_key");
-    assert_eq!(openapi_debug_json["auth"]["api_key_id"], 2);
-    assert_eq!(
-        openapi_debug_json["auth"]["api_key_type"],
-        "service_account"
-    );
-    assert_eq!(openapi_debug_json["project"]["id"], 1);
-    assert_eq!(
-        openapi_debug_json["thread"]["threadId"],
-        "thread-service-postgres"
-    );
-    assert_eq!(
-        openapi_debug_json["trace"]["traceId"],
-        "trace-service-postgres"
-    );
-    assert_eq!(openapi_debug_json["requestId"], "req-service-postgres");
-
-    embedded_pg.stop_db().await.unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-}
-
-#[test]
-fn postgres_admin_request_content_route_downloads_seeded_content() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (mut embedded_pg, dsn, data_dir) =
-        runtime.block_on(start_embedded_postgres("postgres-admin-request-content"));
-    let content_dir = temp_postgres_dir("postgres-admin-request-content-files");
-    std::fs::create_dir_all(&content_dir).unwrap();
-
-    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match bootstrap {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    let identity = match build_identity_capability("postgres", &dsn, false) {
-        IdentityCapability::Available { identity } => identity,
-        IdentityCapability::Unsupported { message } => {
-            panic!("Expected postgres identity capability to be available: {message}");
-        }
-    };
-    let token = identity
-        .admin_signin(&SignInRequest {
-            email: "owner@example.com".to_owned(),
-            password: "password123".to_owned(),
-        })
-        .unwrap()
-        .token;
-
-    let (project_id, request_id) = {
-        let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-        let project_id: i64 = connection
-            .query_one(
-                "SELECT id FROM projects WHERE deleted_at = 0 ORDER BY id ASC LIMIT 1",
-                &[],
-            )
-            .unwrap()
-            .get(0);
-        let storage_settings = serde_json::json!({
-            "directory": content_dir.to_string_lossy(),
-        })
-        .to_string();
-        let storage_params: [&(dyn postgres::types::ToSql + Sync); 3] = [
-            &"Postgres Request Content FS",
-            &"postgres-admin-read-test",
-            &storage_settings,
-        ];
-        let storage_id: i64 = connection
-            .query_one(
-                "INSERT INTO data_storages (name, description, \"primary\", type, settings, status, deleted_at)
-                 VALUES ($1, $2, FALSE, 'fs', $3, 'active', 0)
-                 RETURNING id",
-                &storage_params,
-            )
-            .unwrap()
-            .get(0);
-
-        let request_id: i64 = connection
-            .query_one(
-                "INSERT INTO requests (
-                    api_key_id, project_id, trace_id, data_storage_id, source, model_id, format,
-                    request_headers, request_body, response_body, response_chunks, channel_id,
-                    external_id, status, stream, client_ip, metrics_latency_ms,
-                    metrics_first_token_latency_ms, content_saved, content_storage_id,
-                    content_storage_key, content_saved_at
-                ) VALUES (
-                    NULL, $1, NULL, $2, 'api', 'gpt-4o', 'openai/video',
-                    '{}', '{}', NULL, NULL, NULL,
-                    NULL, 'completed', FALSE, '', NULL,
-                    NULL, TRUE, $2,
-                    '', '2026-03-23T00:00:00Z'
-                ) RETURNING id",
-                &[&project_id, &storage_id],
-            )
-            .unwrap()
-            .get(0);
-
-        let content_key = format!("/{project_id}/requests/{request_id}/video/video.mp4");
-        let update_params: [&(dyn postgres::types::ToSql + Sync); 2] = [&request_id, &content_key];
-        connection
-            .execute(
-                "UPDATE requests SET content_storage_key = $2 WHERE id = $1",
-                &update_params,
-            )
-            .unwrap();
-
-        (project_id, request_id)
-    };
-
-    let full_path = content_dir.join(format!(
-        "{project_id}/requests/{request_id}/video/video.mp4"
-    ));
-    std::fs::create_dir_all(full_path.parent().unwrap()).unwrap();
-    std::fs::write(&full_path, b"postgres-video-content").unwrap();
-
-    let state = HttpState { service_name: "AxonHub".to_owned(),
-    version: "v0.9.20".to_owned(),
-    config_source: None,
-    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-    identity: build_identity_capability("postgres", &dsn, false),
-    request_context: build_request_context_capability("postgres", &dsn, false),
-    openai_v1: build_openai_v1_capability("postgres", &dsn),
-    admin: build_admin_capability("postgresql", &dsn),
-    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
-        thread_header: Some("AH-Thread-Id".to_owned()),
-        trace_header: Some("AH-Trace-Id".to_owned()),
-        request_header: Some("X-Request-Id".to_owned()),
-        extra_trace_headers: Vec::new(),
-        extra_trace_body_fields: Vec::new(),
-        claude_code_trace_enabled: false,
-        codex_trace_enabled: false,
-    },  };
-
-    let response = runtime
-        .block_on(
-            router(state).oneshot(
-                Request::builder()
-                    .uri(format!("/admin/requests/{request_id}/content"))
-                    .method(Method::GET.as_str())
-                    .header("Authorization", format!("Bearer {token}"))
-                    .header(
-                        "X-Project-ID",
-                        format!("gid://axonhub/project/{project_id}"),
-                    )
-                    .body(Body::empty())
-                    .unwrap(),
-            ),
-        )
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(response
-        .headers()
-        .get("content-disposition")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .contains("video.mp4"));
-    let body = runtime
-        .block_on(actix_web::body::to_bytes(response.into_body()))
-        .unwrap();
-    assert_eq!(body.as_ref(), b"postgres-video-content");
-
-    runtime.block_on(embedded_pg.stop_db()).unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-    std::fs::remove_dir_all(content_dir).ok();
-}
-
-#[tokio::test]
-async fn postgres_admin_graphql_route_executes_current_subset() {
-    let (mut embedded_pg, dsn, data_dir) =
-        start_embedded_postgres("postgres-admin-graphql-subset").await;
-
-    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match bootstrap {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    let identity = match build_identity_capability("postgres", &dsn, false) {
-        IdentityCapability::Available { identity } => identity,
-        IdentityCapability::Unsupported { message } => {
-            panic!("Expected postgres identity capability to be available: {message}");
-        }
-    };
-    let token = identity
-        .admin_signin(&SignInRequest {
-            email: "owner@example.com".to_owned(),
-            password: "password123".to_owned(),
-        })
-        .unwrap()
-        .token;
-
-    std::thread::spawn({
-        let dsn = dsn.clone();
-        move || {
-            let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-            connection
-                .execute(
-                    "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at)
-                     VALUES ($1, $2, $3, 'enabled', $4, $5, FALSE, '', $6, $7, $8, '', '', 0)",
-                    &[
-                        &"openai",
-                        &"https://models.example.test/v1",
-                        &"Task12 QueryModels Channel",
-                        &r#"{"apiKey":"test-upstream-key"}"#,
-                        &r#"["gpt-4"]"#,
-                        &r#"{"queryAllChannelModels":true}"#,
-                        &"[]",
-                        &100_i32,
-                    ],
-                )
-                .unwrap();
-            connection
-                .execute(
-                    "INSERT INTO systems (key, value, deleted_at) VALUES ($1, $2, 0)",
-                    &[
-                        &"system_channel_settings",
-                        &r#"{"probe":{"enabled":true,"frequency":"FiveMinutes"},"query_all_channel_models":true}"#,
-                    ],
-                )
-                .unwrap();
-            connection
-                .execute(
-                    "INSERT INTO models (developer, model_id, type, name, icon, \"group\", remark, model_card, settings, status)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-                    &[
-                        &"openai",
-                        &"gpt-4",
-                        &"chat",
-                        &"GPT-4",
-                        &"icon",
-                        &"openai",
-                        &"Test model",
-                        &"{}",
-                        &"{}",
-                        &"enabled",
-                    ],
-                )
-                .unwrap();
-            connection
-                .execute(
-                    "INSERT INTO models (developer, model_id, type, name, icon, \"group\", remark, model_card, settings, status)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-                    &[
-                        &"anthropic",
-                        &"claude-3",
-                        &"chat",
-                        &"Claude 3",
-                        &"icon",
-                        &"anthropic",
-                        &"Test model 2",
-                        &"{}",
-                        &"{}",
-                        &"disabled",
-                    ],
-                )
-                .unwrap();
-        }
-    })
-    .join()
-    .expect("postgres model seed thread");
-
-    let state = HttpState { service_name: "AxonHub".to_owned(),
-    version: "v0.9.20".to_owned(),
-    config_source: None,
-    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-    identity: build_identity_capability("postgres", &dsn, false),
-    request_context: build_request_context_capability("postgres", &dsn, false),
-    openai_v1: build_openai_v1_capability("postgres", &dsn),
-    admin: build_admin_capability("postgres", &dsn),
-    admin_graphql: build_admin_graphql_capability("postgresql", &dsn),
-    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
-        thread_header: Some("AH-Thread-Id".to_owned()),
-        trace_header: Some("AH-Trace-Id".to_owned()),
-        request_header: Some("X-Request-Id".to_owned()),
-        extra_trace_headers: Vec::new(),
-        extra_trace_body_fields: Vec::new(),
-        claude_code_trace_enabled: false,
-        codex_trace_enabled: false,
-    },  };
-
-    let response = router(state)
-        .oneshot(
-            Request::builder()
-                .uri("/admin/graphql")
-                .method(Method::POST.as_str())
-                .header("Authorization", format!("Bearer {token}"))
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{
-                        "query": "query Models($input: QueryModelsInput!) { queryModels(input: $input) { id status } }",
-                        "variables": { "input": {} }
-                    }"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
-    assert!(json.get("errors").map(|v| v.is_null()).unwrap_or(true));
-    let models = json["data"]["queryModels"]
-        .as_array()
-        .expect("expected queryModels array");
-    assert_eq!(models.len(), 1);
-    assert_eq!(models[0]["id"], "gid://axonhub/model/1");
-    assert_eq!(models[0]["status"], "enabled");
-
-    embedded_pg.stop_db().await.unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-}
-
-#[tokio::test]
-async fn postgres_openai_v1_subset_routes_execute_and_support_image_generations_truthfully() {
-    let (mut embedded_pg, dsn, data_dir) =
-        start_embedded_postgres("postgres-openai-v1-subset").await;
-
-    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match bootstrap {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    std::thread::spawn({
-        let dsn = dsn.clone();
-        move || {
-            let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-            let base_url = mock_openai_v1_runtime_server_url().to_owned();
-            let channel_rows = [
-                (
-                    "OpenAI Mock",
-                    "openai",
-                    base_url.clone(),
-                    r#"["gpt-4o"]"#,
-                    100_i64,
-                ),
-                (
-                    "Anthropic Alias Mock",
-                    "openai",
-                    base_url.clone(),
-                    r#"["claude-3-5-sonnet"]"#,
-                    95_i64,
-                ),
-                (
-                    "Jina Embeddings Mock",
-                    "jina",
-                    base_url.clone(),
-                    r#"["jina-embeddings-v3"]"#,
-                    90_i64,
-                ),
-                (
-                    "Jina Rerank Mock",
-                    "jina",
-                    base_url.clone(),
-                    r#"["jina-reranker-v2-base-multilingual"]"#,
-                    85_i64,
-                ),
-                (
-                    "OpenAI Image Mock",
-                    "openai",
-                    base_url.clone(),
-                    r#"["gpt-image-1"]"#,
-                    80_i64,
-                ),
-            ];
-            for (name, channel_type, base_url, supported_models, ordering_weight) in channel_rows {
-                let ordering_weight_i32 = ordering_weight as i32;
-                let params: [&(dyn postgres::types::ToSql + Sync); 8] = [
-                    &channel_type,
-                    &base_url,
-                    &name,
-                    &r#"{"apiKey":"test-upstream-key"}"#,
-                    &supported_models,
-                    &"{}",
-                    &"[]",
-                    &ordering_weight_i32,
-                ];
-                connection
-                    .execute(
-                        "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at)
-                         VALUES ($1, $2, $3, 'enabled', $4, $5, FALSE, '', $6, $7, $8, '', '', 0)",
-                        &params,
-                    )
-                    .unwrap();
-            }
-
-            let model_rows = [
-                (
-                    "openai",
-                    "gpt-4o",
-                    "chat",
-                    "GPT-4o",
-                    "OpenAI",
-                    "openai",
-                    r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0,"cacheRead":0.5,"cacheWrite":0.25,"cacheWrite5m":0.125},"vision":true,"toolCall":true,"reasoning":{"supported":true},"costPriceReferenceId":"price-ref-task9"}"#,
-                ),
-                (
-                    "anthropic",
-                    "claude-3-5-sonnet",
-                    "chat",
-                    "Claude 3.5 Sonnet",
-                    "Anthropic",
-                    "anthropic",
-                    r#"{"limit":{"context":200000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                ),
-                (
-                    "jina",
-                    "jina-embeddings-v3",
-                    "embedding",
-                    "Jina Embeddings v3",
-                    "Jina",
-                    "jina",
-                    r#"{"limit":{"context":8192,"output":0},"cost":{"input":1.0,"output":0.0}}"#,
-                ),
-                (
-                    "jina",
-                    "jina-reranker-v2-base-multilingual",
-                    "rerank",
-                    "Jina Reranker",
-                    "Jina",
-                    "jina",
-                    r#"{"limit":{"context":8192,"output":0},"cost":{"input":1.0,"output":0.0}}"#,
-                ),
-                (
-                    "openai",
-                    "gpt-image-1",
-                    "image",
-                    "GPT Image 1",
-                    "OpenAI",
-                    "openai",
-                    r#"{"limit":{"context":8192,"output":0},"cost":{"input":1.0,"output":2.0}}"#,
-                ),
-            ];
-            for (developer, model_id, model_type, name, icon, group_name, model_card_json) in model_rows {
-                let params: [&(dyn postgres::types::ToSql + Sync); 7] = [
-                    &developer,
-                    &model_id,
-                    &model_type,
-                    &name,
-                    &icon,
-                    &group_name,
-                    &model_card_json,
-                ];
-                connection
-                    .execute(
-                        "INSERT INTO models (developer, model_id, type, name, icon, \"group\", model_card, settings, status, remark, deleted_at)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, '{}', 'enabled', '', 0)",
-                        &params,
-                    )
-                    .unwrap();
-            }
-        }
-    })
-    .join()
-    .expect("postgres /v1 seed thread");
-
-    let state = HttpState { service_name: "AxonHub".to_owned(),
-    version: "v0.9.20".to_owned(),
-    config_source: None,
-    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-    identity: build_identity_capability("postgres", &dsn, false),
-    request_context: build_request_context_capability("postgres", &dsn, false),
-    openai_v1: build_openai_v1_capability("postgresql", &dsn),
-    admin: build_admin_capability("postgres", &dsn),
-    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
-        thread_header: Some("AH-Thread-Id".to_owned()),
-        trace_header: Some("AH-Trace-Id".to_owned()),
-        request_header: Some("X-Request-Id".to_owned()),
-        extra_trace_headers: Vec::new(),
-        extra_trace_body_fields: Vec::new(),
-        claude_code_trace_enabled: false,
-        codex_trace_enabled: false,
-    },  };
-
-    let app = router(state);
-
-    let models_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/v1/models?include=all")
-                .method(Method::GET)
-                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(models_response.status(), StatusCode::OK);
-    let models_json = serde_json::from_slice::<serde_json::Value>(
-        &read_body(models_response).await,
-    )
-    .unwrap();
-    assert_eq!(models_json["data"][0]["id"], "gpt-4o");
-
-    for (path, body, expected_json_path, expected_value) in [
-        (
-            "/v1/chat/completions",
-            r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#,
-            vec!["id"],
-            serde_json::Value::String("chatcmpl_gpt_4o".to_owned()),
-        ),
-        (
-            "/v1/responses",
-            r#"{"model":"gpt-4o","input":"hi"}"#,
-            vec!["id"],
-            serde_json::Value::String("resp_mock".to_owned()),
-        ),
-        (
-            "/v1/responses/compact",
-            r#"{"model":"gpt-4o","input":"hi"}"#,
-            vec!["id"],
-            serde_json::Value::String("resp_compact_mock".to_owned()),
-        ),
-        (
-            "/v1/embeddings",
-            r#"{"model":"gpt-4o","input":"hi"}"#,
-            vec!["model"],
-            serde_json::Value::String("gpt-4o".to_owned()),
-        ),
-        (
-            "/v1/messages",
-            r#"{"model":"claude-3-5-sonnet","messages":[{"role":"user","content":"hi"}],"max_tokens":16}"#,
-            vec!["type"],
-            serde_json::Value::String("message".to_owned()),
-        ),
-        (
-            "/v1/rerank",
-            r#"{"model":"jina-reranker-v2-base-multilingual","query":"hello","documents":["a"]}"#,
-            vec!["model"],
-            serde_json::Value::String("jina-reranker-v2-base-multilingual".to_owned()),
-        ),
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .method(Method::POST)
-                    .header("content-type", "application/json")
-                    .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                    .header("X-Project-ID", "gid://axonhub/project/1")
-                    .header("AH-Thread-Id", "thread-postgres-v1")
-                    .header("AH-Trace-Id", "trace-postgres-v1")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        if response.status() != StatusCode::OK {
-            let status = response.status();
-            let body = String::from_utf8(read_body(response).await).unwrap_or_default();
-            panic!("path {path} returned {status}: {body}");
-        }
-        let json = serde_json::from_slice::<serde_json::Value>(
-            &read_body(response).await,
-        )
-        .unwrap();
-        let actual = expected_json_path
-            .iter()
-            .fold(&json, |current, key| &current[*key]);
-        assert_eq!(actual, &expected_value, "path {path}");
-    }
-
-    let image_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/v1/images/generations")
-                .method(Method::POST)
-                .header("content-type", "application/json")
-                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                .header("X-Project-ID", "gid://axonhub/project/1")
-                .header("AH-Thread-Id", "thread-postgres-v1")
-                .header("AH-Trace-Id", "trace-postgres-v1")
-                .body(Body::from(r#"{"model":"gpt-image-1","prompt":"draw a cat"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(image_response.status(), StatusCode::OK);
-    let image_json = serde_json::from_slice::<serde_json::Value>(&read_body(image_response).await).unwrap();
-    assert_eq!(image_json["data"][0]["b64_json"], "aGVsbG8=");
-
-    let unported = app
-        .oneshot(
-            Request::builder()
-                .uri("/v1/images/edits")
-                .method(Method::POST)
-                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(unported.status(), StatusCode::BAD_REQUEST);
-
-    let (request_statuses, request_formats, execution_statuses, usage_formats, trace_thread_count) = std::thread::spawn({
-        let dsn = dsn.clone();
-        move || {
-            let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-            let request_statuses = connection
-                .query("SELECT status FROM requests ORDER BY id ASC", &[])
-                .unwrap()
-                .into_iter()
-                .map(|row| row.get::<_, String>(0))
-                .collect::<Vec<_>>();
-            let request_formats = connection
-                .query("SELECT format FROM requests ORDER BY id ASC", &[])
-                .unwrap()
-                .into_iter()
-                .map(|row| row.get::<_, String>(0))
-                .collect::<Vec<_>>();
-            let execution_statuses = connection
-                .query("SELECT status FROM request_executions ORDER BY id ASC", &[])
-                .unwrap()
-                .into_iter()
-                .map(|row| row.get::<_, String>(0))
-                .collect::<Vec<_>>();
-            let usage_formats = connection
-                .query("SELECT format FROM usage_logs ORDER BY id ASC", &[])
-                .unwrap()
-                .into_iter()
-                .map(|row| row.get::<_, String>(0))
-                .collect::<Vec<_>>();
-            let trace_thread_count: i64 = connection
-                .query_one(
-                    "SELECT COUNT(*) FROM traces t JOIN threads th ON th.id = t.thread_id WHERE t.trace_id = $1 AND th.thread_id = $2",
-                    &[&"trace-postgres-v1", &"thread-postgres-v1"],
-                )
-                .unwrap()
-                .get(0);
-            (request_statuses, request_formats, execution_statuses, usage_formats, trace_thread_count)
-        }
-    })
-    .join()
-    .expect("postgres /v1 verification thread");
-
-    assert_eq!(
-        request_statuses,
-        vec![
-            "completed",
-            "completed",
-            "completed",
-            "completed",
-            "completed",
-            "completed",
-            "completed"
-        ]
-    );
-    assert_eq!(
-        request_formats,
-        vec![
-            "openai/chat_completions",
-            "openai/responses",
-            "openai/responses_compact",
-            "openai/embeddings",
-            "anthropic/message",
-            "jina/rerank",
-            "openai/images_generations"
-        ]
-    );
-    assert_eq!(
-        execution_statuses,
-        vec![
-            "completed",
-            "completed",
-            "completed",
-            "completed",
-            "completed",
-            "completed",
-            "completed"
-        ]
-    );
-    assert_eq!(usage_formats.len(), 7);
-    assert_eq!(usage_formats[6], "openai/images_generations");
-    assert_eq!(trace_thread_count, 1);
-
-    embedded_pg.stop_db().await.unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-}
-
-#[tokio::test]
-async fn postgres_openai_v1_retries_same_channel_before_failover_and_records_attempts_once() {
-    let (mut embedded_pg, dsn, data_dir) =
-        start_embedded_postgres("postgres-openai-v1-same-channel-retry").await;
-
-    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match bootstrap {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    std::thread::spawn({
-        let dsn = dsn.clone();
-        move || {
-            let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-            let base_url = mock_openai_v1_runtime_server_url().to_owned();
-            let channel_rows = [
-                (
-                    "OpenAI Retry Primary",
-                    format!("{base_url}/retry-twice-ok-pg"),
-                    100_i32,
-                ),
-                ("OpenAI Retry Backup", format!("{base_url}/backup"), 90_i32),
-            ];
-            for (name, channel_base_url, ordering_weight) in channel_rows {
-                let params: [&(dyn postgres::types::ToSql + Sync); 8] = [
-                    &"openai",
-                    &channel_base_url,
-                    &name,
-                    &r#"{"apiKey":"test-upstream-key"}"#,
-                    &r#"["gpt-4o"]"#,
-                    &"{}",
-                    &"[]",
-                    &ordering_weight,
-                ];
-                connection
-                    .execute(
-                        "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at)
-                         VALUES ($1, $2, $3, 'enabled', $4, $5, FALSE, '', $6, $7, $8, '', '', 0)",
-                        &params,
-                    )
-                    .unwrap();
-            }
-
-            let model_params: [&(dyn postgres::types::ToSql + Sync); 7] = [
-                &"openai",
-                &"gpt-4o",
-                &"chat",
-                &"GPT-4o",
-                &"OpenAI",
-                &"openai",
-                &r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-            ];
-            connection
-                .execute(
-                    "INSERT INTO models (developer, model_id, type, name, icon, \"group\", model_card, settings, status, remark, deleted_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, '{}', 'enabled', '', 0)",
-                    &model_params,
-                )
-                .unwrap();
-        }
-    })
-    .join()
-    .expect("postgres /v1 same-channel retry seed thread");
-
-    let state = HttpState { service_name: "AxonHub".to_owned(),
-    version: "v0.9.20".to_owned(),
-    config_source: None,
-    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-    identity: build_identity_capability("postgres", &dsn, false),
-    request_context: build_request_context_capability("postgres", &dsn, false),
-    openai_v1: build_openai_v1_capability("postgres", &dsn),
-    admin: build_admin_capability("postgres", &dsn),
-    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
-        thread_header: Some("AH-Thread-Id".to_owned()),
-        trace_header: Some("AH-Trace-Id".to_owned()),
-        request_header: Some("X-Request-Id".to_owned()),
-        extra_trace_headers: Vec::new(),
-        extra_trace_body_fields: Vec::new(),
-        claude_code_trace_enabled: false,
-        codex_trace_enabled: false,
-    },  };
-
-    let response = router(state)
-        .oneshot(
-            Request::builder()
-                .uri("/v1/chat/completions")
-                .method(Method::POST)
-                .header("content-type", "application/json")
-                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                .header("X-Project-ID", "gid://axonhub/project/1")
-                .header("AH-Thread-Id", "thread-postgres-retry")
-                .header("AH-Trace-Id", "trace-postgres-retry")
-                .body(Body::from(
-                    r#"{"model":"gpt-4o","messages":[{"role":"user","content":"retry then succeed"}]}"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let json = serde_json::from_slice::<serde_json::Value>(&read_body(response).await).unwrap();
-    assert_eq!(json["id"], "chatcmpl_retry_pg");
-
-    let (request_count, request_model, request_channel_id, execution_rows, usage_count, trace_thread_count) =
-        std::thread::spawn({
-            let dsn = dsn.clone();
-            move || {
-                let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-                let request_count: i64 = connection
-                    .query_one("SELECT COUNT(*) FROM requests", &[])
-                    .unwrap()
-                    .get(0);
-                let request_row = connection
-                    .query_one(
-                        "SELECT model_id, channel_id FROM requests ORDER BY id DESC LIMIT 1",
-                        &[],
-                    )
-                    .unwrap();
-                let request_model: String = request_row.get(0);
-                let request_channel_id: i64 = request_row.get(1);
-                let execution_rows = connection
-                    .query(
-                        "SELECT channel_id, status, response_status_code FROM request_executions ORDER BY id ASC",
-                        &[],
-                    )
-                    .unwrap()
-                    .into_iter()
-                    .map(|row| {
-                        (
-                            row.get::<_, i64>(0),
-                            row.get::<_, String>(1),
-                            row.get::<_, Option<i64>>(2),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let usage_count: i64 = connection
-                    .query_one("SELECT COUNT(*) FROM usage_logs", &[])
-                    .unwrap()
-                    .get(0);
-                let trace_thread_count: i64 = connection
-                    .query_one(
-                        "SELECT COUNT(*) FROM traces t JOIN threads th ON th.id = t.thread_id WHERE t.trace_id = $1 AND th.thread_id = $2",
-                        &[&"trace-postgres-retry", &"thread-postgres-retry"],
-                    )
-                    .unwrap()
-                    .get(0);
-                (
-                    request_count,
-                    request_model,
-                    request_channel_id,
-                    execution_rows,
-                    usage_count,
-                    trace_thread_count,
-                )
-            }
-        })
-        .join()
-        .expect("postgres /v1 same-channel retry verification thread");
-
-    assert_eq!(request_count, 1);
-    assert_eq!(request_model, "gpt-4o");
-    assert_eq!(trace_thread_count, 1);
-    assert_eq!(usage_count, 1);
-    assert_eq!(execution_rows.len(), 3);
-    assert!(execution_rows
-        .iter()
-        .all(|(channel_id, _, _)| *channel_id == request_channel_id));
-    assert_eq!(
-        execution_rows
-            .iter()
-            .map(|(_, status, _)| status.clone())
-            .collect::<Vec<_>>(),
-        vec!["failed", "failed", "completed"]
-    );
-    assert_eq!(execution_rows[0].2, Some(503));
-    assert_eq!(execution_rows[1].2, Some(503));
-    assert_eq!(execution_rows[2].2, Some(200));
-
-    embedded_pg.stop_db().await.unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-}
-
-#[tokio::test]
-async fn postgres_openai_v1_video_routes_execute_and_keep_unported_images_truthful() {
-    let (mut embedded_pg, dsn, data_dir) =
-        start_embedded_postgres("postgres-openai-v1-videos").await;
-
-    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match bootstrap {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    std::thread::spawn({
-        let dsn = dsn.clone();
-        move || {
-            let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-            let base_url = mock_openai_v1_runtime_server_url().to_owned();
-            let ordering_weight_i32 = 100_i32;
-            let channel_params: [&(dyn postgres::types::ToSql + Sync); 8] = [
-                &"openai",
-                &base_url,
-                &"Doubao Video Alias Mock",
-                &r#"{"apiKey":"test-upstream-key"}"#,
-                &r#"["seedance-1.0"]"#,
-                &"{}",
-                &"[]",
-                &ordering_weight_i32,
-            ];
-            connection
-                .execute(
-                    "INSERT INTO channels (type, base_url, name, status, credentials, supported_models, auto_sync_supported_models, default_test_model, settings, tags, ordering_weight, error_message, remark, deleted_at)
-                     VALUES ($1, $2, $3, 'enabled', $4, $5, FALSE, '', $6, $7, $8, '', '', 0)",
-                    &channel_params,
-                )
-                .unwrap();
-
-            let model_params: [&(dyn postgres::types::ToSql + Sync); 7] = [
-                &"doubao",
-                &"seedance-1.0",
-                &"video",
-                &"Seedance 1.0",
-                &"Doubao",
-                &"doubao",
-                &r#"{"limit":{"context":8192,"output":0},"cost":{"input":1.0,"output":0.0}}"#,
-            ];
-            connection
-                .execute(
-                    "INSERT INTO models (developer, model_id, type, name, icon, \"group\", model_card, settings, status, remark, deleted_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, '{}', 'enabled', '', 0)",
-                    &model_params,
-                )
-                .unwrap();
-        }
-    })
-    .join()
-    .expect("postgres /v1 videos seed thread");
-
-    let state = HttpState { service_name: "AxonHub".to_owned(),
-    version: "v0.9.20".to_owned(),
-    config_source: None,
-    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-    identity: build_identity_capability("postgres", &dsn, false),
-    request_context: build_request_context_capability("postgres", &dsn, false),
-    openai_v1: build_openai_v1_capability("postgres", &dsn),
-    admin: build_admin_capability("postgres", &dsn),
-    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
-        thread_header: Some("AH-Thread-Id".to_owned()),
-        trace_header: Some("AH-Trace-Id".to_owned()),
-        request_header: Some("X-Request-Id".to_owned()),
-        extra_trace_headers: Vec::new(),
-        extra_trace_body_fields: Vec::new(),
-        claude_code_trace_enabled: false,
-        codex_trace_enabled: false,
-    },  };
-
-    let app = router(state);
-
-    let create_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/v1/videos")
-                .method(Method::POST)
-                .header("content-type", "application/json")
-                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                .header("X-Project-ID", "gid://axonhub/project/1")
-                .header("AH-Thread-Id", "thread-postgres-video")
-                .header("AH-Trace-Id", "trace-postgres-video")
-                .body(Body::from(
-                    r#"{"model":"seedance-1.0","content":[{"type":"text","text":"make a trailer"}]}"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_json = serde_json::from_slice::<serde_json::Value>(
-        &read_body(create_response).await,
-    )
-    .unwrap();
-    assert_eq!(create_json["id"], "video_mock_task");
-
-    let get_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/v1/videos/video_mock_task")
-                .method(Method::GET)
-                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                .header("X-Project-ID", "gid://axonhub/project/1")
-                .header("AH-Thread-Id", "thread-postgres-video")
-                .header("AH-Trace-Id", "trace-postgres-video")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(get_response.status(), StatusCode::OK);
-    let get_json = serde_json::from_slice::<serde_json::Value>(
-        &read_body(get_response).await,
-    )
-    .unwrap();
-    assert_eq!(get_json["id"], "video_mock_task");
-    assert_eq!(
-        get_json["content"]["video_url"],
-        "https://example.com/generated.mp4"
-    );
-
-    let delete_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/v1/videos/video_mock_task")
-                .method(Method::DELETE)
-                .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                .header("X-Project-ID", "gid://axonhub/project/1")
-                .header("AH-Thread-Id", "thread-postgres-video")
-                .header("AH-Trace-Id", "trace-postgres-video")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
-    let delete_body = read_body(delete_response).await;
-    assert!(delete_body.is_empty());
-
-    let unported_images = app
-        .oneshot(
-                Request::builder()
-                    .uri("/v1/images/edits")
-                    .method(Method::POST)
-                    .header("X-API-Key", DEFAULT_USER_API_KEY_VALUE)
-                    .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(unported_images.status(), StatusCode::BAD_REQUEST);
-
-    let (request_formats, execution_statuses, trace_thread_count) = std::thread::spawn({
-        let dsn = dsn.clone();
-        move || {
-            let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-            let request_formats = connection
-                .query("SELECT format FROM requests ORDER BY id ASC", &[])
-                .unwrap()
-                .into_iter()
-                .map(|row| row.get::<_, String>(0))
-                .collect::<Vec<_>>();
-            let execution_statuses = connection
-                .query("SELECT status FROM request_executions ORDER BY id ASC", &[])
-                .unwrap()
-                .into_iter()
-                .map(|row| row.get::<_, String>(0))
-                .collect::<Vec<_>>();
-            let trace_thread_count: i64 = connection
-                .query_one(
-                    "SELECT COUNT(*) FROM traces t JOIN threads th ON th.id = t.thread_id WHERE t.trace_id = $1 AND th.thread_id = $2",
-                    &[&"trace-postgres-video", &"thread-postgres-video"],
-                )
-                .unwrap()
-                .get(0);
-            (request_formats, execution_statuses, trace_thread_count)
-        }
-    })
-    .join()
-    .expect("postgres /v1 videos verification thread");
-
-    assert_eq!(
-        request_formats,
-        vec![
-            "doubao/video_create",
-            "doubao/video_get",
-            "doubao/video_delete"
-        ]
-    );
-    assert_eq!(
-        execution_statuses,
-        vec!["completed", "completed", "completed"]
-    );
-    assert_eq!(trace_thread_count, 1);
-
-    embedded_pg.stop_db().await.unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
 }
 
 #[tokio::test]
@@ -2422,8 +925,8 @@ async fn main_router_serves_fresh_status_and_initialize_for_sqlite_scope() {
         "sqlite3",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2603,99 +1106,6 @@ fn startup_messages_are_truthful_for_metrics_and_identity() {
     );
 }
 
-#[tokio::test]
-async fn postgres_bootstrap_capability_serves_fresh_status_and_initialize() {
-    let (mut embedded_pg, dsn, data_dir) =
-        start_embedded_postgres("postgres-bootstrap-router").await;
-    let state = HttpState { service_name: "AxonHub".to_owned(),
-    version: "v0.9.20".to_owned(),
-    config_source: None,
-    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-    identity: build_identity_capability(
-        "postgres",
-        &dsn,
-        false,
-    ),
-    request_context: build_request_context_capability(
-        "postgres",
-        &dsn,
-        false,
-    ),
-    openai_v1: build_openai_v1_capability("postgres", &dsn),
-    admin: build_admin_capability("postgres", &dsn),
-    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
-        thread_header: Some("AH-Thread-Id".to_owned()),
-        trace_header: Some("AH-Trace-Id".to_owned()),
-        request_header: Some("X-Request-Id".to_owned()),
-        extra_trace_headers: Vec::new(),
-        extra_trace_body_fields: Vec::new(),
-        claude_code_trace_enabled: false,
-        codex_trace_enabled: false,
-    },  };
-
-    let app = router(state);
-
-    let status_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/admin/system/status")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(status_response.status(), StatusCode::OK);
-    let status_body = read_body(status_response).await;
-    let json = serde_json::from_slice::<serde_json::Value>(&status_body).unwrap();
-    assert_eq!(json["isInitialized"], false);
-
-    let initialize_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/admin/system/initialize")
-                .method(Method::POST.as_str())
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{"ownerEmail":"owner@example.com","ownerPassword":"password123","ownerFirstName":"System","ownerLastName":"Owner","brandName":"AxonHub"}"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(initialize_response.status(), StatusCode::OK);
-    let initialize_body = read_body(initialize_response).await;
-    let json = serde_json::from_slice::<serde_json::Value>(&initialize_body).unwrap();
-    assert_eq!(json["success"], true);
-    assert_eq!(json["message"], "System initialized successfully");
-
-    let second_status_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/admin/system/status")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(second_status_response.status(), StatusCode::OK);
-    let second_status_body = read_body(second_status_response).await;
-    let json = serde_json::from_slice::<serde_json::Value>(&second_status_body).unwrap();
-    assert_eq!(json["isInitialized"], true);
-
-    embedded_pg.stop_db().await.unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-}
-
 #[test]
 fn mysql_capabilities_are_rejected_by_the_rust_runtime_contract() {
     let mysql_dsn = "mysql://axonhub:axonhub_password@127.0.0.1:3306/axonhub";
@@ -2812,8 +1222,8 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
         "postgres",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2918,30 +1328,30 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
 }
 
 #[test]
-fn provider_edge_admin_capability_is_unsupported_without_secure_runtime_config() {
-    let _env = ProviderEdgeEnvFixture::new();
-    let capability = build_provider_edge_admin_capability("postgres", ":memory:");
+fn oauth_provider_admin_capability_is_unsupported_without_secure_runtime_config() {
+    let _env = OAuthProviderEnvFixture::new();
+    let capability = build_oauth_provider_admin_capability("postgres", ":memory:");
     match capability {
-        ProviderEdgeAdminCapability::Unsupported { message } => {
-            assert!(message.contains("Provider-edge admin OAuth helpers"));
+        OauthProviderAdminCapability::Unsupported { message } => {
+            assert!(message.contains("OAuth provider admin helpers"));
             assert!(message.contains("secure runtime configuration"));
             assert!(message.contains("AXONHUB_PROVIDER_EDGE_"));
         }
-        ProviderEdgeAdminCapability::Available { .. } => {
+        OauthProviderAdminCapability::Available { .. } => {
             panic!("Expected Unsupported but got Available");
         }
     }
 }
 
 #[test]
-fn provider_edge_admin_capability_is_available_on_postgres_with_secure_runtime_config() {
-    let env = ProviderEdgeEnvFixture::new();
+fn oauth_provider_admin_capability_is_available_on_postgres_with_secure_runtime_config() {
+    let env = OAuthProviderEnvFixture::new();
     env.set_all();
 
-    let capability = build_provider_edge_admin_capability("postgres", ":memory:");
+    let capability = build_oauth_provider_admin_capability("postgres", ":memory:");
     match capability {
-        ProviderEdgeAdminCapability::Available { .. } => {}
-        ProviderEdgeAdminCapability::Unsupported { message } => {
+        OauthProviderAdminCapability::Available { .. } => {}
+        OauthProviderAdminCapability::Unsupported { message } => {
             panic!("Expected Available but got Unsupported: {message}");
         }
     }
@@ -2949,7 +1359,7 @@ fn provider_edge_admin_capability_is_available_on_postgres_with_secure_runtime_c
 
 #[tokio::test]
 async fn postgres_provider_edge_routes_remain_truthful_when_secure_runtime_config_is_absent() {
-    let _env = ProviderEdgeEnvFixture::new();
+    let _env = OAuthProviderEnvFixture::new();
     let db_path = temp_sqlite_path("postgres-provider-edge-missing-config");
     let state = HttpState { service_name: "AxonHub".to_owned(),
     version: "v0.9.20".to_owned(),
@@ -2972,7 +1382,7 @@ async fn postgres_provider_edge_routes_remain_truthful_when_secure_runtime_confi
         "postgres",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: build_provider_edge_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    oauth_provider_admin: build_oauth_provider_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -3011,7 +1421,7 @@ async fn postgres_provider_edge_routes_remain_truthful_when_secure_runtime_confi
 
 #[tokio::test]
 async fn postgres_provider_edge_routes_start_when_secure_runtime_config_is_present() {
-    let env = ProviderEdgeEnvFixture::new();
+    let env = OAuthProviderEnvFixture::new();
     env.set_all();
     let db_path = temp_sqlite_path("postgres-provider-edge-secure-config");
     let state = HttpState { service_name: "AxonHub".to_owned(),
@@ -3035,7 +1445,7 @@ async fn postgres_provider_edge_routes_start_when_secure_runtime_config_is_prese
         "postgres",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: build_provider_edge_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    oauth_provider_admin: build_oauth_provider_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -3093,8 +1503,8 @@ async fn unsupported_non_seaorm_dialect_keeps_graphql_routes_truthful() {
     admin: build_admin_capability("oracle", &db_path.display().to_string()),
     admin_graphql: build_admin_graphql_capability("oracle", &db_path.display().to_string()),
     openapi_graphql: build_openapi_graphql_capability("oracle", &db_path.display().to_string()),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3213,8 +1623,8 @@ async fn sqlite_backed_openapi_graphql_route_executes_pilot_mutation() {
         "sqlite3",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3264,126 +1674,6 @@ async fn sqlite_backed_openapi_graphql_route_executes_pilot_mutation() {
 }
 
 #[tokio::test]
-async fn postgres_openapi_graphql_route_executes_pilot_mutation() {
-    let (mut embedded_pg, dsn, data_dir) =
-        start_embedded_postgres("postgres-openapi-graphql-pilot").await;
-
-    let bootstrap = build_system_bootstrap_capability("postgres", &dsn, "v0.9.20");
-    let system = match bootstrap {
-        SystemBootstrapCapability::Available { system } => system,
-        SystemBootstrapCapability::Unsupported { message } => {
-            panic!("Expected postgres bootstrap capability to be available: {message}");
-        }
-    };
-    system
-        .initialize(&InitializeSystemRequest {
-            owner_email: "owner@example.com".to_owned(),
-            owner_password: "password123".to_owned(),
-            owner_first_name: "System".to_owned(),
-            owner_last_name: "Owner".to_owned(),
-            brand_name: "AxonHub".to_owned(),
-        })
-        .unwrap();
-
-    std::thread::spawn({
-        let dsn = dsn.clone();
-        move || {
-            let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-            let scopes_json = serde_json::to_string(&["write_api_keys"]).unwrap();
-            connection
-                .execute(
-                    "UPDATE api_keys SET scopes = $1 WHERE key = $2 AND deleted_at = 0",
-                    &[&scopes_json, &DEFAULT_SERVICE_API_KEY_VALUE],
-                )
-                .unwrap();
-        }
-    })
-    .join()
-    .expect("postgres openapi service key scope update thread");
-
-    let state = HttpState { service_name: "AxonHub".to_owned(),
-    version: "v0.9.20".to_owned(),
-    config_source: None,
-    system_bootstrap: build_system_bootstrap_capability("postgres", &dsn, "v0.9.20"),
-    identity: build_identity_capability("postgres", &dsn, false),
-    request_context: build_request_context_capability("postgres", &dsn, false),
-    openai_v1: build_openai_v1_capability("postgres", &dsn),
-    admin: build_admin_capability("postgres", &dsn),
-    admin_graphql: build_admin_graphql_capability("postgres", &dsn),
-    openapi_graphql: build_openapi_graphql_capability("postgres", &dsn),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
-        thread_header: Some("AH-Thread-Id".to_owned()),
-        trace_header: Some("AH-Trace-Id".to_owned()),
-        request_header: Some("X-Request-Id".to_owned()),
-        extra_trace_headers: Vec::new(),
-        extra_trace_body_fields: Vec::new(),
-        claude_code_trace_enabled: false,
-        codex_trace_enabled: false,
-    },  };
-
-    let app = router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/openapi/v1/graphql")
-                .method(Method::POST.as_str())
-                .header("content-type", "application/json")
-                .header("Authorization", "Bearer service-key-123")
-                .body(Body::from(
-                    r#"{"query": "mutation { createLLMAPIKey(name: \"SDK Key\") { key name scopes } }"}"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    let json = serde_json::from_slice::<serde_json::Value>(&body).unwrap();
-
-    assert!(json.get("errors").map(|v| v.is_null()).unwrap_or(true));
-    let api_key = json["data"]["createLLMAPIKey"].clone();
-    assert_eq!(api_key["name"], "SDK Key");
-    assert!(api_key["key"]
-        .as_str()
-        .is_some_and(|value| value.starts_with("ah-")));
-    let scopes = api_key["scopes"].as_array().expect("expected scopes array");
-    let scope_strs: Vec<&str> = scopes.iter().filter_map(|v| v.as_str()).collect();
-    assert!(scope_strs.contains(&"read_channels"));
-    assert!(scope_strs.contains(&"write_requests"));
-
-    let dsn_for_query = dsn.clone();
-    let key_for_query = api_key["key"]
-        .as_str()
-        .expect("expected api key value")
-        .to_owned();
-    let (stored_name, stored_type, stored_status) = std::thread::spawn(move || {
-        let mut connection = PostgresClient::connect(&dsn_for_query, NoTls).unwrap();
-        let row = connection
-            .query_one(
-                "SELECT name, type, status FROM api_keys WHERE key = $1 LIMIT 1",
-                &[&key_for_query],
-            )
-            .unwrap();
-        let stored_name: String = row.get(0);
-        let stored_type: String = row.get(1);
-        let stored_status: String = row.get(2);
-        (stored_name, stored_type, stored_status)
-    })
-    .join()
-    .expect("postgres verification thread");
-    assert_eq!(stored_name, "SDK Key");
-    assert_eq!(stored_type, "user");
-    assert_eq!(stored_status, "enabled");
-
-    embedded_pg.stop_db().await.unwrap();
-    std::fs::remove_dir_all(data_dir).ok();
-}
-
-#[tokio::test]
 async fn sqlite_backed_openapi_graphql_route_rejects_missing_or_invalid_service_api_key() {
     let db_path = temp_sqlite_path("openapi-graphql-auth");
     let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
@@ -3426,8 +1716,8 @@ async fn sqlite_backed_openapi_graphql_route_rejects_missing_or_invalid_service_
         "sqlite3",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3590,8 +1880,8 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
         "sqlite3",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -3857,8 +2147,8 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         "sqlite3",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -4474,8 +2764,8 @@ async fn sqlite_admin_graphql_route_supports_user_management_writes() {
         "sqlite3",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -4719,8 +3009,8 @@ async fn sqlite_admin_graphql_route_supports_broader_management_writes_for_task1
         "sqlite3",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -5060,8 +3350,8 @@ async fn sqlite_admin_request_content_route_enforces_project_scope_and_wrong_pro
         "sqlite3",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
@@ -5223,8 +3513,8 @@ async fn sqlite_openapi_graphql_route_enforces_api_key_scope_and_service_account
         "sqlite3",
         &db_path.display().to_string(),
     ),
-    provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
+    oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
     }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),

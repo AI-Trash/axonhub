@@ -13,12 +13,10 @@ use super::{
     },
     circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
     graphql::{
-        sqlite_test_support::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
-        SeaOrmAdminGraphqlService,
+        SeaOrmAdminGraphqlService, SeaOrmOpenApiGraphqlService,
     },
-    identity::sqlite_test_support::query_default_project_for_user,
     identity_service::SeaOrmIdentityService,
-    identity_service::sqlite_test_support::{build_user_context, SqliteIdentityService},
+    identity_service::sqlite_test_support::SqliteIdentityService,
     openai_v1::{
         NewChannelRecord, NewModelRecord, NewRequestExecutionRecord, NewRequestRecord,
         NewUsageLogRecord, SeaOrmOpenAiV1Service,
@@ -27,7 +25,6 @@ use super::{
     request_context::{parse_onboarding_record, serialize_onboarding_record, OnboardingModule, OnboardingRecord},
     request_context_service::SeaOrmRequestContextService,
     request_context_service::sqlite_test_support::SqliteRequestContextService,
-    repositories::identity::sqlite_test_support::{query_project, query_user_by_id},
     seaorm::SeaOrmConnectionFactory,
     shared::{
         DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
@@ -47,8 +44,8 @@ use axonhub_http::{
     AdminCapability, AdminError, AdminGraphqlCapability, AdminGraphqlPort, AdminPort,
     AuthUserContext, GraphqlRequestPayload, HttpCorsSettings, HttpState, IdentityCapability,
     IdentityPort, InitializeSystemRequest, OpenAiRequestBody, OpenAiV1Capability,
-    OpenAiV1ExecutionRequest, OpenAiV1Port, OpenAiV1Route, OpenApiGraphqlCapability,
-    ProjectContext, ProviderEdgeAdminCapability, RealtimeSessionCreateRequest,
+    OpenAiV1ExecutionRequest, OpenAiV1Port, OpenAiV1Route, OauthProviderAdminCapability,
+    OpenApiGraphqlCapability, ProjectContext, RealtimeSessionCreateRequest,
     RealtimeSessionPatchRequest, RealtimeSessionTransportRequest, RequestContextCapability,
     RequestContextPort, SignInRequest, SystemBootstrapCapability, SystemBootstrapPort,
     TraceConfig, router as http_router,
@@ -58,12 +55,12 @@ use actix_web::dev::ServiceResponse;
 use actix_web::http::{Method, StatusCode};
 use actix_web::http::header;
 use actix_web::test as actix_test;
+use axonhub_db_entity::{
+    api_keys, channel_model_price_versions, channel_model_prices, channel_override_templates,
+    data_storages, projects, request_executions, requests, roles, systems, usage_logs, users,
+};
 use chrono::{Datelike, Duration as ChronoDuration, TimeZone, Utc};
-use pg_embed::pg_enums::PgAuthMethod;
-use pg_embed::pg_fetch::{PgFetchSettings, PG_V15};
-use pg_embed::postgres::{PgEmbed, PgSettings};
-use postgres::{Client as PostgresClient, NoTls, Row};
-use rusqlite::{params, Connection};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -230,52 +227,6 @@ struct TestHttpRequest {
         std::env::temp_dir().join(format!("axonhub-{name}-{unique}.db"))
     }
 
-    fn temp_postgres_dir(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("axonhub-{name}-{unique}"))
-    }
-
-    fn available_tcp_port() -> u16 {
-        TcpListener::bind("127.0.0.1:0")
-            .expect("bind ephemeral port")
-            .local_addr()
-            .expect("read local addr")
-            .port()
-    }
-
-    async fn start_embedded_postgres(name: &str) -> (PgEmbed, String, PathBuf) {
-        let data_dir = temp_postgres_dir(name);
-        let port = available_tcp_port();
-        let settings = PgSettings {
-            database_dir: data_dir.clone(),
-            port,
-            user: "postgres".to_owned(),
-            password: "postgres".to_owned(),
-            auth_method: PgAuthMethod::Plain,
-            persistent: false,
-            timeout: Some(std::time::Duration::from_secs(60)),
-            migration_dir: None,
-        };
-
-        let mut pg = PgEmbed::new(
-            settings,
-            PgFetchSettings {
-                version: PG_V15,
-                ..Default::default()
-            },
-        )
-        .await
-        .expect("create embedded postgres");
-        pg.setup().await.expect("setup embedded postgres");
-        pg.start_db().await.expect("start embedded postgres");
-
-        let dsn = pg.full_db_uri("postgres");
-        (pg, dsn, data_dir)
-    }
-
     fn seaorm_admin_service(foundation: &Arc<SqliteFoundation>) -> SeaOrmAdminService {
         SeaOrmAdminService::new(foundation.seaorm())
     }
@@ -304,69 +255,109 @@ struct TestHttpRequest {
     }
 
     fn insert_test_user(
-        connection: &Connection,
+        foundation: &SqliteFoundation,
         email: &str,
         password: &str,
         scopes: &[ScopeSlug],
     ) -> i64 {
         let hashed_password = hash_password(password).unwrap();
         let scopes_json = serialize_scope_slugs(scopes).unwrap();
-        connection
-            .execute(
-                "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, token_version, scopes, deleted_at)
-                 VALUES (?1, 'activated', 'en', ?2, 'Test', 'User', '', 0, 0, ?3, 0)",
-                params![email, hashed_password, scopes_json],
-            )
-            .unwrap();
-        connection.last_insert_rowid()
+        let email = email.to_owned();
+        foundation
+            .seaorm()
+            .run_sync(move |db| async move {
+                let connection = db.connect_migrated().await.unwrap();
+                users::Entity::insert(users::ActiveModel {
+                    email: Set(email),
+                    status: Set("activated".to_owned()),
+                    prefer_language: Set("en".to_owned()),
+                    password: Set(hashed_password),
+                    first_name: Set("Test".to_owned()),
+                    last_name: Set("User".to_owned()),
+                    avatar: Set(Some(String::new())),
+                    is_owner: Set(false),
+                    token_version: Set(0),
+                    scopes: Set(scopes_json),
+                    deleted_at: Set(0),
+                    ..Default::default()
+                })
+                .exec(&connection)
+                .await
+                .unwrap()
+                .last_insert_id
+            })
     }
 
     fn insert_project_membership(
-        connection: &Connection,
+        foundation: &SqliteFoundation,
         user_id: i64,
         project_id: i64,
         is_owner: bool,
         scopes: &[ScopeSlug],
     ) {
         let scopes_json = serialize_scope_slugs(scopes).unwrap();
-        connection
-            .execute(
-                "INSERT INTO user_projects (user_id, project_id, is_owner, scopes)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![user_id, project_id, if is_owner { 1 } else { 0 }, scopes_json],
-            )
+        foundation.seaorm().run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.unwrap();
+            user_projects::Entity::insert(user_projects::ActiveModel {
+                user_id: Set(user_id),
+                project_id: Set(project_id),
+                is_owner: Set(is_owner),
+                scopes: Set(scopes_json),
+                ..Default::default()
+            })
+            .exec(&connection)
+            .await
             .unwrap();
+            Ok::<_, ()>(())
+        }).unwrap();
     }
 
     fn insert_role(
-        connection: &Connection,
+        foundation: &SqliteFoundation,
         name: &str,
         level: ScopeLevel,
         project_id: i64,
         scopes: &[ScopeSlug],
     ) -> i64 {
+        let name = name.to_owned();
+        let level = level.as_str().to_owned();
         let scopes_json = serialize_scope_slugs(scopes).unwrap();
-        connection
-            .execute(
-                "INSERT INTO roles (name, level, project_id, scopes, deleted_at)
-                  VALUES (?1, ?2, ?3, ?4, 0)",
-                params![name, level.as_str(), project_id, scopes_json],
-            )
-            .unwrap();
-        connection.last_insert_rowid()
+        foundation
+            .seaorm()
+            .run_sync(move |db| async move {
+                let connection = db.connect_migrated().await.unwrap();
+                roles::Entity::insert(roles::ActiveModel {
+                    name: Set(name),
+                    level: Set(level),
+                    project_id: Set(project_id),
+                    scopes: Set(scopes_json),
+                    deleted_at: Set(0),
+                    ..Default::default()
+                })
+                .exec(&connection)
+                .await
+                .unwrap()
+                .last_insert_id
+            })
     }
 
-    fn attach_role(connection: &Connection, user_id: i64, role_id: i64) {
-        connection
-            .execute(
-                "INSERT INTO user_roles (user_id, role_id) VALUES (?1, ?2)",
-                params![user_id, role_id],
-            )
+    fn attach_role(foundation: &SqliteFoundation, user_id: i64, role_id: i64) {
+        foundation.seaorm().run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.unwrap();
+            axonhub_db_entity::user_roles::Entity::insert(axonhub_db_entity::user_roles::ActiveModel {
+                user_id: Set(user_id),
+                role_id: Set(role_id),
+                ..Default::default()
+            })
+            .exec(&connection)
+            .await
             .unwrap();
+            Ok::<_, ()>(())
+        }).unwrap();
     }
 
     fn insert_api_key(
-        connection: &Connection,
+        foundation: &SqliteFoundation,
         user_id: i64,
         project_id: i64,
         key: &str,
@@ -374,31 +365,50 @@ struct TestHttpRequest {
         key_type: &str,
         scopes: &[ScopeSlug],
     ) -> i64 {
+        let key = key.to_owned();
+        let name = name.to_owned();
+        let key_type = key_type.to_owned();
         let scopes_json = serialize_scope_slugs(scopes).unwrap();
-        connection
-            .execute(
-                "INSERT INTO api_keys (user_id, project_id, key, name, type, status, scopes, profiles, deleted_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'enabled', ?6, '{}', 0)
-                 ON CONFLICT(key) DO UPDATE SET
-                     user_id = excluded.user_id,
-                     project_id = excluded.project_id,
-                     name = excluded.name,
-                     type = excluded.type,
-                     status = excluded.status,
-                     scopes = excluded.scopes,
-                     profiles = excluded.profiles,
-                     deleted_at = 0,
-                     updated_at = CURRENT_TIMESTAMP",
-                params![user_id, project_id, key, name, key_type, scopes_json],
-            )
-            .unwrap();
-        connection
-            .query_row(
-                "SELECT id FROM api_keys WHERE key = ?1 AND deleted_at = 0 LIMIT 1",
-                [key],
-                |row| row.get(0),
-            )
-            .unwrap()
+        foundation
+            .seaorm()
+            .run_sync(move |db| async move {
+                let connection = db.connect_migrated().await.unwrap();
+                if let Some(existing) = api_keys::Entity::find()
+                    .filter(api_keys::Column::Key.eq(key.as_str()))
+                    .filter(api_keys::Column::DeletedAt.eq(0_i64))
+                    .one(&connection)
+                    .await
+                    .unwrap()
+                {
+                    let mut model: api_keys::ActiveModel = existing.into();
+                    model.user_id = Set(user_id);
+                    model.project_id = Set(project_id);
+                    model.name = Set(name.clone());
+                    model.type_field = Set(key_type.clone());
+                    model.status = Set("enabled".to_owned());
+                    model.scopes = Set(scopes_json.clone());
+                    model.profiles = Set("{}".to_owned());
+                    model.deleted_at = Set(0);
+                    model.update(&connection).await.unwrap().id
+                } else {
+                    api_keys::Entity::insert(api_keys::ActiveModel {
+                        user_id: Set(user_id),
+                        project_id: Set(project_id),
+                        key: Set(key),
+                        name: Set(name),
+                        type_field: Set(key_type),
+                        status: Set("enabled".to_owned()),
+                        scopes: Set(scopes_json),
+                        profiles: Set("{}".to_owned()),
+                        deleted_at: Set(0),
+                        ..Default::default()
+                    })
+                    .exec(&connection)
+                    .await
+                    .unwrap()
+                    .last_insert_id
+                }
+            })
     }
 
     fn ensure_provider_quota_status_deleted_at_compat(connection: &Connection) {
@@ -486,8 +496,8 @@ struct TestHttpRequest {
             openapi_graphql: OpenApiGraphqlCapability::Available {
                 graphql: Arc::new(SqliteOpenApiGraphqlService::new(foundation)),
             },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
+            oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+                message: "test-only unsupported oauth provider admin".to_owned(),
             },
             allow_no_auth: false,
             cors: disabled_test_cors(),
@@ -548,8 +558,8 @@ struct TestHttpRequest {
             openapi_graphql: OpenApiGraphqlCapability::Available {
                 graphql: Arc::new(SqliteOpenApiGraphqlService::new(foundation)),
             },
-            provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-                message: "test-only unsupported provider-edge admin".to_owned(),
+            oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+                message: "test-only unsupported oauth provider admin".to_owned(),
             },
             allow_no_auth: false,
             cors: disabled_test_cors(),
@@ -624,82 +634,12 @@ struct TestHttpRequest {
             .as_str()
     }
 
-    fn bootstrap_postgres_auth_fixture(connection: &mut PostgresClient) {
-        connection
-            .execute(
-                "INSERT INTO systems (key, value, deleted_at) VALUES ($1, $2, 0)
-                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-                &[&crate::foundation::shared::SYSTEM_KEY_SECRET_KEY, &"task4-secret"],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO users (
-                    id, created_at, updated_at, deleted_at, email, status, prefer_language,
-                    password, first_name, last_name, avatar, is_owner, scopes
-                ) VALUES (
-                    1, NOW(), NOW(), 0, $1, 'activated', 'en', $2, 'System', 'Owner', '', TRUE, '[]'
-                )
-                ON CONFLICT (id) DO NOTHING",
-                &[
-                    &"owner@example.com",
-                    &hash_password("password123").unwrap(),
-                ],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO projects (id, created_at, updated_at, deleted_at, name, description, status)
-                 VALUES (1, NOW(), NOW(), 0, 'Default', '', 'active')
-                 ON CONFLICT (id) DO NOTHING",
-                &[],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO user_projects (id, created_at, updated_at, user_id, project_id, is_owner, scopes)
-                 VALUES (1, NOW(), NOW(), 1, 1, TRUE, '[]')
-                 ON CONFLICT (id) DO NOTHING",
-                &[],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "INSERT INTO api_keys (
-                    id, created_at, updated_at, deleted_at, user_id, project_id, key, name, type, status, scopes, profiles
-                ) VALUES
-                    (1, NOW(), NOW(), 0, 1, 1, $1, 'Task4 User Key', 'user', 'enabled', $3, '{}'),
-                    (2, NOW(), NOW(), 0, 1, 1, $2, 'Task4 Service Key', 'service_account', 'enabled', $3, '{}')
-                ON CONFLICT (id) DO NOTHING",
-                &[
-                    &DEFAULT_USER_API_KEY_VALUE,
-                    &DEFAULT_SERVICE_API_KEY_VALUE,
-                    &serialize_scope_slugs(&[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS]).unwrap(),
-                ],
-            )
-            .unwrap();
-    }
-
-    fn postgres_query_one(connection: &mut PostgresClient, sql: &str) -> Result<Row, String> {
-        connection.query_one(sql, &[]).map_err(|error| error.to_string())
-    }
-
     fn sqlite_task4_identity_and_request_context_services(
         foundation: Arc<SqliteFoundation>,
     ) -> (SqliteIdentityService, SqliteRequestContextService) {
         (
             SqliteIdentityService::new(foundation.clone(), false),
             SqliteRequestContextService::new(foundation, false),
-        )
-    }
-
-    fn seaorm_task4_identity_and_request_context_services(
-        dsn: &str,
-    ) -> (SeaOrmIdentityService, SeaOrmRequestContextService) {
-        let factory = SeaOrmConnectionFactory::postgres(dsn.to_owned());
-        (
-            SeaOrmIdentityService::new(factory.clone(), false),
-            SeaOrmRequestContextService::new(factory, false),
         )
     }
 
@@ -909,100 +849,6 @@ struct TestHttpRequest {
     }
 
     #[test]
-    fn postgres_identity_and_request_context_match_task4_auth_contract() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let (mut embedded_pg, dsn, data_dir) =
-            runtime.block_on(start_embedded_postgres("task4-postgres-auth-context"));
-
-        let factory = SeaOrmConnectionFactory::postgres(dsn.clone());
-        runtime.block_on(factory.connect_migrated()).unwrap();
-
-        let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-        bootstrap_postgres_auth_fixture(&mut connection);
-
-        let (identity, request_context) = seaorm_task4_identity_and_request_context_services(&dsn);
-
-        let signin = identity
-            .admin_signin(&SignInRequest {
-                email: "owner@example.com".to_owned(),
-                password: "password123".to_owned(),
-            })
-            .unwrap();
-        let admin = identity.authenticate_admin_jwt(&signin.token).unwrap();
-        assert_eq!(admin.email, "owner@example.com");
-        assert!(matches!(
-            identity.authenticate_admin_jwt("invalid-token"),
-            Err(axonhub_http::AdminAuthError::InvalidToken)
-        ));
-
-        let user_key = identity
-            .authenticate_api_key(Some(DEFAULT_USER_API_KEY_VALUE), false)
-            .unwrap();
-        assert_eq!(user_key.project.id, 1);
-        assert_eq!(user_key.key_type, axonhub_http::ApiKeyType::User);
-        assert!(matches!(
-            identity.authenticate_api_key(Some("invalid-key"), false),
-            Err(axonhub_http::ApiKeyAuthError::Invalid)
-        ));
-
-        let service_key = identity
-            .authenticate_api_key(Some(DEFAULT_SERVICE_API_KEY_VALUE), false)
-            .unwrap();
-        assert_eq!(service_key.key_type, axonhub_http::ApiKeyType::ServiceAccount);
-
-        let gemini_query = identity
-            .authenticate_gemini_key(Some(DEFAULT_USER_API_KEY_VALUE), None)
-            .unwrap();
-        let gemini_header = identity
-            .authenticate_gemini_key(None, Some(DEFAULT_USER_API_KEY_VALUE))
-            .unwrap();
-        assert_eq!(gemini_query.id, gemini_header.id);
-
-        let project = request_context.resolve_project(1).unwrap().unwrap();
-        assert_eq!(project.name, "Default");
-
-        let thread = request_context.resolve_thread(1, " thread-task4-pg ").unwrap().unwrap();
-        assert_eq!(thread.thread_id, "thread-task4-pg");
-        let thread_reuse = request_context
-            .resolve_thread(1, "thread-task4-pg")
-            .unwrap()
-            .unwrap();
-        assert_eq!(thread.id, thread_reuse.id);
-        assert!(matches!(
-            request_context.resolve_thread(2, "thread-task4-pg"),
-            Err(axonhub_http::ContextResolveError::Internal)
-        ));
-
-        let trace = request_context
-            .resolve_trace(1, " trace-task4-pg ", Some(thread.id))
-            .unwrap()
-            .unwrap();
-        assert_eq!(trace.trace_id, "trace-task4-pg");
-        assert_eq!(trace.thread_id, Some(thread.id));
-        let trace_reuse = request_context
-            .resolve_trace(1, "trace-task4-pg", Some(thread.id))
-            .unwrap()
-            .unwrap();
-        assert_eq!(trace.id, trace_reuse.id);
-        let trace_without_thread = request_context
-            .resolve_trace(1, "trace-task4-pg", None)
-            .unwrap()
-            .unwrap();
-        assert_eq!(trace.id, trace_without_thread.id);
-        assert!(matches!(
-            request_context.resolve_trace(1, "trace-task4-pg", Some(thread.id + 1)),
-            Err(axonhub_http::ContextResolveError::Internal)
-        ));
-        assert!(matches!(
-            request_context.resolve_trace(1, "trace-task4-pg-missing-thread", Some(thread.id + 10_000)),
-            Err(axonhub_http::ContextResolveError::Internal)
-        ));
-
-        runtime.block_on(embedded_pg.stop_db()).unwrap();
-        std::fs::remove_dir_all(data_dir).ok();
-    }
-
-    #[test]
     fn bootstrap_seeds_default_task4_onboarding_record() {
         let db_path = temp_sqlite_path("task4-bootstrap-onboarding");
         let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
@@ -1095,8 +941,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -2881,11 +2727,9 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let connection = foundation.open_connection(true).unwrap();
-        ensure_identity_tables(&connection).unwrap();
         foundation.requests().ensure_schema().unwrap();
         let _user_id = insert_test_user(
-            &connection,
+            &foundation,
             "dashboard-reader@example.com",
             "password123",
             &[SCOPE_READ_DASHBOARD],
@@ -2973,18 +2817,31 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        connection
-            .execute(
-                "INSERT INTO projects (id, created_at, updated_at, name, description, status, deleted_at) VALUES (?1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?2, ?3, ?4, 0)",
-                params![2, "Project Beta", "Second project", "active"],
-            )
+        foundation.seaorm().run_sync(|db| async move {
+            let connection = db.connect_migrated().await.unwrap();
+            projects::Entity::insert_many([
+                projects::ActiveModel {
+                    id: Set(2),
+                    name: Set("Project Beta".to_owned()),
+                    description: Set("Second project".to_owned()),
+                    status: Set("active".to_owned()),
+                    deleted_at: Set(0),
+                    ..Default::default()
+                },
+                projects::ActiveModel {
+                    id: Set(3),
+                    name: Set("Project Gamma".to_owned()),
+                    description: Set("Should be ignored".to_owned()),
+                    status: Set("active".to_owned()),
+                    deleted_at: Set(0),
+                    ..Default::default()
+                },
+            ])
+            .exec(&connection)
+            .await
             .unwrap();
-        connection
-            .execute(
-                "INSERT INTO projects (id, created_at, updated_at, name, description, status, deleted_at) VALUES (?1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?2, ?3, ?4, 0)",
-                params![3, "Project Gamma", "Should be ignored", "active"],
-            )
-            .unwrap();
+            Ok::<_, ()>(())
+        }).unwrap();
         foundation
             .requests()
             .create_request(&NewRequestRecord {
@@ -3012,12 +2869,18 @@ struct TestHttpRequest {
                 content_saved_at: None,
             })
             .unwrap();
-        connection
-            .execute(
-                "UPDATE projects SET deleted_at = 1 WHERE id = ?1",
-                params![3],
-            )
-            .unwrap();
+        foundation.seaorm().run_sync(|db| async move {
+            let connection = db.connect_migrated().await.unwrap();
+            let existing = projects::Entity::find_by_id(3)
+                .one(&connection)
+                .await
+                .unwrap()
+                .expect("project 3 exists");
+            let mut model: projects::ActiveModel = existing.into();
+            model.deleted_at = Set(1);
+            model.update(&connection).await.unwrap();
+            Ok::<_, ()>(())
+        }).unwrap();
 
         let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
         let token = signin_token(foundation.clone(), "dashboard-reader@example.com", "password123");
@@ -3069,9 +2932,7 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let connection = foundation.open_connection(true).unwrap();
-        ensure_identity_tables(&connection).unwrap();
-        let _user_id = insert_test_user(&connection, "dashboard-user@example.com", "password123", &[]);
+        let _user_id = insert_test_user(&foundation, "dashboard-user@example.com", "password123", &[]);
 
         let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
         let token = signin_token(foundation.clone(), "dashboard-user@example.com", "password123");
@@ -3113,9 +2974,7 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let connection = foundation.open_connection(true).unwrap();
-        ensure_identity_tables(&connection).unwrap();
-        let user_id = insert_test_user(&connection, "jwt-user@example.com", "password123", &[SCOPE_WRITE_USERS]);
+        let user_id = insert_test_user(&foundation, "jwt-user@example.com", "password123", &[SCOPE_WRITE_USERS]);
 
         let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
         let token = signin_token(foundation.clone(), "jwt-user@example.com", "password123");
@@ -3627,10 +3486,8 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let connection = foundation.open_connection(true).unwrap();
-        ensure_identity_tables(&connection).unwrap();
         let _admin_id = insert_test_user(
-            &connection,
+            &foundation,
             "admin@example.com",
             "password123",
             &[SCOPE_WRITE_SETTINGS, SCOPE_READ_SETTINGS],
@@ -3716,13 +3573,11 @@ struct TestHttpRequest {
         assert_eq!(items[0]["username"], Value::Null);
         assert_eq!(items[0]["password"], Value::Null);
 
-        let stored: String = connection
-            .query_row(
-                "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
-                params!["system_proxy_presets"],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let stored = foundation
+            .system_settings()
+            .value("system_proxy_presets")
+            .unwrap()
+            .expect("proxy preset system value exists");
         let stored_json: Value = serde_json::from_str(&stored).unwrap();
         assert_eq!(
             stored_json,
@@ -3804,9 +3659,7 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let connection = foundation.open_connection(true).unwrap();
-        ensure_identity_tables(&connection).unwrap();
-        let _user_id = insert_test_user(&connection, "user@example.com", "password123", &[]);
+        let _user_id = insert_test_user(&foundation, "user@example.com", "password123", &[]);
 
         let app = seaorm_graphql_test_app(foundation.clone(), bootstrap, db);
         let token = signin_token(foundation.clone(), "user@example.com", "password123");
@@ -4049,8 +3902,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -4314,8 +4167,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -4469,8 +4322,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -5954,8 +5807,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -6366,8 +6219,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -6763,8 +6616,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -8067,8 +7920,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -8328,8 +8181,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -8490,8 +8343,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -8669,8 +8522,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -8870,8 +8723,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -9035,8 +8888,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -9172,8 +9025,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -9338,8 +9191,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -9497,8 +9350,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -9836,8 +9689,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -10063,8 +9916,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
@@ -19512,8 +19365,8 @@ struct TestHttpRequest {
         openapi_graphql: OpenApiGraphqlCapability::Unsupported {
             message: "test-only unsupported openapi graphql".to_owned(),
         },
-        provider_edge_admin: ProviderEdgeAdminCapability::Unsupported {
-            message: "test-only unsupported provider-edge admin".to_owned(),
+        oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
+            message: "test-only unsupported oauth provider admin".to_owned(),
         }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),

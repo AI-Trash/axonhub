@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use axonhub_http::{
-    AdminCapability, AdminGraphqlCapability, IdentityCapability, OpenAiV1Capability,
-    OpenApiGraphqlCapability, ProviderEdgeAdminCapability, RequestContextCapability,
+    AdminCapability, AdminGraphqlCapability, IdentityCapability, OauthProviderAdminCapability,
+    OpenAiV1Capability, OpenApiGraphqlCapability, RequestContextCapability,
     SystemBootstrapCapability,
 };
 
@@ -12,6 +12,7 @@ use super::services::{
     SystemBootstrapApplicationService,
 };
 use crate::foundation::{
+    admin::oauth::SqliteOauthProviderAdminService,
     admin::SeaOrmAdminService,
     graphql::{SeaOrmAdminGraphqlService, SeaOrmOpenApiGraphqlService},
     identity_service::SeaOrmIdentityService,
@@ -20,7 +21,6 @@ use crate::foundation::{
         AdminGraphqlRepository, AdminRepository, IdentityRepository, OpenAiV1Repository,
         OpenApiGraphqlRepository, RequestContextRepository, SystemBootstrapRepository,
     },
-    provider_edge::SqliteProviderEdgeAdminService,
     request_context_service::SeaOrmRequestContextService,
     seaorm::SeaOrmConnectionFactory,
     system::SeaOrmBootstrapService,
@@ -37,7 +37,7 @@ pub(crate) struct ServerCapabilities {
     pub(crate) admin: AdminCapability,
     pub(crate) admin_graphql: AdminGraphqlCapability,
     pub(crate) openapi_graphql: OpenApiGraphqlCapability,
-    pub(crate) provider_edge_admin: ProviderEdgeAdminCapability,
+    pub(crate) oauth_provider_admin: OauthProviderAdminCapability,
 }
 
 enum PersistenceProfile {
@@ -87,7 +87,7 @@ pub(crate) fn build_server_capabilities(
         admin: build_admin_capability_from_profile(&profile),
         admin_graphql: build_admin_graphql_capability_from_profile(&profile),
         openapi_graphql: build_openapi_graphql_capability_from_profile(&profile),
-        provider_edge_admin: build_provider_edge_admin_capability(dialect, dsn),
+        oauth_provider_admin: build_oauth_provider_admin_capability(dialect, dsn),
     }
 }
 
@@ -259,18 +259,18 @@ fn build_openapi_graphql_capability_from_profile(
     }
 }
 
-pub(crate) fn build_provider_edge_admin_capability(
+pub(crate) fn build_oauth_provider_admin_capability(
     _dialect: &str,
     _dsn: &str,
-) -> ProviderEdgeAdminCapability {
-    if let Some(provider_edge) = SqliteProviderEdgeAdminService::from_env() {
-        return ProviderEdgeAdminCapability::Available {
-            provider_edge: Arc::new(provider_edge),
+) -> OauthProviderAdminCapability {
+    if let Some(oauth_provider_admin) = SqliteOauthProviderAdminService::from_env() {
+        return OauthProviderAdminCapability::Available {
+            oauth_provider_admin: Arc::new(oauth_provider_admin),
         };
     }
 
-    ProviderEdgeAdminCapability::Unsupported {
-        message: "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
+    OauthProviderAdminCapability::Unsupported {
+        message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set the required OAuth provider environment variables to enable these routes."
             .to_owned(),
     }
 }
