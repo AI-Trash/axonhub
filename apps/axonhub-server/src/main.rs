@@ -40,7 +40,7 @@ fn runtime_query_semantics_preserved_after_rewrite() {
 #[cfg(test)]
 #[test]
 fn parity_oracle_helpers_preserve_contract() {
-    app::parity_oracle_helpers_preserve_contract_inner();
+    app::test_support::tests::parity_oracle_helpers_preserve_contract_inner();
 }
 
 #[cfg(test)]
@@ -64,7 +64,7 @@ fn seaorm_run_sync_preserves_trace_context_across_bridge() {
 #[cfg(test)]
 #[test]
 fn schema_ownership_contract_limits_raw_sql_usage() {
-    foundation::schema_ownership::schema_ownership_contract_limits_raw_sql_usage_inner();
+    foundation::schema_governance::schema_ownership::schema_ownership_contract_limits_raw_sql_usage_inner();
 }
 
 #[cfg(test)]

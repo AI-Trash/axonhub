@@ -53,6 +53,12 @@ pub(crate) const OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS: &[&str] = &[
     "AXONHUB_PROVIDER_EDGE_COPILOT_SCOPE",
 ];
 
+#[cfg(test)]
+pub(crate) fn oauth_provider_env_test_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 #[derive(Debug, Clone)]
 pub struct OAuthProviderAdminConfig {
     codex_authorize_url: String,
@@ -1407,11 +1413,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::thread;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     struct OAuthProviderEnvFixture {
         previous: Vec<(&'static str, Option<String>)>,
     }
@@ -1546,7 +1547,9 @@ mod tests {
 
     #[test]
     fn oauth_provider_config_requires_secure_runtime_env() {
-        let _lock = env_lock().lock().unwrap();
+        let _lock = super::oauth_provider_env_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let fixture = OAuthProviderEnvFixture::new();
 
         assert!(OAuthProviderAdminConfig::from_env().is_none());
@@ -1568,7 +1571,9 @@ mod tests {
 
     #[test]
     fn sqlite_oauth_provider_service_is_env_gated() {
-        let _lock = env_lock().lock().unwrap();
+        let _lock = super::oauth_provider_env_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let fixture = OAuthProviderEnvFixture::new();
 
         assert!(SqliteOauthProviderAdminService::from_env().is_none());

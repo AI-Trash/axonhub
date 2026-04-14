@@ -402,10 +402,11 @@ fn scan_sqlite_support_suffix_files(package_root: &Path, display_prefix: &str) -
 
 fn display_path(package_root: &Path, display_prefix: &str, path: &Path) -> String {
     let relative = path.strip_prefix(package_root).unwrap_or(path);
+    let relative = relative.display().to_string().replace('\\', "/");
     if display_prefix.is_empty() {
-        relative.display().to_string()
+        relative
     } else {
-        format!("{display_prefix}/{}", relative.display())
+        format!("{display_prefix}/{relative}")
     }
 }
 

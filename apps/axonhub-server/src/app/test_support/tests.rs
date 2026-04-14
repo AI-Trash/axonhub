@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use actix_web::body::BoxBody;
@@ -22,7 +22,7 @@ use crate::app::capabilities::{
     build_oauth_provider_admin_capability, build_request_context_capability,
     build_system_bootstrap_capability,
 };
-use crate::foundation::admin::oauth::OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS;
+use crate::foundation::admin::oauth::{oauth_provider_env_test_lock, OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS};
 use crate::foundation::shared::{DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE};
 
 #[derive(Deserialize)]
@@ -201,17 +201,16 @@ fn load_fixture(path: &Path) -> OracleFixture {
     fixture
 }
 
-fn provider_edge_env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
 struct ProviderEdgeEnvFixture {
+    _guard: std::sync::MutexGuard<'static, ()>,
     previous: Vec<(&'static str, Option<String>)>,
 }
 
 impl ProviderEdgeEnvFixture {
     fn new() -> Self {
+        let guard = oauth_provider_env_test_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous = OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS
             .iter()
             .map(|key| (*key, env::var(key).ok()))
@@ -221,7 +220,7 @@ impl ProviderEdgeEnvFixture {
             env::remove_var(key);
         }
 
-        Self { previous }
+        Self { _guard: guard, previous }
     }
 
     fn set_all(&self) {
@@ -522,108 +521,10 @@ async fn emit_http_handler_parity(suite: &str, fixture: OracleFixture) -> Oracle
     if matches!(fixture.handler.as_deref(), Some("anthropic_models_basic" | "gemini_models_basic" | "v1_models_basic")) {
         bootstrap_sqlite(&db_path);
     }
-    let state = sqlite_state(&db_path);
-    let handler = fixture.handler.as_deref().expect("handler fixture is required");
-    if matches!(
-        handler,
-        "provider_edge_claudecode_start_invalid_json"
-            | "provider_edge_antigravity_start_invalid_json"
-            | "provider_edge_copilot_start_invalid_json"
-    ) {
-        let response = TestApp::new(state).oneshot(fixture.request).await.unwrap();
-        let output = response_to_output(suite, response, false).await;
-        fs::remove_file(db_path).ok();
-        return output;
-    }
-    let app = match handler {
-        "admin_initialize_invalid_json" => actix_test::init_service(
-            App::new()
-                .app_data(web::Data::new(state))
-                .service(web::resource("/admin/system/initialize").route(web::post().to(axonhub_http::compatibility_initialize_system))),
-        )
-        .await,
-        "admin_graphql_playground" => actix_test::init_service(
-            App::new().service(web::resource("/admin/playground").route(web::get().to(axonhub_http::compatibility_admin_graphql_playground))),
-        )
-        .await,
-        "openapi_graphql_playground" => actix_test::init_service(
-            App::new().service(web::resource("/openapi/v1/playground").route(web::get().to(axonhub_http::compatibility_openapi_graphql_playground))),
-        )
-        .await,
-        "openai_chat_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/chat/completions").route(web::post().to(axonhub_http::compatibility_openai_chat_completions))),
-        )
-        .await,
-        "openai_responses_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/responses").route(web::post().to(axonhub_http::compatibility_openai_responses))),
-        )
-        .await,
-        "openai_embeddings_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/embeddings").route(web::post().to(axonhub_http::compatibility_openai_embeddings))),
-        )
-        .await,
-        "openai_images_generations_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/images/generations").route(web::post().to(axonhub_http::compatibility_openai_images_generations))),
-        )
-        .await,
-        "openai_videos_create_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/v1/videos").route(web::post().to(axonhub_http::compatibility_openai_videos_create))),
-        )
-        .await,
-        "anthropic_messages_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/anthropic/v1/messages").route(web::post().to(axonhub_http::compatibility_anthropic_messages))),
-        )
-        .await,
-        "jina_rerank_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/jina/v1/rerank").route(web::post().to(axonhub_http::compatibility_jina_rerank))),
-        )
-        .await,
-        "jina_embeddings_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/jina/v1/embeddings").route(web::post().to(axonhub_http::compatibility_jina_embeddings))),
-        )
-        .await,
-        "gemini_generate_content_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/gemini/v1/models/gemini-2.5-flash:generateContent").route(web::post().to(axonhub_http::compatibility_gemini_generate_content))),
-        )
-        .await,
-        "v1beta_generate_content_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/v1beta/models/gemini-2.5-flash:generateContent").route(web::post().to(axonhub_http::compatibility_gemini_generate_content))),
-        )
-        .await,
-        "doubao_create_task_empty_body" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/doubao/v3/contents/generations/tasks").route(web::post().to(axonhub_http::compatibility_doubao_create_task))),
-        )
-        .await,
-        "provider_edge_claudecode_start_invalid_json" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/admin/claudecode/oauth/start").route(web::post().to(axonhub_http::compatibility_start_claudecode_oauth))),
-        )
-        .await,
-        "provider_edge_antigravity_start_invalid_json" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/admin/antigravity/oauth/start").route(web::post().to(axonhub_http::compatibility_start_antigravity_oauth))),
-        )
-        .await,
-        "provider_edge_copilot_start_invalid_json" => actix_test::init_service(
-            App::new().app_data(web::Data::new(state)).service(web::resource("/admin/copilot/oauth/start").route(web::post().to(axonhub_http::compatibility_start_copilot_oauth))),
-        )
-        .await,
-        _ => panic!("unsupported handler parity fixture {handler}"),
-    };
-
-    let mut request = actix_test::TestRequest::default()
-        .method(Method::from_bytes(fixture.request.method.as_bytes()).expect("valid method"))
-        .uri(&fixture.request.path);
-    if let Some(headers) = fixture.request.headers.as_ref() {
-        for (name, value) in headers {
-            request = request.insert_header((name.as_str(), value.as_str()));
-        }
-    }
-    let response = actix_test::call_service(
-        &app,
-        request
-            .set_payload(fixture.request.body.unwrap_or_default().into_bytes())
-            .to_request(),
-    )
-    .await;
+    let response = TestApp::new(sqlite_state(&db_path))
+        .oneshot(fixture.request)
+        .await
+        .unwrap();
     let output = response_to_output(suite, response, false).await;
     fs::remove_file(db_path).ok();
     output
@@ -712,7 +613,6 @@ async fn response_to_output(
 
 #[tokio::test]
 async fn provider_edge_start_invalid_json_parity_fixtures_cover_all_supported_providers() {
-    let _lock = provider_edge_env_lock().lock().expect("lock provider-edge env");
     let env_fixture = ProviderEdgeEnvFixture::new();
     env_fixture.set_all();
 

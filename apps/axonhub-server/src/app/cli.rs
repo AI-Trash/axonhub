@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::process;
 
 use anyhow::Result;
@@ -27,6 +28,8 @@ pub(crate) struct AxonhubCliContract {
 enum AxonhubTopLevelVerb {
     #[command(about = "Configuration helpers")]
     Config(ConfigArgs),
+    #[command(about = "Show help")]
+    Help,
     #[command(about = "Show version")]
     Version,
     #[command(about = "Show detailed build metadata")]
@@ -118,6 +121,7 @@ pub(crate) async fn run(args: &[String]) -> Result<()> {
 
     match cli.command {
         Some(AxonhubTopLevelVerb::Config(config)) => handle_config_command(config),
+        Some(AxonhubTopLevelVerb::Help) => print_help(),
         Some(AxonhubTopLevelVerb::Version) => {
             show_version();
             Ok(())
@@ -139,16 +143,25 @@ fn handle_config_command(args: ConfigArgs) -> Result<()> {
 }
 
 fn config_preview(args: ConfigPreviewArgs) -> Result<()> {
+    let format: PreviewFormat = args.format.into();
+    let stdout_is_terminal = std::io::stdout().is_terminal();
     let loaded = load_for_cli().unwrap_or_else(|error| {
         println!("Failed to load config: {error}");
         process::exit(1);
     });
-    let preview = loaded.preview(args.format.into()).unwrap_or_else(|error| {
+    let preview = loaded.preview(format).unwrap_or_else(|error| {
         println!("Failed to preview config: {error}");
         process::exit(1);
     });
-    println!("{preview}");
+    println!("{}", format_preview_for_terminal(&preview, format, stdout_is_terminal));
 
+    Ok(())
+}
+
+fn print_help() -> Result<()> {
+    let mut command = axonhub_cli_command();
+    command.print_long_help()?;
+    println!();
     Ok(())
 }
 
@@ -239,5 +252,152 @@ fn format_json_value(value: &serde_json::Value) -> Result<String> {
         serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
             Ok(serde_json::to_string_pretty(value)?)
         }
+    }
+}
+
+fn format_preview_for_terminal(preview: &str, format: PreviewFormat, is_terminal: bool) -> String {
+    match (format, is_terminal) {
+        (PreviewFormat::Yaml, true) => highlight_yaml_preview(preview),
+        _ => preview.to_owned(),
+    }
+}
+
+fn highlight_yaml_preview(preview: &str) -> String {
+    preview
+        .lines()
+        .map(highlight_yaml_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn highlight_yaml_line(line: &str) -> String {
+    const RESET: &str = "\u{1b}[0m";
+    const COMMENT: &str = "\u{1b}[90m";
+    const KEY: &str = "\u{1b}[36m";
+    const STRING: &str = "\u{1b}[32m";
+    const NUMBER: &str = "\u{1b}[33m";
+    const BOOLEAN: &str = "\u{1b}[35m";
+
+    fn highlight_scalar(value: &str) -> String {
+        const RESET: &str = "\u{1b}[0m";
+        const COMMENT: &str = "\u{1b}[90m";
+        const STRING: &str = "\u{1b}[32m";
+        const NUMBER: &str = "\u{1b}[33m";
+        const BOOLEAN: &str = "\u{1b}[35m";
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return value.to_owned();
+        }
+
+        let leading_len = value.len() - value.trim_start().len();
+        let trailing_len = value.len() - value.trim_end().len();
+        let leading = &value[..leading_len];
+        let trailing = &value[value.len() - trailing_len..];
+        let core = value.trim();
+
+        let color = if core.starts_with('#') {
+            COMMENT
+        } else if matches!(core, "true" | "false" | "null" | "~") {
+            BOOLEAN
+        } else if core.parse::<i64>().is_ok() || core.parse::<f64>().is_ok() {
+            NUMBER
+        } else {
+            STRING
+        };
+
+        format!("{leading}{color}{core}{RESET}{trailing}")
+    }
+
+    if line.is_empty() {
+        return String::new();
+    }
+
+    let trimmed = line.trim_start();
+    let indent = &line[..line.len() - trimmed.len()];
+
+    if trimmed.starts_with('#') {
+        return format!("{indent}{COMMENT}{trimmed}{RESET}");
+    }
+
+    let (prefix, body) = match trimmed.strip_prefix("- ") {
+        Some(rest) => ("- ", rest),
+        None => ("", trimmed),
+    };
+
+    if let Some(separator) = yaml_key_separator_index(body) {
+        let key = &body[..separator];
+        let remainder = &body[separator + 1..];
+        return format!(
+            "{indent}{prefix}{KEY}{key}{RESET}:{}",
+            highlight_scalar(remainder)
+        );
+    }
+
+    format!("{indent}{prefix}{}", highlight_scalar(body))
+}
+
+fn yaml_key_separator_index(value: &str) -> Option<usize> {
+    value.char_indices().find_map(|(index, ch)| {
+        if ch != ':' {
+            return None;
+        }
+
+        let next = value[index + ch.len_utf8()..].chars().next();
+        match next {
+            None => Some(index),
+            Some(next) if next.is_whitespace() => Some(index),
+            _ => None,
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_args(args: &[&str]) -> AxonhubCliContract {
+        let args = args.iter().map(|value| value.to_string()).collect::<Vec<_>>();
+        parse_axonhub_cli(&args).expect("cli should parse")
+    }
+
+    #[test]
+    fn parse_help_as_explicit_top_level_command() {
+        let cli = parse_args(&["axonhub", "help"]);
+        assert!(matches!(cli.command, Some(AxonhubTopLevelVerb::Help)));
+    }
+
+    #[test]
+    fn yaml_preview_output_is_highlighted_for_terminal() {
+        let output = format_preview_for_terminal(
+            "server:\n  port: 8090\n  debug: false\n  name: AxonHub",
+            PreviewFormat::Yaml,
+            true,
+        );
+
+        assert!(output.contains("\u{1b}[36mserver\u{1b}[0m:"));
+        assert!(output.contains("\u{1b}[33m8090\u{1b}[0m"));
+        assert!(output.contains("\u{1b}[35mfalse\u{1b}[0m"));
+        assert!(output.contains("\u{1b}[32mAxonHub\u{1b}[0m"));
+    }
+
+    #[test]
+    fn yaml_preview_output_remains_plain_text_when_not_terminal() {
+        let output = format_preview_for_terminal(
+            "server:\n  port: 8090\n  debug: false\n  name: AxonHub",
+            PreviewFormat::Yaml,
+            false,
+        );
+        assert!(!output.contains("\u{1b}["));
+    }
+
+    #[test]
+    fn json_preview_output_remains_plain_text() {
+        let output = format_preview_for_terminal(
+            "{\n  \"server\": {\n    \"port\": 8090\n  }\n}",
+            PreviewFormat::Json,
+            true,
+        );
+        assert!(!output.contains("\u{1b}["));
     }
 }

@@ -115,7 +115,8 @@ fn runtime_driver_guard_rejects_runtime_imports() {
         "expected exactly one runtime violation"
     );
     assert!(
-        violations[0].contains("src/app/runtime.rs"),
+        violations[0].contains("src/app/runtime.rs")
+            || violations[0].contains("src\\app\\runtime.rs"),
         "unexpected violation: {}",
         violations[0]
     );
@@ -183,7 +184,8 @@ fn runtime_driver_guard_rejects_runtime_driver_paths() {
         "expected exactly one runtime path-fragment violation"
     );
     assert!(
-        violations[0].contains("src/app/runtime.rs"),
+        violations[0].contains("src/app/runtime.rs")
+            || violations[0].contains("src\\app\\runtime.rs"),
         "unexpected violation: {}",
         violations[0]
     );

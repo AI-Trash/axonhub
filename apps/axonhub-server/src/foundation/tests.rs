@@ -14,9 +14,11 @@ use super::{
     circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
     graphql::{
         SeaOrmAdminGraphqlService, SeaOrmOpenApiGraphqlService,
+        sqlite_test_support::{SqliteAdminGraphqlService, SqliteOpenApiGraphqlService},
     },
     identity_service::SeaOrmIdentityService,
     identity_service::sqlite_test_support::SqliteIdentityService,
+    identity_service::sqlite_test_support::build_user_context,
     openai_v1::{
         NewChannelRecord, NewModelRecord, NewRequestExecutionRecord, NewRequestRecord,
         NewUsageLogRecord, SeaOrmOpenAiV1Service,
@@ -57,9 +59,13 @@ use actix_web::http::header;
 use actix_web::test as actix_test;
 use axonhub_db_entity::{
     api_keys, channel_model_price_versions, channel_model_prices, channel_override_templates,
-    data_storages, projects, request_executions, requests, roles, systems, usage_logs, users,
+    data_storages, projects, request_executions, requests, roles, systems, usage_logs,
+    user_projects, users,
 };
 use chrono::{Datelike, Duration as ChronoDuration, TimeZone, Utc};
+use rusqlite::{params, Connection, OptionalExtension};
+use crate::foundation::identity::sqlite_test_support::query_default_project_for_user;
+use crate::foundation::repositories::identity::sqlite_test_support::{query_project, query_user_by_id};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -254,110 +260,100 @@ struct TestHttpRequest {
         }
     }
 
+    trait SqliteExecTarget {
+        fn with_connection<T>(&self, f: impl FnOnce(&Connection) -> T) -> T;
+    }
+
+    impl SqliteExecTarget for Connection {
+        fn with_connection<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
+            f(self)
+        }
+    }
+
+    impl SqliteExecTarget for SqliteFoundation {
+        fn with_connection<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
+            let connection = self.open_connection(true).unwrap();
+            f(&connection)
+        }
+    }
+
+    impl SqliteExecTarget for Arc<SqliteFoundation> {
+        fn with_connection<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
+            let connection = self.open_connection(true).unwrap();
+            f(&connection)
+        }
+    }
+
     fn insert_test_user(
-        foundation: &SqliteFoundation,
+        target: &impl SqliteExecTarget,
         email: &str,
         password: &str,
         scopes: &[ScopeSlug],
     ) -> i64 {
         let hashed_password = hash_password(password).unwrap();
         let scopes_json = serialize_scope_slugs(scopes).unwrap();
-        let email = email.to_owned();
-        foundation
-            .seaorm()
-            .run_sync(move |db| async move {
-                let connection = db.connect_migrated().await.unwrap();
-                users::Entity::insert(users::ActiveModel {
-                    email: Set(email),
-                    status: Set("activated".to_owned()),
-                    prefer_language: Set("en".to_owned()),
-                    password: Set(hashed_password),
-                    first_name: Set("Test".to_owned()),
-                    last_name: Set("User".to_owned()),
-                    avatar: Set(Some(String::new())),
-                    is_owner: Set(false),
-                    token_version: Set(0),
-                    scopes: Set(scopes_json),
-                    deleted_at: Set(0),
-                    ..Default::default()
-                })
-                .exec(&connection)
-                .await
-                .unwrap()
-                .last_insert_id
-            })
+        target.with_connection(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO users (email, status, prefer_language, password, first_name, last_name, avatar, is_owner, token_version, scopes, deleted_at)
+                     VALUES (?1, 'activated', 'en', ?2, 'Test', 'User', '', 0, 0, ?3, 0)",
+                    params![email, hashed_password, scopes_json],
+                )
+                .unwrap();
+            connection.last_insert_rowid()
+        })
     }
 
     fn insert_project_membership(
-        foundation: &SqliteFoundation,
+        target: &impl SqliteExecTarget,
         user_id: i64,
         project_id: i64,
         is_owner: bool,
         scopes: &[ScopeSlug],
     ) {
         let scopes_json = serialize_scope_slugs(scopes).unwrap();
-        foundation.seaorm().run_sync(move |db| async move {
-            let connection = db.connect_migrated().await.unwrap();
-            user_projects::Entity::insert(user_projects::ActiveModel {
-                user_id: Set(user_id),
-                project_id: Set(project_id),
-                is_owner: Set(is_owner),
-                scopes: Set(scopes_json),
-                ..Default::default()
-            })
-            .exec(&connection)
-            .await
-            .unwrap();
-            Ok::<_, ()>(())
-        }).unwrap();
+        target.with_connection(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO user_projects (user_id, project_id, is_owner, scopes) VALUES (?1, ?2, ?3, ?4)",
+                    params![user_id, project_id, if is_owner { 1 } else { 0 }, scopes_json],
+                )
+                .unwrap();
+        });
     }
 
     fn insert_role(
-        foundation: &SqliteFoundation,
+        target: &impl SqliteExecTarget,
         name: &str,
         level: ScopeLevel,
         project_id: i64,
         scopes: &[ScopeSlug],
     ) -> i64 {
-        let name = name.to_owned();
-        let level = level.as_str().to_owned();
         let scopes_json = serialize_scope_slugs(scopes).unwrap();
-        foundation
-            .seaorm()
-            .run_sync(move |db| async move {
-                let connection = db.connect_migrated().await.unwrap();
-                roles::Entity::insert(roles::ActiveModel {
-                    name: Set(name),
-                    level: Set(level),
-                    project_id: Set(project_id),
-                    scopes: Set(scopes_json),
-                    deleted_at: Set(0),
-                    ..Default::default()
-                })
-                .exec(&connection)
-                .await
-                .unwrap()
-                .last_insert_id
-            })
+        target.with_connection(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO roles (name, level, project_id, scopes, deleted_at) VALUES (?1, ?2, ?3, ?4, 0)",
+                    params![name, level.as_str(), project_id, scopes_json],
+                )
+                .unwrap();
+            connection.last_insert_rowid()
+        })
     }
 
-    fn attach_role(foundation: &SqliteFoundation, user_id: i64, role_id: i64) {
-        foundation.seaorm().run_sync(move |db| async move {
-            let connection = db.connect_migrated().await.unwrap();
-            axonhub_db_entity::user_roles::Entity::insert(axonhub_db_entity::user_roles::ActiveModel {
-                user_id: Set(user_id),
-                role_id: Set(role_id),
-                ..Default::default()
-            })
-            .exec(&connection)
-            .await
-            .unwrap();
-            Ok::<_, ()>(())
-        }).unwrap();
+    fn attach_role(target: &impl SqliteExecTarget, user_id: i64, role_id: i64) {
+        target.with_connection(|connection| {
+            connection
+                .execute(
+                    "INSERT INTO user_roles (user_id, role_id) VALUES (?1, ?2)",
+                    params![user_id, role_id],
+                )
+                .unwrap();
+        });
     }
 
     fn insert_api_key(
-        foundation: &SqliteFoundation,
+        target: &impl SqliteExecTarget,
         user_id: i64,
         project_id: i64,
         key: &str,
@@ -365,50 +361,38 @@ struct TestHttpRequest {
         key_type: &str,
         scopes: &[ScopeSlug],
     ) -> i64 {
-        let key = key.to_owned();
-        let name = name.to_owned();
-        let key_type = key_type.to_owned();
         let scopes_json = serialize_scope_slugs(scopes).unwrap();
-        foundation
-            .seaorm()
-            .run_sync(move |db| async move {
-                let connection = db.connect_migrated().await.unwrap();
-                if let Some(existing) = api_keys::Entity::find()
-                    .filter(api_keys::Column::Key.eq(key.as_str()))
-                    .filter(api_keys::Column::DeletedAt.eq(0_i64))
-                    .one(&connection)
-                    .await
-                    .unwrap()
-                {
-                    let mut model: api_keys::ActiveModel = existing.into();
-                    model.user_id = Set(user_id);
-                    model.project_id = Set(project_id);
-                    model.name = Set(name.clone());
-                    model.type_field = Set(key_type.clone());
-                    model.status = Set("enabled".to_owned());
-                    model.scopes = Set(scopes_json.clone());
-                    model.profiles = Set("{}".to_owned());
-                    model.deleted_at = Set(0);
-                    model.update(&connection).await.unwrap().id
-                } else {
-                    api_keys::Entity::insert(api_keys::ActiveModel {
-                        user_id: Set(user_id),
-                        project_id: Set(project_id),
-                        key: Set(key),
-                        name: Set(name),
-                        type_field: Set(key_type),
-                        status: Set("enabled".to_owned()),
-                        scopes: Set(scopes_json),
-                        profiles: Set("{}".to_owned()),
-                        deleted_at: Set(0),
-                        ..Default::default()
-                    })
-                    .exec(&connection)
-                    .await
-                    .unwrap()
-                    .last_insert_id
-                }
-            })
+        target.with_connection(|connection| {
+            let existing = connection
+                .query_row(
+                    "SELECT id FROM api_keys WHERE key = ?1 AND deleted_at = 0 LIMIT 1",
+                    [key],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .unwrap();
+
+            if let Some(id) = existing {
+                connection
+                    .execute(
+                        "UPDATE api_keys
+                         SET user_id = ?2, project_id = ?3, name = ?4, type = ?5, status = 'enabled', scopes = ?6, profiles = '{}', deleted_at = 0
+                         WHERE key = ?1",
+                        params![key, user_id, project_id, name, key_type, scopes_json],
+                    )
+                    .unwrap();
+                id
+            } else {
+                connection
+                    .execute(
+                        "INSERT INTO api_keys (user_id, project_id, key, name, type, status, scopes, profiles, deleted_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, 'enabled', ?6, '{}', 0)",
+                        params![user_id, project_id, key, name, key_type, scopes_json],
+                    )
+                    .unwrap();
+                connection.last_insert_rowid()
+            }
+        })
     }
 
     fn ensure_provider_quota_status_deleted_at_compat(connection: &Connection) {
@@ -3629,6 +3613,7 @@ struct TestHttpRequest {
         let final_query_json = read_json_response(final_query_response).await;
         assert_eq!(final_query_json["data"]["proxyPresets"], Value::Array(vec![]));
 
+        let connection = foundation.open_connection(true).unwrap();
         let stored_after_delete: String = connection
             .query_row(
                 "SELECT value FROM systems WHERE key = ?1 AND deleted_at = 0",
@@ -4860,14 +4845,9 @@ struct TestHttpRequest {
 
     #[test]
     fn seaorm_operational_service_restores_backup_payload_and_records_completed_run() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let (mut embedded_pg, dsn, data_dir) =
-            runtime.block_on(start_embedded_postgres("task6-seaorm-restore-success"));
-
-        let factory = SeaOrmConnectionFactory::postgres(dsn.clone());
-        runtime.block_on(factory.connect_migrated()).unwrap();
-
-        let bootstrap = SeaOrmBootstrapService::new(factory.clone().into(), "v0.9.20".to_owned());
+        let db_path = temp_sqlite_path("task6-seaorm-restore-success");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
         bootstrap
             .initialize(&InitializeSystemRequest {
                 owner_email: "owner@example.com".to_owned(),
@@ -4878,14 +4858,13 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-        bootstrap_postgres_auth_fixture(&mut connection);
+        let connection = foundation.open_connection(true).unwrap();
         connection
             .execute(
                 "INSERT INTO projects (id, created_at, updated_at, deleted_at, name, description, status)
-                 VALUES (2, NOW(), NOW(), 0, 'Imported Project', '', 'active')
+                 VALUES (2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 'Imported Project', '', 'active')
                  ON CONFLICT (id) DO NOTHING",
-                &[],
+                [],
             )
             .unwrap();
 
@@ -4939,7 +4918,7 @@ struct TestHttpRequest {
         };
 
         let payload_bytes = serde_json::to_vec(&payload).unwrap();
-        let service = SeaOrmOperationalService::new(factory.clone());
+        let service = seaorm_operational_service(&foundation);
         let message = service
             .restore_backup(
                 &payload_bytes,
@@ -4955,56 +4934,49 @@ struct TestHttpRequest {
             .unwrap();
         assert_eq!(message, "Restore completed successfully");
 
-        let channel_count: i64 = postgres_query_one(
-            &mut connection,
-            "SELECT COUNT(*) FROM channels WHERE name = 'Imported Channel'",
-        )
-        .unwrap()
-        .get(0);
-        let model_count: i64 = postgres_query_one(
-            &mut connection,
-            "SELECT COUNT(*) FROM models WHERE model_id = 'gpt-4o' AND developer = 'openai'",
-        )
-        .unwrap()
-        .get(0);
-        let api_key_count: i64 =
-            postgres_query_one(&mut connection, "SELECT COUNT(*) FROM api_keys WHERE key = 'sk-task6'")
-                .unwrap()
-                .get(0);
-        let price_count: i64 = postgres_query_one(
-            &mut connection,
-            "SELECT COUNT(*) FROM channel_model_prices WHERE reference_id = 'ref-task6'",
-        )
-        .unwrap()
-        .get(0);
-        let run_row = postgres_query_one(
-            &mut connection,
-            "SELECT status, error_message FROM operational_runs WHERE operation_type = 'restore' ORDER BY id DESC LIMIT 1",
-        )
-        .unwrap();
-        let run_status: String = run_row.get(0);
-        let run_error: Option<String> = run_row.get(1);
+        let verification = foundation.open_connection(true).unwrap();
+        let channel_count: i64 = verification
+            .query_row("SELECT COUNT(*) FROM channels WHERE name = 'Imported Channel'", [], |row| row.get(0))
+            .unwrap();
+        let model_count: i64 = verification
+            .query_row(
+                "SELECT COUNT(*) FROM models WHERE model_id = 'gpt-4o' AND developer = 'openai'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let api_key_count: i64 = verification
+            .query_row("SELECT COUNT(*) FROM api_keys WHERE key = 'sk-task6'", [], |row| row.get(0))
+            .unwrap();
+        let price_count: i64 = verification
+            .query_row(
+                "SELECT COUNT(*) FROM channel_model_prices WHERE reference_id = 'ref-task6'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let run_row: (String, Option<String>) = verification
+            .query_row(
+                "SELECT status, error_message FROM operational_runs WHERE operation_type = 'restore' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(channel_count, 1);
         assert_eq!(model_count, 1);
         assert_eq!(api_key_count, 1);
         assert_eq!(price_count, 1);
-        assert_eq!(run_status, "completed");
-        assert!(run_error.is_none());
+        assert_eq!(run_row.0, "completed");
+        assert!(run_row.1.is_none());
 
-        runtime.block_on(embedded_pg.stop_db()).ok();
-        std::fs::remove_dir_all(data_dir).ok();
+        std::fs::remove_file(db_path).ok();
     }
 
     #[test]
     fn seaorm_operational_service_rejects_invalid_backup_version_and_records_failed_run() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let (mut embedded_pg, dsn, data_dir) =
-            runtime.block_on(start_embedded_postgres("task6-seaorm-restore-failure"));
-
-        let factory = SeaOrmConnectionFactory::postgres(dsn.clone());
-        runtime.block_on(factory.connect_migrated()).unwrap();
-
-        let bootstrap = SeaOrmBootstrapService::new(factory.clone().into(), "v0.9.20".to_owned());
+        let db_path = temp_sqlite_path("task6-seaorm-restore-failure");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
         bootstrap
             .initialize(&InitializeSystemRequest {
                 owner_email: "owner@example.com".to_owned(),
@@ -5014,9 +4986,6 @@ struct TestHttpRequest {
                 brand_name: "AxonHub".to_owned(),
             })
             .unwrap();
-
-        let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-        bootstrap_postgres_auth_fixture(&mut connection);
 
         let payload_bytes = serde_json::to_vec(&StoredBackupPayload {
             version: "0.0".to_owned(),
@@ -5028,7 +4997,7 @@ struct TestHttpRequest {
         })
         .unwrap();
 
-        let service = SeaOrmOperationalService::new(factory.clone());
+        let service = seaorm_operational_service(&foundation);
         let error = service
             .restore_backup(
                 &payload_bytes,
@@ -5044,18 +5013,18 @@ struct TestHttpRequest {
             .unwrap_err();
         assert!(error.contains("backup version mismatch"));
 
-        let run_row = postgres_query_one(
-            &mut connection,
-            "SELECT status, COALESCE(error_message, '') FROM operational_runs WHERE operation_type = 'restore' ORDER BY id DESC LIMIT 1",
-        )
-        .unwrap();
-        let run_status: String = run_row.get(0);
-        let run_error: String = run_row.get(1);
-        assert_eq!(run_status, "failed");
-        assert!(run_error.contains("backup version mismatch"));
+        let verification = foundation.open_connection(true).unwrap();
+        let run_row: (String, String) = verification
+            .query_row(
+                "SELECT status, COALESCE(error_message, '') FROM operational_runs WHERE operation_type = 'restore' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(run_row.0, "failed");
+        assert!(run_row.1.contains("backup version mismatch"));
 
-        runtime.block_on(embedded_pg.stop_db()).ok();
-        std::fs::remove_dir_all(data_dir).ok();
+        std::fs::remove_file(db_path).ok();
     }
 
     #[test]
@@ -6303,14 +6272,9 @@ struct TestHttpRequest {
 
     #[test]
     fn seaorm_openai_v1_failure_persists_terminal_request_and_execution_state() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let (mut embedded_pg, dsn, data_dir) =
-            runtime.block_on(start_embedded_postgres("task5-postgres-openai-failure"));
-
-        let factory = SeaOrmConnectionFactory::postgres(dsn.clone());
-        runtime.block_on(factory.connect_migrated()).unwrap();
-
-        let bootstrap = SeaOrmBootstrapService::new(factory.clone().into(), "v0.9.20".to_owned());
+        let db_path = temp_sqlite_path("task5-seaorm-openai-failure");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
         bootstrap
             .initialize(&InitializeSystemRequest {
                 owner_email: "owner@example.com".to_owned(),
@@ -6321,77 +6285,58 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-        bootstrap_postgres_auth_fixture(&mut connection);
-
-        connection
-            .execute(
-                "INSERT INTO channels (
-                    created_at, updated_at, deleted_at, type, base_url, name, status, credentials,
-                    disabled_api_keys, supported_models, manual_models, auto_sync_supported_models,
-                    auto_sync_model_pattern, tags, default_test_model, policies, settings,
-                    ordering_weight, error_message, remark
-                ) VALUES (
-                    NOW(), NOW(), 0, $1, $2, $3, 'enabled', $4,
-                    '[]', $5, '[]', FALSE,
-                    '', '[]', $6, '{}', '{}',
-                    100, '', 'Task 5 SeaORM failure channel'
-                )",
-                &[
-                    &"openai",
-                    &format!("{}/primary-fail", mock_openai_server_url()),
-                    &"SeaORM Failure Channel",
-                    &r#"{"apiKey":"test-upstream-key"}"#,
-                    &r#"["gpt-4o"]"#,
-                    &"gpt-4o",
-                ],
-            )
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "SeaORM Failure Channel",
+                channel_type: "openai",
+                base_url: format!("{}/primary-fail", mock_openai_server_url()).as_str(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 5 SeaORM failure channel",
+            })
             .unwrap();
-        connection
-            .execute(
-                "INSERT INTO models (
-                    created_at, updated_at, deleted_at, developer, model_id, type, name, icon,
-                    \"group\", model_card, settings, status, remark
-                ) VALUES (
-                    NOW(), NOW(), 0, $1, $2, $3, $4, $5,
-                    $6, $7, '{}', 'enabled', $8
-                )",
-                &[
-                    &"openai",
-                    &"gpt-4o",
-                    &"chat",
-                    &"GPT-4o",
-                    &"OpenAI",
-                    &"openai",
-                    &r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                    &"Task 5 SeaORM failure model",
-                ],
-            )
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 5 SeaORM failure model",
+            })
             .unwrap();
 
-        let project_row = connection
-            .query_one(
-                "SELECT id, name, status FROM projects WHERE id = 1",
-                &[],
+        let connection = foundation.open_connection(true).unwrap();
+        let trace_id: i64 = connection
+            .query_row(
+                "INSERT INTO traces (created_at, updated_at, project_id, trace_id)
+                 VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, ?1)
+                 RETURNING id",
+                ["trace-task5-seaorm-failure"],
+                |row| row.get(0),
             )
             .unwrap();
         let project = ProjectContext {
-            id: project_row.get(0),
-            name: project_row.get(1),
-            status: project_row.get(2),
+            id: 1,
+            name: "Default Project".to_owned(),
+            status: "active".to_owned(),
         };
-        let trace_id: i64 = connection
-            .query_one(
-                "INSERT INTO traces (created_at, updated_at, project_id, trace_id)
-                 VALUES (NOW(), NOW(), 1, $1)
-                 RETURNING id",
-                &[&"trace-task5-seaorm-failure"],
-            )
-            .unwrap()
-            .get(0);
 
         let api_key_project = project.clone();
-        let service = SeaOrmOpenAiV1Service::new(factory.clone());
+        let service = SeaOrmOpenAiV1Service::new(foundation.seaorm());
         let error = service
             .execute(
                 OpenAiV1Route::ChatCompletions,
@@ -6435,48 +6380,34 @@ struct TestHttpRequest {
             other => panic!("expected upstream error, got {other:?}"),
         }
 
-        let request_row = connection
-            .query_one(
+        let request_row: (String, Option<i64>, Option<String>) = connection
+            .query_row(
                 "SELECT status, channel_id, response_body FROM requests ORDER BY id DESC LIMIT 1",
-                &[],
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        let request_row: (String, Option<i64>, Option<String>) = (
-            request_row.get(0),
-            request_row.get(1),
-            request_row.get(2),
-        );
         assert_eq!(request_row.0, "failed");
         assert!(request_row.1.is_some());
         assert!(request_row.2.unwrap_or_default().contains("primary unavailable"));
 
-        let execution_row = connection
-            .query_one(
+        let execution_row: (String, i64, String, Option<i64>, Option<String>) = connection
+            .query_row(
                 "SELECT status, channel_id, error_message, response_status_code, response_body
                  FROM request_executions ORDER BY id DESC LIMIT 1",
-                &[],
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .unwrap();
-        let execution_row: (String, i64, String, Option<i64>, Option<String>) = (
-            execution_row.get(0),
-            execution_row.get(1),
-            execution_row.get(2),
-            execution_row.get(3),
-            execution_row.get(4),
-        );
         assert_eq!(execution_row.0, "failed");
         assert_eq!(execution_row.2, "primary unavailable");
         assert_eq!(execution_row.3, Some(503));
         assert!(execution_row.4.unwrap_or_default().contains("primary unavailable"));
 
-        let usage_count: i64 = connection
-            .query_one("SELECT COUNT(*) FROM usage_logs", &[])
-            .unwrap()
-            .get(0);
+        let usage_count: i64 = connection.query_row("SELECT COUNT(*) FROM usage_logs", [], |row| row.get(0)).unwrap();
         assert_eq!(usage_count, 0);
 
-        runtime.block_on(embedded_pg.stop_db()).ok();
-        std::fs::remove_dir_all(data_dir).ok();
+        std::fs::remove_file(db_path).ok();
     }
 
     #[tokio::test]
@@ -7970,14 +7901,9 @@ struct TestHttpRequest {
 
     #[test]
     fn openai_v1_chat_completions_ignore_previous_response_id_passthrough() {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let (mut embedded_pg, dsn, data_dir) =
-            runtime.block_on(start_embedded_postgres("task16-postgres-chat-previous-response-id"));
-
-        let factory = SeaOrmConnectionFactory::postgres(dsn.clone());
-        runtime.block_on(factory.connect_migrated()).unwrap();
-
-        let bootstrap = SeaOrmBootstrapService::new(factory.clone().into(), "v0.9.20".to_owned());
+        let db_path = temp_sqlite_path("task16-seaorm-chat-previous-response-id");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
         bootstrap
             .initialize(&InitializeSystemRequest {
                 owner_email: "owner@example.com".to_owned(),
@@ -7988,64 +7914,47 @@ struct TestHttpRequest {
             })
             .unwrap();
 
-        let mut connection = PostgresClient::connect(&dsn, NoTls).unwrap();
-        bootstrap_postgres_auth_fixture(&mut connection);
-
-        connection
-            .execute(
-                "INSERT INTO channels (
-                    created_at, updated_at, deleted_at, type, base_url, name, status, credentials,
-                    disabled_api_keys, supported_models, manual_models, auto_sync_supported_models,
-                    auto_sync_model_pattern, tags, default_test_model, policies, settings,
-                    ordering_weight, error_message, remark
-                ) VALUES (
-                    NOW(), NOW(), 0, $1, $2, $3, 'enabled', $4,
-                    '[]', $5, '[]', FALSE,
-                    '', '[]', $6, '{}', '{}',
-                    100, '', 'Task 16 SeaORM chat channel'
-                )",
-                &[
-                    &"openai",
-                    &mock_openai_server_url(),
-                    &"SeaORM Chat Previous Response Channel",
-                    &r#"{"apiKey":"test-upstream-key"}"#,
-                    &r#"["gpt-4o"]"#,
-                    &"gpt-4o",
-                ],
-            )
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "SeaORM Chat Previous Response Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 16 SeaORM chat channel",
+            })
             .unwrap();
-        connection
-            .execute(
-                "INSERT INTO models (
-                    created_at, updated_at, deleted_at, developer, model_id, type, name, icon,
-                    \"group\", model_card, settings, status, remark
-                ) VALUES (
-                    NOW(), NOW(), 0, $1, $2, $3, $4, $5,
-                    $6, $7, '{}', 'enabled', $8
-                )",
-                &[
-                    &"openai",
-                    &"gpt-4o",
-                    &"chat",
-                    &"GPT-4o",
-                    &"OpenAI",
-                    &"openai",
-                    &r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                    &"Task 16 SeaORM chat model",
-                ],
-            )
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: "{}",
+                status: "enabled",
+                remark: "Task 16 SeaORM chat model",
+            })
             .unwrap();
 
-        let project_row = connection
-            .query_one("SELECT id, name, status FROM projects WHERE id = 1", &[])
-            .unwrap();
         let project = ProjectContext {
-            id: project_row.get(0),
-            name: project_row.get(1),
-            status: project_row.get(2),
+            id: 1,
+            name: "Default Project".to_owned(),
+            status: "active".to_owned(),
         };
         let api_key_project = project.clone();
-        let service = SeaOrmOpenAiV1Service::new(factory.clone());
+        let service = SeaOrmOpenAiV1Service::new(foundation.seaorm());
         let response = service
             .execute(
                 OpenAiV1Route::ChatCompletions,
@@ -8078,16 +7987,15 @@ struct TestHttpRequest {
             .unwrap();
         assert_eq!(response.status, StatusCode::OK.as_u16());
 
+        let connection = foundation.open_connection(true).unwrap();
         let request_row = connection
-            .query_one("SELECT request_body FROM requests ORDER BY id DESC LIMIT 1", &[])
+            .query_row("SELECT request_body FROM requests ORDER BY id DESC LIMIT 1", [], |row| row.get::<_, String>(0))
             .unwrap();
-        let request_body: String = request_row.get(0);
-        let request_json: Value = serde_json::from_str(request_body.as_str()).unwrap();
+        let request_json: Value = serde_json::from_str(request_row.as_str()).unwrap();
         assert_eq!(request_json["previous_response_id"], "resp_passthrough");
         assert_eq!(request_json["messages"][0]["content"], "hello");
 
-        runtime.block_on(embedded_pg.stop_db()).ok();
-        std::fs::remove_dir_all(data_dir).ok();
+        std::fs::remove_file(db_path).ok();
     }
 
     #[tokio::test]

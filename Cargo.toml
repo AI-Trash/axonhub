@@ -53,6 +53,7 @@ tracing = "0.1"
 tracing-opentelemetry = "0.32"
 tracing-log = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+rusqlite = "0.32.1"
 axonhub-db-entity = { path = "crates/axonhub-db-entity" }
 axonhub-db-migration = { path = "crates/axonhub-db-migration" }
 axonhub-config = { path = "crates/axonhub-config" }

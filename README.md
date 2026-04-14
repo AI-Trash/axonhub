@@ -25,7 +25,7 @@
 
 AxonHub's canonical backend implementation is written in Rust. The Rust workspace and Rust-tagged release artifacts constitute the primary deployment path for the platform.
 
-### Current Rust-Supported Surface
+### Current Rust-Supported Surface (Verified)
 
 The Rust backend provides broad, production-oriented functionality for SQLite and PostgreSQL deployments. In the current repository, the strongest self-contained automated verification is on SQLite-backed Rust paths; PostgreSQL remains a canonical supported runtime/deployment target, but is not claimed here as fully verified across the same in-repo test surface.
 
@@ -44,7 +44,7 @@ The Rust backend provides broad, production-oriented functionality for SQLite an
 - **Transformer/pipeline**: provider orchestration, outbound transformers, middleware pipeline
 - **Enterprise features**: prompt protection, provider quota management, circuit breakers
 - **Configuration**: broad alignment with the AxonHub configuration surface for SQLite/PostgreSQL
-- **Database support**: SQLite is the most comprehensively self-verified Rust path in-repo; PostgreSQL remains a canonical supported runtime/deployment target. MySQL/TiDB/Neon are not supported in the Rust backend.
+- **Database support**: SQLite and PostgreSQL (canonical); MySQL/TiDB/Neon are not supported in the Rust backend.
 
 ### Historical Reference Only
 

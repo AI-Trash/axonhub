@@ -15,10 +15,7 @@ pub(crate) async fn run() -> Result<()> {
 }
 
 #[cfg(test)]
-mod test_support;
-
-#[cfg(test)]
-mod parity_oracle;
+pub(crate) mod test_support;
 
 #[cfg(test)]
 mod tests;
@@ -28,6 +25,3 @@ pub(crate) use tracing::{
     trace_exporter_invalid_type_fail_open_inner,
     trace_exporter_stdout_emits_http_request_span_inner,
 };
-
-#[cfg(test)]
-pub(crate) use test_support::parity_oracle_helpers_preserve_contract_inner;

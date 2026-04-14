@@ -10,7 +10,7 @@ use super::cli::{
 };
 use super::server::startup_messages;
 use crate::foundation::{
-    admin::oauth::OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS,
+    admin::oauth::{oauth_provider_env_test_lock, OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS},
     request_context::parse_onboarding_record,
     shared::{
         DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
@@ -34,6 +34,7 @@ use actix_web::dev::ServiceResponse;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
 use clap::{error::ErrorKind, CommandFactory};
+use rusqlite::OptionalExtension;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -266,9 +267,9 @@ struct OAuthProviderEnvFixture {
 
 impl OAuthProviderEnvFixture {
     fn new() -> Self {
-        let guard = oauth_provider_env_lock()
+        let guard = oauth_provider_env_test_lock()
             .lock()
-            .expect("lock oauth provider env fixture");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous = OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS
             .iter()
             .map(|key| (*key, std::env::var(key).ok()))
@@ -466,7 +467,10 @@ fn seed_sqlite_request_content(
     foundation: &Arc<SqliteFoundation>,
     project_id: i64,
 ) -> (i64, std::path::PathBuf) {
-    let content_dir = temp_postgres_dir("sqlite-admin-request-content-files");
+    let content_dir = std::env::temp_dir().join(format!(
+        "axonhub-sqlite-admin-request-content-files-{}",
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    ));
     std::fs::create_dir_all(&content_dir).unwrap();
 
     let connection = foundation.open_connection(true).unwrap();
@@ -880,14 +884,14 @@ fn sqlite_bootstrap_seeds_default_onboarding_baseline() {
         .seaorm()
         .run_sync(|db| async move {
             let connection = db.connect_migrated().await.unwrap();
-            axonhub_db_entity::systems::Entity::find()
+            Ok::<_, ()>(axonhub_db_entity::systems::Entity::find()
                 .filter(axonhub_db_entity::systems::Column::Key.eq(SYSTEM_KEY_ONBOARDED))
                 .filter(axonhub_db_entity::systems::Column::DeletedAt.eq(0_i64))
                 .into_partial_model::<axonhub_db_entity::systems::KeyValue>()
                 .one(&connection)
                 .await
                 .unwrap()
-                .map(|row| row.value)
+                .map(|row| row.value))
         })
         .unwrap();
     let onboarding_raw = onboarding_raw.expect("onboarding record exists after bootstrap");
@@ -1261,7 +1265,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
     assert_eq!(json["method"], "POST");
     assert_eq!(
         json["message"],
-        "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
+        "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
     );
 
     let exchange_response = app
@@ -1291,7 +1295,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
     assert_eq!(json["method"], "POST");
     assert_eq!(
         json["message"],
-        "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
+        "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
     );
 
     let exchange_response = app
@@ -1321,7 +1325,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
     assert_eq!(json["method"], "POST");
     assert_eq!(
         json["message"],
-        "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
+        "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
     );
 
     std::fs::remove_file(db_path).ok();
@@ -1335,7 +1339,7 @@ fn oauth_provider_admin_capability_is_unsupported_without_secure_runtime_config(
         OauthProviderAdminCapability::Unsupported { message } => {
             assert!(message.contains("OAuth provider admin helpers"));
             assert!(message.contains("secure runtime configuration"));
-            assert!(message.contains("AXONHUB_PROVIDER_EDGE_"));
+            assert!(message.contains("required OAuth provider environment variables"));
         }
         OauthProviderAdminCapability::Available { .. } => {
             panic!("Expected Unsupported but got Available");
@@ -1413,7 +1417,7 @@ async fn postgres_provider_edge_routes_remain_truthful_when_secure_runtime_confi
     assert_eq!(json["method"], "POST");
     assert_eq!(
         json["message"],
-        "Provider-edge admin OAuth helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes."
+        "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set the required OAuth provider environment variables to enable these routes."
     );
 
     std::fs::remove_file(db_path).ok();

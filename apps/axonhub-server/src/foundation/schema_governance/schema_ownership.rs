@@ -299,7 +299,7 @@ mod tests {
     };
     use axonhub_http::{InitializeSystemRequest, SystemBootstrapPort};
     use axonhub_db_entity::{api_keys, data_storages, projects, roles, systems, user_projects};
-    use sea_orm::{ColumnTrait, DatabaseBackend, EntityTrait, QueryFilter};
+    use sea_orm::{ColumnTrait, DatabaseBackend, EntityTrait, PaginatorTrait, QueryFilter};
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -469,7 +469,7 @@ mod tests {
 
             for key in contract.bootstrap.preserved_system_keys {
                 let value = systems::Entity::find()
-                    .filter(systems::Column::Key.eq(key))
+                    .filter(systems::Column::Key.eq(*key))
                     .filter(systems::Column::DeletedAt.eq(0_i64))
                     .into_partial_model::<systems::KeyValue>()
                     .one(&connection)
@@ -559,7 +559,8 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(owner_membership_count, 1);
-        });
+            Ok::<_, ()>(())
+        }).unwrap();
 
         std::fs::remove_file(db_path).ok();
     }
@@ -587,7 +588,8 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(prompts_count, 0);
-        });
+            Ok::<_, ()>(())
+        }).unwrap();
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime
@@ -626,7 +628,8 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(default_project_count, 1);
-        });
+            Ok::<_, ()>(())
+        }).unwrap();
 
         std::fs::remove_file(db_path).ok();
     }

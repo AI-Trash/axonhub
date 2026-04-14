@@ -17,7 +17,6 @@ pub(crate) mod admin;
 pub(crate) mod admin_operational;
 pub(crate) mod graphql;
 pub(crate) mod schema_governance;
-pub(crate) mod schema_ownership;
 
 #[cfg(test)]
 mod tests;
