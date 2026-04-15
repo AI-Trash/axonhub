@@ -18,6 +18,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 use std::time::Instant;
+use tokio::time::timeout;
 use tracing::{field, Instrument, Level, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -43,6 +44,10 @@ pub(crate) fn gemini_auth() -> GeminiAuthMiddleware {
 
 pub(crate) fn http_metrics(http_metrics: HttpMetricsCapability) -> HttpMetricsMiddleware {
     HttpMetricsMiddleware { http_metrics }
+}
+
+pub(crate) fn request_timeout(scope: RequestTimeoutScope) -> RequestTimeoutMiddleware {
+    RequestTimeoutMiddleware { scope }
 }
 
 fn request_span(req: &ServiceRequest) -> Span {
@@ -510,6 +515,16 @@ pub(crate) struct HttpMetricsMiddleware {
     http_metrics: HttpMetricsCapability,
 }
 
+pub(crate) struct RequestTimeoutMiddleware {
+    scope: RequestTimeoutScope,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RequestTimeoutScope {
+    Request,
+    Llm,
+}
+
 impl<S, B> Transform<S, ServiceRequest> for HttpMetricsMiddleware
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
@@ -526,6 +541,72 @@ where
             service: Rc::new(service),
             http_metrics: self.http_metrics.clone(),
         }))
+    }
+}
+
+impl<S, B> Transform<S, ServiceRequest> for RequestTimeoutMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Transform = RequestTimeoutMiddlewareService<S>;
+    type InitError = ();
+    type Future = StdReady<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(RequestTimeoutMiddlewareService {
+            service: Rc::new(service),
+            scope: self.scope,
+        }))
+    }
+}
+
+pub(crate) struct RequestTimeoutMiddlewareService<S> {
+    service: Rc<S>,
+    scope: RequestTimeoutScope,
+}
+
+impl<S, B> Service<ServiceRequest> for RequestTimeoutMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+{
+    type Response = ServiceResponse<BoxBody>;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let service = Rc::clone(&self.service);
+        let scope = self.scope;
+        Box::pin(async move {
+            let timeout_duration = req
+                .app_data::<web::Data<HttpState>>()
+                .and_then(|state| match scope {
+                    RequestTimeoutScope::Request => state.request_timeout,
+                    RequestTimeoutScope::Llm => state.llm_request_timeout,
+                });
+
+            let Some(timeout_duration) = timeout_duration else {
+                return Ok(service.call(req).await?.map_into_boxed_body());
+            };
+
+            match timeout(timeout_duration, service.call(req)).await {
+                Ok(result) => Ok(result?.map_into_boxed_body()),
+                Err(_) => Err(
+                    actix_web::error::InternalError::from_response(
+                        "Request timed out",
+                        request_timeout_response(),
+                    )
+                    .into(),
+                ),
+            }
+        })
     }
 }
 
@@ -626,6 +707,14 @@ fn http_rejection_response(rejection: HttpRejection) -> HttpResponse {
             crate::errors::NotImplementedJsonResponse::from_route(route).into_response()
         }
     }
+}
+
+fn request_timeout_response() -> HttpResponse {
+    crate::errors::error_response(
+        StatusCode::GATEWAY_TIMEOUT,
+        "Gateway Timeout",
+        "Request timed out",
+    )
 }
 
 pub(crate) struct ActixRequest(pub actix_web::HttpRequest);

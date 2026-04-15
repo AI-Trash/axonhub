@@ -17,7 +17,8 @@ use super::server::start_server;
     name = "axonhub",
     bin_name = "axonhub",
     about = "AxonHub AI Gateway",
-    long_about = None
+    long_about = None,
+    disable_help_subcommand = true
 )]
 pub(crate) struct AxonhubCliContract {
     #[command(subcommand)]
@@ -28,8 +29,6 @@ pub(crate) struct AxonhubCliContract {
 enum AxonhubTopLevelVerb {
     #[command(about = "Configuration helpers")]
     Config(ConfigArgs),
-    #[command(about = "Show help")]
-    Help,
     #[command(about = "Show version")]
     Version,
     #[command(about = "Show detailed build metadata")]
@@ -40,7 +39,7 @@ enum AxonhubTopLevelVerb {
 }
 
 #[derive(Debug, Clone, Args)]
-#[command(arg_required_else_help = true)]
+#[command(arg_required_else_help = true, disable_help_subcommand = true)]
 struct ConfigArgs {
     #[command(subcommand)]
     command: AxonhubConfigVerb,
@@ -121,7 +120,6 @@ pub(crate) async fn run(args: &[String]) -> Result<()> {
 
     match cli.command {
         Some(AxonhubTopLevelVerb::Config(config)) => handle_config_command(config),
-        Some(AxonhubTopLevelVerb::Help) => print_help(),
         Some(AxonhubTopLevelVerb::Version) => {
             show_version();
             Ok(())
@@ -199,6 +197,7 @@ fn config_get(args: ConfigGetArgs) -> Result<()> {
 
 pub(crate) fn axonhub_cli_command() -> Command {
     AxonhubCliContract::command()
+        .disable_help_subcommand(true)
         .disable_version_flag(true)
         .arg(
             Arg::new("version")
@@ -232,7 +231,18 @@ fn cli_config_get_value(config: &axonhub_config::Config, key: ConfigKey) -> Valu
 pub(crate) fn parse_axonhub_cli(
     args: &[String],
 ) -> std::result::Result<AxonhubCliContract, clap::Error> {
-    parse_command(axonhub_cli_command(), args)
+    let normalized = normalize_help_aliases(args);
+    parse_command(axonhub_cli_command(), &normalized)
+}
+
+fn normalize_help_aliases(args: &[String]) -> Vec<String> {
+    match args {
+        [bin, help] if help == "help" => vec![bin.clone(), "--help".to_owned()],
+        [bin, config, help] if config == "config" && help == "help" => {
+            vec![bin.clone(), config.clone(), "--help".to_owned()]
+        }
+        _ => args.to_vec(),
+    }
 }
 
 fn parse_command<T>(mut command: Command, args: &[String]) -> std::result::Result<T, clap::Error>
@@ -362,9 +372,42 @@ mod tests {
     }
 
     #[test]
-    fn parse_help_as_explicit_top_level_command() {
-        let cli = parse_args(&["axonhub", "help"]);
-        assert!(matches!(cli.command, Some(AxonhubTopLevelVerb::Help)));
+    fn parse_help_subcommand_alias_returns_display_help_error() {
+        let args = ["axonhub", "help"]
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let error = parse_axonhub_cli(&args).expect_err("help should stop with display help");
+
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+    }
+
+    #[test]
+    fn parse_help_flag_returns_display_help_error() {
+        let args = ["axonhub", "--help"]
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let error = parse_axonhub_cli(&args).expect_err("--help should stop with display help");
+
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+    }
+
+    #[test]
+    fn parse_config_help_subcommand_alias_returns_display_help_error() {
+        let args = ["axonhub", "config", "help"]
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>();
+        let error = parse_axonhub_cli(&args).expect_err("config help should stop with display help");
+
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+    }
+
+    #[test]
+    fn cli_command_passes_clap_debug_assertions() {
+        axonhub_cli_command().debug_assert();
+        axonhub_config_cli_command().debug_assert();
     }
 
     #[test]

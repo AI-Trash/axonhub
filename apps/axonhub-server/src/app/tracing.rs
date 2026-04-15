@@ -260,6 +260,8 @@ mod tests {
             },
             allow_no_auth: false,
             cors: disabled_test_cors(),
+            request_timeout: Some(std::time::Duration::from_secs(30)),
+            llm_request_timeout: Some(std::time::Duration::from_secs(600)),
             trace_config: TraceConfig::default(),
         }
     }

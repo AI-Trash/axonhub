@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axonhub_db_entity::{
@@ -6,8 +6,8 @@ use axonhub_db_entity::{
     usage_logs,
 };
 use axonhub_http::{OpenAiModel, OpenAiV1Error, OpenAiV1ExecutionRequest, OpenAiV1Route};
+use regex::Regex;
 use serde::Deserialize;
-use serde_json::Value;
 use sea_orm::ActiveValue::Set;
 use sea_orm::sea_query::{Alias, Expr, Func, SimpleExpr};
 use sea_orm::{
@@ -17,7 +17,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
 use crate::foundation::{
     admin::provider_quota_type_for_channel,
-    admin::default_system_channel_settings,
+    admin::{default_system_channel_settings, default_system_model_settings},
     circuit_breaker::{CircuitBreakerPolicy, SharedCircuitBreaker},
     openai_v1::{
         calculate_top_k, compare_openai_target_priority, extract_channel_api_key,
@@ -114,6 +114,126 @@ struct QuotaUsageAggregate {
 #[serde(default)]
 struct ParsedGeneralSettings {
     timezone: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct LegacySystemChannelSettings {
+    fallback_to_channels_on_model_not_found: Option<bool>,
+    query_all_channel_models: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TargetSelectionMode {
+    Direct,
+    AssociatedModel,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct ParsedModelSettings {
+    associations: Vec<ParsedModelAssociation>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct ParsedModelAssociation {
+    #[serde(rename = "type")]
+    type_field: String,
+    priority: i32,
+    disabled: bool,
+    #[serde(rename = "channelModel")]
+    channel_model: Option<ParsedChannelModelAssociation>,
+    #[serde(rename = "channelRegex")]
+    channel_regex: Option<ParsedChannelRegexAssociation>,
+    #[serde(rename = "modelId")]
+    model_id: Option<ParsedModelIdAssociation>,
+    regex: Option<ParsedRegexAssociation>,
+    #[serde(rename = "channelTagsModel")]
+    channel_tags_model: Option<ParsedChannelTagsModelAssociation>,
+    #[serde(rename = "channelTagsRegex")]
+    channel_tags_regex: Option<ParsedChannelTagsRegexAssociation>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct ParsedChannelModelAssociation {
+    #[serde(rename = "channelId")]
+    channel_id: i64,
+    #[serde(rename = "modelId")]
+    model_id: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct ParsedChannelRegexAssociation {
+    #[serde(rename = "channelId")]
+    channel_id: i64,
+    pattern: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct ParsedModelIdAssociation {
+    #[serde(rename = "modelId")]
+    model_id: String,
+    exclude: Vec<ParsedExcludeAssociation>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct ParsedRegexAssociation {
+    pattern: String,
+    exclude: Vec<ParsedExcludeAssociation>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct ParsedChannelTagsModelAssociation {
+    #[serde(rename = "channelTags")]
+    channel_tags: Vec<String>,
+    #[serde(rename = "modelId")]
+    model_id: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct ParsedChannelTagsRegexAssociation {
+    #[serde(rename = "channelTags")]
+    channel_tags: Vec<String>,
+    pattern: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+struct ParsedExcludeAssociation {
+    #[serde(rename = "channelNamePattern")]
+    channel_name_pattern: String,
+    #[serde(rename = "channelIds")]
+    channel_ids: Vec<i64>,
+    #[serde(rename = "channelTags")]
+    channel_tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, sea_orm::FromQueryResult)]
+struct EnabledModelSelectionRecord {
+    id: i64,
+    created_at: String,
+    developer: String,
+    model_id: String,
+    model_type: String,
+    name: String,
+    icon: String,
+    remark: Option<String>,
+    model_card: String,
+    settings: String,
+}
+
+#[derive(Debug, Clone)]
+struct ChannelTargetCandidate {
+    channel: channels::RoutingCandidate,
+    actual_model_id: String,
+    api_key: String,
 }
 
 impl<'de> Deserialize<'de> for ParsedQuotaCost {
@@ -306,19 +426,58 @@ pub(crate) async fn select_target_channels_seaorm(
         return Ok(Vec::new());
     }
 
+    let settings = query_system_model_settings_seaorm(db).await?;
+    let model_type = openai_route_model_type(route);
+
+    match select_model_associated_targets_seaorm(
+        db,
+        backend,
+        request_model.as_str(),
+        request.trace.as_ref().map(|trace| trace.id),
+        2,
+        model_type,
+        request.channel_hint_id,
+        circuit_breaker,
+        active_profile.as_ref(),
+    )
+    .await?
+    {
+        ModelAssociationSelection::Targets(targets) => return validate_selected_targets(request, targets),
+        ModelAssociationSelection::ModelExistsButNoTargets => {
+            return Err(OpenAiV1Error::InvalidRequest {
+                message: "No enabled OpenAI channel is configured for the requested model".to_owned(),
+            })
+        }
+        ModelAssociationSelection::ModelNotFound => {}
+    }
+
+    if !settings.fallback_to_channels_on_model_not_found {
+        return Err(OpenAiV1Error::InvalidRequest {
+            message: "No enabled OpenAI channel is configured for the requested model".to_owned(),
+        });
+    }
+
     let targets = select_openai_route_targets_seaorm(
         db,
         backend,
         request_model.as_str(),
         request.trace.as_ref().map(|trace| trace.id),
         2,
-        openai_route_model_type(route),
+        model_type,
         request.channel_hint_id,
         circuit_breaker,
         active_profile.as_ref(),
+        TargetSelectionMode::Direct,
     )
     .await?;
 
+    validate_selected_targets(request, targets)
+}
+
+fn validate_selected_targets(
+    request: &OpenAiV1ExecutionRequest,
+    targets: Vec<SelectedOpenAiTarget>,
+) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
     if targets.is_empty() {
         Err(OpenAiV1Error::InvalidRequest {
             message: "No enabled OpenAI channel is configured for the requested model".to_owned(),
@@ -345,6 +504,7 @@ async fn select_openai_route_targets_seaorm(
     preferred_channel_id: Option<i64>,
     circuit_breaker: &SharedCircuitBreaker,
     active_profile: Option<&ParsedApiKeyProfile>,
+    selection_mode: TargetSelectionMode,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
     let mut targets = Vec::new();
     for channel_type in ["openai", "codex", "claudecode"] {
@@ -360,6 +520,7 @@ async fn select_openai_route_targets_seaorm(
                 preferred_channel_id,
                 circuit_breaker,
                 active_profile,
+                selection_mode.clone(),
             )
             .await?,
         );
@@ -400,6 +561,7 @@ pub(crate) async fn select_inference_targets_seaorm(
     preferred_channel_id: Option<i64>,
     circuit_breaker: &SharedCircuitBreaker,
     active_profile: Option<&ParsedApiKeyProfile>,
+    selection_mode: TargetSelectionMode,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
     let preferred_trace_channel_id = match trace_id {
         Some(trace_id) => query_preferred_trace_channel_id_seaorm(db, backend, trace_id, request_model_id).await?,
@@ -417,46 +579,42 @@ pub(crate) async fn select_inference_targets_seaorm(
         .await
         .map_err(map_openai_db_err)?;
 
-    let mut resolved_channels = Vec::new();
-    let mut actual_model_ids = BTreeSet::new();
-    for channel in channel_candidates {
-        if let Some(profile) = active_profile {
-            if !profile.channel_ids.is_empty() && !profile.channel_ids.contains(&channel.id) {
-                continue;
-            }
-            if !profile.channel_tags.is_empty()
-                && !profile_matches_channel_tags(profile, channel.tags.as_str())
-            {
-                continue;
-            }
+    let resolved_channels = match selection_mode {
+        TargetSelectionMode::Direct => {
+            resolve_direct_channel_candidates_seaorm(
+                db,
+                backend,
+                request_model_id,
+                channel_type,
+                &channel_candidates,
+                circuit_breaker,
+                active_profile,
+            )
+            .await?
         }
-        let Some(model_entry) = resolve_channel_model_entry(
-            &channel.supported_models,
-            &channel.settings,
-            request_model_id,
-        ) else {
-            continue;
-        };
-        let api_key = extract_channel_api_key(&channel.credentials);
-        if api_key.is_empty() {
-            continue;
+        TargetSelectionMode::AssociatedModel => {
+            resolve_associated_channel_candidates_seaorm(
+                db,
+                backend,
+                request_model_id,
+                channel_type,
+                &channel_candidates,
+                circuit_breaker,
+                active_profile,
+            )
+            .await?
         }
-
-        if provider_channel_is_blocked_seaorm(db, backend, channel.id).await?
-            || circuit_breaker.is_blocked(channel.id, model_entry.actual_model_id.as_str())
-        {
-            continue;
-        }
-
-        actual_model_ids.insert(model_entry.actual_model_id.clone());
-        resolved_channels.push((channel, model_entry, api_key));
-    }
+    };
 
     if resolved_channels.is_empty() {
         return Ok(Vec::new());
     }
 
-    let enabled_model_ids = actual_model_ids.into_iter().collect::<BTreeSet<_>>();
+    let enabled_model_ids = resolved_channels
+        .iter()
+        .map(|candidate| candidate.actual_model_id.clone())
+        .collect::<BTreeSet<_>>();
+
     let enabled_models = models::Entity::find()
         .filter(models::Column::DeletedAt.eq(0_i64))
         .filter(models::Column::Status.eq("enabled"))
@@ -479,18 +637,19 @@ pub(crate) async fn select_inference_targets_seaorm(
         .collect::<HashMap<_, _>>();
 
     let mut candidates = Vec::new();
-    for (channel, model_entry, api_key) in resolved_channels {
-        let Some(model) = enabled_models_by_id.get(&model_entry.actual_model_id).cloned() else {
-            continue;
-        };
-        let channel_id = channel.id;
-        let ordering_weight = int4_to_i64(channel.ordering_weight);
+    for candidate in resolved_channels {
+        let model = enabled_models_by_id
+            .get(&candidate.actual_model_id)
+            .cloned()
+            .unwrap_or_else(|| fallback_stored_model_record(candidate.actual_model_id.as_str(), model_type));
+        let channel_id = candidate.channel.id;
+        let ordering_weight = int4_to_i64(candidate.channel.ordering_weight);
         let routing_stats = query_channel_routing_stats_seaorm(db, backend, channel_id).await?;
         candidates.push(SelectedOpenAiTarget {
             channel_id,
-            base_url: channel.base_url.unwrap_or_default(),
-            api_key,
-            actual_model_id: model_entry.actual_model_id,
+            base_url: candidate.channel.base_url.unwrap_or_default(),
+            api_key: candidate.api_key,
+            actual_model_id: candidate.actual_model_id,
             provider_type: provider_quota_type_for_channel(channel_type).map(str::to_owned),
             ordering_weight,
             trace_affinity: preferred_trace_channel_id == Some(channel_id),
@@ -510,6 +669,405 @@ pub(crate) async fn select_inference_targets_seaorm(
     let top_k = calculate_top_k(candidates.len(), max_channel_retries);
     candidates.truncate(top_k);
     Ok(candidates)
+}
+
+fn fallback_stored_model_record(model_id: &str, model_type: &str) -> StoredModelRecord {
+    StoredModelRecord {
+        id: 0,
+        created_at: String::new(),
+        developer: String::new(),
+        model_id: model_id.to_owned(),
+        model_type: model_type.to_owned(),
+        name: model_id.to_owned(),
+        icon: String::new(),
+        remark: String::new(),
+        model_card_json: "{}".to_owned(),
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ModelAssociationSelection {
+    Targets(Vec<SelectedOpenAiTarget>),
+    ModelExistsButNoTargets,
+    ModelNotFound,
+}
+
+async fn select_model_associated_targets_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    request_model_id: &str,
+    trace_id: Option<i64>,
+    max_channel_retries: usize,
+    model_type: &str,
+    preferred_channel_id: Option<i64>,
+    circuit_breaker: &SharedCircuitBreaker,
+    active_profile: Option<&ParsedApiKeyProfile>,
+) -> Result<ModelAssociationSelection, OpenAiV1Error> {
+    let Some(model_record) = load_enabled_model_selection_record_seaorm(db, request_model_id, model_type).await? else {
+        return Ok(ModelAssociationSelection::ModelNotFound);
+    };
+
+    let settings = parse_model_settings_json(model_record.settings.as_str());
+    if settings.associations.is_empty() {
+        return Ok(ModelAssociationSelection::ModelExistsButNoTargets);
+    }
+
+    let targets = select_openai_route_targets_seaorm(
+        db,
+        backend,
+        request_model_id,
+        trace_id,
+        max_channel_retries,
+        model_type,
+        preferred_channel_id,
+        circuit_breaker,
+        active_profile,
+        TargetSelectionMode::AssociatedModel,
+    )
+    .await?;
+
+    if targets.is_empty() {
+        Ok(ModelAssociationSelection::ModelExistsButNoTargets)
+    } else {
+        Ok(ModelAssociationSelection::Targets(targets))
+    }
+}
+
+async fn resolve_direct_channel_candidates_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    request_model_id: &str,
+    channel_type: &str,
+    channel_candidates: &[channels::RoutingCandidate],
+    circuit_breaker: &SharedCircuitBreaker,
+    active_profile: Option<&ParsedApiKeyProfile>,
+) -> Result<Vec<ChannelTargetCandidate>, OpenAiV1Error> {
+    let mut resolved_channels = Vec::new();
+    for channel in channel_candidates {
+        if !channel_matches_active_profile(channel, active_profile) {
+            continue;
+        }
+        let Some(model_entry) = resolve_channel_model_entry(
+            &channel.supported_models,
+            &channel.settings,
+            request_model_id,
+        ) else {
+            continue;
+        };
+        let api_key = extract_channel_api_key(&channel.credentials);
+        if api_key.is_empty() {
+            continue;
+        }
+
+        if provider_channel_is_blocked_seaorm(db, backend, channel.id).await?
+            || circuit_breaker.is_blocked(channel.id, model_entry.actual_model_id.as_str())
+        {
+            continue;
+        }
+
+        resolved_channels.push(ChannelTargetCandidate {
+            channel: channel.clone(),
+            actual_model_id: model_entry.actual_model_id,
+            api_key,
+        });
+    }
+
+    let _ = channel_type;
+    Ok(resolved_channels)
+}
+
+async fn resolve_associated_channel_candidates_seaorm(
+    db: &impl ConnectionTrait,
+    backend: DatabaseBackend,
+    request_model_id: &str,
+    channel_type: &str,
+    channel_candidates: &[channels::RoutingCandidate],
+    circuit_breaker: &SharedCircuitBreaker,
+    active_profile: Option<&ParsedApiKeyProfile>,
+) -> Result<Vec<ChannelTargetCandidate>, OpenAiV1Error> {
+    let Some(model_record) = load_enabled_model_selection_record_seaorm(db, request_model_id, "").await? else {
+        return Ok(Vec::new());
+    };
+    let settings = parse_model_settings_json(model_record.settings.as_str());
+    if settings.associations.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let channel_map = channel_candidates
+        .iter()
+        .filter(|channel| channel.channel_type == channel_type)
+        .map(|channel| (channel.id, channel.clone()))
+        .collect::<HashMap<_, _>>();
+    let mut seen = HashSet::new();
+    let mut resolved_channels = Vec::new();
+
+    for association in settings.associations.iter().filter(|association| !association.disabled) {
+        match_association_candidates(
+            association,
+            &channel_map,
+            active_profile,
+            &mut seen,
+            &mut resolved_channels,
+        );
+    }
+
+    let mut filtered = Vec::new();
+    for candidate in resolved_channels {
+        if provider_channel_is_blocked_seaorm(db, backend, candidate.channel.id).await?
+            || circuit_breaker.is_blocked(candidate.channel.id, candidate.actual_model_id.as_str())
+        {
+            continue;
+        }
+        filtered.push(candidate);
+    }
+
+    Ok(filtered)
+}
+
+async fn load_enabled_model_selection_record_seaorm(
+    db: &impl ConnectionTrait,
+    request_model_id: &str,
+    model_type: &str,
+) -> Result<Option<EnabledModelSelectionRecord>, OpenAiV1Error> {
+    models::Entity::find()
+        .filter(models::Column::DeletedAt.eq(0_i64))
+        .filter(models::Column::Status.eq("enabled"))
+        .filter(models::Column::ModelId.eq(request_model_id))
+        .apply_if((!model_type.is_empty()).then_some(model_type), |query, model_type| {
+            query.filter(models::Column::TypeField.eq(model_type))
+        })
+        .order_by_asc(models::Column::Id)
+        .into_model::<models::Model>()
+        .one(db)
+        .await
+        .map_err(map_openai_db_err)
+        .map(|record| {
+            record.map(|record| EnabledModelSelectionRecord {
+                id: record.id,
+                created_at: record.created_at,
+                developer: record.developer,
+                model_id: record.model_id,
+                model_type: record.type_field,
+                name: record.name,
+                icon: record.icon,
+                remark: record.remark,
+                model_card: record.model_card,
+                settings: record.settings,
+            })
+        })
+}
+
+fn parse_model_settings_json(raw: &str) -> ParsedModelSettings {
+    serde_json::from_str::<ParsedModelSettings>(raw).unwrap_or_default()
+}
+
+fn channel_matches_active_profile(
+    channel: &channels::RoutingCandidate,
+    active_profile: Option<&ParsedApiKeyProfile>,
+) -> bool {
+    let Some(profile) = active_profile else {
+        return true;
+    };
+
+    if !profile.channel_ids.is_empty() && !profile.channel_ids.contains(&channel.id) {
+        return false;
+    }
+
+    if !profile.channel_tags.is_empty() && !profile_matches_channel_tags(profile, channel.tags.as_str()) {
+        return false;
+    }
+
+    true
+}
+
+fn match_association_candidates(
+    association: &ParsedModelAssociation,
+    channel_map: &HashMap<i64, channels::RoutingCandidate>,
+    active_profile: Option<&ParsedApiKeyProfile>,
+    seen: &mut HashSet<(i64, String)>,
+    resolved_channels: &mut Vec<ChannelTargetCandidate>,
+) {
+    match association.type_field.as_str() {
+        "channel_model" => {
+            let Some(association) = association.channel_model.as_ref() else {
+                return;
+            };
+            let Some(channel) = channel_map.get(&association.channel_id) else {
+                return;
+            };
+            push_channel_model_candidate(
+                channel,
+                association.model_id.as_str(),
+                active_profile,
+                seen,
+                resolved_channels,
+            );
+        }
+        "channel_regex" => {
+            let Some(association) = association.channel_regex.as_ref() else {
+                return;
+            };
+            let Some(channel) = channel_map.get(&association.channel_id) else {
+                return;
+            };
+            push_channel_regex_candidates(
+                channel,
+                association.pattern.as_str(),
+                active_profile,
+                seen,
+                resolved_channels,
+            );
+        }
+        "model" => {
+            let Some(association) = association.model_id.as_ref() else {
+                return;
+            };
+            for channel in channel_map.values() {
+                if should_exclude_channel(channel, &association.exclude) {
+                    continue;
+                }
+                push_channel_model_candidate(
+                    channel,
+                    association.model_id.as_str(),
+                    active_profile,
+                    seen,
+                    resolved_channels,
+                );
+            }
+        }
+        "regex" => {
+            let Some(association) = association.regex.as_ref() else {
+                return;
+            };
+            for channel in channel_map.values() {
+                if should_exclude_channel(channel, &association.exclude) {
+                    continue;
+                }
+                push_channel_regex_candidates(
+                    channel,
+                    association.pattern.as_str(),
+                    active_profile,
+                    seen,
+                    resolved_channels,
+                );
+            }
+        }
+        "channel_tags_model" => {
+            let Some(association) = association.channel_tags_model.as_ref() else {
+                return;
+            };
+            for channel in channel_map.values() {
+                if !channel_has_any_tag(channel, &association.channel_tags) {
+                    continue;
+                }
+                push_channel_model_candidate(
+                    channel,
+                    association.model_id.as_str(),
+                    active_profile,
+                    seen,
+                    resolved_channels,
+                );
+            }
+        }
+        "channel_tags_regex" => {
+            let Some(association) = association.channel_tags_regex.as_ref() else {
+                return;
+            };
+            for channel in channel_map.values() {
+                if !channel_has_any_tag(channel, &association.channel_tags) {
+                    continue;
+                }
+                push_channel_regex_candidates(
+                    channel,
+                    association.pattern.as_str(),
+                    active_profile,
+                    seen,
+                    resolved_channels,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_channel_model_candidate(
+    channel: &channels::RoutingCandidate,
+    request_model_id: &str,
+    active_profile: Option<&ParsedApiKeyProfile>,
+    seen: &mut HashSet<(i64, String)>,
+    resolved_channels: &mut Vec<ChannelTargetCandidate>,
+) {
+    if !channel_matches_active_profile(channel, active_profile) {
+        return;
+    }
+    let api_key = extract_channel_api_key(&channel.credentials);
+    if api_key.is_empty() {
+        return;
+    }
+    let Some(model_entry) = resolve_channel_model_entry(
+        channel.supported_models.as_str(),
+        channel.settings.as_str(),
+        request_model_id,
+    ) else {
+        return;
+    };
+    let dedupe_key = (channel.id, model_entry.actual_model_id.clone());
+    if !seen.insert(dedupe_key) {
+        return;
+    }
+    resolved_channels.push(ChannelTargetCandidate {
+        channel: channel.clone(),
+        actual_model_id: model_entry.actual_model_id,
+        api_key,
+    });
+}
+
+fn push_channel_regex_candidates(
+    channel: &channels::RoutingCandidate,
+    pattern: &str,
+    active_profile: Option<&ParsedApiKeyProfile>,
+    seen: &mut HashSet<(i64, String)>,
+    resolved_channels: &mut Vec<ChannelTargetCandidate>,
+) {
+    let Ok(regex) = Regex::new(pattern) else {
+        return;
+    };
+
+    let entries = derive_channel_model_entries(channel.supported_models.as_str(), channel.settings.as_str());
+    for (request_model_id, entry) in entries {
+        if regex.is_match(request_model_id.as_str()) {
+            push_channel_model_candidate(
+                channel,
+                request_model_id.as_str(),
+                active_profile,
+                seen,
+                resolved_channels,
+            );
+            let _ = entry;
+        }
+    }
+}
+
+fn should_exclude_channel(channel: &channels::RoutingCandidate, excludes: &[ParsedExcludeAssociation]) -> bool {
+    excludes.iter().any(|exclude| {
+        (!exclude.channel_name_pattern.trim().is_empty()
+            && Regex::new(exclude.channel_name_pattern.as_str())
+                .map(|regex| regex.is_match(channel.name.as_str()))
+                .unwrap_or(false))
+            || (!exclude.channel_ids.is_empty() && exclude.channel_ids.contains(&channel.id))
+            || exclude
+                .channel_tags
+                .iter()
+                .any(|tag| channel_has_any_tag(channel, std::slice::from_ref(tag)))
+    })
+}
+
+fn channel_has_any_tag(channel: &channels::RoutingCandidate, tags: &[String]) -> bool {
+    if tags.is_empty() {
+        return false;
+    }
+    let parsed_tags = serde_json::from_str::<Vec<String>>(channel.tags.as_str()).unwrap_or_default();
+    parsed_tags.iter().any(|channel_tag| tags.iter().any(|tag| tag == channel_tag))
 }
 
 async fn provider_channel_is_blocked_seaorm(
@@ -670,6 +1228,7 @@ mod tests {
             None,
             &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
             None,
+            TargetSelectionMode::Direct,
         )
         .await
         .unwrap();
@@ -689,6 +1248,7 @@ mod tests {
             None,
             &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
             None,
+            TargetSelectionMode::Direct,
         )
         .await
         .unwrap();
@@ -708,6 +1268,7 @@ mod tests {
             None,
             &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
             None,
+            TargetSelectionMode::Direct,
         )
         .await
         .unwrap();
@@ -733,7 +1294,7 @@ mod tests {
         insert_model(&db, "actual-model").await;
         insert_model(&db, "alias-model").await;
 
-        let settings = query_system_channel_settings_seaorm(&db).await.unwrap();
+        let settings = query_system_model_settings_seaorm(&db).await.unwrap();
         assert!(settings.query_all_channel_models);
 
         let models = list_enabled_model_records_seaorm(
@@ -764,13 +1325,9 @@ mod tests {
         .await;
         insert_model(&db, "actual-model").await;
         insert_model(&db, "alias-model").await;
-        upsert_system_channel_settings(
-            &db,
-            r#"{"probe":{"enabled":true,"frequency":"FiveMinutes"},"query_all_channel_models":false}"#,
-        )
-        .await;
+        upsert_system_model_settings(&db, r#"{"query_all_channel_models":false}"#).await;
 
-        let settings = query_system_channel_settings_seaorm(&db).await.unwrap();
+        let settings = query_system_model_settings_seaorm(&db).await.unwrap();
         assert!(!settings.query_all_channel_models);
 
         let models = list_enabled_model_records_seaorm(
@@ -787,16 +1344,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn query_system_channel_settings_seaorm_falls_back_to_legacy_model_settings() {
+    async fn query_system_model_settings_seaorm_falls_back_to_legacy_channel_settings() {
         let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
         let db = factory.connect_migrated().await.unwrap();
 
-        upsert_system_model_settings(&db, r#"{"query_all_channel_models":false}"#).await;
+        upsert_system_channel_settings(
+            &db,
+            r#"{"fallback_to_channels_on_model_not_found":false,"query_all_channel_models":false}"#,
+        )
+        .await;
 
-        let settings = query_system_channel_settings_seaorm(&db).await.unwrap();
+        let settings = query_system_model_settings_seaorm(&db).await.unwrap();
 
         assert!(!settings.query_all_channel_models);
-        assert!(settings.probe.enabled);
+        assert!(!settings.fallback_to_channels_on_model_not_found);
     }
 
     #[tokio::test]
@@ -814,7 +1375,7 @@ mod tests {
         .await;
         insert_model(&db, "actual-model").await;
 
-        let settings = query_system_channel_settings_seaorm(&db).await.unwrap();
+        let settings = query_system_model_settings_seaorm(&db).await.unwrap();
         assert!(settings.query_all_channel_models);
 
         let models = list_enabled_model_records_seaorm(
@@ -827,6 +1388,215 @@ mod tests {
         .unwrap();
 
         assert!(models.is_empty());
+    }
+
+    #[tokio::test]
+    async fn select_target_channels_seaorm_uses_model_associations_when_model_exists() {
+        let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+        let db = factory.connect_migrated().await.unwrap();
+
+        let associated_channel_id = insert_channel(&db, "associated-channel", r#"["gpt-4o"]"#, "{}", 100).await;
+        insert_channel(&db, "direct-channel", r#"["alias-model"]"#, "{}", 90).await;
+        models::Entity::insert(models::ActiveModel {
+            developer: Set("openai".to_owned()),
+            model_id: Set("alias-model".to_owned()),
+            type_field: Set("chat".to_owned()),
+            name: Set("alias-model".to_owned()),
+            icon: Set("OpenAI".to_owned()),
+            group_name: Set("openai".to_owned()),
+            model_card: Set("{}".to_owned()),
+            settings: Set(r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#.to_owned()),
+            status: Set("enabled".to_owned()),
+            remark: Set(Some("repository test".to_owned())),
+            deleted_at: Set(0),
+            ..Default::default()
+        })
+        .exec(&db)
+        .await
+        .unwrap();
+        insert_model(&db, "gpt-4o").await;
+
+        let request = OpenAiV1ExecutionRequest {
+            headers: HashMap::new(),
+            body: axonhub_http::OpenAiRequestBody::Json(serde_json::json!({"model":"alias-model","messages":[{"role":"user","content":"hello"}]})),
+            path: "/v1/chat/completions".to_owned(),
+            path_params: HashMap::new(),
+            query: HashMap::new(),
+            project: axonhub_http::ProjectContext { id: 1, name: "Default Project".to_owned(), status: "active".to_owned() },
+            trace: None,
+            api_key: axonhub_http::AuthApiKeyContext {
+                id: 1,
+                key: "test".to_owned(),
+                name: "test".to_owned(),
+                key_type: axonhub_http::ApiKeyType::User,
+                project: axonhub_http::ProjectContext { id: 1, name: "Default Project".to_owned(), status: "active".to_owned() },
+                scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                profiles_json: None,
+            },
+            api_key_id: Some(1),
+            client_ip: None,
+            channel_hint_id: None,
+        };
+
+        let targets = select_target_channels_seaorm(
+            &db,
+            DatabaseBackend::Sqlite,
+            &request,
+            OpenAiV1Route::ChatCompletions,
+            &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].channel_id, associated_channel_id);
+        assert_eq!(targets[0].actual_model_id, "gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn select_target_channels_seaorm_falls_back_to_direct_channels_only_when_model_missing_and_enabled() {
+        let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+        let db = factory.connect_migrated().await.unwrap();
+
+        let direct_channel_id = insert_channel(&db, "direct-channel", r#"["missing-model"]"#, "{}", 100).await;
+        upsert_system_model_settings(&db, r#"{"fallback_to_channels_on_model_not_found":true}"#).await;
+
+        let request = OpenAiV1ExecutionRequest {
+            headers: HashMap::new(),
+            body: axonhub_http::OpenAiRequestBody::Json(serde_json::json!({"model":"missing-model","messages":[{"role":"user","content":"hello"}]})),
+            path: "/v1/chat/completions".to_owned(),
+            path_params: HashMap::new(),
+            query: HashMap::new(),
+            project: axonhub_http::ProjectContext { id: 1, name: "Default Project".to_owned(), status: "active".to_owned() },
+            trace: None,
+            api_key: axonhub_http::AuthApiKeyContext {
+                id: 1,
+                key: "test".to_owned(),
+                name: "test".to_owned(),
+                key_type: axonhub_http::ApiKeyType::User,
+                project: axonhub_http::ProjectContext { id: 1, name: "Default Project".to_owned(), status: "active".to_owned() },
+                scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                profiles_json: None,
+            },
+            api_key_id: Some(1),
+            client_ip: None,
+            channel_hint_id: None,
+        };
+
+        let targets = select_target_channels_seaorm(
+            &db,
+            DatabaseBackend::Sqlite,
+            &request,
+            OpenAiV1Route::ChatCompletions,
+            &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].channel_id, direct_channel_id);
+        assert_eq!(targets[0].actual_model_id, "missing-model");
+    }
+
+    #[tokio::test]
+    async fn select_target_channels_seaorm_blocks_direct_channel_fallback_when_disabled() {
+        let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+        let db = factory.connect_migrated().await.unwrap();
+
+        insert_channel(&db, "direct-channel", r#"["missing-model"]"#, "{}", 100).await;
+        upsert_system_model_settings(&db, r#"{"fallback_to_channels_on_model_not_found":false}"#).await;
+
+        let request = OpenAiV1ExecutionRequest {
+            headers: HashMap::new(),
+            body: axonhub_http::OpenAiRequestBody::Json(serde_json::json!({"model":"missing-model","messages":[{"role":"user","content":"hello"}]})),
+            path: "/v1/chat/completions".to_owned(),
+            path_params: HashMap::new(),
+            query: HashMap::new(),
+            project: axonhub_http::ProjectContext { id: 1, name: "Default Project".to_owned(), status: "active".to_owned() },
+            trace: None,
+            api_key: axonhub_http::AuthApiKeyContext {
+                id: 1,
+                key: "test".to_owned(),
+                name: "test".to_owned(),
+                key_type: axonhub_http::ApiKeyType::User,
+                project: axonhub_http::ProjectContext { id: 1, name: "Default Project".to_owned(), status: "active".to_owned() },
+                scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                profiles_json: None,
+            },
+            api_key_id: Some(1),
+            client_ip: None,
+            channel_hint_id: None,
+        };
+
+        let error = select_target_channels_seaorm(
+            &db,
+            DatabaseBackend::Sqlite,
+            &request,
+            OpenAiV1Route::ChatCompletions,
+            &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        match error {
+            OpenAiV1Error::InvalidRequest { message } => {
+                assert_eq!(message, "No enabled OpenAI channel is configured for the requested model");
+            }
+            other => panic!("expected invalid request, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn select_target_channels_seaorm_does_not_fallback_when_existing_model_has_zero_associations() {
+        let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+        let db = factory.connect_migrated().await.unwrap();
+
+        insert_channel(&db, "direct-channel", r#"["alias-model"]"#, "{}", 100).await;
+        upsert_system_model_settings(&db, r#"{"fallback_to_channels_on_model_not_found":true}"#).await;
+        insert_model(&db, "alias-model").await;
+
+        let request = OpenAiV1ExecutionRequest {
+            headers: HashMap::new(),
+            body: axonhub_http::OpenAiRequestBody::Json(serde_json::json!({"model":"alias-model","messages":[{"role":"user","content":"hello"}]})),
+            path: "/v1/chat/completions".to_owned(),
+            path_params: HashMap::new(),
+            query: HashMap::new(),
+            project: axonhub_http::ProjectContext { id: 1, name: "Default Project".to_owned(), status: "active".to_owned() },
+            trace: None,
+            api_key: axonhub_http::AuthApiKeyContext {
+                id: 1,
+                key: "test".to_owned(),
+                name: "test".to_owned(),
+                key_type: axonhub_http::ApiKeyType::User,
+                project: axonhub_http::ProjectContext { id: 1, name: "Default Project".to_owned(), status: "active".to_owned() },
+                scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                profiles_json: None,
+            },
+            api_key_id: Some(1),
+            client_ip: None,
+            channel_hint_id: None,
+        };
+
+        let error = select_target_channels_seaorm(
+            &db,
+            DatabaseBackend::Sqlite,
+            &request,
+            OpenAiV1Route::ChatCompletions,
+            &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        match error {
+            OpenAiV1Error::InvalidRequest { message } => {
+                assert_eq!(message, "No enabled OpenAI channel is configured for the requested model");
+            }
+            other => panic!("expected invalid request, got {other:?}"),
+        }
     }
 }
 
@@ -1393,7 +2163,7 @@ pub(crate) mod sqlite_test_support {
         connection: &SqlConnection,
         settings_store: &SystemSettingsStore,
     ) -> SqlResult<Vec<StoredModelRecord>> {
-        if load_system_channel_settings(settings_store)?.query_all_channel_models {
+        if load_system_model_settings(settings_store)?.query_all_channel_models {
             list_routable_model_records(connection)
         } else {
             list_enabled_model_records(connection)
@@ -1404,26 +2174,34 @@ pub(crate) mod sqlite_test_support {
         settings_store: &SystemSettingsStore,
     ) -> SqlResult<StoredSystemChannelSettings> {
         let raw_channel_settings = settings_store.value(crate::foundation::shared::SYSTEM_KEY_CHANNEL_SETTINGS)?;
-        let mut settings = raw_channel_settings
+        Ok(raw_channel_settings
             .as_deref()
             .map(parse_system_channel_settings)
             .transpose()?
-            .unwrap_or_else(default_system_channel_settings);
+            .unwrap_or_else(default_system_channel_settings))
+    }
 
-        let query_all_channel_models_present = raw_channel_settings
+    fn load_system_model_settings(
+        settings_store: &SystemSettingsStore,
+    ) -> SqlResult<crate::foundation::admin::StoredSystemModelSettings> {
+        let raw_model_settings = settings_store.value(crate::foundation::shared::SYSTEM_KEY_MODEL_SETTINGS)?;
+        let mut settings = raw_model_settings
             .as_deref()
-            .map(channel_settings_has_query_all_channel_models)
+            .map(parse_system_model_settings)
             .transpose()?
-            .unwrap_or(false);
-        if !query_all_channel_models_present {
-            if let Some(query_all_channel_models) = settings_store
-                .value(crate::foundation::shared::SYSTEM_KEY_MODEL_SETTINGS)?
-                .as_deref()
-                .map(parse_legacy_query_all_channel_models)
-                .transpose()?
-                .flatten()
-            {
-                settings.query_all_channel_models = query_all_channel_models;
+            .unwrap_or_else(default_system_model_settings);
+
+        if let Some(legacy_channel_settings) = settings_store
+            .value(crate::foundation::shared::SYSTEM_KEY_CHANNEL_SETTINGS)?
+            .as_deref()
+            .map(parse_legacy_system_channel_settings)
+            .transpose()?
+        {
+            if let Some(value) = legacy_channel_settings.fallback_to_channels_on_model_not_found {
+                settings.fallback_to_channels_on_model_not_found = value;
+            }
+            if let Some(value) = legacy_channel_settings.query_all_channel_models {
+                settings.query_all_channel_models = value;
             }
         }
 
@@ -1434,22 +2212,15 @@ pub(crate) mod sqlite_test_support {
         serde_json::from_str::<StoredSystemChannelSettings>(raw).map_err(json_setting_decode_error)
     }
 
-    fn channel_settings_has_query_all_channel_models(raw: &str) -> SqlResult<bool> {
-        let value = serde_json::from_str::<Value>(raw).map_err(json_setting_decode_error)?;
-        Ok(value
-            .as_object()
-            .is_some_and(|object| object.contains_key("query_all_channel_models")))
+    fn parse_system_model_settings(
+        raw: &str,
+    ) -> SqlResult<crate::foundation::admin::StoredSystemModelSettings> {
+        serde_json::from_str::<crate::foundation::admin::StoredSystemModelSettings>(raw)
+            .map_err(json_setting_decode_error)
     }
 
-    fn parse_legacy_query_all_channel_models(raw: &str) -> SqlResult<Option<bool>> {
-        #[derive(Deserialize)]
-        struct LegacySystemModelSettings {
-            query_all_channel_models: Option<bool>,
-        }
-
-        serde_json::from_str::<LegacySystemModelSettings>(raw)
-            .map(|settings| settings.query_all_channel_models)
-            .map_err(json_setting_decode_error)
+    fn parse_legacy_system_channel_settings(raw: &str) -> SqlResult<LegacySystemChannelSettings> {
+        serde_json::from_str::<LegacySystemChannelSettings>(raw).map_err(json_setting_decode_error)
     }
 
     fn json_setting_decode_error(error: serde_json::Error) -> rusqlite::Error {
@@ -1970,32 +2741,50 @@ pub(crate) async fn query_system_channel_settings_seaorm(
         .map_err(map_openai_db_err)?
         .map(|row| row.value);
 
-    let mut settings = raw_channel_settings
+    let settings = raw_channel_settings
         .as_deref()
         .map(parse_system_channel_settings_seaorm)
         .transpose()?
         .unwrap_or_else(default_system_channel_settings);
 
-    let query_all_channel_models_present = raw_channel_settings
+    Ok(settings)
+}
+
+pub(crate) async fn query_system_model_settings_seaorm(
+    db: &impl ConnectionTrait,
+) -> Result<crate::foundation::admin::StoredSystemModelSettings, OpenAiV1Error> {
+    let raw_model_settings = systems::Entity::find()
+        .filter(systems::Column::Key.eq(SYSTEM_KEY_MODEL_SETTINGS))
+        .filter(systems::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<systems::KeyValue>()
+        .one(db)
+        .await
+        .map_err(map_openai_db_err)?
+        .map(|row| row.value);
+
+    let mut settings = raw_model_settings
         .as_deref()
-        .map(channel_settings_has_query_all_channel_models_seaorm)
+        .map(parse_system_model_settings_seaorm)
         .transpose()?
-        .unwrap_or(false);
-    if !query_all_channel_models_present {
-        if let Some(query_all_channel_models) = systems::Entity::find()
-            .filter(systems::Column::Key.eq(SYSTEM_KEY_MODEL_SETTINGS))
-            .filter(systems::Column::DeletedAt.eq(0_i64))
-            .into_partial_model::<systems::KeyValue>()
-            .one(db)
-            .await
-            .map_err(map_openai_db_err)?
-            .map(|row| row.value)
-            .as_deref()
-            .map(parse_legacy_query_all_channel_models_seaorm)
-            .transpose()?
-            .flatten()
-        {
-            settings.query_all_channel_models = query_all_channel_models;
+        .unwrap_or_else(default_system_model_settings);
+
+    if let Some(legacy_channel_settings) = systems::Entity::find()
+        .filter(systems::Column::Key.eq(SYSTEM_KEY_CHANNEL_SETTINGS))
+        .filter(systems::Column::DeletedAt.eq(0_i64))
+        .into_partial_model::<systems::KeyValue>()
+        .one(db)
+        .await
+        .map_err(map_openai_db_err)?
+        .map(|row| row.value)
+        .as_deref()
+        .map(parse_legacy_system_channel_settings_seaorm)
+        .transpose()?
+    {
+        if let Some(value) = legacy_channel_settings.fallback_to_channels_on_model_not_found {
+            settings.fallback_to_channels_on_model_not_found = value;
+        }
+        if let Some(value) = legacy_channel_settings.query_all_channel_models {
+            settings.query_all_channel_models = value;
         }
     }
 
@@ -2012,29 +2801,22 @@ fn parse_system_channel_settings_seaorm(
     )
 }
 
-fn channel_settings_has_query_all_channel_models_seaorm(
+fn parse_system_model_settings_seaorm(
     raw: &str,
-) -> Result<bool, OpenAiV1Error> {
-    let value = serde_json::from_str::<Value>(raw).map_err(|error| OpenAiV1Error::Internal {
-        message: format!("Failed to decode system channel settings: {error}"),
-    })?;
-    Ok(value
-        .as_object()
-        .is_some_and(|object| object.contains_key("query_all_channel_models")))
+) -> Result<crate::foundation::admin::StoredSystemModelSettings, OpenAiV1Error> {
+    serde_json::from_str::<crate::foundation::admin::StoredSystemModelSettings>(raw).map_err(
+        |error| OpenAiV1Error::Internal {
+            message: format!("Failed to decode system model settings: {error}"),
+        },
+    )
 }
 
-fn parse_legacy_query_all_channel_models_seaorm(raw: &str) -> Result<Option<bool>, OpenAiV1Error> {
-    #[derive(Debug, Clone, Default, Deserialize)]
-    #[serde(default)]
-    struct LegacySystemModelSettings {
-        query_all_channel_models: Option<bool>,
-    }
-
-    serde_json::from_str::<LegacySystemModelSettings>(raw)
-        .map(|settings| settings.query_all_channel_models)
-        .map_err(|error| OpenAiV1Error::Internal {
-            message: format!("Failed to decode legacy system model settings: {error}"),
-        })
+fn parse_legacy_system_channel_settings_seaorm(
+    raw: &str,
+) -> Result<LegacySystemChannelSettings, OpenAiV1Error> {
+    serde_json::from_str::<LegacySystemChannelSettings>(raw).map_err(|error| OpenAiV1Error::Internal {
+        message: format!("Failed to decode system channel settings: {error}"),
+    })
 }
 
 pub(crate) async fn select_doubao_task_targets_seaorm(
@@ -2072,6 +2854,7 @@ pub(crate) async fn select_doubao_task_targets_seaorm(
         None,
         &SharedCircuitBreaker::new(CircuitBreakerPolicy::default()),
         active_profile.as_ref(),
+        TargetSelectionMode::Direct,
     )
     .await?;
     if let Some(index) = targets.iter().position(|target| target.channel_id == request_hint.channel_id) {

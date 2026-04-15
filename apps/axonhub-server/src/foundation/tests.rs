@@ -1,7 +1,7 @@
 use super::{
     admin::{
         SeaOrmAdminService, StoredAutoBackupSettings, StoredBackupApiKey, StoredBackupChannel,
-        StoredBackupModel, StoredBackupPayload,
+        StoredBackupModel, StoredBackupPayload, StoredVideoStorageSettings,
     },
     admin_operational::{RestoreOptions, SeaOrmOperationalService},
     authz::{
@@ -77,6 +77,95 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+fn mock_operational_video_server_url() -> &'static str {
+    static SERVER_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SERVER_URL
+        .get_or_init(|| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let base_url = format!("http://{address}/v1");
+            let download_url = format!("{base_url}/generated.mp4");
+            thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let mut stream = match stream {
+                        Ok(stream) => stream,
+                        Err(_) => continue,
+                    };
+                    let mut buffer = [0_u8; 4096];
+                    let size = match stream.read(&mut buffer) {
+                        Ok(size) => size,
+                        Err(_) => continue,
+                    };
+                    let request = String::from_utf8_lossy(&buffer[..size]);
+                    let method = request.lines().next().and_then(|line| line.split_whitespace().next()).unwrap_or("GET");
+                    let path = request.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("/");
+
+                    let (status_line, content_type, extra_headers, body) = if method == "GET" && path == "/v1/generated.mp4" {
+                        (
+                            "HTTP/1.1 200 OK",
+                            "video/mp4",
+                            "Content-Disposition: attachment; filename=\"service-generated.mp4\"\r\n",
+                            b"foundation-video-bytes".to_vec(),
+                        )
+                    } else if method == "GET" && path == "/v1/videos/video_mock_task" {
+                        (
+                            "HTTP/1.1 200 OK",
+                            "application/json",
+                            "",
+                            serde_json::json!({
+                                "id": "video_mock_task",
+                                "model": "seedance-1.0",
+                                "status": "succeeded",
+                                "content": {"video_url": download_url},
+                                "created_at": 1,
+                                "completed_at": 2
+                            })
+                            .to_string()
+                            .into_bytes(),
+                        )
+                    } else {
+                        (
+                            "HTTP/1.1 404 Not Found",
+                            "application/json",
+                            "",
+                            br#"{"error":{"message":"not found"}}"#.to_vec(),
+                        )
+                    };
+
+                    let response = format!(
+                        "{status_line}\r\nContent-Type: {content_type}\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len(),
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(&body);
+                }
+            });
+            base_url
+        })
+        .as_str()
+}
+
+async fn execute_admin_graphql_direct(
+    graphql: &SeaOrmAdminGraphqlService,
+    query: &str,
+    variables: Value,
+    project_id: Option<i64>,
+    user: AuthUserContext,
+) -> Value {
+    graphql
+        .execute_graphql(
+            GraphqlRequestPayload {
+                query: query.to_owned(),
+                variables,
+                operation_name: None,
+            },
+            project_id,
+            user,
+        )
+        .await
+        .body
+}
 
 fn disabled_test_cors() -> HttpCorsSettings {
     HttpCorsSettings::default()
@@ -231,6 +320,19 @@ struct TestHttpRequest {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("axonhub-{name}-{unique}.db"))
+    }
+
+    #[test]
+    fn openai_v1_service_builds_upstream_client_with_configured_timeout() {
+        let db_path = temp_sqlite_path("task-openai-upstream-timeout");
+        let service = SeaOrmOpenAiV1Service::new_with_upstream_request_timeout(
+            SeaOrmConnectionFactory::sqlite_with_debug(db_path.display().to_string(), false),
+            Some(std::time::Duration::from_secs(42)),
+        );
+
+        assert_eq!(service.upstream_http_client_timeout(), Some(std::time::Duration::from_secs(42)));
+
+        std::fs::remove_file(db_path).ok();
     }
 
     fn seaorm_admin_service(foundation: &Arc<SqliteFoundation>) -> SeaOrmAdminService {
@@ -485,6 +587,8 @@ struct TestHttpRequest {
             },
             allow_no_auth: false,
             cors: disabled_test_cors(),
+            request_timeout: Some(std::time::Duration::from_secs(30)),
+            llm_request_timeout: Some(std::time::Duration::from_secs(600)),
             trace_config: TraceConfig {
                 thread_header: Some("AH-Thread-Id".to_owned()),
                 trace_header: Some("AH-Trace-Id".to_owned()),
@@ -547,6 +651,8 @@ struct TestHttpRequest {
             },
             allow_no_auth: false,
             cors: disabled_test_cors(),
+            request_timeout: Some(std::time::Duration::from_secs(30)),
+            llm_request_timeout: Some(std::time::Duration::from_secs(600)),
             trace_config: TraceConfig {
                 thread_header: Some("AH-Thread-Id".to_owned()),
                 trace_header: Some("AH-Trace-Id".to_owned()),
@@ -927,7 +1033,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -1016,7 +1122,7 @@ struct TestHttpRequest {
                 supported_models_json: "[\"gpt-4o\"]",
                 auto_sync_supported_models: false,
                 default_test_model: "gpt-4o",
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 tags_json: "[\"primary\"]",
                 ordering_weight: 100,
                 error_message: "",
@@ -1034,7 +1140,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: "{}",
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Rust migration foundation test",
             })
@@ -1893,10 +1999,9 @@ struct TestHttpRequest {
                              "query": "mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }",
                              "variables": {
                                  "input": {
-                                     "queryAllChannelModels": false,
-                                     "probe": {
-                                         "enabled": false,
-                                         "frequency": "ONE_HOUR"
+                                  "probe": {
+                                      "enabled": false,
+                                      "frequency": "ONE_HOUR"
                                      }
                                  }
                             }
@@ -1919,7 +2024,6 @@ struct TestHttpRequest {
             settings.auto_sync.frequency,
             super::admin::AutoSyncFrequencySetting::OneHour
         );
-        assert!(!settings.query_all_channel_models);
 
         std::fs::remove_file(db_path).ok();
     }
@@ -3839,7 +3943,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 9 model setting test",
             })
@@ -3854,7 +3958,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-image-1"}}]}"#,
                 status: "enabled",
                 remark: "Task 9 model setting test",
             })
@@ -3889,7 +3993,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -3989,7 +4093,7 @@ struct TestHttpRequest {
                 supported_models_json: "[]",
                 auto_sync_supported_models: false,
                 default_test_model: "",
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 tags_json: "[]",
                 ordering_weight: 100,
                 error_message: "",
@@ -4074,7 +4178,7 @@ struct TestHttpRequest {
                 supported_models_json: r#"["gpt-4o"]"#,
                 auto_sync_supported_models: false,
                 default_test_model: "gpt-4o",
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 tags_json: "[]",
                 ordering_weight: 100,
                 error_message: "",
@@ -4091,7 +4195,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 16 quota ready model",
             })
@@ -4154,7 +4258,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -4238,7 +4342,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 16 quota exhausted model",
             })
@@ -4309,7 +4413,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -5182,7 +5286,6 @@ struct TestHttpRequest {
         let quota_statuses = operational.provider_quota_statuses().unwrap();
         assert_eq!(quota_statuses.len(), 1);
         assert_eq!(quota_statuses[0].provider_type, "codex");
-        assert!(quota_statuses[0].ready);
 
         let backup_message = operational.trigger_backup_now(Some(admin_id)).unwrap();
         assert_eq!(backup_message, "Backup completed successfully");
@@ -5207,6 +5310,125 @@ struct TestHttpRequest {
         assert_eq!(completed_runs, 3);
 
         fs::remove_dir_all(backup_root).ok();
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn seaorm_operational_service_saves_video_content_into_fs_storage() {
+        let db_path = temp_sqlite_path("task-video-storage-service");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        let video_root = std::env::temp_dir().join(format!(
+            "axonhub-task-video-storage-service-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&video_root).unwrap();
+
+        let storage_id = foundation
+            .data_storages()
+            .find_primary_active_storage()
+            .unwrap()
+            .unwrap()
+            .id
+            + 200;
+        connection
+            .execute(
+                "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at)
+                 VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+                params![
+                    storage_id,
+                    "Task Video Storage FS",
+                    "task video storage",
+                    serde_json::json!({"directory": video_root.to_string_lossy()}).to_string(),
+                ],
+            )
+            .unwrap();
+
+        let channel_id = foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "Task Video Channel",
+                channel_type: "openai",
+                base_url: mock_operational_video_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["seedance-1.0"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "seedance-1.0",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "task video storage",
+            })
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO requests (
+                    api_key_id, project_id, trace_id, data_storage_id, source, model_id, format,
+                    request_headers, request_body, response_body, response_chunks, channel_id,
+                    external_id, status, stream, client_ip, metrics_latency_ms,
+                    metrics_first_token_latency_ms, content_saved, content_storage_id,
+                    content_storage_key, content_saved_at
+                ) VALUES (
+                    NULL, 1, NULL, NULL, 'api', 'seedance-1.0', 'doubao/video_create',
+                    '{}', '{}', ?1, NULL, ?2,
+                    'video_mock_task', 'processing', 0, '', NULL,
+                    NULL, 0, NULL,
+                    NULL, NULL
+                )",
+                params![r#"{"id":"video_mock_task","status":"processing"}"#, channel_id],
+            )
+            .unwrap();
+        let request_id = connection.last_insert_rowid();
+        drop(connection);
+
+        let service = seaorm_operational_service(&foundation);
+        let settings = service
+            .update_video_storage_settings(crate::foundation::graphql::AdminGraphqlUpdateVideoStorageSettingsInput {
+                enabled: Some(true),
+                data_storage_id: Some(storage_id),
+                scan_interval_minutes: Some(5),
+                scan_limit: Some(20),
+            })
+            .unwrap();
+        assert!(settings.enabled);
+
+        let processed = service.run_video_storage_scan_tick().unwrap();
+        assert_eq!(processed, 1);
+
+        let verification = foundation.open_connection(true).unwrap();
+        let stored: (i64, i64, String, Option<String>) = verification
+            .query_row(
+                "SELECT content_saved, content_storage_id, content_storage_key, content_saved_at
+                 FROM requests WHERE id = ?1",
+                [request_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(stored.0, 1);
+        assert_eq!(stored.1, storage_id);
+        assert_eq!(stored.2, format!("/1/requests/{request_id}/video/service-generated.mp4"));
+        assert!(stored.3.is_some());
+        assert_eq!(
+            fs::read(video_root.join(format!("1/requests/{request_id}/video/service-generated.mp4"))).unwrap(),
+            b"foundation-video-bytes"
+        );
+
+        fs::remove_dir_all(video_root).ok();
         std::fs::remove_file(db_path).ok();
     }
 
@@ -5710,7 +5932,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0,"cacheRead":0.5,"cacheWrite":0.25,"cacheWrite5m":0.125},"vision":true,"toolCall":true,"reasoning":{"supported":true},"costPriceReferenceId":"price-ref-task9"}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 7 runtime test",
             })
@@ -5743,7 +5965,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":8192,"output":0},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-image-1"}}]}"#,
                 status: "enabled",
                 remark: "Task 13 image runtime test",
             })
@@ -5778,7 +6000,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -6155,7 +6377,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 9 failure model",
             })
@@ -6190,7 +6412,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -6296,7 +6518,7 @@ struct TestHttpRequest {
                 supported_models_json: r#"["gpt-4o"]"#,
                 auto_sync_supported_models: false,
                 default_test_model: "gpt-4o",
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 tags_json: "[]",
                 ordering_weight: 100,
                 error_message: "",
@@ -6313,7 +6535,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 5 SeaORM failure model",
             })
@@ -6454,7 +6676,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 9 quota denial model",
             })
@@ -6549,7 +6771,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -6658,7 +6880,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 16 responses model",
             })
@@ -6821,7 +7043,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 16 compact responses model",
             })
@@ -6965,7 +7187,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 16 missing responses model",
             })
@@ -7109,7 +7331,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 16 cross-project responses model",
             })
@@ -7278,7 +7500,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 16 same-project responses model",
             })
@@ -7424,7 +7646,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 17 retrieval responses model",
             })
@@ -7629,7 +7851,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 17 scoped retrieval responses model",
             })
@@ -7782,7 +8004,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 17 HTTP retrieval responses model",
             })
@@ -7853,7 +8075,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -7925,7 +8147,7 @@ struct TestHttpRequest {
                 supported_models_json: r#"["gpt-4o"]"#,
                 auto_sync_supported_models: false,
                 default_test_model: "gpt-4o",
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-image-1"}}]}"#,
                 tags_json: "[]",
                 ordering_weight: 100,
                 error_message: "",
@@ -7942,7 +8164,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 16 SeaORM chat model",
             })
@@ -7994,6 +8216,246 @@ struct TestHttpRequest {
         let request_json: Value = serde_json::from_str(request_row.as_str()).unwrap();
         assert_eq!(request_json["previous_response_id"], "resp_passthrough");
         assert_eq!(request_json["messages"][0]["content"], "hello");
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[test]
+    fn openai_v1_chat_completions_injects_matching_prompts_into_persisted_outbound_request_body() {
+        let db_path = temp_sqlite_path("task16-seaorm-chat-prompt-injection");
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let api_key_id = {
+            let connection = foundation.open_connection(true).unwrap();
+            insert_api_key(
+                &connection,
+                1,
+                1,
+                DEFAULT_USER_API_KEY_VALUE,
+                "Task16 Prompt Injection User Key",
+                "user",
+                &[SCOPE_READ_CHANNELS, SCOPE_WRITE_REQUESTS],
+            )
+        };
+
+        foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "SeaORM Chat Prompt Injection Channel",
+                channel_type: "openai",
+                base_url: mock_openai_server_url(),
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["gpt-4o"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "gpt-4o",
+                settings_json: r#"{"modelMappings":[{"from":"alias-model","to":"gpt-4o"}]}"#,
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "Task 16 SeaORM chat prompt injection channel",
+            })
+            .unwrap();
+        foundation
+            .channel_models()
+            .upsert_model(&NewModelRecord {
+                developer: "openai",
+                model_id: "gpt-4o",
+                model_type: "chat",
+                name: "GPT-4o",
+                icon: "OpenAI",
+                group: "openai",
+                model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
+                status: "enabled",
+                remark: "Task 16 SeaORM chat prompt injection model",
+            })
+            .unwrap();
+
+        let matching_prepend_settings = serde_json::json!({
+            "action": {"type": "prepend"},
+            "conditions": [
+                {"conditions": [
+                    {"type": "model_id", "modelId": "alias-model"},
+                    {"type": "model_pattern", "modelPattern": "^nope$"}
+                ]},
+                {"conditions": [
+                    {"type": "api_key", "apiKeyId": api_key_id}
+                ]}
+            ]
+        })
+        .to_string();
+        let matching_tiebreak_settings = serde_json::json!({
+            "action": {"type": "prepend"},
+            "conditions": [
+                {"conditions": [
+                    {"type": "model_pattern", "modelPattern": "^alias-.*$"}
+                ]}
+            ]
+        })
+        .to_string();
+        let matching_append_settings = serde_json::json!({
+            "action": {"type": "append"},
+            "conditions": [
+                {"conditions": [
+                    {"type": "api_key", "apiKeyId": api_key_id}
+                ]}
+            ]
+        })
+        .to_string();
+        let ignored_settings = serde_json::json!({
+            "action": {"type": "prepend"},
+            "conditions": [
+                {"conditions": [
+                    {"type": "model_id", "modelId": "different-model"}
+                ]}
+            ]
+        })
+        .to_string();
+
+        {
+            let connection = foundation.open_connection(true).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prompts (created_at, updated_at, project_id, name, description, role, content, status, \"order\", settings, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, 'enabled', ?7, ?8, 0)",
+                    params![
+                        "2026-04-10 10:00:00",
+                        "2026-04-10 10:00:00",
+                        1,
+                        "Task16 Prompt Prepend First",
+                        "system",
+                        "prepended first",
+                        10,
+                        matching_prepend_settings,
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prompts (created_at, updated_at, project_id, name, description, role, content, status, \"order\", settings, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, 'enabled', ?7, ?8, 0)",
+                    params![
+                        "2026-04-10 10:00:01",
+                        "2026-04-10 10:00:01",
+                        1,
+                        "Task16 Prompt Prepend Second",
+                        "developer",
+                        "prepended second",
+                        10,
+                        matching_tiebreak_settings,
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prompts (created_at, updated_at, project_id, name, description, role, content, status, \"order\", settings, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, 'enabled', ?7, ?8, 0)",
+                    params![
+                        "2026-04-10 10:00:02",
+                        "2026-04-10 10:00:02",
+                        1,
+                        "Task16 Prompt Append",
+                        "system",
+                        "appended last",
+                        20,
+                        matching_append_settings,
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO prompts (created_at, updated_at, project_id, name, description, role, content, status, \"order\", settings, deleted_at)
+                     VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, 'enabled', ?7, ?8, 0)",
+                    params![
+                        "2026-04-10 10:00:03",
+                        "2026-04-10 10:00:03",
+                        1,
+                        "Task16 Prompt Ignored",
+                        "system",
+                        "should not appear",
+                        5,
+                        ignored_settings,
+                    ],
+                )
+                .unwrap();
+        }
+
+        let project = ProjectContext {
+            id: 1,
+            name: "Default Project".to_owned(),
+            status: "active".to_owned(),
+        };
+        let api_key_project = project.clone();
+        let service = SeaOrmOpenAiV1Service::new(foundation.seaorm());
+        let response = service
+            .execute(
+                OpenAiV1Route::ChatCompletions,
+                OpenAiV1ExecutionRequest {
+                    headers: HashMap::new(),
+                    body: OpenAiRequestBody::Json(serde_json::json!({
+                        "model": "alias-model",
+                        "messages": [{"role": "user", "content": "hello"}],
+                    })),
+                    path: "/v1/chat/completions".to_owned(),
+                    path_params: HashMap::new(),
+                    query: HashMap::new(),
+                    project,
+                    trace: None,
+                    api_key: axonhub_http::AuthApiKeyContext {
+                        id: api_key_id,
+                        key: DEFAULT_USER_API_KEY_VALUE.to_owned(),
+                        name: "Task16 Prompt Injection User Key".to_owned(),
+                        key_type: axonhub_http::ApiKeyType::User,
+                        project: api_key_project,
+                        scopes: vec!["read_channels".to_owned(), "write_requests".to_owned()],
+                        profiles_json: None,
+                    },
+                    api_key_id: Some(api_key_id),
+                    client_ip: Some("127.0.0.1".to_owned()),
+                    channel_hint_id: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(response.status, StatusCode::OK.as_u16());
+
+        let connection = foundation.open_connection(true).unwrap();
+        let request_row = connection
+            .query_row("SELECT request_body FROM requests ORDER BY id DESC LIMIT 1", [], |row| row.get::<_, String>(0))
+            .unwrap();
+        let execution_row = connection
+            .query_row(
+                "SELECT request_body FROM request_executions ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        let request_json: Value = serde_json::from_str(request_row.as_str()).unwrap();
+        let execution_json: Value = serde_json::from_str(execution_row.as_str()).unwrap();
+
+        assert_eq!(request_json["model"], "alias-model");
+        assert_eq!(request_json["messages"][0]["role"], "system");
+        assert_eq!(request_json["messages"][0]["content"], "prepended first");
+        assert_eq!(request_json["messages"][1]["role"], "developer");
+        assert_eq!(request_json["messages"][1]["content"], "prepended second");
+        assert_eq!(request_json["messages"][2]["role"], "user");
+        assert_eq!(request_json["messages"][2]["content"], "hello");
+        assert_eq!(request_json["messages"][3]["role"], "system");
+        assert_eq!(request_json["messages"][3]["content"], "appended last");
+        assert_eq!(request_json["messages"].as_array().unwrap().len(), 4);
+
+        assert_eq!(execution_json["model"], "gpt-4o");
+        assert_eq!(execution_json["messages"], request_json["messages"]);
 
         std::fs::remove_file(db_path).ok();
     }
@@ -8091,7 +8553,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -8218,7 +8680,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0,"cache_read":0.5,"cache_write":0.25}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 8 failover model",
             })
@@ -8253,7 +8715,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -8397,7 +8859,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 12 retry model",
             })
@@ -8432,7 +8894,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -8591,7 +9053,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 17 breaker model",
             })
@@ -8633,7 +9095,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -8754,7 +9216,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 17 recovery model",
             })
@@ -8798,7 +9260,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -8900,7 +9362,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096},"cost":{"input":1.0,"output":2.0}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 14 invalid outbound header model",
             })
@@ -8935,7 +9397,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -9066,7 +9528,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 8 affinity model",
             })
@@ -9101,7 +9563,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -9225,7 +9687,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 8 codex session affinity model",
             })
@@ -9260,7 +9722,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -9388,7 +9850,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 16 requested model",
             })
@@ -9564,7 +10026,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 8 repair model",
             })
@@ -9599,7 +10061,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -9776,7 +10238,7 @@ struct TestHttpRequest {
                 icon: "Gemini",
                 group: "gemini",
                 model_card_json: r#"{"limit":{"context":1048576,"output":8192}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gemini-2.5-flash"}}]}"#,
                 status: "enabled",
                 remark: "Task 12 Gemini model",
             })
@@ -9791,7 +10253,7 @@ struct TestHttpRequest {
                 icon: "Doubao",
                 group: "doubao",
                 model_card_json: r#"{}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"seedance-1.0"}}]}"#,
                 status: "enabled",
                 remark: "Task 12 Doubao model",
             })
@@ -9826,7 +10288,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -10777,7 +11239,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 15 mask model",
             })
@@ -10907,7 +11369,7 @@ struct TestHttpRequest {
                 icon: "OpenAI",
                 group: "openai",
                 model_card_json: r#"{"limit":{"context":128000,"output":4096}}"#,
-                settings_json: "{}",
+                settings_json: r#"{"associations":[{"type":"model","modelId":{"modelId":"gpt-4o"}}]}"#,
                 status: "enabled",
                 remark: "Task 15 reject model",
             })
@@ -19275,7 +19737,7 @@ struct TestHttpRequest {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "test-only unsupported oauth provider admin".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -19319,6 +19781,370 @@ struct TestHttpRequest {
         assert_eq!(request_count, 0);
         assert_eq!(execution_count, 0);
         assert_eq!(usage_count, 0);
+
+        std::fs::remove_file(db_path).ok();
+    }
+
+    #[tokio::test]
+    async fn admin_graphql_seaorm_prompt_and_system_write_parity() {
+        let db_path = temp_sqlite_path("task-prompt-and-system-write-parity");
+        let db = SeaOrmConnectionFactory::sqlite(db_path.display().to_string());
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let writer_id = insert_test_user(
+            &foundation,
+            "prompt-admin@example.com",
+            "password123",
+            &[SCOPE_READ_SETTINGS, SCOPE_WRITE_SETTINGS],
+        );
+        insert_project_membership(
+            &foundation,
+            writer_id,
+            1,
+            false,
+            &[SCOPE_READ_PROMPTS, SCOPE_WRITE_PROMPTS],
+        );
+
+        let identity = SqliteIdentityService::new(foundation.clone(), false);
+        let token = signin_token(foundation.clone(), "prompt-admin@example.com", "password123");
+        let writer = identity.authenticate_admin_jwt(&token).unwrap();
+        let graphql = SeaOrmAdminGraphqlService::new(db.clone());
+
+        let create_prompt = execute_admin_graphql_direct(
+            &graphql,
+            "mutation CreatePrompt($input: CreatePromptInput!) { createPrompt(input: $input) { id projectID name description role content status order settings { action { type } conditions { conditions { type modelId } } } } }",
+            serde_json::json!({
+                "input": {
+                    "name": "Welcome Prompt",
+                    "description": "Initial prompt",
+                    "role": "system",
+                    "content": "Hello from Rust",
+                    "status": "enabled",
+                    "order": 5,
+                    "settings": {
+                        "action": {"type": "prepend"},
+                        "conditions": [
+                            {"conditions": [{"type": "model_id", "modelId": "gpt-4o"}]}
+                        ]
+                    }
+                }
+            }),
+            Some(1),
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(create_prompt["errors"], Value::Null);
+        let prompt_id = create_prompt["data"]["createPrompt"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(create_prompt["data"]["createPrompt"]["projectID"], graphql_gid("project", 1));
+        assert_eq!(create_prompt["data"]["createPrompt"]["settings"]["action"]["type"], "prepend");
+
+        let prompts_query = execute_admin_graphql_direct(
+            &graphql,
+            "{ prompts { totalCount edges { cursor node { id name role status order settings { action { type } } } } pageInfo { startCursor endCursor hasNextPage hasPreviousPage } } }",
+            Value::Object(Default::default()),
+            Some(1),
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(prompts_query["errors"], Value::Null);
+        assert_eq!(prompts_query["data"]["prompts"]["totalCount"], 1);
+        assert_eq!(prompts_query["data"]["prompts"]["edges"][0]["node"]["id"], prompt_id);
+
+        let update_prompt = execute_admin_graphql_direct(
+            &graphql,
+            "mutation UpdatePrompt($id: ID!, $input: UpdatePromptInput!) { updatePrompt(id: $id, input: $input) { name role content status order settings { action { type } conditions { conditions { type modelPattern } } } } }",
+            serde_json::json!({
+                "id": prompt_id,
+                "input": {
+                    "name": "Welcome Prompt V2",
+                    "role": "developer",
+                    "content": "Updated content",
+                    "status": "disabled",
+                    "order": 7,
+                    "settings": {
+                        "action": {"type": "append"},
+                        "conditions": [
+                            {"conditions": [{"type": "model_pattern", "modelPattern": "gpt-*"}]}
+                        ]
+                    }
+                }
+            }),
+            Some(1),
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(update_prompt["errors"], Value::Null);
+        assert_eq!(update_prompt["data"]["updatePrompt"]["name"], "Welcome Prompt V2");
+        assert_eq!(update_prompt["data"]["updatePrompt"]["settings"]["action"]["type"], "append");
+
+        let update_status = execute_admin_graphql_direct(
+            &graphql,
+            "mutation UpdatePromptStatus($id: ID!, $status: String!) { updatePromptStatus(id: $id, status: $status) }",
+            serde_json::json!({"id": prompt_id, "status": "enabled"}),
+            Some(1),
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(update_status["errors"], Value::Null);
+        assert_eq!(update_status["data"]["updatePromptStatus"], true);
+
+        let second_prompt = execute_admin_graphql_direct(
+            &graphql,
+            "mutation CreatePrompt($input: CreatePromptInput!) { createPrompt(input: $input) { id } }",
+            serde_json::json!({
+                "input": {
+                    "name": "Cleanup Prompt",
+                    "description": "Delete me",
+                    "role": "user",
+                    "content": "bye",
+                    "settings": {
+                        "action": {"type": "prepend"},
+                        "conditions": []
+                    }
+                }
+            }),
+            Some(1),
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(second_prompt["errors"], Value::Null);
+        let second_prompt_id = second_prompt["data"]["createPrompt"]["id"].as_str().unwrap().to_owned();
+
+        let bulk_disable = execute_admin_graphql_direct(
+            &graphql,
+            "mutation BulkDisable($ids: [ID!]!) { bulkDisablePrompts(ids: $ids) }",
+            serde_json::json!({"ids": [prompt_id.clone(), second_prompt_id.clone()]}),
+            Some(1),
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(bulk_disable["errors"], Value::Null);
+        assert_eq!(bulk_disable["data"]["bulkDisablePrompts"], true);
+
+        let bulk_enable = execute_admin_graphql_direct(
+            &graphql,
+            "mutation BulkEnable($ids: [ID!]!) { bulkEnablePrompts(ids: $ids) }",
+            serde_json::json!({"ids": [prompt_id.clone()]}),
+            Some(1),
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(bulk_enable["errors"], Value::Null);
+        assert_eq!(bulk_enable["data"]["bulkEnablePrompts"], true);
+
+        let delete_prompt = execute_admin_graphql_direct(
+            &graphql,
+            "mutation DeletePrompt($id: ID!) { deletePrompt(id: $id) }",
+            serde_json::json!({"id": second_prompt_id.clone()}),
+            Some(1),
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(delete_prompt["errors"], Value::Null);
+        assert_eq!(delete_prompt["data"]["deletePrompt"], true);
+
+        let bulk_delete = execute_admin_graphql_direct(
+            &graphql,
+            "mutation BulkDelete($ids: [ID!]!) { bulkDeletePrompts(ids: $ids) }",
+            serde_json::json!({"ids": [prompt_id.clone()]}),
+            Some(1),
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(bulk_delete["errors"], Value::Null);
+        assert_eq!(bulk_delete["data"]["bulkDeletePrompts"], true);
+
+        let connection = foundation.open_connection(true).unwrap();
+        let deleted_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM prompts WHERE project_id = 1 AND deleted_at = 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(deleted_count, 2);
+
+        let missing_project_query = execute_admin_graphql_direct(
+            &graphql,
+            "{ prompts { totalCount } }",
+            Value::Object(Default::default()),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert!(missing_project_query["errors"][0]["message"].as_str().unwrap().contains("project context is required for this query"));
+
+        let no_scope_id = insert_test_user(&foundation, "prompt-viewer@example.com", "password123", &[]);
+        insert_project_membership(&foundation, no_scope_id, 1, false, &[]);
+        let no_scope_token = signin_token(foundation.clone(), "prompt-viewer@example.com", "password123");
+        let no_scope_user = identity.authenticate_admin_jwt(&no_scope_token).unwrap();
+        let no_scope_query = execute_admin_graphql_direct(
+            &graphql,
+            "{ prompts { totalCount } }",
+            Value::Object(Default::default()),
+            Some(1),
+            no_scope_user,
+        )
+        .await;
+        assert_eq!(no_scope_query["data"]["prompts"], Value::Null);
+        assert_eq!(no_scope_query["errors"][0]["message"], "permission denied");
+
+        let update_settings = execute_admin_graphql_direct(
+            &graphql,
+            "mutation UpdateSystemModelSettings($input: UpdateSystemModelSettingsInput!) { updateSystemModelSettings(input: $input) }",
+            serde_json::json!({"input": {"fallbackToChannelsOnModelNotFound": false, "queryAllChannelModels": false}}),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(update_settings["errors"], Value::Null);
+        assert_eq!(update_settings["data"]["updateSystemModelSettings"], true);
+
+        let stored_model_settings = foundation.system_settings().value("system_model_settings").unwrap().unwrap();
+        let stored_model_settings_json: Value = serde_json::from_str(&stored_model_settings).unwrap();
+        assert_eq!(stored_model_settings_json["fallback_to_channels_on_model_not_found"], false);
+        assert_eq!(stored_model_settings_json["query_all_channel_models"], false);
+
+        let queried_system_model_settings = execute_admin_graphql_direct(
+            &graphql,
+            "{ systemModelSettings { fallbackToChannelsOnModelNotFound queryAllChannelModels } }",
+            Value::Object(Default::default()),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(queried_system_model_settings["errors"], Value::Null);
+        assert_eq!(queried_system_model_settings["data"]["systemModelSettings"]["fallbackToChannelsOnModelNotFound"], false);
+        assert_eq!(queried_system_model_settings["data"]["systemModelSettings"]["queryAllChannelModels"], false);
+
+        foundation
+            .system_settings()
+            .set_value(
+                "system_channel_settings",
+                r#"{"fallback_to_channels_on_model_not_found":false,"query_all_channel_models":false,"probe":{"enabled":true,"frequency":"one_hour"},"auto_sync":{"frequency":"one_hour"}}"#,
+            )
+            .unwrap();
+        let legacy_connection = foundation.open_connection(true).unwrap();
+        legacy_connection
+            .execute(
+                "UPDATE systems SET deleted_at = 1 WHERE key = ?1",
+                ["system_model_settings"],
+            )
+            .unwrap();
+
+        let legacy_model_settings = execute_admin_graphql_direct(
+            &graphql,
+            "{ systemModelSettings { fallbackToChannelsOnModelNotFound queryAllChannelModels } }",
+            Value::Object(Default::default()),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(legacy_model_settings["errors"], Value::Null);
+        assert_eq!(
+            legacy_model_settings["data"]["systemModelSettings"]["fallbackToChannelsOnModelNotFound"],
+            false
+        );
+        assert_eq!(
+            legacy_model_settings["data"]["systemModelSettings"]["queryAllChannelModels"],
+            false
+        );
+
+        let legacy_channel_settings = execute_admin_graphql_direct(
+            &graphql,
+            "{ systemChannelSettings { probe { enabled frequency } autoSync { frequency } } }",
+            Value::Object(Default::default()),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(legacy_channel_settings["errors"], Value::Null);
+        assert_eq!(legacy_channel_settings["data"]["systemChannelSettings"]["queryAllChannelModels"], Value::Null);
+
+        let queried_system_channel_settings = execute_admin_graphql_direct(
+            &graphql,
+            "{ systemChannelSettings { probe { enabled frequency } autoSync { frequency } } }",
+            Value::Object(Default::default()),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(queried_system_channel_settings["errors"], Value::Null);
+        assert_eq!(queried_system_channel_settings["data"]["systemChannelSettings"]["probe"]["enabled"], true);
+        assert_eq!(queried_system_channel_settings["data"]["systemChannelSettings"]["autoSync"]["frequency"], "ONE_HOUR");
+        assert_eq!(queried_system_channel_settings["data"]["systemChannelSettings"]["queryAllChannelModels"], Value::Null);
+
+        let complete_onboarding = execute_admin_graphql_direct(
+            &graphql,
+            "mutation CompleteOnboarding($input: CompleteOnboardingInput!) { completeOnboarding(input: $input) }",
+            serde_json::json!({"input": {"dummy": "ok"}}),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(complete_onboarding["errors"], Value::Null);
+        assert_eq!(complete_onboarding["data"]["completeOnboarding"], true);
+
+        let onboarding_after_main_completion = parse_onboarding_record(
+            &foundation.system_settings().value(SYSTEM_KEY_ONBOARDED).unwrap().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            onboarding_after_main_completion
+                .auto_disable_channel
+                .as_ref()
+                .map(|value| value.onboarded),
+            Some(true)
+        );
+
+        let complete_system_onboarding = execute_admin_graphql_direct(
+            &graphql,
+            "mutation CompleteSystemModelSettingOnboarding($input: CompleteSystemModelSettingOnboardingInput!) { completeSystemModelSettingOnboarding(input: $input) }",
+            serde_json::json!({"input": {"dummy": "ok"}}),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(complete_system_onboarding["errors"], Value::Null);
+        assert_eq!(complete_system_onboarding["data"]["completeSystemModelSettingOnboarding"], true);
+
+        let complete_auto_disable = execute_admin_graphql_direct(
+            &graphql,
+            "mutation CompleteAutoDisableChannelOnboarding($input: CompleteAutoDisableChannelOnboardingInput!) { completeAutoDisableChannelOnboarding(input: $input) }",
+            serde_json::json!({"input": {"dummy": "ok"}}),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(complete_auto_disable["errors"], Value::Null);
+        assert_eq!(complete_auto_disable["data"]["completeAutoDisableChannelOnboarding"], true);
+
+        let onboarding_raw = foundation.system_settings().value(SYSTEM_KEY_ONBOARDED).unwrap().unwrap();
+        let onboarding = parse_onboarding_record(&onboarding_raw).unwrap();
+        assert!(onboarding.onboarded);
+        assert!(onboarding.completed_at.is_some());
+        assert_eq!(onboarding.system_model_setting.as_ref().map(|value| value.onboarded), Some(true));
+        assert_eq!(onboarding.auto_disable_channel.as_ref().map(|value| value.onboarded), Some(true));
+
+        let onboarding_info = execute_admin_graphql_direct(
+            &graphql,
+            "{ onboardingInfo { onboarded completedAt systemModelSetting { onboarded completedAt } autoDisableChannel { onboarded completedAt } } }",
+            Value::Object(Default::default()),
+            None,
+            writer.clone(),
+        )
+        .await;
+        assert_eq!(onboarding_info["errors"], Value::Null);
+        assert_eq!(onboarding_info["data"]["onboardingInfo"]["onboarded"], true);
+        assert_eq!(onboarding_info["data"]["onboardingInfo"]["systemModelSetting"]["onboarded"], true);
+        assert_eq!(onboarding_info["data"]["onboardingInfo"]["autoDisableChannel"]["onboarded"], true);
 
         std::fs::remove_file(db_path).ok();
     }

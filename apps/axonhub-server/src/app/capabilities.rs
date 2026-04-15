@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axonhub_http::{
     AdminCapability, AdminGraphqlCapability, IdentityCapability, OauthProviderAdminCapability,
@@ -76,6 +77,7 @@ pub(crate) fn build_server_capabilities(
     db_debug: bool,
     allow_no_auth: bool,
     version: &str,
+    llm_request_timeout: Option<Duration>,
 ) -> ServerCapabilities {
     let profile = PersistenceProfile::resolve(dialect, dsn, db_debug);
 
@@ -83,7 +85,7 @@ pub(crate) fn build_server_capabilities(
         system_bootstrap: build_system_bootstrap_capability_from_profile(&profile, version),
         identity: build_identity_capability_from_profile(&profile, allow_no_auth),
         request_context: build_request_context_capability_from_profile(&profile, allow_no_auth),
-        openai_v1: build_openai_v1_capability_from_profile(&profile),
+        openai_v1: build_openai_v1_capability_from_profile(&profile, llm_request_timeout),
         admin: build_admin_capability_from_profile(&profile),
         admin_graphql: build_admin_graphql_capability_from_profile(&profile),
         openapi_graphql: build_openapi_graphql_capability_from_profile(&profile),
@@ -120,7 +122,7 @@ pub(crate) fn build_request_context_capability(
 
 pub(crate) fn build_openai_v1_capability(dialect: &str, dsn: &str) -> OpenAiV1Capability {
     let profile = PersistenceProfile::resolve(dialect, dsn, false);
-    build_openai_v1_capability_from_profile(&profile)
+    build_openai_v1_capability_from_profile(&profile, None)
 }
 
 pub(crate) fn build_admin_capability(dialect: &str, dsn: &str) -> AdminCapability {
@@ -195,11 +197,17 @@ fn build_request_context_capability_from_profile(
     }
 }
 
-fn build_openai_v1_capability_from_profile(profile: &PersistenceProfile) -> OpenAiV1Capability {
+fn build_openai_v1_capability_from_profile(
+    profile: &PersistenceProfile,
+    llm_request_timeout: Option<Duration>,
+) -> OpenAiV1Capability {
     match profile {
         PersistenceProfile::Sqlite { db } | PersistenceProfile::Postgres { db } => {
             let repository: Arc<dyn OpenAiV1Repository> =
-                Arc::new(SeaOrmOpenAiV1Service::new(db.clone()));
+                Arc::new(SeaOrmOpenAiV1Service::new_with_upstream_request_timeout(
+                    db.clone(),
+                    llm_request_timeout,
+                ));
             OpenAiV1Capability::Available {
                 openai: Arc::new(OpenAiV1ApplicationService::new(repository)),
             }

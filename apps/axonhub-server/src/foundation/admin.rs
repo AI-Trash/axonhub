@@ -186,7 +186,19 @@ pub(crate) struct StoredChannelModelAutoSyncSettings {
 pub(crate) struct StoredSystemChannelSettings {
     pub(crate) probe: StoredChannelProbeSettings,
     pub(crate) auto_sync: StoredChannelModelAutoSyncSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct StoredSystemModelSettings {
+    pub(crate) fallback_to_channels_on_model_not_found: bool,
     pub(crate) query_all_channel_models: bool,
+}
+
+impl Default for StoredSystemModelSettings {
+    fn default() -> Self {
+        default_system_model_settings()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -586,8 +598,18 @@ pub(crate) fn default_system_channel_settings() -> StoredSystemChannelSettings {
         auto_sync: StoredChannelModelAutoSyncSettings {
             frequency: AutoSyncFrequencySetting::OneHour,
         },
+    }
+}
+
+pub(crate) fn default_system_model_settings() -> StoredSystemModelSettings {
+    StoredSystemModelSettings {
+        fallback_to_channels_on_model_not_found: true,
         query_all_channel_models: true,
     }
+}
+
+fn default_fallback_to_channels_on_model_not_found() -> bool {
+    true
 }
 
 pub(crate) fn default_system_general_settings() -> StoredSystemGeneralSettings {

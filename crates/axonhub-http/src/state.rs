@@ -115,6 +115,8 @@ pub struct HttpState {
     pub oauth_provider_admin: OauthProviderAdminCapability,
     pub allow_no_auth: bool,
     pub cors: HttpCorsSettings,
+    pub request_timeout: Option<Duration>,
+    pub llm_request_timeout: Option<Duration>,
     pub trace_config: TraceConfig,
 }
 

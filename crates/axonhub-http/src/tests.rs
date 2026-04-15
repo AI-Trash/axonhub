@@ -5,6 +5,7 @@ use actix_web::dev::ServiceResponse;
 use actix_web::http::header;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
+use futures_util::FutureExt;
 use opentelemetry::trace::{SpanId, TracerProvider as _};
 use opentelemetry_sdk::trace::{SdkTracerProvider, SpanData, SpanExporter};
 use serde_json::json;
@@ -12,6 +13,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::fmt;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -67,14 +69,21 @@ impl TestApp {
         ))
         .await;
 
-        let mut actix_request = actix_test::TestRequest::default()
-            .method(Method::from_bytes(request.method.as_bytes()).expect("valid method"))
-            .uri(&request.uri);
-        for (name, value) in &request.headers {
-            actix_request = actix_request.insert_header((name.as_str(), value.as_str()));
-        }
+        let build_request = |body: Vec<u8>| {
+            let mut actix_request = actix_test::TestRequest::default()
+                .method(Method::from_bytes(request.method.as_bytes()).expect("valid method"))
+                .uri(&request.uri);
+            for (name, value) in &request.headers {
+                actix_request = actix_request.insert_header((name.as_str(), value.as_str()));
+            }
+            actix_request.set_payload(body)
+        };
 
-        Ok(actix_test::call_service(&app, actix_request.set_payload(request.body).to_request()).await)
+        let fallback_request = build_request(Vec::new()).to_http_request();
+        match actix_test::try_call_service(&app, build_request(request.body).to_request()).await {
+            Ok(response) => Ok(response),
+            Err(error) => Ok(ServiceResponse::from_err(error, fallback_request).map_into_boxed_body()),
+        }
     }
 }
 
@@ -318,6 +327,7 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     #[derive(Default)]
     struct FakeOpenAiV1State {
         executions: Vec<RecordedOpenAiExecution>,
+        delay: Option<Duration>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,6 +341,19 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
     }
 
     struct FakeAdminPort;
+
+    #[derive(Default)]
+    struct FakeGraphqlState {
+        delay: Option<Duration>,
+    }
+
+    struct FakeAdminGraphqlPort {
+        state: Mutex<FakeGraphqlState>,
+    }
+
+    struct FakeOpenApiGraphqlPort {
+        state: Mutex<FakeGraphqlState>,
+    }
 
     #[derive(Default)]
     struct FakeOauthProviderAdminState {
@@ -372,8 +395,33 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             }
         }
 
+        fn with_delay(delay: Duration) -> Self {
+            Self {
+                state: Mutex::new(FakeOpenAiV1State {
+                    executions: Vec::new(),
+                    delay: Some(delay),
+                }),
+            }
+        }
+
         fn executions(&self) -> Vec<RecordedOpenAiExecution> {
             self.state.lock().unwrap().executions.clone()
+        }
+    }
+
+    impl FakeAdminGraphqlPort {
+        fn new(delay: Option<Duration>) -> Self {
+            Self {
+                state: Mutex::new(FakeGraphqlState { delay }),
+            }
+        }
+    }
+
+    impl FakeOpenApiGraphqlPort {
+        fn new(delay: Option<Duration>) -> Self {
+            Self {
+                state: Mutex::new(FakeGraphqlState { delay }),
+            }
         }
     }
 
@@ -706,10 +754,19 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
                     message: "permission denied".to_owned(),
                 });
             }
-            self.state.lock().unwrap().executions.push(RecordedOpenAiExecution {
-                route,
-                trace_id: request.trace.as_ref().map(|trace| trace.trace_id.clone()),
-            });
+            let delay = {
+                let mut state = self.state.lock().unwrap();
+                state.executions.push(RecordedOpenAiExecution {
+                    route,
+                    trace_id: request.trace.as_ref().map(|trace| trace.trace_id.clone()),
+                });
+                state.delay
+            };
+
+            if let Some(delay) = delay {
+                std::thread::sleep(delay);
+            }
+
             Ok(OpenAiV1ExecutionResponse {
                 status: 200,
                 body: match route {
@@ -888,6 +945,11 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             route: CompatibilityRoute,
             request: OpenAiV1ExecutionRequest,
         ) -> Result<OpenAiV1ExecutionResponse, OpenAiV1Error> {
+            let delay = self.state.lock().unwrap().delay;
+            if let Some(delay) = delay {
+                std::thread::sleep(delay);
+            }
+
             let body = match route {
                 CompatibilityRoute::AnthropicMessages => json!({
                     "id": "msg_rust",
@@ -1118,6 +1180,60 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
         }
     }
 
+    impl AdminGraphqlPort for FakeAdminGraphqlPort {
+        fn execute_graphql(
+            &self,
+            request: GraphqlRequestPayload,
+            project_id: Option<i64>,
+            user: AuthUserContext,
+        ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
+            let delay = self.state.lock().unwrap().delay;
+            async move {
+                if let Some(delay) = delay {
+                    tokio::time::sleep(delay).await;
+                }
+
+                GraphqlExecutionResult {
+                    status: 200,
+                    body: json!({
+                        "data": {
+                            "query": request.query,
+                            "projectId": project_id,
+                            "userId": user.id,
+                        }
+                    }),
+                }
+            }
+            .boxed()
+        }
+    }
+
+    impl OpenApiGraphqlPort for FakeOpenApiGraphqlPort {
+        fn execute_graphql(
+            &self,
+            request: GraphqlRequestPayload,
+            owner_api_key: AuthApiKeyContext,
+        ) -> Pin<Box<dyn Future<Output = GraphqlExecutionResult> + Send>> {
+            let delay = self.state.lock().unwrap().delay;
+            async move {
+                if let Some(delay) = delay {
+                    tokio::time::sleep(delay).await;
+                }
+
+                GraphqlExecutionResult {
+                    status: 200,
+                    body: json!({
+                        "data": {
+                            "query": request.query,
+                            "apiKeyId": owner_api_key.id,
+                        }
+                    }),
+                }
+            }
+            .boxed()
+        }
+    }
+
     impl OauthProviderAdminPort for FakeOauthProviderAdminPort {
         fn start_codex_oauth(
             &self,
@@ -1233,6 +1349,8 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             },
             allow_no_auth,
             cors: disabled_test_cors(),
+            request_timeout: Some(Duration::from_secs(30)),
+            llm_request_timeout: Some(Duration::from_secs(600)),
             trace_config: TraceConfig {
                 thread_header: Some("AH-Thread-Id".to_owned()),
                 trace_header: Some("AH-Trace-Id".to_owned()),
@@ -1278,6 +1396,8 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             },
             allow_no_auth,
             cors: disabled_test_cors(),
+            request_timeout: Some(Duration::from_secs(30)),
+            llm_request_timeout: Some(Duration::from_secs(600)),
             trace_config: TraceConfig {
                 thread_header: Some("AH-Thread-Id".to_owned()),
                 trace_header: Some("AH-Trace-Id".to_owned()),
@@ -1310,6 +1430,33 @@ impl HttpMetricsRecorder for RecordingHttpMetrics {
             openai: openai.clone(),
         };
         (state, openai)
+    }
+
+    fn test_state_with_delayed_openai(
+        system_bootstrap: SystemBootstrapCapability,
+        allow_no_auth: bool,
+        delay: Duration,
+    ) -> HttpState {
+        let mut state = test_state(system_bootstrap, allow_no_auth);
+        state.openai_v1 = OpenAiV1Capability::Available {
+            openai: Arc::new(FakeOpenAiV1Port::with_delay(delay)),
+        };
+        state
+    }
+
+    fn test_state_with_delayed_graphql(
+        system_bootstrap: SystemBootstrapCapability,
+        allow_no_auth: bool,
+        delay: Duration,
+    ) -> HttpState {
+        let mut state = test_state(system_bootstrap, allow_no_auth);
+        state.admin_graphql = AdminGraphqlCapability::Available {
+            graphql: Arc::new(FakeAdminGraphqlPort::new(Some(delay))),
+        };
+        state.openapi_graphql = OpenApiGraphqlCapability::Available {
+            graphql: Arc::new(FakeOpenApiGraphqlPort::new(Some(delay))),
+        };
+        state
     }
 
     fn test_state_with_oauth_provider_admin(
@@ -1898,7 +2045,7 @@ fn assert_go_duration_shape(value: &str) {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(Duration::from_secs(30)), llm_request_timeout: Some(Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -2675,7 +2822,7 @@ fn assert_go_duration_shape(value: &str) {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(Duration::from_secs(30)), llm_request_timeout: Some(Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -2969,7 +3116,7 @@ fn assert_go_duration_shape(value: &str) {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(Duration::from_secs(30)), llm_request_timeout: Some(Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -3171,7 +3318,7 @@ fn assert_go_duration_shape(value: &str) {
         },
         oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
             message: "OAuth provider admin helpers are not configured in this HTTP test fixture.".to_owned(),
-        }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+        }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(Duration::from_secs(30)), llm_request_timeout: Some(Duration::from_secs(600)), trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),
             request_header: Some("X-Request-Id".to_owned()),
@@ -3300,6 +3447,123 @@ fn assert_go_duration_shape(value: &str) {
         let json = read_json(response).await;
         assert_eq!(json["auth"]["mode"], "api_key");
         assert_eq!(json["project"]["id"], 1);
+    }
+
+    #[tokio::test]
+    async fn admin_and_openapi_graphql_routes_enforce_request_timeout_scope() {
+        let mut state = test_state_with_delayed_graphql(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+            Duration::from_millis(50),
+        );
+        state.request_timeout = Some(Duration::from_millis(10));
+        let app = router(state);
+
+        let admin_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", "Bearer valid-admin-token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ systemStatus { isInitialized } }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(admin_response.status(), StatusCode::GATEWAY_TIMEOUT);
+        let admin_json = read_json(admin_response).await;
+        assert_eq!(admin_json["error"]["message"], "Request timed out");
+
+        let openapi_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/openapi/v1/graphql")
+                    .method(Method::POST)
+                    .header("Authorization", "Bearer service-key-123")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"query":"{ __typename }"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(openapi_response.status(), StatusCode::GATEWAY_TIMEOUT);
+        let openapi_json = read_json(openapi_response).await;
+        assert_eq!(openapi_json["error"]["message"], "Request timed out");
+    }
+
+    #[tokio::test]
+    async fn openai_and_gemini_routes_enforce_llm_request_timeout_scope() {
+        let mut state = test_state_with_delayed_openai(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+            Duration::from_millis(50),
+        );
+        state.llm_request_timeout = Some(Duration::from_millis(10));
+        let app = router(state);
+
+        let openai_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/chat/completions")
+                    .method(Method::POST)
+                    .header("X-API-Key", "api-key-123")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(openai_response.status(), StatusCode::GATEWAY_TIMEOUT);
+        let openai_json = read_json(openai_response).await;
+        assert_eq!(openai_json["error"]["message"], "Request timed out");
+
+        let gemini_response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/gemini/v1/models/gemini-2.5-flash:generateContent?key=api-key-123")
+                    .method(Method::POST)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"model":"gemini-2.5-flash","contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gemini_response.status(), StatusCode::GATEWAY_TIMEOUT);
+        let gemini_json = read_json(gemini_response).await;
+        assert_eq!(gemini_json["error"]["message"], "Request timed out");
+    }
+
+    #[tokio::test]
+    async fn public_routes_are_not_forced_through_llm_timeout_scope() {
+        let mut state = test_state(
+            SystemBootstrapCapability::Available {
+                system: Arc::new(SharedSystemBootstrapPort::new(SharedSystemState::default())),
+            },
+            false,
+        );
+        state.request_timeout = Some(Duration::from_secs(1));
+        state.llm_request_timeout = Some(Duration::from_millis(1));
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .method(Method::GET)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

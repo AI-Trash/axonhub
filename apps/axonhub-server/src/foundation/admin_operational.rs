@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use axonhub_http::{OAuthProxyConfig, OAuthProxyType};
 use axonhub_db_entity::{
     api_keys, channel_model_price_versions, channel_model_prices, channel_probes, channels,
     data_storages, models, operational_runs, projects, provider_quota_statuses,
@@ -9,20 +10,24 @@ use axonhub_db_entity::{
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
-    EntityTrait, QueryFilter, QueryOrder, Set, TransactionTrait,
+    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
+use tracing::warn;
 
 use super::{
-    admin::{
-        default_auto_backup_settings, default_retry_policy, default_storage_policy, default_system_channel_settings,
-        default_video_storage_settings, generate_probe_timestamps,
-        provider_quota_type_for_channel, CachedFileStorage, StoredAutoBackupSettings,
-        StoredBackupApiKey, StoredBackupChannel, StoredBackupModel, StoredBackupPayload,
-        StoredChannelProbeData, StoredChannelProbePoint, StoredGcCleanupSummary,
-        StoredProviderQuotaStatus, StoredProxyPreset, StoredStoragePolicy,
-        StoredSystemChannelSettings, StoredVideoStorageSettings, StoredRetryPolicy,
-    },
+        admin::{
+            default_auto_backup_settings, default_storage_policy, default_system_channel_settings,
+            default_system_model_settings,
+            default_video_storage_settings, generate_probe_timestamps,
+            provider_quota_type_for_channel, CachedFileStorage, StoredAutoBackupSettings,
+            StoredBackupApiKey, StoredBackupChannel, StoredBackupModel, StoredBackupPayload,
+            StoredChannelProbeData, StoredChannelProbePoint, StoredGcCleanupSummary,
+            StoredProviderQuotaStatus, StoredProxyPreset, StoredStoragePolicy,
+            StoredSystemChannelSettings, StoredSystemModelSettings, StoredVideoStorageSettings, StoredRetryPolicy,
+            safe_relative_key_path,
+        },
     graphql::AdminGraphqlUpdateVideoStorageSettingsInput,
     seaorm::SeaOrmConnectionFactory,
     shared::{
@@ -157,6 +162,19 @@ impl SeaOrmOperationalService {
         })
     }
 
+    pub(crate) fn video_storage_settings(&self) -> Result<StoredVideoStorageSettings, String> {
+        let db = self.db.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            load_json_setting(
+                &connection,
+                SYSTEM_KEY_VIDEO_STORAGE_SETTINGS,
+                default_video_storage_settings(),
+            )
+            .await
+        })
+    }
+
     pub(crate) fn update_system_channel_settings(
         &self,
         settings: StoredSystemChannelSettings,
@@ -167,6 +185,14 @@ impl SeaOrmOperationalService {
             let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
             store_json_setting(&connection, SYSTEM_KEY_CHANNEL_SETTINGS, &settings_to_store).await?;
             Ok(settings_to_store)
+        })
+    }
+
+    pub(crate) fn system_model_settings(&self) -> Result<StoredSystemModelSettings, String> {
+        let db = self.db.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            load_json_setting(&connection, crate::foundation::shared::SYSTEM_KEY_MODEL_SETTINGS, default_system_model_settings()).await
         })
     }
 
@@ -441,8 +467,9 @@ impl SeaOrmOperationalService {
                 let channels = query_channel_quota_candidates(&connection, backend).await?;
 
                 let mut updated = 0_usize;
-                for (channel_id, channel_type) in channels {
-                    let Some(provider_type) = provider_quota_type_for_channel(channel_type.as_str()) else {
+                for channel in channels {
+                    let channel_id = channel.id;
+                    let Some(provider_type) = provider_quota_type_for_channel(channel.type_field.as_str()) else {
                         continue;
                     };
                     if !force {
@@ -454,24 +481,50 @@ impl SeaOrmOperationalService {
                         }
                     }
 
-                    let details = quota_ready_details(provider_type, channel_id);
-                    let payload = json!({
-                        "message": details,
-                        "source": "manual_recheck",
-                        "channelId": channel_id,
-                    })
-                    .to_string();
-                    upsert_provider_quota_status_model(
-                        &connection,
+                    let channel_proxy = extract_channel_proxy_config(channel.settings.as_str());
+                    let http_client = build_provider_quota_http_client(channel_proxy.as_ref())?;
+                    match run_provider_quota_check(
+                        &http_client,
                         channel_id,
+                        channel.base_url.as_deref(),
+                        channel.credentials.as_str(),
                         provider_type,
-                        "available",
-                        true,
-                        None,
-                        next_check_at,
-                        payload,
                     )
-                    .await?;
+                    .await
+                    {
+                        Ok(result) => {
+                            upsert_provider_quota_status_model(
+                                &connection,
+                                channel_id,
+                                provider_type,
+                                result.status,
+                                result.ready,
+                                result.next_reset_at,
+                                next_check_at,
+                                result.quota_data_json,
+                            )
+                            .await?;
+                        }
+                        Err(error) => {
+                            let payload = provider_quota_error_payload(
+                                load_existing_provider_quota_data_json(&connection, channel_id)
+                                    .await?
+                                    .as_deref(),
+                                error.as_str(),
+                            );
+                            upsert_provider_quota_status_model(
+                                &connection,
+                                channel_id,
+                                provider_type,
+                                "unknown",
+                                false,
+                                None,
+                                next_check_at,
+                                payload,
+                            )
+                            .await?;
+                        }
+                    }
                     updated += 1;
                 }
                 Ok::<usize, String>(updated)
@@ -505,10 +558,228 @@ impl SeaOrmOperationalService {
         })
     }
 
+    pub(crate) fn run_video_storage_scan_tick(&self) -> Result<usize, String> {
+        let db = self.db.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            let settings: StoredVideoStorageSettings = load_json_setting(
+                &connection,
+                SYSTEM_KEY_VIDEO_STORAGE_SETTINGS,
+                default_video_storage_settings(),
+            )
+            .await?;
+
+            if !settings.enabled {
+                return Ok(0);
+            }
+            if settings.data_storage_id <= 0 {
+                return Err("video storage enabled but dataStorageID is not configured".to_owned());
+            }
+
+            let storage = load_active_fs_storage(&connection, settings.data_storage_id)
+                .await?
+                .ok_or_else(|| {
+                    "video storage target must be an active fs-backed non-database data storage".to_owned()
+                })?;
+            fs::create_dir_all(storage.root.as_path())
+                .map_err(|error| format!("failed to create video storage directory: {error}"))?;
+
+            let limit = settings.scan_limit.max(1) as u64;
+            let candidates = requests::Entity::find()
+                .filter(requests::Column::ContentSaved.eq(false))
+                .filter(requests::Column::Status.is_in(["processing", "completed"]))
+                .filter(requests::Column::Format.contains("video"))
+                .order_by_asc(requests::Column::Id)
+                .limit(limit)
+                .all(&connection)
+                .await
+                .map_err(|error| format!("failed to load pending video requests: {error}"))?;
+
+            let mut processed = 0_usize;
+            for request in candidates {
+                let request_id = request.id;
+                match process_video_storage_request(&connection, &storage, settings.data_storage_id, request).await {
+                    Ok(true) => processed += 1,
+                    Ok(false) => {}
+                    Err(error) => warn!(request_id = request_id, error = %error, "video storage scan skipped request after error"),
+                }
+            }
+
+            Ok(processed)
+        })
+    }
+
+    pub(crate) fn run_channel_probe_sampling_tick(&self) -> Result<usize, String> {
+        let db = self.db.clone();
+        db.run_sync(move |factory| async move {
+            let connection = factory.connect_migrated().await.map_err(|error| error.to_string())?;
+            let settings: StoredSystemChannelSettings = load_json_setting(
+                &connection,
+                SYSTEM_KEY_CHANNEL_SETTINGS,
+                default_system_channel_settings(),
+            )
+            .await?;
+            if !settings.probe.enabled {
+                return Ok(0);
+            }
+
+            let interval_minutes = settings.probe.interval_minutes().max(1);
+            let interval_seconds = i64::from(interval_minutes) * 60;
+            let timestamp = aligned_probe_timestamp(current_unix_timestamp(), interval_minutes);
+            let start_timestamp = timestamp - interval_seconds;
+            let start_time = format_unix_timestamp(start_timestamp);
+            let end_time = format_unix_timestamp(timestamp);
+
+            let enabled_channels = channels::Entity::find()
+                .filter(channels::Column::DeletedAt.eq(0_i64))
+                .filter(channels::Column::Status.eq("enabled"))
+                .order_by_asc(channels::Column::Id)
+                .all(&connection)
+                .await
+                .map_err(|error| format!("failed to load enabled channels for probe sampling: {error}"))?;
+            if enabled_channels.is_empty() {
+                return Ok(0);
+            }
+
+            let channel_ids = enabled_channels.iter().map(|channel| channel.id).collect::<Vec<_>>();
+            let request_rows = requests::Entity::find()
+                .filter(requests::Column::ChannelId.is_in(channel_ids.clone()))
+                .filter(requests::Column::CreatedAt.gte(start_time.clone()))
+                .filter(requests::Column::CreatedAt.lt(end_time.clone()))
+                .order_by_asc(requests::Column::Id)
+                .all(&connection)
+                .await
+                .map_err(|error| format!("failed to load requests for probe sampling: {error}"))?;
+
+            let successful_request_ids = request_rows
+                .iter()
+                .filter(|request| request.status == "completed")
+                .map(|request| request.id)
+                .collect::<Vec<_>>();
+            let mut usage_by_request = std::collections::HashMap::<i64, i64>::new();
+            if !successful_request_ids.is_empty() {
+                let usage_rows = usage_logs::Entity::find()
+                    .filter(usage_logs::Column::RequestId.is_in(successful_request_ids))
+                    .all(&connection)
+                    .await
+                    .map_err(|error| format!("failed to load usage logs for probe sampling: {error}"))?;
+                for row in usage_rows {
+                    *usage_by_request.entry(row.request_id).or_insert(0) += row.total_tokens;
+                }
+            }
+
+            let mut aggregates = std::collections::HashMap::<i64, ChannelProbeAggregate>::new();
+            for request in request_rows {
+                let Some(channel_id) = request.channel_id else {
+                    continue;
+                };
+                let aggregate = aggregates.entry(channel_id).or_default();
+                aggregate.total_request_count += 1;
+                if request.status != "completed" {
+                    continue;
+                }
+
+                aggregate.success_request_count += 1;
+                let latency_ms = request.metrics_latency_ms.unwrap_or(0);
+                let first_token_latency_ms = request.metrics_first_token_latency_ms.unwrap_or(0);
+                let total_tokens = usage_by_request.get(&request.id).copied().unwrap_or(0);
+                let effective_latency_ms = if request.stream {
+                    latency_ms.saturating_sub(first_token_latency_ms)
+                } else {
+                    latency_ms
+                };
+                if total_tokens > 0 && effective_latency_ms > 0 {
+                    aggregate.total_tokens += total_tokens;
+                    aggregate.total_effective_latency_ms += effective_latency_ms;
+                }
+                if request.stream && first_token_latency_ms > 0 {
+                    aggregate.total_first_token_latency_ms += first_token_latency_ms;
+                    aggregate.first_token_request_count += 1;
+                }
+            }
+
+            let mut written = 0_usize;
+            for channel in enabled_channels {
+                let Some(aggregate) = aggregates.get(&channel.id) else {
+                    continue;
+                };
+                if aggregate.total_request_count <= 0 {
+                    continue;
+                }
+
+                let avg_tokens_per_second = if aggregate.total_tokens > 0 && aggregate.total_effective_latency_ms > 0 {
+                    Some(
+                        aggregate.total_tokens as f64
+                            / (aggregate.total_effective_latency_ms as f64 / 1000.0),
+                    )
+                } else {
+                    None
+                };
+                let avg_time_to_first_token_ms = if aggregate.first_token_request_count > 0 {
+                    Some(
+                        aggregate.total_first_token_latency_ms as f64
+                            / aggregate.first_token_request_count as f64,
+                    )
+                } else {
+                    None
+                };
+
+                if let Some(existing) = channel_probes::Entity::find()
+                    .filter(channel_probes::Column::ChannelId.eq(channel.id))
+                    .filter(channel_probes::Column::Timestamp.eq(timestamp))
+                    .one(&connection)
+                    .await
+                    .map_err(|error| format!("failed to load existing probe row: {error}"))?
+                {
+                    let mut active: channel_probes::ActiveModel = existing.into();
+                    active.total_request_count = Set(aggregate.total_request_count);
+                    active.success_request_count = Set(aggregate.success_request_count);
+                    active.avg_tokens_per_second = Set(avg_tokens_per_second);
+                    active.avg_time_to_first_token_ms = Set(avg_time_to_first_token_ms);
+                    active.update(&connection)
+                        .await
+                        .map_err(|error| format!("failed to update channel probe row: {error}"))?;
+                } else {
+                    channel_probes::Entity::insert(channel_probes::ActiveModel {
+                        channel_id: Set(channel.id),
+                        timestamp: Set(timestamp),
+                        total_request_count: Set(aggregate.total_request_count),
+                        success_request_count: Set(aggregate.success_request_count),
+                        avg_tokens_per_second: Set(avg_tokens_per_second),
+                        avg_time_to_first_token_ms: Set(avg_time_to_first_token_ms),
+                        ..Default::default()
+                    })
+                    .exec(&connection)
+                    .await
+                    .map_err(|error| format!("failed to insert channel probe row: {error}"))?;
+                }
+                written += 1;
+            }
+
+            Ok(written)
+        })
+    }
+
     pub(crate) fn run_gc_cleanup_now(
         &self,
-        _vacuum_enabled: bool,
+        vacuum_enabled: bool,
         initiated_by_user_id: Option<i64>,
+    ) -> Result<StoredGcCleanupSummary, String> {
+        self.run_gc_cleanup(vacuum_enabled, initiated_by_user_id, "manual")
+    }
+
+    pub(crate) fn run_scheduled_gc_cleanup(
+        &self,
+        vacuum_enabled: bool,
+    ) -> Result<StoredGcCleanupSummary, String> {
+        self.run_gc_cleanup(vacuum_enabled, None, "scheduled")
+    }
+
+    fn run_gc_cleanup(
+        &self,
+        vacuum_enabled: bool,
+        initiated_by_user_id: Option<i64>,
+        trigger_source: &'static str,
     ) -> Result<StoredGcCleanupSummary, String> {
         let db = self.db.clone();
         db.run_sync(move |factory| async move {
@@ -516,7 +787,7 @@ impl SeaOrmOperationalService {
             let run = start_operational_run(
                 &connection,
                 "gc_cleanup",
-                "manual",
+                trigger_source,
                 initiated_by_user_id,
                 None,
                 None,
@@ -554,8 +825,13 @@ impl SeaOrmOperationalService {
                 summary.channel_probes_deleted +=
                     cleanup_channel_probes(&connection, channel_probe_cutoff).await?;
 
-                // Runtime GC cleanup no longer executes VACUUM under the zero-runtime-raw-SQL
-                // target, so vacuum_ran remains deterministically false.
+                if vacuum_enabled {
+                    connection
+                        .execute_unprepared("VACUUM")
+                        .await
+                        .map_err(|error| format!("failed to run VACUUM after cleanup: {error}"))?;
+                    summary.vacuum_ran = true;
+                }
 
                 Ok::<StoredGcCleanupSummary, String>(summary)
             }
@@ -604,6 +880,18 @@ impl SeaOrmOperationalService {
         &self,
         initiated_by_user_id: Option<i64>,
     ) -> Result<String, String> {
+        self.trigger_backup(initiated_by_user_id, "manual")
+    }
+
+    pub(crate) fn trigger_scheduled_backup(&self) -> Result<String, String> {
+        self.trigger_backup(None, "scheduled")
+    }
+
+    fn trigger_backup(
+        &self,
+        initiated_by_user_id: Option<i64>,
+        trigger_source: &'static str,
+    ) -> Result<String, String> {
         let settings = self.auto_backup_settings()?;
         if settings.data_storage_id <= 0 {
             return Err("data storage not configured for backup".to_owned());
@@ -615,7 +903,7 @@ impl SeaOrmOperationalService {
             let run = start_operational_run(
                 &connection,
                 "auto_backup",
-                "manual",
+                trigger_source,
                 initiated_by_user_id,
                 Some(settings.data_storage_id),
                 None,
@@ -724,18 +1012,14 @@ impl SeaOrmOperationalService {
 async fn query_channel_quota_candidates(
     connection: &DatabaseConnection,
     _backend: DatabaseBackend,
-) -> Result<Vec<(i64, String)>, String> {
-    let channels = channels::Entity::find()
+) -> Result<Vec<channels::Model>, String> {
+    channels::Entity::find()
         .filter(channels::Column::DeletedAt.eq(0_i64))
         .filter(channels::Column::Status.eq("enabled"))
         .order_by_asc(channels::Column::Id)
         .all(connection)
         .await
-        .map_err(|error| error.to_string())?;
-    channels
-        .into_iter()
-        .map(|channel| Ok::<(i64, String), String>((channel.id, channel.type_field)))
-        .collect()
+        .map_err(|error| error.to_string())
 }
 
 async fn query_next_quota_check_at(
@@ -837,6 +1121,374 @@ pub(crate) fn quota_exhausted_details(provider_type: &str, channel_id: i64, mess
     format!(
         "provider quota exhausted for {provider_type} channel {channel_id}: {message}"
     )
+}
+
+#[derive(Debug)]
+struct ProviderQuotaCheckResult {
+    status: &'static str,
+    ready: bool,
+    next_reset_at: Option<i64>,
+    quota_data_json: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ProviderQuotaChannelSettings {
+    #[serde(default)]
+    proxy: Option<OAuthProxyConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexUsageResponse {
+    #[serde(default)]
+    rate_limit: Option<CodexRateLimitInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexRateLimitInfo {
+    #[serde(default)]
+    allowed: Option<bool>,
+    #[serde(default)]
+    limit_reached: Option<bool>,
+    #[serde(default)]
+    primary_window: Option<CodexUsageWindow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexUsageWindow {
+    #[serde(default)]
+    used_percent: Option<f64>,
+    #[serde(default)]
+    reset_at: Option<i64>,
+}
+
+fn build_provider_quota_http_client(proxy: Option<&OAuthProxyConfig>) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(60));
+    if let Some(proxy) = proxy {
+        match proxy.proxy_type {
+            OAuthProxyType::Disabled => {
+                builder = builder.no_proxy();
+            }
+            OAuthProxyType::Environment => {}
+            OAuthProxyType::Url => {
+                if !proxy.url.trim().is_empty() {
+                    let mut reqwest_proxy = reqwest::Proxy::all(proxy.url.as_str())
+                        .map_err(|error| format!("invalid provider quota proxy URL: {error}"))?;
+                    if !proxy.username.is_empty() && !proxy.password.is_empty() {
+                        reqwest_proxy =
+                            reqwest_proxy.basic_auth(proxy.username.as_str(), proxy.password.as_str());
+                    }
+                    builder = builder.proxy(reqwest_proxy);
+                }
+            }
+        }
+    }
+    builder
+        .build()
+        .map_err(|error| format!("failed to build provider quota HTTP client: {error}"))
+}
+
+async fn run_provider_quota_check(
+    http_client: &reqwest::Client,
+    channel_id: i64,
+    base_url: Option<&str>,
+    credentials_json: &str,
+    provider_type: &str,
+) -> Result<ProviderQuotaCheckResult, String> {
+    let api_key = crate::foundation::openai_v1::extract_channel_api_key(credentials_json);
+    if api_key.is_empty() {
+        return Err(format!(
+            "provider quota channel {channel_id} credentials missing api key"
+        ));
+    }
+
+    match provider_type {
+        "codex" => run_codex_provider_quota_check(http_client, base_url, api_key.as_str()).await,
+        "claudecode" => {
+            run_claudecode_provider_quota_check(http_client, base_url, api_key.as_str()).await
+        }
+        _ => Err(format!(
+            "provider quota type `{provider_type}` is not supported"
+        )),
+    }
+}
+
+async fn run_codex_provider_quota_check(
+    http_client: &reqwest::Client,
+    base_url: Option<&str>,
+    api_key: &str,
+) -> Result<ProviderQuotaCheckResult, String> {
+    let usage_url = build_codex_usage_url(base_url)?;
+    validate_provider_quota_url(usage_url.as_str(), ProviderQuotaUrlKind::Codex)?;
+
+    let response = http_client
+        .get(usage_url)
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {api_key}"))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|error| format!("quota request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {body}", status.as_u16()));
+    }
+
+    let quota_data_json = response
+        .text()
+        .await
+        .map_err(|error| format!("failed to read codex quota response: {error}"))?;
+    let parsed: CodexUsageResponse = serde_json::from_str(quota_data_json.as_str())
+        .map_err(|error| format!("failed to parse codex usage response: {error}"))?;
+
+    let mut status = "unknown";
+    let mut next_reset_at = None;
+    if let Some(rate_limit) = parsed.rate_limit {
+        if rate_limit.limit_reached == Some(true) || rate_limit.allowed == Some(false) {
+            status = "exhausted";
+        } else {
+            status = "available";
+            if let Some(primary_window) = rate_limit.primary_window {
+                if primary_window.used_percent.unwrap_or_default() >= 80.0 {
+                    status = "warning";
+                }
+                next_reset_at = primary_window.reset_at.filter(|value| *value > 0);
+            }
+        }
+    }
+
+    Ok(ProviderQuotaCheckResult {
+        status,
+        ready: matches!(status, "available" | "warning"),
+        next_reset_at,
+        quota_data_json,
+    })
+}
+
+async fn run_claudecode_provider_quota_check(
+    http_client: &reqwest::Client,
+    base_url: Option<&str>,
+    api_key: &str,
+) -> Result<ProviderQuotaCheckResult, String> {
+    let endpoint_url = build_claudecode_messages_url(base_url)?;
+    validate_provider_quota_url(endpoint_url.as_str(), ProviderQuotaUrlKind::ClaudeCode)?;
+
+    let response = http_client
+        .post(endpoint_url)
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {api_key}"))
+        .header(
+            "anthropic-beta",
+            "claude-code-20250219,interleaved-thinking-2025-05-14,prompt-caching-scope-2026-01-05,effort-2025-11-24",
+        )
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-dangerous-direct-browser-access", "true")
+        .header("x-app", "cli")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(&json!({
+            "model": "claude-haiku-4-5",
+            "messages": [{"role": "user", "content": "limit"}],
+            "max_tokens": 1,
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("HTTP request failed: {error}"))?;
+
+    if response.status() != reqwest::StatusCode::OK {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {body}", status.as_u16()));
+    }
+
+    parse_claudecode_quota_response(response.headers())
+}
+
+fn parse_claudecode_quota_response(
+    headers: &reqwest::header::HeaderMap,
+) -> Result<ProviderQuotaCheckResult, String> {
+    let unified_status = provider_quota_header_value(headers, "Anthropic-Ratelimit-Unified-Status");
+    if unified_status.is_empty() {
+        return Err("missing quota headers".to_owned());
+    }
+
+    let representative_claim =
+        provider_quota_header_value(headers, "Anthropic-Ratelimit-Unified-Representative-Claim");
+    let five_hour_utilization =
+        provider_quota_header_f64(headers, "Anthropic-Ratelimit-Unified-5h-Utilization");
+    let seven_day_utilization =
+        provider_quota_header_f64(headers, "Anthropic-Ratelimit-Unified-7d-Utilization");
+
+    let windows = json!({
+        "5h": {
+            "status": provider_quota_header_value(headers, "Anthropic-Ratelimit-Unified-5h-Status"),
+            "reset": provider_quota_header_i64(headers, "Anthropic-Ratelimit-Unified-5h-Reset"),
+            "utilization": five_hour_utilization,
+        },
+        "7d": {
+            "status": provider_quota_header_value(headers, "Anthropic-Ratelimit-Unified-7d-Status"),
+            "reset": provider_quota_header_i64(headers, "Anthropic-Ratelimit-Unified-7d-Reset"),
+            "utilization": seven_day_utilization,
+        },
+        "overage": {
+            "status": provider_quota_header_value(headers, "Anthropic-Ratelimit-Unified-Overage-Status"),
+            "reset": provider_quota_header_i64(headers, "Anthropic-Ratelimit-Unified-Overage-Reset"),
+            "utilization": provider_quota_header_f64(headers, "Anthropic-Ratelimit-Unified-Overage-Utilization"),
+        }
+    });
+
+    let quota_data_json = json!({
+        "unified_status": unified_status,
+        "windows": windows,
+        "representative_claim": representative_claim,
+        "fallback": provider_quota_header_value(headers, "Anthropic-Ratelimit-Unified-Fallback"),
+        "fallback_percentage": provider_quota_header_f64(headers, "Anthropic-Ratelimit-Unified-Fallback-Percentage"),
+        "reset": provider_quota_header_i64(headers, "Anthropic-Ratelimit-Unified-Reset"),
+    })
+    .to_string();
+
+    let mut status = match unified_status.as_str() {
+        "allowed" => "available",
+        "throttled" | "rejected" => "exhausted",
+        _ => "unknown",
+    };
+    if status == "available" && (five_hour_utilization >= 0.8 || seven_day_utilization >= 0.8) {
+        status = "warning";
+    }
+
+    let reset_window_key = match representative_claim.as_str() {
+        "five_hour" => "5h",
+        "seven_day" => "7d",
+        value => value,
+    };
+    let next_reset_at = windows
+        .get(reset_window_key)
+        .and_then(|window| window.get("reset"))
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0);
+
+    Ok(ProviderQuotaCheckResult {
+        status,
+        ready: matches!(status, "available" | "warning"),
+        next_reset_at,
+        quota_data_json,
+    })
+}
+
+fn build_codex_usage_url(base_url: Option<&str>) -> Result<String, String> {
+    let trimmed = base_url.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        return Ok("https://chatgpt.com/backend-api/wham/usage".to_owned());
+    }
+
+    let mut parsed = reqwest::Url::parse(trimmed)
+        .map_err(|error| format!("invalid codex base URL `{trimmed}`: {error}"))?;
+    parsed.set_path("/backend-api/wham/usage");
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    Ok(parsed.to_string())
+}
+
+fn build_claudecode_messages_url(base_url: Option<&str>) -> Result<String, String> {
+    let trimmed = base_url.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        return Ok("https://api.anthropic.com/v1/messages".to_owned());
+    }
+
+    let trimmed = trimmed.trim_end_matches('/');
+    let endpoint = if trimmed.ends_with("/v1") {
+        format!("{trimmed}/messages")
+    } else {
+        format!("{trimmed}/v1/messages")
+    };
+    reqwest::Url::parse(endpoint.as_str())
+        .map_err(|error| format!("invalid claudecode base URL `{trimmed}`: {error}"))?;
+    Ok(endpoint)
+}
+
+fn extract_channel_proxy_config(settings_json: &str) -> Option<OAuthProxyConfig> {
+    serde_json::from_str::<ProviderQuotaChannelSettings>(settings_json)
+        .ok()
+        .and_then(|settings| settings.proxy)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ProviderQuotaUrlKind {
+    Codex,
+    ClaudeCode,
+}
+
+fn validate_provider_quota_url(value: &str, kind: ProviderQuotaUrlKind) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(value).map_err(|error| format!("invalid URL `{value}`: {error}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "provider quota URL host is required".to_owned())?
+        .trim()
+        .to_ascii_lowercase();
+
+    #[cfg(test)]
+    {
+        if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+            return Ok(());
+        }
+    }
+
+    if parsed.scheme() != "https" {
+        return Err("provider quota URLs must use https".to_owned());
+    }
+
+    let allowed = match kind {
+        ProviderQuotaUrlKind::Codex => ["chatgpt.com"],
+        ProviderQuotaUrlKind::ClaudeCode => ["api.anthropic.com"],
+    };
+    if !allowed.iter().any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}"))) {
+        return Err(format!("provider quota host `{host}` is not allowed"));
+    }
+    Ok(())
+}
+
+fn provider_quota_header_value(headers: &reqwest::header::HeaderMap, name: &str) -> String {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_default()
+}
+
+fn provider_quota_header_i64(headers: &reqwest::header::HeaderMap, name: &str) -> i64 {
+    provider_quota_header_value(headers, name)
+        .parse::<i64>()
+        .unwrap_or_default()
+}
+
+fn provider_quota_header_f64(headers: &reqwest::header::HeaderMap, name: &str) -> f64 {
+    provider_quota_header_value(headers, name)
+        .parse::<f64>()
+        .unwrap_or_default()
+}
+
+async fn load_existing_provider_quota_data_json(
+    connection: &DatabaseConnection,
+    channel_id: i64,
+) -> Result<Option<String>, String> {
+    provider_quota_statuses::Entity::find()
+        .filter(provider_quota_statuses::Column::ChannelId.eq(channel_id))
+        .one(connection)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|model| model.map(|row| row.quota_data))
+}
+
+fn provider_quota_error_payload(existing_quota_data_json: Option<&str>, error_message: &str) -> String {
+    let mut payload = existing_quota_data_json
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| json!({}));
+    let Some(object) = payload.as_object_mut() else {
+        return json!({"error": error_message}).to_string();
+    };
+    object.insert("error".to_owned(), Value::String(error_message.to_owned()));
+    payload.to_string()
 }
 
 async fn load_json_setting<T: serde::de::DeserializeOwned>(
@@ -1087,6 +1739,294 @@ async fn load_active_fs_storage(
     Ok(Some(CachedFileStorage {
         root: directory.into(),
     }))
+}
+
+#[derive(Debug, Clone, Default)]
+struct ChannelProbeAggregate {
+    total_request_count: i32,
+    success_request_count: i32,
+    total_tokens: i64,
+    total_effective_latency_ms: i64,
+    total_first_token_latency_ms: i64,
+    first_token_request_count: i64,
+}
+
+fn aligned_probe_timestamp(now_timestamp: i64, interval_minutes: i32) -> i64 {
+    let interval_seconds = i64::from(interval_minutes.max(1)) * 60;
+    now_timestamp - (now_timestamp.rem_euclid(interval_seconds))
+}
+
+async fn process_video_storage_request(
+    connection: &DatabaseConnection,
+    storage: &CachedFileStorage,
+    storage_id: i64,
+    request: requests::Model,
+) -> Result<bool, String> {
+    let response_body = request.response_body.as_deref();
+    let mut resolved_response = response_body
+        .map(parse_video_response_body)
+        .transpose()?;
+    if resolved_response.as_ref().and_then(|body| body.video_url.as_deref()).is_none()
+        && request.external_id.as_deref().is_some()
+        && request.channel_id.is_some()
+    {
+        resolved_response = fetch_video_response_body(connection, &request).await?.or(resolved_response);
+    }
+
+    let Some(video_url) = resolved_response
+        .as_ref()
+        .and_then(|body| body.video_url.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(false);
+    };
+    if resolved_response
+        .as_ref()
+        .and_then(|body| body.status.as_deref())
+        .is_some_and(|status| !status.eq_ignore_ascii_case("succeeded"))
+    {
+        return Ok(false);
+    }
+
+    let downloaded = download_video_payload(video_url).await?;
+    let storage_key = generate_video_storage_key(request.project_id, request.id, downloaded.filename.as_str());
+    let relative = safe_relative_key_path(storage_key.as_str())
+        .ok_or_else(|| "generated video storage key was unsafe".to_owned())?;
+    let full_path = storage.root.join(relative.as_path());
+    if let Some(parent) = full_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create video directory: {error}"))?;
+    }
+    fs::write(full_path.as_path(), downloaded.bytes)
+        .map_err(|error| format!("failed to write video file: {error}"))?;
+
+    let existing = requests::Entity::find_by_id(request.id)
+        .one(connection)
+        .await
+        .map_err(|error| format!("failed to reload video request {}: {error}", request.id))?
+        .ok_or_else(|| format!("request {} disappeared before video save update", request.id))?;
+    let mut active: requests::ActiveModel = existing.into();
+    active.content_saved = Set(true);
+    active.content_storage_id = Set(Some(storage_id));
+    active.content_storage_key = Set(Some(storage_key));
+    active.content_saved_at = Set(Some(current_rfc3339_timestamp()));
+    if let Some(response_body_json) = resolved_response.and_then(|body| body.raw_json) {
+        active.response_body = Set(Some(response_body_json));
+    }
+    active.update(connection)
+        .await
+        .map_err(|error| format!("failed to update saved video request {}: {error}", request.id))?;
+    Ok(true)
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedVideoResponseBody {
+    status: Option<String>,
+    video_url: Option<String>,
+    raw_json: Option<String>,
+}
+
+fn parse_video_response_body(raw: &str) -> Result<ResolvedVideoResponseBody, String> {
+    let value: Value = serde_json::from_str(raw)
+        .map_err(|error| format!("failed to decode saved video response JSON: {error}"))?;
+    Ok(ResolvedVideoResponseBody {
+        status: value.get("status").and_then(Value::as_str).map(ToOwned::to_owned),
+        video_url: extract_video_url_from_value(&value),
+        raw_json: Some(raw.to_owned()),
+    })
+}
+
+fn extract_video_url_from_value(value: &Value) -> Option<String> {
+    value
+        .get("video_url")
+        .and_then(Value::as_str)
+        .or_else(|| value.pointer("/content/video_url").and_then(Value::as_str))
+        .or_else(|| value.pointer("/content/videoUrl").and_then(Value::as_str))
+        .or_else(|| value.pointer("/content/output_url").and_then(Value::as_str))
+        .or_else(|| value.pointer("/data/0/url").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+async fn fetch_video_response_body(
+    connection: &DatabaseConnection,
+    request: &requests::Model,
+) -> Result<Option<ResolvedVideoResponseBody>, String> {
+    let Some(channel_id) = request.channel_id else {
+        return Ok(None);
+    };
+    let Some(external_id) = request.external_id.as_deref().map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let channel = channels::Entity::find_by_id(channel_id)
+        .filter(channels::Column::DeletedAt.eq(0_i64))
+        .one(connection)
+        .await
+        .map_err(|error| format!("failed to load video channel {channel_id}: {error}"))?
+        .ok_or_else(|| format!("video channel {channel_id} not found"))?;
+    if channel.status != "enabled" {
+        return Ok(None);
+    }
+
+    let api_key = crate::foundation::openai_v1::extract_channel_api_key(channel.credentials.as_str());
+    if api_key.is_empty() {
+        return Ok(None);
+    }
+
+    let task_url = build_channel_video_task_url(channel.base_url.as_deref().unwrap_or_default(), external_id)?;
+    validate_remote_http_url(task_url.as_str())?;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|error| format!("failed to build video poll client: {error}"))?
+        .get(task_url)
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {api_key}"))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|error| format!("failed to query provider video task: {error}"))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(format!(
+            "provider video task lookup returned unexpected status {}",
+            response.status()
+        ));
+    }
+    let raw_json = response
+        .text()
+        .await
+        .map_err(|error| format!("failed to read provider video task response: {error}"))?;
+    let mut parsed = parse_video_response_body(raw_json.as_str())?;
+    parsed.raw_json = Some(raw_json);
+    Ok(Some(parsed))
+}
+
+fn build_channel_video_task_url(base_url: &str, task_id: &str) -> Result<String, String> {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("video channel base URL is empty".to_owned());
+    }
+    let task_id = task_id.trim().trim_matches('/');
+    if task_id.is_empty() {
+        return Err("video task id is empty".to_owned());
+    }
+    Ok(format!("{trimmed}/videos/{task_id}"))
+}
+
+struct DownloadedVideoPayload {
+    filename: String,
+    bytes: Vec<u8>,
+}
+
+async fn download_video_payload(video_url: &str) -> Result<DownloadedVideoPayload, String> {
+    validate_remote_http_url(video_url)?;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .build()
+        .map_err(|error| format!("failed to build video download client: {error}"))?
+        .get(video_url)
+        .send()
+        .await
+        .map_err(|error| format!("failed to download video payload: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "video download returned unexpected status {}",
+            response.status()
+        ));
+    }
+
+    let filename = derive_video_filename(
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_DISPOSITION)
+            .and_then(|value| value.to_str().ok()),
+        video_url,
+    );
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("failed to read downloaded video body: {error}"))?;
+    const MAX_VIDEO_BYTES: usize = 512 * 1024 * 1024;
+    if bytes.len() > MAX_VIDEO_BYTES {
+        return Err("video payload exceeded 512MB safety limit".to_owned());
+    }
+
+    Ok(DownloadedVideoPayload {
+        filename,
+        bytes: bytes.to_vec(),
+    })
+}
+
+fn validate_remote_http_url(value: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(value).map_err(|error| format!("invalid URL `{value}`: {error}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => return Err(format!("unsupported URL scheme `{scheme}`")),
+    }
+
+    #[cfg(test)]
+    {
+        return Ok(());
+    }
+
+    #[cfg(not(test))]
+    {
+    let Some(host) = parsed.host_str() else {
+        return Err("URL host is required".to_owned());
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return Err("localhost video URLs are not allowed".to_owned());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        match ip {
+            std::net::IpAddr::V4(ipv4)
+                if ipv4.is_private() || ipv4.is_loopback() || ipv4.is_link_local() => {
+                return Err("private video URLs are not allowed".to_owned())
+            }
+            std::net::IpAddr::V6(ipv6)
+                if ipv6.is_loopback() || ipv6.is_unique_local() || ipv6.is_unicast_link_local() => {
+                return Err("private video URLs are not allowed".to_owned())
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+    }
+}
+
+fn derive_video_filename(content_disposition: Option<&str>, video_url: &str) -> String {
+    let from_header = content_disposition
+        .and_then(|value| value.split(';').find_map(|part| part.trim().strip_prefix("filename=")))
+        .map(|value| value.trim_matches('"'));
+    let fallback_path = reqwest::Url::parse(video_url)
+        .ok()
+        .and_then(|url| url.path_segments().and_then(|mut segments| segments.next_back().map(ToOwned::to_owned)));
+    let chosen = from_header
+        .or(fallback_path.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("video.mp4");
+    sanitize_video_filename(chosen)
+}
+
+fn sanitize_video_filename(value: &str) -> String {
+    std::path::Path::new(value)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("video.mp4")
+        .to_owned()
+}
+
+fn generate_video_storage_key(project_id: i64, request_id: i64, filename: &str) -> String {
+    format!(
+        "/{project_id}/requests/{request_id}/video/{}",
+        sanitize_video_filename(filename)
+    )
 }
 
 async fn restore_backup_into_transaction(
@@ -1575,14 +2515,14 @@ pub(crate) mod sqlite_test_support {
         super::{
                 admin::{
                     default_auto_backup_settings, default_retry_policy, default_storage_policy,
-                    default_system_channel_settings, default_video_storage_settings,
+                    default_system_channel_settings, default_system_model_settings, default_video_storage_settings,
                     generate_probe_timestamps,
                     parse_graphql_resource_id, provider_quota_type_for_channel, CachedFileStorage,
                     StoredAutoBackupSettings, StoredBackupApiKey, StoredBackupChannel,
                     StoredBackupModel, StoredBackupPayload, StoredChannelProbeData,
                     StoredChannelProbePoint, StoredCleanupOption, StoredGcCleanupSummary,
                     StoredAutoDisableChannelStatus, StoredProviderQuotaStatus, StoredProxyPreset, StoredRetryPolicy, StoredStoragePolicy,
-                    StoredSystemChannelSettings, StoredVideoStorageSettings,
+                    StoredSystemChannelSettings, StoredSystemModelSettings, StoredVideoStorageSettings,
                 },
             graphql::{
                 AdminGraphqlUpdateAutoBackupSettingsInput, AdminGraphqlUpdateRetryPolicyInput, AdminGraphqlUpdateStoragePolicyInput,
@@ -1592,6 +2532,7 @@ pub(crate) mod sqlite_test_support {
                 bool_to_sql, current_rfc3339_timestamp, current_unix_timestamp,
                 format_unix_timestamp, AUTO_BACKUP_PREFIX, AUTO_BACKUP_SUFFIX, BACKUP_VERSION,
                 SYSTEM_KEY_AUTO_BACKUP_SETTINGS, SYSTEM_KEY_CHANNEL_SETTINGS,
+                SYSTEM_KEY_MODEL_SETTINGS,
                 SYSTEM_KEY_PROXY_PRESETS, SYSTEM_KEY_STORAGE_POLICY,
                 SYSTEM_KEY_USER_AGENT_PASS_THROUGH,
             },
@@ -2059,14 +3000,23 @@ pub(crate) mod sqlite_test_support {
             Ok("Backup completed successfully".to_owned())
         }
 
-    pub fn system_channel_settings(&self) -> Result<StoredSystemChannelSettings, String> {
-        load_json_setting(
-            &self.foundation.system_settings(),
-            SYSTEM_KEY_CHANNEL_SETTINGS,
-            default_system_channel_settings(),
-        )
-        .map_err(|error| format!("failed to load channel settings: {error}"))
-    }
+        pub fn system_channel_settings(&self) -> Result<StoredSystemChannelSettings, String> {
+            load_json_setting(
+                &self.foundation.system_settings(),
+                SYSTEM_KEY_CHANNEL_SETTINGS,
+                default_system_channel_settings(),
+            )
+            .map_err(|error| format!("failed to load channel settings: {error}"))
+        }
+
+        pub fn system_model_settings(&self) -> Result<StoredSystemModelSettings, String> {
+            load_json_setting(
+                &self.foundation.system_settings(),
+                SYSTEM_KEY_MODEL_SETTINGS,
+                default_system_model_settings(),
+            )
+            .map_err(|error| format!("failed to load model settings: {error}"))
+        }
 
     pub fn video_storage_settings(&self) -> Result<StoredVideoStorageSettings, String> {
         load_json_setting(
@@ -2092,9 +3042,6 @@ pub(crate) mod sqlite_test_support {
                 settings.auto_sync = super::super::admin::StoredChannelModelAutoSyncSettings {
                     frequency: auto_sync.frequency,
                 };
-            }
-            if let Some(query_all_channel_models) = input.query_all_channel_models {
-                settings.query_all_channel_models = query_all_channel_models;
             }
             self.store_json_setting(SYSTEM_KEY_CHANNEL_SETTINGS, &settings)?;
             Ok(settings)

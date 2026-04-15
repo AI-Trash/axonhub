@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use axonhub_db_entity::realtime_sessions;
+use axonhub_db_entity::{prompts, realtime_sessions};
 use axonhub_http::{
     AnthropicModel, AnthropicModelListResponse, AuthApiKeyContext, CompatibilityRoute,
     GeminiModel, GeminiModelListResponse, ModelCapabilities, ModelListResponse, ModelPricing,
@@ -14,8 +15,12 @@ use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
 use opentelemetry::propagation::{Injector, TextMapPropagator};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
+use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend,
+    EntityTrait, QueryFilter, QueryOrder,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{field, Span};
@@ -25,6 +30,7 @@ use super::{
     admin_operational::{persist_provider_quota_status_seaorm, quota_exhausted_details, quota_ready_details},
     authz::{require_api_key_scope, AuthzFailure, SCOPE_READ_CHANNELS, SCOPE_READ_REQUESTS, SCOPE_WRITE_REQUESTS},
     circuit_breaker::{ChannelBreakerStatus, CircuitBreakerSnapshot, CircuitBreakerState, SharedCircuitBreaker},
+    graphql::{StoredPromptActivationCondition, StoredPromptActivationConditionComposite, StoredPromptSettings},
     ports::OpenAiV1Repository,
     prompt_protection::{apply_prompt_protection, load_enabled_prompt_protection_rules_seaorm},
     repositories::openai_v1::{
@@ -33,7 +39,7 @@ use super::{
         find_latest_completed_response_by_external_id_seaorm,
         find_latest_completed_response_chain_request_by_external_id_seaorm,
         list_enabled_model_records_seaorm,
-        query_system_channel_settings_seaorm,
+        query_system_model_settings_seaorm,
         record_usage_seaorm, select_doubao_task_targets_seaorm,
         select_inference_targets_seaorm, select_target_channels_seaorm,
         update_request_execution_result_seaorm, update_request_result_seaorm,
@@ -48,6 +54,9 @@ use super::circuit_breaker::CircuitBreakerPolicy;
 pub struct SeaOrmOpenAiV1Service {
     db: SeaOrmConnectionFactory,
     circuit_breaker: SharedCircuitBreaker,
+    upstream_http_client: reqwest::Client,
+    #[cfg(test)]
+    upstream_request_timeout: Option<Duration>,
 }
 
 pub(crate) const DEFAULT_MAX_CHANNEL_RETRIES: usize = 2;
@@ -55,8 +64,22 @@ pub(crate) const DEFAULT_MAX_SAME_CHANNEL_RETRIES: usize = 2;
 
 impl SeaOrmOpenAiV1Service {
     pub fn new(db: SeaOrmConnectionFactory) -> Self {
+        Self::new_with_upstream_request_timeout(db, None)
+    }
+
+    pub fn new_with_upstream_request_timeout(
+        db: SeaOrmConnectionFactory,
+        upstream_request_timeout: Option<Duration>,
+    ) -> Self {
         let circuit_breaker = SharedCircuitBreaker::with_factory(&db);
-        Self { db, circuit_breaker }
+        let upstream_http_client = build_upstream_http_client(upstream_request_timeout);
+        Self {
+            db,
+            circuit_breaker,
+            upstream_http_client,
+            #[cfg(test)]
+            upstream_request_timeout,
+        }
     }
 
     #[cfg(test)]
@@ -64,7 +87,13 @@ impl SeaOrmOpenAiV1Service {
         db: SeaOrmConnectionFactory,
         circuit_breaker: SharedCircuitBreaker,
     ) -> Self {
-        Self { db, circuit_breaker }
+        Self {
+            db,
+            circuit_breaker,
+            upstream_http_client: build_upstream_http_client(None),
+            #[cfg(test)]
+            upstream_request_timeout: None,
+        }
     }
 
     #[cfg(test)]
@@ -73,7 +102,18 @@ impl SeaOrmOpenAiV1Service {
         policy: CircuitBreakerPolicy,
     ) -> Self {
         let circuit_breaker = SharedCircuitBreaker::with_factory_and_policy(&db, policy);
-        Self { db, circuit_breaker }
+        Self {
+            db,
+            circuit_breaker,
+            upstream_http_client: build_upstream_http_client(None),
+            #[cfg(test)]
+            upstream_request_timeout: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn upstream_http_client_timeout(&self) -> Option<Duration> {
+        self.upstream_request_timeout
     }
 }
 
@@ -90,7 +130,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         let models = db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
             let include = ModelInclude::parse(include_owned.as_deref());
-            let settings = query_system_channel_settings_seaorm(&connection).await?;
+            let settings = query_system_model_settings_seaorm(&connection).await?;
             let models = list_enabled_model_records_seaorm(
                 &connection,
                 db.backend(),
@@ -121,7 +161,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
             let include = ModelInclude::parse(include_owned.as_deref());
-            let settings = query_system_channel_settings_seaorm(&connection).await?;
+            let settings = query_system_model_settings_seaorm(&connection).await?;
             let model = list_enabled_model_records_seaorm(
                 &connection,
                 db.backend(),
@@ -175,7 +215,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         let db = self.db.clone();
         let models = db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
-            let settings = query_system_channel_settings_seaorm(&connection).await?;
+            let settings = query_system_model_settings_seaorm(&connection).await?;
             list_enabled_model_records_seaorm(
                 &connection,
                 db.backend(),
@@ -218,7 +258,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         let db = self.db.clone();
         let models = db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
-            let settings = query_system_channel_settings_seaorm(&connection).await?;
+            let settings = query_system_model_settings_seaorm(&connection).await?;
             list_enabled_model_records_seaorm(
                 &connection,
                 db.backend(),
@@ -264,6 +304,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
             let request_model_id = request_model_id(&request.body)?;
             let db = self.db.clone();
             let circuit_breaker = self.circuit_breaker.clone();
+            let upstream_http_client = self.upstream_http_client.clone();
 
             db.run_sync(move |db| async move {
                 let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
@@ -291,6 +332,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                     &request.headers,
                     data_storage_id,
                     &circuit_breaker,
+                    &upstream_http_client,
                     |target| target.upstream_url(route),
                     Ok,
                     |response_body| extract_usage(route, response_body),
@@ -319,6 +361,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         let result = (|| {
             let db = self.db.clone();
             let circuit_breaker = self.circuit_breaker.clone();
+            let upstream_http_client = self.upstream_http_client.clone();
             db.run_sync(move |db| async move {
                 let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
                 let backend = db.backend();
@@ -341,6 +384,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                         None,
                         &circuit_breaker,
                         None,
+                        super::repositories::openai_v1::TargetSelectionMode::Direct,
                     )
                     .await?
                 };
@@ -368,6 +412,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                     &request.headers,
                     data_storage_id,
                     &circuit_breaker,
+                    &upstream_http_client,
                     move |target| compatibility_upstream_url(target, route, route_task_id.as_deref()),
                     |response_body| map_compatibility_response(route, response_body),
                     |response_body| compatibility_usage(route, response_body),
@@ -899,6 +944,160 @@ pub(crate) fn merge_realtime_session_metadata(
 fn map_openai_db_err(error: sea_orm::DbErr) -> OpenAiV1Error {
     OpenAiV1Error::Internal {
         message: error.to_string(),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RuntimePromptRecord {
+    created_at: String,
+    role: String,
+    content: String,
+    order: i32,
+    settings: StoredPromptSettings,
+}
+
+async fn inject_prompt_messages_for_route_seaorm(
+    db: &impl ConnectionTrait,
+    route_format: &str,
+    body: &OpenAiRequestBody,
+    project_id: i64,
+    request_model_id: &str,
+    api_key_id: Option<i64>,
+) -> Result<OpenAiRequestBody, OpenAiV1Error> {
+    if route_format != "openai/chat_completions" {
+        return Ok(body.clone());
+    }
+
+    let Some(value) = body.as_json() else {
+        return Ok(body.clone());
+    };
+
+    let prompts = load_matching_enabled_prompts_seaorm(db, project_id, request_model_id, api_key_id).await?;
+    if prompts.is_empty() {
+        return Ok(body.clone());
+    }
+
+    let mut rewritten = value.clone();
+    let Some(object) = rewritten.as_object_mut() else {
+        return Ok(body.clone());
+    };
+    let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) else {
+        return Ok(body.clone());
+    };
+
+    let mut prepend_messages = Vec::new();
+    let mut append_messages = Vec::new();
+    for prompt in prompts {
+        let message = serde_json::json!({
+            "role": prompt.role,
+            "content": prompt.content,
+        });
+        match prompt.settings.action.type_field.as_str() {
+            "append" => append_messages.push(message),
+            "prepend" => prepend_messages.push(message),
+            _ => prepend_messages.push(message),
+        }
+    }
+
+    let existing_messages = std::mem::take(messages);
+    let mut combined_messages = Vec::with_capacity(
+        prepend_messages.len() + existing_messages.len() + append_messages.len(),
+    );
+    combined_messages.extend(prepend_messages);
+    combined_messages.extend(existing_messages);
+    combined_messages.extend(append_messages);
+    *messages = combined_messages;
+
+    Ok(OpenAiRequestBody::Json(rewritten))
+}
+
+async fn load_matching_enabled_prompts_seaorm(
+    db: &impl ConnectionTrait,
+    project_id: i64,
+    request_model_id: &str,
+    api_key_id: Option<i64>,
+) -> Result<Vec<RuntimePromptRecord>, OpenAiV1Error> {
+    let prompt_rows = prompts::Entity::find()
+        .filter(prompts::Column::ProjectId.eq(project_id))
+        .filter(prompts::Column::DeletedAt.eq(0_i64))
+        .filter(prompts::Column::Status.eq("enabled"))
+        .order_by_asc(prompts::Column::Order)
+        .order_by_asc(prompts::Column::CreatedAt)
+        .order_by_asc(prompts::Column::Id)
+        .all(db)
+        .await
+        .map_err(map_openai_db_err)?;
+
+    let mut matching_prompts = Vec::new();
+    for prompt in prompt_rows {
+        let settings = serde_json::from_str::<StoredPromptSettings>(prompt.settings.as_str()).map_err(|error| {
+            OpenAiV1Error::Internal {
+                message: format!(
+                    "Failed to decode prompt settings for prompt `{}`: {error}",
+                    prompt.name
+                ),
+            }
+        })?;
+        if !prompt_conditions_match(&settings.conditions, request_model_id, api_key_id) {
+            continue;
+        }
+        matching_prompts.push(RuntimePromptRecord {
+            created_at: prompt.created_at,
+            role: prompt.role,
+            content: prompt.content,
+            order: prompt.order,
+            settings,
+        });
+    }
+
+    matching_prompts.sort_by(|left, right| {
+        left.order
+            .cmp(&right.order)
+            .then_with(|| left.created_at.cmp(&right.created_at))
+    });
+    Ok(matching_prompts)
+}
+
+fn prompt_conditions_match(
+    conditions: &[StoredPromptActivationConditionComposite],
+    request_model_id: &str,
+    api_key_id: Option<i64>,
+) -> bool {
+    if conditions.is_empty() {
+        return true;
+    }
+
+    conditions.iter().all(|composite| {
+        composite.conditions.is_empty()
+            || composite
+                .conditions
+                .iter()
+                .any(|condition| prompt_condition_matches(condition, request_model_id, api_key_id))
+    })
+}
+
+fn prompt_condition_matches(
+    condition: &StoredPromptActivationCondition,
+    request_model_id: &str,
+    api_key_id: Option<i64>,
+) -> bool {
+    match condition.type_field.as_str() {
+        "model_id" => condition
+            .model_id
+            .as_deref()
+            .is_some_and(|model_id| model_id == request_model_id),
+        "model_pattern" => condition
+            .model_pattern
+            .as_deref()
+            .filter(|pattern| !pattern.is_empty())
+            .and_then(|pattern| Regex::new(pattern).ok())
+            .is_some_and(|pattern| pattern.is_match(request_model_id)),
+        "api_key" => condition
+            .api_key_id
+            .map(i64::from)
+            .zip(api_key_id)
+            .is_some_and(|(expected_api_key_id, actual_api_key_id)| expected_api_key_id == actual_api_key_id),
+        _ => false,
     }
 }
 
@@ -1438,6 +1637,7 @@ async fn execute_shared_route_seaorm<UrlBuilder, ResponseMapper, UsageExtractor>
     upstream_headers: &HashMap<String, String>,
     data_storage_id: Option<i64>,
     circuit_breaker: &SharedCircuitBreaker,
+    upstream_http_client: &reqwest::Client,
     upstream_url_for_target: UrlBuilder,
     response_mapper: ResponseMapper,
     usage_extractor: UsageExtractor,
@@ -1451,6 +1651,15 @@ where
     let span = Span::current();
 
     let effective_body = chained_request_body_for_route_seaorm(db, backend, route_format, request).await?;
+    let effective_body = inject_prompt_messages_for_route_seaorm(
+        db,
+        route_format,
+        &effective_body,
+        request.project.id,
+        request_model_id,
+        request.api_key_id,
+    )
+    .await?;
 
     let masked_request_headers = sanitize_headers_json(upstream_headers);
     let request_body_json = serde_json::to_string(&effective_body).map_err(|error| OpenAiV1Error::Internal {
@@ -1550,8 +1759,7 @@ where
             .await?;
 
             let attempt_result = async {
-                let client_http = reqwest::Client::new();
-                let mut upstream_request = client_http
+                let mut upstream_request = upstream_http_client
                     .request(upstream_method.clone(), upstream_url_for_target(target).as_str())
                     .headers(prepared_attempt.headers.clone());
                 if matches!(upstream_method, reqwest::Method::POST) {
@@ -1693,6 +1901,16 @@ where
     });
     mark_request_failed_seaorm(db, backend, request_id, None, None, None).await?;
     Err(terminal_error)
+}
+
+fn build_upstream_http_client(upstream_request_timeout: Option<Duration>) -> reqwest::Client {
+    let mut builder = reqwest::Client::builder();
+    if let Some(timeout) = upstream_request_timeout {
+        builder = builder.timeout(timeout);
+    }
+    builder
+        .build()
+        .expect("failed to build upstream OpenAI reqwest client")
 }
 
 async fn complete_execution_seaorm(
@@ -4096,6 +4314,14 @@ pub(crate) fn extract_channel_api_key(credentials_json: &str) -> String {
                 .get("apiKeys")
                 .and_then(Value::as_array)
                 .and_then(|keys| keys.first())
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| {
+            value
+                .get("access_token")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())

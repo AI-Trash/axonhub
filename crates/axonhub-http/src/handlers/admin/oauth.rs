@@ -447,6 +447,8 @@ mod tests {
             },
             allow_no_auth: false,
             cors: crate::state::HttpCorsSettings::default(),
+            request_timeout: Some(std::time::Duration::from_secs(30)),
+            llm_request_timeout: Some(std::time::Duration::from_secs(600)),
             trace_config: TraceConfig {
                 thread_header: Some("AH-Thread-Id".to_owned()),
                 trace_header: Some("AH-Trace-Id".to_owned()),

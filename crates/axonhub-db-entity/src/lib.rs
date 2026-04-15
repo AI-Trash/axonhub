@@ -303,6 +303,7 @@ pub mod channels {
     pub struct RoutingCandidate {
         pub id: i64,
         pub base_url: Option<String>,
+        pub name: String,
         pub credentials: String,
         pub supported_models: String,
         pub settings: String,

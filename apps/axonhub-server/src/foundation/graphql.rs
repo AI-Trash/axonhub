@@ -21,11 +21,12 @@ use tracing::{field, Instrument, Span};
     use super::{
         admin::{
             default_auto_backup_settings, default_retry_policy, default_storage_policy, default_system_channel_settings,
+            default_system_model_settings,
             default_system_general_settings,
             normalize_retry_policy_load_balancer_strategy,
         default_video_storage_settings, parse_graphql_resource_id, AutoSyncFrequencySetting, BackupFrequencySetting,
             ProbeFrequencySetting, StoredAutoBackupSettings, StoredChannelProbeData,
-        StoredSystemGeneralSettings,
+        StoredSystemGeneralSettings, StoredSystemModelSettings,
         StoredCircuitBreakerStatus,
         StoredProviderQuotaStatus, StoredProxyPreset, StoredRetryPolicy, StoredStoragePolicy,
         StoredSystemChannelSettings, StoredVideoStorageSettings,
@@ -51,8 +52,9 @@ use tracing::{field, Instrument, Span};
     repositories::graphql::{
         AdminGraphqlSubsetRepository, GraphqlApiKeyRecord, GraphqlAutoBackupSettingsRecord,
         GraphqlChannelRecord, GraphqlDefaultDataStorageRecord, GraphqlModelRecord,
-        GraphqlProjectRecord, GraphqlRetryPolicyRecord, GraphqlRoleRecord, GraphqlRoleSummaryRecord,
+        GraphqlProjectRecord, GraphqlPromptRecord, GraphqlRetryPolicyRecord, GraphqlRoleRecord, GraphqlRoleSummaryRecord,
         GraphqlStoragePolicyRecord, GraphqlSystemChannelSettingsRecord, GraphqlSystemGeneralSettingsRecord,
+        GraphqlSystemModelSettingsRecord,
         GraphqlVideoStorageSettingsRecord,
         OpenApiGraphqlMutationRepository,
         SeaOrmAdminGraphqlSubsetRepository, SeaOrmOpenApiGraphqlMutationRepository,
@@ -63,6 +65,41 @@ use tracing::{field, Instrument, Span};
     passwords::hash_password,
 };
 use serde_json::json;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoredPromptAction {
+    #[serde(rename = "type")]
+    pub(crate) type_field: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoredPromptActivationCondition {
+    #[serde(rename = "type")]
+    pub(crate) type_field: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) model_pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) api_key_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoredPromptActivationConditionComposite {
+    #[serde(default)]
+    pub(crate) conditions: Vec<StoredPromptActivationCondition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoredPromptSettings {
+    pub(crate) action: StoredPromptAction,
+    #[serde(default)]
+    pub(crate) conditions: Vec<StoredPromptActivationConditionComposite>,
+}
 
 #[cfg(test)]
 use super::circuit_breaker::CircuitBreakerPolicy;
@@ -354,6 +391,13 @@ struct AdminGraphqlGeneralSettings {
     #[serde(alias = "currencyCode")]
     currency_code: String,
     timezone: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+struct LegacySystemChannelSettings {
+    fallback_to_channels_on_model_not_found: Option<bool>,
+    query_all_channel_models: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, InputObject)]
@@ -657,7 +701,6 @@ pub(crate) struct AdminGraphqlChannelProbeSetting {
 pub(crate) struct AdminGraphqlSystemChannelSettings {
     pub(crate) probe: AdminGraphqlChannelProbeSetting,
     pub(crate) auto_sync: AdminGraphqlChannelModelAutoSyncSetting,
-    pub(crate) query_all_channel_models: bool,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
@@ -665,6 +708,68 @@ pub(crate) struct AdminGraphqlSystemChannelSettings {
 pub(crate) struct AdminGraphqlSystemModelSettings {
     pub(crate) fallback_to_channels_on_model_not_found: bool,
     pub(crate) query_all_channel_models: bool,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "PromptAction", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlPromptAction {
+    #[graphql(name = "type")]
+    pub(crate) type_field: String,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "PromptActivationCondition", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlPromptActivationCondition {
+    #[graphql(name = "type")]
+    pub(crate) type_field: String,
+    pub(crate) model_id: Option<String>,
+    pub(crate) model_pattern: Option<String>,
+    pub(crate) api_key_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "PromptActivationConditionComposite", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlPromptActivationConditionComposite {
+    pub(crate) conditions: Vec<AdminGraphqlPromptActivationCondition>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "PromptSettings", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlPromptSettings {
+    pub(crate) action: AdminGraphqlPromptAction,
+    pub(crate) conditions: Vec<AdminGraphqlPromptActivationConditionComposite>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "Prompt", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlPrompt {
+    pub(crate) id: String,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    #[graphql(name = "projectID")]
+    pub(crate) project_id: String,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) role: String,
+    pub(crate) content: String,
+    pub(crate) status: String,
+    pub(crate) order: i32,
+    pub(crate) settings: AdminGraphqlPromptSettings,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "PromptEdge", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlPromptEdge {
+    pub(crate) cursor: Option<String>,
+    pub(crate) node: Option<AdminGraphqlPrompt>,
+}
+
+#[derive(Debug, Clone, SimpleObject)]
+#[graphql(name = "PromptConnection", rename_fields = "camelCase")]
+pub(crate) struct AdminGraphqlPromptConnection {
+    pub(crate) edges: Vec<AdminGraphqlPromptEdge>,
+    pub(crate) page_info: AdminGraphqlPageInfo,
+    pub(crate) total_count: i32,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
@@ -687,7 +792,6 @@ pub(crate) struct AdminGraphqlUpdateChannelProbeSettingInput {
 pub(crate) struct AdminGraphqlUpdateSystemChannelSettingsInput {
     pub(crate) probe: Option<AdminGraphqlUpdateChannelProbeSettingInput>,
     pub(crate) auto_sync: Option<AdminGraphqlUpdateChannelModelAutoSyncSettingInput>,
-    pub(crate) query_all_channel_models: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, InputObject)]
@@ -695,6 +799,35 @@ pub(crate) struct AdminGraphqlUpdateSystemChannelSettingsInput {
 #[graphql(name = "UpdateChannelModelAutoSyncSettingInput")]
 pub(crate) struct AdminGraphqlUpdateChannelModelAutoSyncSettingInput {
     pub(crate) frequency: AutoSyncFrequencySetting,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "UpdateSystemModelSettingsInput")]
+pub(crate) struct AdminGraphqlUpdateSystemModelSettingsInput {
+    pub(crate) fallback_to_channels_on_model_not_found: Option<bool>,
+    pub(crate) query_all_channel_models: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "CompleteOnboardingInput")]
+pub(crate) struct AdminGraphqlCompleteOnboardingInput {
+    pub(crate) dummy: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "CompleteSystemModelSettingOnboardingInput")]
+pub(crate) struct AdminGraphqlCompleteSystemModelSettingOnboardingInput {
+    pub(crate) dummy: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "CompleteAutoDisableChannelOnboardingInput")]
+pub(crate) struct AdminGraphqlCompleteAutoDisableChannelOnboardingInput {
+    pub(crate) dummy: Option<String>,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
@@ -836,6 +969,68 @@ pub(crate) struct AdminGraphqlUpdatePromptProtectionRuleInput {
     pub(crate) pattern: Option<String>,
     pub(crate) status: Option<PromptProtectionRuleStatus>,
     pub(crate) settings: Option<AdminGraphqlPromptProtectionSettingsInput>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "PromptActionInput")]
+pub(crate) struct AdminGraphqlPromptActionInput {
+    #[serde(rename = "type")]
+    #[graphql(name = "type")]
+    pub(crate) type_field: String,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "PromptActivationConditionInput")]
+pub(crate) struct AdminGraphqlPromptActivationConditionInput {
+    #[serde(rename = "type")]
+    #[graphql(name = "type")]
+    pub(crate) type_field: String,
+    pub(crate) model_id: Option<String>,
+    pub(crate) model_pattern: Option<String>,
+    pub(crate) api_key_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "PromptActivationConditionCompositeInput")]
+pub(crate) struct AdminGraphqlPromptActivationConditionCompositeInput {
+    pub(crate) conditions: Vec<AdminGraphqlPromptActivationConditionInput>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "PromptSettingsInput")]
+pub(crate) struct AdminGraphqlPromptSettingsInput {
+    pub(crate) action: AdminGraphqlPromptActionInput,
+    pub(crate) conditions: Option<Vec<AdminGraphqlPromptActivationConditionCompositeInput>>,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "CreatePromptInput")]
+pub(crate) struct AdminGraphqlCreatePromptInput {
+    pub(crate) name: String,
+    pub(crate) description: Option<String>,
+    pub(crate) role: String,
+    pub(crate) content: String,
+    pub(crate) status: Option<String>,
+    pub(crate) order: Option<i32>,
+    pub(crate) settings: AdminGraphqlPromptSettingsInput,
+}
+
+#[derive(Debug, Clone, Deserialize, InputObject)]
+#[serde(rename_all = "camelCase")]
+#[graphql(name = "UpdatePromptInput")]
+pub(crate) struct AdminGraphqlUpdatePromptInput {
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) role: Option<String>,
+    pub(crate) content: Option<String>,
+    pub(crate) status: Option<String>,
+    pub(crate) order: Option<i32>,
+    pub(crate) settings: Option<AdminGraphqlPromptSettingsInput>,
 }
 
 #[derive(Debug, Clone, SimpleObject)]
@@ -1406,6 +1601,14 @@ async fn execute_admin_graphql_seaorm_request(
         return update_system_general_settings_seaorm(&repository, payload.variables);
     }
 
+    if query.contains("updateSystemModelSettings") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("updateSystemModelSettings");
+        }
+
+        return update_system_model_settings_seaorm(&repository, payload.variables);
+    }
+
     if query.contains("updateVideoStorageSettings") {
         if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
             return graphql_permission_denied("updateVideoStorageSettings");
@@ -1436,6 +1639,30 @@ async fn execute_admin_graphql_seaorm_request(
         }
 
         return update_user_agent_pass_through_settings_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("completeSystemModelSettingOnboarding") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("completeSystemModelSettingOnboarding");
+        }
+
+        return complete_system_model_setting_onboarding_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("completeAutoDisableChannelOnboarding") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("completeAutoDisableChannelOnboarding");
+        }
+
+        return complete_auto_disable_channel_onboarding_seaorm(&repository, payload.variables);
+    }
+
+    if query.contains("completeOnboarding") {
+        if authorize_user_system_scope(&user, SCOPE_WRITE_SETTINGS).is_err() {
+            return graphql_permission_denied("completeOnboarding");
+        }
+
+        return complete_onboarding_seaorm(&repository, payload.variables);
     }
 
     if query.contains("triggerAutoBackup") {
@@ -1514,6 +1741,69 @@ async fn execute_admin_graphql_seaorm_request(
         }
 
         return update_user_seaorm(&repository, payload.variables);
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("createPrompt") {
+        let project_id = _project_id.ok_or_else(|| "project context is required for this mutation".to_owned())?;
+        if require_user_project_scope(&user, project_id, SCOPE_WRITE_PROMPTS).is_err() {
+            return graphql_permission_denied("createPrompt");
+        }
+
+        return create_prompt_graphql_seaorm(&repository, payload.variables, project_id);
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("updatePromptStatus") {
+        let project_id = _project_id.ok_or_else(|| "project context is required for this mutation".to_owned())?;
+        if require_user_project_scope(&user, project_id, SCOPE_WRITE_PROMPTS).is_err() {
+            return graphql_permission_denied("updatePromptStatus");
+        }
+
+        return update_prompt_status_graphql_seaorm(&repository, payload.variables, project_id);
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("bulkDeletePrompts") {
+        let project_id = _project_id.ok_or_else(|| "project context is required for this mutation".to_owned())?;
+        if require_user_project_scope(&user, project_id, SCOPE_WRITE_PROMPTS).is_err() {
+            return graphql_permission_denied("bulkDeletePrompts");
+        }
+
+        return bulk_delete_prompts_graphql_seaorm(&repository, payload.variables, project_id);
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("bulkEnablePrompts") {
+        let project_id = _project_id.ok_or_else(|| "project context is required for this mutation".to_owned())?;
+        if require_user_project_scope(&user, project_id, SCOPE_WRITE_PROMPTS).is_err() {
+            return graphql_permission_denied("bulkEnablePrompts");
+        }
+
+        return bulk_update_prompts_status_graphql_seaorm(&repository, payload.variables, project_id, "enabled", "bulkEnablePrompts");
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("bulkDisablePrompts") {
+        let project_id = _project_id.ok_or_else(|| "project context is required for this mutation".to_owned())?;
+        if require_user_project_scope(&user, project_id, SCOPE_WRITE_PROMPTS).is_err() {
+            return graphql_permission_denied("bulkDisablePrompts");
+        }
+
+        return bulk_update_prompts_status_graphql_seaorm(&repository, payload.variables, project_id, "disabled", "bulkDisablePrompts");
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("deletePrompt") {
+        let project_id = _project_id.ok_or_else(|| "project context is required for this mutation".to_owned())?;
+        if require_user_project_scope(&user, project_id, SCOPE_WRITE_PROMPTS).is_err() {
+            return graphql_permission_denied("deletePrompt");
+        }
+
+        return delete_prompt_graphql_seaorm(&repository, payload.variables, project_id);
+    }
+
+    if first_graphql_field_name(query).as_deref() == Some("updatePrompt") {
+        let project_id = _project_id.ok_or_else(|| "project context is required for this mutation".to_owned())?;
+        if require_user_project_scope(&user, project_id, SCOPE_WRITE_PROMPTS).is_err() {
+            return graphql_permission_denied("updatePrompt");
+        }
+
+        return update_prompt_graphql_seaorm(&repository, payload.variables, project_id);
     }
 
     if query.contains("createPromptProtectionRule") {
@@ -1881,6 +2171,15 @@ async fn execute_admin_graphql_seaorm_request(
         });
     }
 
+    if first_graphql_field_name(query).as_deref() == Some("prompts") {
+        let project_id = _project_id.ok_or_else(|| "project context is required for this query".to_owned())?;
+        if require_user_project_scope(&user, project_id, SCOPE_READ_PROMPTS).is_err() {
+            return graphql_permission_denied("prompts");
+        }
+
+        return query_prompts_graphql_seaorm(&repository, project_id);
+    }
+
     if first_graphql_field_name(query).as_deref() == Some("topRequestsProjects") {
         if authorize_user_system_scope(&user, super::authz::SCOPE_READ_DASHBOARD).is_err() {
             return graphql_permission_denied("topRequestsProjects");
@@ -2200,7 +2499,7 @@ fn query_system_general_settings_seaorm(
 fn query_system_model_settings_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
 ) -> Result<GraphqlExecutionResult, String> {
-    let settings = load_system_channel_settings_seaorm(repository)?;
+    let settings = load_system_model_settings_seaorm(repository)?;
     Ok(GraphqlExecutionResult {
         status: 200,
         body: json!({
@@ -2260,6 +2559,46 @@ fn query_onboarding_info_seaorm(
         body: json!({
             "data": {
                 "onboardingInfo": AdminGraphqlOnboardingInfo::from(onboarding),
+            }
+        }),
+    })
+}
+
+fn query_prompts_graphql_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    project_id: i64,
+) -> Result<GraphqlExecutionResult, String> {
+    let prompts = repository
+        .query_prompts(project_id)?
+        .into_iter()
+        .map(admin_graphql_prompt_from_record)
+        .collect::<Result<Vec<_>, _>>()?;
+    let edges = prompts
+        .iter()
+        .map(|prompt| {
+            json!({
+                "cursor": prompt.id,
+                "node": prompt_json(prompt),
+            })
+        })
+        .collect::<Vec<_>>();
+    let start_cursor = prompts.first().map(|prompt| prompt.id.clone());
+    let end_cursor = prompts.last().map(|prompt| prompt.id.clone());
+
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({
+            "data": {
+                "prompts": {
+                    "edges": edges,
+                    "pageInfo": {
+                        "hasNextPage": false,
+                        "hasPreviousPage": false,
+                        "startCursor": start_cursor,
+                        "endCursor": end_cursor,
+                    },
+                    "totalCount": prompts.len(),
+                }
             }
         }),
     })
@@ -5349,14 +5688,6 @@ fn update_system_channel_settings_seaorm(
         )?;
         settings.auto_sync = super::admin::StoredChannelModelAutoSyncSettings { frequency };
     }
-    if let Some(query_all_channel_models) = variables
-        .get("input")
-        .and_then(|input| input.get("queryAllChannelModels"))
-    {
-        settings.query_all_channel_models = query_all_channel_models
-            .as_bool()
-            .ok_or_else(|| "invalid queryAllChannelModels: expected boolean".to_owned())?;
-    }
     SeaOrmOperationalService::new(repository.db()).update_system_channel_settings(settings)?;
     Ok(GraphqlExecutionResult {
         status: 200,
@@ -5405,6 +5736,33 @@ fn update_system_general_settings_seaorm(
     Ok(GraphqlExecutionResult {
         status: 200,
         body: json!({"data": {"updateSystemGeneralSettings": true}}),
+    })
+}
+
+fn update_system_model_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdateSystemModelSettingsInput>(
+        variables,
+        "input",
+        "input is required",
+    )?;
+    let mut settings = load_system_model_settings_seaorm(repository)?;
+    if let Some(fallback) = input.fallback_to_channels_on_model_not_found {
+        settings.fallback_to_channels_on_model_not_found = fallback;
+    }
+    if let Some(query_all_channel_models) = input.query_all_channel_models {
+        settings.query_all_channel_models = query_all_channel_models;
+    }
+    repository.upsert_system_model_settings(
+        serde_json::to_string(&settings)
+            .map_err(|error| format!("failed to serialize system model settings: {error}"))?
+            .as_str(),
+    )?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updateSystemModelSettings": true}}),
     })
 }
 
@@ -6493,6 +6851,254 @@ fn update_me_seaorm(
     })
 }
 
+fn create_prompt_graphql_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+    project_id: i64,
+) -> Result<GraphqlExecutionResult, String> {
+    let input = parse_graphql_variable_input::<AdminGraphqlCreatePromptInput>(
+        variables,
+        "input",
+        "prompt input is required",
+    )?;
+    let name = input.name.trim().to_owned();
+    if name.is_empty() {
+        return graphql_field_error("createPrompt", "prompt name is required");
+    }
+    let role = normalize_prompt_role(Some(input.role.as_str()))?.to_owned();
+    let status = normalize_enable_status(input.status.as_deref(), "prompt")?.to_owned();
+    let settings_json = serde_json::to_string(&stored_prompt_settings_from_input(input.settings)?)
+        .map_err(|error| format!("failed to serialize prompt settings: {error}"))?;
+    let result = repository.create_prompt(
+        project_id,
+        name.as_str(),
+        input.description.unwrap_or_default().as_str(),
+        role.as_str(),
+        input.content.as_str(),
+        status.as_str(),
+        input.order.unwrap_or_default(),
+        settings_json.as_str(),
+    );
+
+    match result {
+        Ok(record) => Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({"data": {"createPrompt": prompt_json(&admin_graphql_prompt_from_record(record)?)}}),
+        }),
+        Err(message) if message == "project not found" || message == "prompt already exists" => {
+            graphql_field_error("createPrompt", message)
+        }
+        Err(message) => Err(message),
+    }
+}
+
+fn update_prompt_graphql_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+    project_id: i64,
+) -> Result<GraphqlExecutionResult, String> {
+    let prompt_id = parse_prompt_id_from_variables(&variables)?;
+    let existing = repository.query_prompt(prompt_id)?.ok_or_else(|| "prompt not found".to_owned())?;
+    if existing.project_id != project_id {
+        return graphql_field_error("updatePrompt", "prompt not found");
+    }
+    let input = parse_graphql_variable_input::<AdminGraphqlUpdatePromptInput>(
+        variables,
+        "input",
+        "prompt input is required",
+    )?;
+    if input.name.is_none()
+        && input.description.is_none()
+        && input.role.is_none()
+        && input.content.is_none()
+        && input.status.is_none()
+        && input.order.is_none()
+        && input.settings.is_none()
+    {
+        return graphql_field_error("updatePrompt", "no fields to update");
+    }
+
+    let role = input
+        .role
+        .as_deref()
+        .map(|value| normalize_prompt_role(Some(value)).map(str::to_owned))
+        .transpose()?;
+    let status = input
+        .status
+        .as_deref()
+        .map(|value| normalize_enable_status(Some(value), "prompt").map(str::to_owned))
+        .transpose()?;
+    let settings_json = input
+        .settings
+        .map(stored_prompt_settings_from_input)
+        .transpose()?
+        .map(|settings| serde_json::to_string(&settings))
+        .transpose()
+        .map_err(|error| format!("failed to serialize prompt settings: {error}"))?;
+    let result = repository.update_prompt(
+        prompt_id,
+        input.name.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()),
+        input.description.as_deref(),
+        role.as_deref(),
+        input.content.as_deref(),
+        status.as_deref(),
+        input.order,
+        settings_json.as_deref(),
+    );
+
+    match result {
+        Ok(record) => Ok(GraphqlExecutionResult {
+            status: 200,
+            body: json!({"data": {"updatePrompt": prompt_json(&admin_graphql_prompt_from_record(record)?)}}),
+        }),
+        Err(message) if message == "prompt not found" || message == "prompt already exists" => {
+            graphql_field_error("updatePrompt", message)
+        }
+        Err(message) => Err(message),
+    }
+}
+
+fn delete_prompt_graphql_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+    project_id: i64,
+) -> Result<GraphqlExecutionResult, String> {
+    let prompt_id = parse_prompt_id_from_variables(&variables)?;
+    let existing = repository.query_prompt(prompt_id)?.ok_or_else(|| "prompt not found".to_owned())?;
+    if existing.project_id != project_id {
+        return graphql_field_error("deletePrompt", "prompt not found");
+    }
+    if !repository.delete_prompt(prompt_id)? {
+        return graphql_field_error("deletePrompt", "prompt not found");
+    }
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"deletePrompt": true}}),
+    })
+}
+
+fn update_prompt_status_graphql_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+    project_id: i64,
+) -> Result<GraphqlExecutionResult, String> {
+    let prompt_id = parse_prompt_id_from_variables(&variables)?;
+    let existing = repository.query_prompt(prompt_id)?.ok_or_else(|| "prompt not found".to_owned())?;
+    if existing.project_id != project_id {
+        return graphql_field_error("updatePromptStatus", "prompt not found");
+    }
+    let status = variables
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "status is required".to_owned())?;
+    let status = normalize_enable_status(Some(status), "prompt")?.to_owned();
+    if !repository.update_prompt_status(prompt_id, status.as_str())? {
+        return graphql_field_error("updatePromptStatus", "prompt not found");
+    }
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"updatePromptStatus": true}}),
+    })
+}
+
+fn bulk_delete_prompts_graphql_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+    project_id: i64,
+) -> Result<GraphqlExecutionResult, String> {
+    let ids = parse_prompt_ids(&variables)?;
+    ensure_prompts_in_project(repository, &ids, project_id, "bulkDeletePrompts")?;
+    repository.bulk_delete_prompts(&ids)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"bulkDeletePrompts": true}}),
+    })
+}
+
+fn bulk_update_prompts_status_graphql_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+    project_id: i64,
+    status: &str,
+    field: &str,
+) -> Result<GraphqlExecutionResult, String> {
+    let ids = parse_prompt_ids(&variables)?;
+    ensure_prompts_in_project(repository, &ids, project_id, field)?;
+    repository.bulk_update_prompts_status(&ids, status)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {field: true}}),
+    })
+}
+
+fn complete_onboarding_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let _ = parse_graphql_variable_input::<AdminGraphqlCompleteOnboardingInput>(
+        variables,
+        "input",
+        "input is required",
+    )?;
+    let mut record = repository.query_onboarding_record()?.unwrap_or_default();
+    let completed_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    record.onboarded = true;
+    record.completed_at = Some(completed_at.clone());
+    if record.auto_disable_channel.is_none() {
+        record.auto_disable_channel = Some(crate::foundation::request_context::OnboardingModule {
+            onboarded: true,
+            completed_at: Some(completed_at),
+        });
+    }
+    persist_onboarding_record(repository, &record)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"completeOnboarding": true}}),
+    })
+}
+
+fn complete_system_model_setting_onboarding_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let _ = parse_graphql_variable_input::<AdminGraphqlCompleteSystemModelSettingOnboardingInput>(
+        variables,
+        "input",
+        "input is required",
+    )?;
+    let mut record = repository.query_onboarding_record()?.unwrap_or_default();
+    record.system_model_setting = Some(crate::foundation::request_context::OnboardingModule {
+        onboarded: true,
+        completed_at: Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+    });
+    persist_onboarding_record(repository, &record)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"completeSystemModelSettingOnboarding": true}}),
+    })
+}
+
+fn complete_auto_disable_channel_onboarding_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    variables: Value,
+) -> Result<GraphqlExecutionResult, String> {
+    let _ = parse_graphql_variable_input::<AdminGraphqlCompleteAutoDisableChannelOnboardingInput>(
+        variables,
+        "input",
+        "input is required",
+    )?;
+    let mut record = repository.query_onboarding_record()?.unwrap_or_default();
+    record.auto_disable_channel = Some(crate::foundation::request_context::OnboardingModule {
+        onboarded: true,
+        completed_at: Some(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()),
+    });
+    persist_onboarding_record(repository, &record)?;
+    Ok(GraphqlExecutionResult {
+        status: 200,
+        body: json!({"data": {"completeAutoDisableChannelOnboarding": true}}),
+    })
+}
+
 fn query_prompt_protection_rules_graphql_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
 ) -> Result<GraphqlExecutionResult, String> {
@@ -6761,6 +7367,28 @@ fn load_system_channel_settings_seaorm(
     )
 }
 
+fn load_system_model_settings_seaorm(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+) -> Result<StoredSystemModelSettings, String> {
+    let mut settings = deserialize_setting_or_default(
+        repository.query_system_model_settings()?,
+        default_system_model_settings,
+    )?;
+
+    if let Some(legacy_channel_settings) = repository.query_system_channel_settings()? {
+        let legacy: LegacySystemChannelSettings = serde_json::from_str(legacy_channel_settings.value.as_str())
+            .map_err(|error| format!("failed to decode stored admin setting: {error}"))?;
+        if let Some(value) = legacy.fallback_to_channels_on_model_not_found {
+            settings.fallback_to_channels_on_model_not_found = value;
+        }
+        if let Some(value) = legacy.query_all_channel_models {
+            settings.query_all_channel_models = value;
+        }
+    }
+
+    Ok(settings)
+}
+
 fn load_system_general_settings_seaorm(
     repository: &SeaOrmAdminGraphqlSubsetRepository,
 ) -> Result<StoredSystemGeneralSettings, String> {
@@ -6945,6 +7573,12 @@ impl IntoGraphqlSettingValue for GraphqlSystemGeneralSettingsRecord {
     }
 }
 
+impl IntoGraphqlSettingValue for GraphqlSystemModelSettingsRecord {
+    fn setting_value(&self) -> &str {
+        self.value.as_str()
+    }
+}
+
 fn parse_graphql_variable_input<T>(
     variables: Value,
     key: &str,
@@ -7031,7 +7665,6 @@ fn system_channel_settings_json(settings: &StoredSystemChannelSettings) -> Value
         "autoSync": {
             "frequency": auto_sync_frequency_graphql_name(settings.auto_sync.frequency),
         },
-        "queryAllChannelModels": settings.query_all_channel_models,
     })
 }
 
@@ -7042,9 +7675,9 @@ fn system_general_settings_json(settings: &StoredSystemGeneralSettings) -> Value
     })
 }
 
-fn system_model_settings_json(settings: &StoredSystemChannelSettings) -> Value {
+fn system_model_settings_json(settings: &StoredSystemModelSettings) -> Value {
     json!({
-        "fallbackToChannelsOnModelNotFound": true,
+        "fallbackToChannelsOnModelNotFound": settings.fallback_to_channels_on_model_not_found,
         "queryAllChannelModels": settings.query_all_channel_models,
     })
 }
@@ -7534,6 +8167,14 @@ impl From<StoredSystemChannelSettings> for AdminGraphqlSystemChannelSettings {
             auto_sync: AdminGraphqlChannelModelAutoSyncSetting {
                 frequency: value.auto_sync.frequency,
             },
+        }
+    }
+}
+
+impl From<StoredSystemModelSettings> for AdminGraphqlSystemModelSettings {
+    fn from(value: StoredSystemModelSettings) -> Self {
+        Self {
+            fallback_to_channels_on_model_not_found: value.fallback_to_channels_on_model_not_found,
             query_all_channel_models: value.query_all_channel_models,
         }
     }
@@ -8085,6 +8726,34 @@ fn stored_prompt_protection_settings_from_input(
     }
 }
 
+fn stored_prompt_settings_from_input(input: AdminGraphqlPromptSettingsInput) -> Result<StoredPromptSettings, String> {
+    Ok(StoredPromptSettings {
+        action: StoredPromptAction {
+            type_field: normalize_prompt_action_type(input.action.type_field.as_str())?.to_owned(),
+        },
+        conditions: input
+            .conditions
+            .unwrap_or_default()
+            .into_iter()
+            .map(|composite| {
+                composite
+                    .conditions
+                    .into_iter()
+                    .map(|condition| {
+                        Ok(StoredPromptActivationCondition {
+                            type_field: normalize_prompt_condition_type(condition.type_field.as_str())?.to_owned(),
+                            model_id: condition.model_id,
+                            model_pattern: condition.model_pattern,
+                            api_key_id: condition.api_key_id,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()
+                    .map(|conditions| StoredPromptActivationConditionComposite { conditions })
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+    })
+}
+
 fn prompt_protection_rule_status_name(status: PromptProtectionRuleStatus) -> &'static str {
     match status {
         PromptProtectionRuleStatus::Enabled => "enabled",
@@ -8112,6 +8781,75 @@ fn parse_graphql_prompt_protection_rule_ids(variables: &Value) -> Result<Vec<i64
         })?;
     parse_graphql_id_list(Some(ids.clone()), "promptProtectionRule")
         .or_else(|_| parse_graphql_id_list(Some(ids), "prompt_protection_rule"))
+}
+
+fn parse_prompt_id_from_variables(variables: &Value) -> Result<i64, String> {
+    let id = variables
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "prompt id is required".to_owned())?;
+    parse_graphql_resource_id(id, "prompt").map_err(|_| "invalid prompt id".to_owned())
+}
+
+fn parse_prompt_ids(variables: &Value) -> Result<Vec<i64>, String> {
+    let ids = variables
+        .get("ids")
+        .cloned()
+        .ok_or_else(|| "ids are required".to_owned())
+        .and_then(|value| serde_json::from_value::<Vec<String>>(value).map_err(|error| format!("invalid ids: {error}")))?;
+    parse_graphql_id_list(Some(ids), "prompt")
+}
+
+fn ensure_prompts_in_project(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    ids: &[i64],
+    project_id: i64,
+    field: &str,
+) -> Result<(), String> {
+    for id in ids {
+        let prompt = repository.query_prompt(*id)?.ok_or_else(|| "prompt not found".to_owned())?;
+        if prompt.project_id != project_id {
+            return graphql_field_error(field, "prompt not found").map(|_| ()).and(Err("prompt not found".to_owned()));
+        }
+    }
+    Ok(())
+}
+
+fn normalize_prompt_role(value: Option<&str>) -> Result<&'static str, String> {
+    match value.unwrap_or("system").trim().to_ascii_lowercase().as_str() {
+        "system" => Ok("system"),
+        "developer" => Ok("developer"),
+        "user" => Ok("user"),
+        "assistant" => Ok("assistant"),
+        "tool" => Ok("tool"),
+        _ => Err("invalid prompt role".to_owned()),
+    }
+}
+
+fn normalize_prompt_action_type(value: &str) -> Result<&'static str, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "prepend" => Ok("prepend"),
+        "append" => Ok("append"),
+        _ => Err("invalid prompt action type".to_owned()),
+    }
+}
+
+fn normalize_prompt_condition_type(value: &str) -> Result<&'static str, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "model_id" => Ok("model_id"),
+        "model_pattern" => Ok("model_pattern"),
+        "api_key" => Ok("api_key"),
+        _ => Err("invalid prompt condition type".to_owned()),
+    }
+}
+
+fn persist_onboarding_record(
+    repository: &SeaOrmAdminGraphqlSubsetRepository,
+    record: &crate::foundation::request_context::OnboardingRecord,
+) -> Result<(), String> {
+    let encoded = crate::foundation::request_context::serialize_onboarding_record(record)
+        .map_err(|error| format!("failed to serialize onboarding record: {error}"))?;
+    repository.upsert_onboarding_record(encoded.as_str())
 }
 
 #[derive(Debug, Clone, SimpleObject)]
@@ -8231,6 +8969,76 @@ fn model_json(model: &AdminGraphqlModel) -> Value {
         "remark": model.remark,
         "contextLength": model.context_length,
         "maxOutputTokens": model.max_output_tokens,
+    })
+}
+
+fn prompt_json(prompt: &AdminGraphqlPrompt) -> Value {
+    json!({
+        "id": prompt.id,
+        "createdAt": prompt.created_at,
+        "updatedAt": prompt.updated_at,
+        "projectID": prompt.project_id,
+        "name": prompt.name,
+        "description": prompt.description,
+        "role": prompt.role,
+        "content": prompt.content,
+        "status": prompt.status,
+        "order": prompt.order,
+        "settings": {
+            "action": {
+                "type": prompt.settings.action.type_field,
+            },
+            "conditions": prompt.settings.conditions.iter().map(|composite| {
+                json!({
+                    "conditions": composite.conditions.iter().map(|condition| {
+                        json!({
+                            "type": condition.type_field,
+                            "modelId": condition.model_id,
+                            "modelPattern": condition.model_pattern,
+                            "apiKeyId": condition.api_key_id,
+                        })
+                    }).collect::<Vec<_>>()
+                })
+            }).collect::<Vec<_>>()
+        }
+    })
+}
+
+fn admin_graphql_prompt_from_record(record: GraphqlPromptRecord) -> Result<AdminGraphqlPrompt, String> {
+    let settings = serde_json::from_str::<StoredPromptSettings>(record.settings.as_str())
+        .map_err(|error| format!("failed to decode prompt settings: {error}"))?;
+    Ok(AdminGraphqlPrompt {
+        id: graphql_gid("prompt", record.id),
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+        project_id: graphql_gid("project", record.project_id),
+        name: record.name,
+        description: record.description,
+        role: record.role,
+        content: record.content,
+        status: record.status,
+        order: record.order,
+        settings: AdminGraphqlPromptSettings {
+            action: AdminGraphqlPromptAction {
+                type_field: settings.action.type_field,
+            },
+            conditions: settings
+                .conditions
+                .into_iter()
+                .map(|composite| AdminGraphqlPromptActivationConditionComposite {
+                    conditions: composite
+                        .conditions
+                        .into_iter()
+                        .map(|condition| AdminGraphqlPromptActivationCondition {
+                            type_field: condition.type_field,
+                            model_id: condition.model_id,
+                            model_pattern: condition.model_pattern,
+                            api_key_id: condition.api_key_id,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        },
     })
 }
 
@@ -8741,11 +9549,8 @@ pub(crate) mod sqlite_test_support {
         ) -> async_graphql::Result<AdminGraphqlSystemModelSettings> {
             require_admin_system_scope(ctx, SCOPE_READ_SETTINGS)?;
             self.operational
-                .system_channel_settings()
-                .map(|settings| AdminGraphqlSystemModelSettings {
-                    fallback_to_channels_on_model_not_found: true,
-                    query_all_channel_models: settings.query_all_channel_models,
-                })
+                .system_model_settings()
+                .map(AdminGraphqlSystemModelSettings::from)
                 .map_err(async_graphql::Error::new)
         }
 

@@ -8,15 +8,27 @@ use super::capabilities::{
 use super::cli::{
     axonhub_cli_command, axonhub_config_cli_command, parse_axonhub_cli, AxonhubCliContract,
 };
-use super::server::startup_messages;
+use super::server::{
+    auto_backup_should_run_now, auto_backup_wait_duration, backup_frequency_interval,
+    gc_interval_from_cron, gc_schedule_from_cron, next_two_am_wait_duration,
+    parse_duration_setting, run_auto_backup_scheduler_tick, run_gc_scheduler_tick,
+    run_channel_probe_scheduler_tick, run_provider_quota_scheduler_tick,
+    run_video_storage_scheduler_tick, server_request_head_timeout, startup_messages,
+    ACTIX_REQUEST_HEAD_TIMEOUT_FALLBACK,
+};
+use chrono::{Local, TimeZone};
 use crate::foundation::{
+    admin::{BackupFrequencySetting, StoredAutoBackupSettings, StoredStoragePolicy, StoredVideoStorageSettings},
+    admin_operational::SeaOrmOperationalService,
+    openai_v1::NewChannelRecord,
     admin::oauth::{oauth_provider_env_test_lock, OAUTH_PROVIDER_ADMIN_REQUIRED_ENV_VARS},
     request_context::parse_onboarding_record,
     shared::{
         DEFAULT_SERVICE_API_KEY_VALUE, DEFAULT_USER_API_KEY_VALUE, PRIMARY_DATA_STORAGE_NAME,
         SYSTEM_KEY_BRAND_NAME, SYSTEM_KEY_DEFAULT_DATA_STORAGE, SYSTEM_KEY_ONBOARDED,
-        SYSTEM_KEY_VERSION, graphql_gid,
+        SYSTEM_KEY_VERSION, format_unix_timestamp, graphql_gid,
     },
+    system::sqlite_test_support::{ensure_identity_tables, ensure_operational_tables},
     system::{hash_password, SqliteBootstrapService, SqliteFoundation},
 };
 use axonhub_http::{
@@ -34,13 +46,16 @@ use actix_web::dev::ServiceResponse;
 use actix_web::http::{Method, StatusCode};
 use actix_web::test as actix_test;
 use clap::{error::ErrorKind, CommandFactory};
+use rusqlite::params;
 use rusqlite::OptionalExtension;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::fs;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -397,6 +412,305 @@ fn oauth_provider_env_values() -> Vec<(&'static str, &'static str)> {
         ),
         ("AXONHUB_PROVIDER_EDGE_COPILOT_SCOPE", "read:user"),
     ]
+}
+
+struct ScheduledOperationalFixture {
+    db_path: PathBuf,
+    foundation: Arc<SqliteFoundation>,
+    db: crate::foundation::seaorm::SeaOrmConnectionFactory,
+}
+
+impl ScheduledOperationalFixture {
+    fn new(name: &str) -> Self {
+        let db_path = temp_sqlite_path(name);
+        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
+        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
+        bootstrap
+            .initialize(&InitializeSystemRequest {
+                owner_email: "owner@example.com".to_owned(),
+                owner_password: "password123".to_owned(),
+                owner_first_name: "System".to_owned(),
+                owner_last_name: "Owner".to_owned(),
+                brand_name: "AxonHub".to_owned(),
+            })
+            .unwrap();
+
+        let connection = foundation.open_connection(true).unwrap();
+        ensure_identity_tables(&connection).unwrap();
+        ensure_operational_tables(&connection).unwrap();
+
+        Self {
+            db: crate::foundation::seaorm::SeaOrmConnectionFactory::sqlite(db_path.display().to_string()),
+            db_path,
+            foundation,
+        }
+    }
+
+    fn configure_gc_policy(&self, cleanup_days: i32) {
+        self.foundation
+            .system_settings()
+            .set_value(
+                "storage_policy",
+                serde_json::to_string(&StoredStoragePolicy {
+                    store_chunks: false,
+                    store_request_body: true,
+                    store_response_body: true,
+                    cleanup_options: vec![crate::foundation::admin::StoredCleanupOption {
+                        resource_type: "usage_logs".to_owned(),
+                        enabled: false,
+                        cleanup_days,
+                    }],
+                })
+                .unwrap()
+                .as_str(),
+            )
+            .unwrap();
+    }
+
+    fn insert_old_channel_probe(&self) {
+        let connection = self.foundation.open_connection(true).unwrap();
+        self.insert_provider_quota_channel("codex");
+        connection
+            .execute(
+                "INSERT INTO channel_probes (channel_id, timestamp, total_request_count, success_request_count, avg_tokens_per_second, avg_time_to_first_token_ms)
+                 VALUES (1, ?1, 1, 1, NULL, NULL)",
+                [crate::foundation::shared::current_unix_timestamp() - (4 * 86_400)],
+            )
+            .unwrap();
+    }
+
+    fn channel_probe_count(&self) -> i64 {
+        self.foundation
+            .open_connection(true)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM channel_probes", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn configure_auto_backup(&self, settings: &StoredAutoBackupSettings) {
+        self.foundation
+            .system_settings()
+            .set_value(
+                "system_auto_backup_settings",
+                serde_json::to_string(settings).unwrap().as_str(),
+            )
+            .unwrap();
+    }
+
+    fn configure_video_storage(&self, settings: &StoredVideoStorageSettings) {
+        self.foundation
+            .system_settings()
+            .set_value(
+                "system_video_storage_settings",
+                serde_json::to_string(settings).unwrap().as_str(),
+            )
+            .unwrap();
+    }
+
+    fn configure_channel_probe_one_hour(&self) {
+        self.foundation
+            .system_settings()
+            .set_value(
+                "system_channel_settings",
+                r#"{"probe":{"enabled":true,"frequency":"ONE_HOUR"},"auto_sync":{"frequency":"ONE_HOUR"}}"#,
+            )
+            .unwrap();
+    }
+
+    fn insert_provider_quota_channel(&self, channel_type: &str) -> i64 {
+        self.insert_provider_quota_channel_with_config(channel_type, "https://example.test/v1", "{}")
+    }
+
+    fn insert_provider_quota_channel_with_config(
+        &self,
+        channel_type: &str,
+        base_url: &str,
+        credentials_json: &str,
+    ) -> i64 {
+        let name = format!("scheduled-test-channel-{channel_type}");
+        self.foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: &name,
+                channel_type,
+                base_url,
+                status: "enabled",
+                credentials_json,
+                supported_models_json: "[]",
+                auto_sync_supported_models: false,
+                default_test_model: "",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "scheduled test",
+            })
+            .unwrap()
+    }
+
+    fn provider_quota_statuses(&self) -> Vec<crate::foundation::admin::StoredProviderQuotaStatus> {
+        SeaOrmOperationalService::new(self.db.clone())
+            .provider_quota_statuses()
+            .unwrap()
+    }
+
+    fn insert_video_channel(&self, base_url: &str) -> i64 {
+        self.foundation
+            .channel_models()
+            .upsert_channel(&NewChannelRecord {
+                name: "scheduled-video-channel",
+                channel_type: "openai",
+                base_url,
+                status: "enabled",
+                credentials_json: r#"{"apiKey":"test-upstream-key"}"#,
+                supported_models_json: r#"["seedance-1.0"]"#,
+                auto_sync_supported_models: false,
+                default_test_model: "seedance-1.0",
+                settings_json: "{}",
+                tags_json: "[]",
+                ordering_weight: 100,
+                error_message: "",
+                remark: "scheduled video test",
+            })
+            .unwrap()
+    }
+
+    fn insert_video_request(&self, channel_id: i64, external_id: &str, response_body_json: &str) -> i64 {
+        let connection = self.foundation.open_connection(true).unwrap();
+        connection
+            .execute(
+                "INSERT INTO requests (
+                    api_key_id, project_id, trace_id, data_storage_id, source, model_id, format,
+                    request_headers, request_body, response_body, response_chunks, channel_id,
+                    external_id, status, stream, client_ip, metrics_latency_ms,
+                    metrics_first_token_latency_ms, content_saved, content_storage_id,
+                    content_storage_key, content_saved_at
+                ) VALUES (
+                    NULL, 1, NULL, NULL, 'api', 'seedance-1.0', 'doubao/video_create',
+                    '{}', '{}', ?1, NULL, ?2,
+                    ?3, 'processing', 0, '', NULL,
+                    NULL, 0, NULL,
+                    NULL, NULL
+                )",
+                params![response_body_json, channel_id, external_id],
+            )
+            .unwrap();
+        connection.last_insert_rowid()
+    }
+
+    fn insert_probe_request(
+        &self,
+        channel_id: i64,
+        created_at_unix: i64,
+        status: &str,
+        stream: bool,
+        metrics_latency_ms: Option<i64>,
+        metrics_first_token_latency_ms: Option<i64>,
+    ) -> i64 {
+        let connection = self.foundation.open_connection(true).unwrap();
+        let created_at = format_unix_timestamp(created_at_unix);
+        connection
+            .execute(
+                "INSERT INTO requests (
+                    created_at, updated_at, api_key_id, project_id, trace_id, data_storage_id, source,
+                    model_id, format, request_headers, request_body, response_body, response_chunks,
+                    channel_id, external_id, status, stream, client_ip, metrics_latency_ms,
+                    metrics_first_token_latency_ms, content_saved, content_storage_id,
+                    content_storage_key, content_saved_at
+                ) VALUES (
+                    ?1, ?1, NULL, 1, NULL, NULL, 'api',
+                    'gpt-4o', 'openai/chat_completions', '{}', '{}', '{}', '[]',
+                    ?2, NULL, ?3, ?4, '', ?5,
+                    ?6, 0, NULL,
+                    NULL, NULL
+                )",
+                params![
+                    created_at,
+                    channel_id,
+                    status,
+                    if stream { 1 } else { 0 },
+                    metrics_latency_ms,
+                    metrics_first_token_latency_ms,
+                ],
+            )
+            .unwrap();
+        connection.last_insert_rowid()
+    }
+
+    fn insert_usage_log(&self, request_id: i64, channel_id: i64, total_tokens: i64) {
+        let connection = self.foundation.open_connection(true).unwrap();
+        connection
+            .execute(
+                "INSERT INTO usage_logs (
+                    request_id, api_key_id, project_id, channel_id, model_id,
+                    prompt_tokens, completion_tokens, total_tokens,
+                    prompt_audio_tokens, prompt_cached_tokens, prompt_write_cached_tokens,
+                    prompt_write_cached_tokens_5m, prompt_write_cached_tokens_1h,
+                    completion_audio_tokens, completion_reasoning_tokens,
+                    completion_accepted_prediction_tokens, completion_rejected_prediction_tokens,
+                    source, format, total_cost, cost_items, cost_price_reference_id, deleted_at
+                ) VALUES (
+                    ?1, NULL, 1, ?2, 'gpt-4o',
+                    0, 0, ?3,
+                    0, 0, 0,
+                    0, 0,
+                    0, 0,
+                    0, 0,
+                    'api', 'openai/chat_completions', NULL, '[]', '', 0
+                )",
+                params![request_id, channel_id, total_tokens],
+            )
+            .unwrap();
+    }
+
+    fn insert_backup_storage(&self, root: &std::path::Path) -> i64 {
+        let connection = self.foundation.open_connection(true).unwrap();
+        let storage_id = self
+            .foundation
+            .data_storages()
+            .find_primary_active_storage()
+            .unwrap()
+            .unwrap()
+            .id
+            + 100;
+        connection
+            .execute(
+                "INSERT INTO data_storages (id, name, description, \"primary\", type, settings, status, deleted_at)
+                 VALUES (?1, ?2, ?3, 0, 'fs', ?4, 'active', 0)",
+                params![
+                    storage_id,
+                    "Scheduled Backup FS",
+                    "scheduled backup storage",
+                    serde_json::json!({"directory": root.to_string_lossy()}).to_string(),
+                ],
+            )
+            .unwrap();
+        storage_id
+    }
+
+    fn latest_operational_run(&self, operation_type: &str) -> (String, String, Option<String>) {
+        self.foundation
+            .open_connection(true)
+            .unwrap()
+            .query_row(
+                "SELECT trigger_source, status, finished_at FROM operational_runs WHERE operation_type = ?1 ORDER BY id DESC LIMIT 1",
+                [operation_type],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .unwrap()
+    }
+}
+
+impl Drop for ScheduledOperationalFixture {
+    fn drop(&mut self) {
+        fs::remove_file(&self.db_path).ok();
+    }
 }
 
 fn insert_sqlite_user(
@@ -931,7 +1245,7 @@ async fn main_router_serves_fresh_status_and_initialize_for_sqlite_scope() {
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -1110,6 +1424,837 @@ fn startup_messages_are_truthful_for_metrics_and_identity() {
     );
 }
 
+fn mock_operational_video_server_url() -> &'static str {
+    static SERVER_URL: OnceLock<String> = OnceLock::new();
+    SERVER_URL
+        .get_or_init(|| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let base_url = format!("http://{address}/v1");
+            let download_url = format!("{base_url}/generated.mp4");
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let mut stream = match stream {
+                        Ok(stream) => stream,
+                        Err(_) => continue,
+                    };
+                    let mut buffer = [0_u8; 4096];
+                    let size = match stream.read(&mut buffer) {
+                        Ok(size) => size,
+                        Err(_) => continue,
+                    };
+                    let request = String::from_utf8_lossy(&buffer[..size]);
+                    let method = request.lines().next().and_then(|line| line.split_whitespace().next()).unwrap_or("GET");
+                    let path = request.lines().next().and_then(|line| line.split_whitespace().nth(1)).unwrap_or("/");
+
+                    let (status_line, content_type, extra_headers, body) = if method == "GET" && path == "/v1/generated.mp4" {
+                        (
+                            "HTTP/1.1 200 OK",
+                            "video/mp4",
+                            "Content-Disposition: attachment; filename=\"generated.mp4\"\r\n",
+                            b"scheduled-video-bytes".to_vec(),
+                        )
+                    } else if method == "GET" && path == "/v1/videos/video_mock_task" {
+                        (
+                            "HTTP/1.1 200 OK",
+                            "application/json",
+                            "",
+                            serde_json::json!({
+                                "id": "video_mock_task",
+                                "model": "seedance-1.0",
+                                "status": "succeeded",
+                                "content": {"video_url": download_url},
+                                "created_at": 1,
+                                "completed_at": 2
+                            })
+                            .to_string()
+                            .into_bytes(),
+                        )
+                    } else {
+                        (
+                            "HTTP/1.1 404 Not Found",
+                            "application/json",
+                            "",
+                            br#"{"error":{"message":"not found"}}"#.to_vec(),
+                        )
+                    };
+
+                    let response = format!(
+                        "{status_line}\r\nContent-Type: {content_type}\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len(),
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = stream.write_all(&body);
+                }
+            });
+            base_url
+        })
+        .as_str()
+}
+
+fn read_mock_http_request(
+    stream: &mut std::net::TcpStream,
+) -> Option<(String, String, HashMap<String, String>, Vec<u8>)> {
+    let mut request_bytes = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    let mut header_end = None;
+    let mut expected_body_len = None;
+    loop {
+        let size = stream.read(&mut buffer).ok()?;
+        if size == 0 {
+            break;
+        }
+        request_bytes.extend_from_slice(&buffer[..size]);
+
+        if header_end.is_none() {
+            header_end = request_bytes
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|position| position + 4);
+            if let Some(end) = header_end {
+                let headers = String::from_utf8_lossy(&request_bytes[..end]);
+                expected_body_len = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':').and_then(|(name, value)| {
+                            name.trim()
+                                .eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                    })
+                    .or(Some(0));
+            }
+        }
+
+        if let (Some(end), Some(body_len)) = (header_end, expected_body_len) {
+            if request_bytes.len() >= end + body_len {
+                break;
+            }
+        }
+    }
+
+    let header_end = header_end?;
+    let header_text = String::from_utf8_lossy(&request_bytes[..header_end]);
+    let request_line = header_text.lines().next().unwrap_or_default();
+    let method = request_line
+        .split_whitespace()
+        .next()
+        .unwrap_or("GET")
+        .to_owned();
+    let path = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("/")
+        .to_owned();
+    let headers = header_text
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            line.split_once(':').map(|(name, value)| {
+                (name.trim().to_ascii_lowercase(), value.trim().to_owned())
+            })
+        })
+        .collect::<HashMap<_, _>>();
+    let body = request_bytes[header_end..].to_vec();
+    Some((method, path, headers, body))
+}
+
+fn write_mock_http_response(
+    stream: &mut std::net::TcpStream,
+    status_line: &str,
+    content_type: &str,
+    extra_headers: &[(&str, &str)],
+    body: &[u8],
+) {
+    let mut response = format!(
+        "{status_line}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len(),
+    );
+    for (name, value) in extra_headers {
+        response.push_str(&format!("{name}: {value}\r\n"));
+    }
+    response.push_str("\r\n");
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.write_all(body);
+}
+
+static MOCK_OPERATIONAL_PROXY_HITS: AtomicUsize = AtomicUsize::new(0);
+
+fn mock_operational_proxy_server_url() -> &'static str {
+    static SERVER_URL: OnceLock<String> = OnceLock::new();
+    SERVER_URL
+        .get_or_init(|| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let base_url = format!("http://{address}");
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let mut stream = match stream {
+                        Ok(stream) => stream,
+                        Err(_) => continue,
+                    };
+                    let Some((method, path, headers, _body)) = read_mock_http_request(&mut stream) else {
+                        continue;
+                    };
+                    if method == "CONNECT"
+                        && path.contains("chatgpt.com:443")
+                        && headers.get("proxy-authorization").map(String::as_str)
+                            == Some("Basic dXNlcjpzZWNyZXQ=")
+                    {
+                        MOCK_OPERATIONAL_PROXY_HITS.fetch_add(1, Ordering::SeqCst);
+                        write_mock_http_response(
+                            &mut stream,
+                            "HTTP/1.1 502 Bad Gateway",
+                            "text/plain",
+                            &[],
+                            b"proxy tunnel blocked",
+                        );
+                    } else {
+                        write_mock_http_response(
+                            &mut stream,
+                            "HTTP/1.1 400 Bad Request",
+                            "text/plain",
+                            &[],
+                            b"unexpected proxy request",
+                        );
+                    }
+                }
+            });
+            base_url
+        })
+        .as_str()
+}
+
+fn reset_mock_operational_proxy_hits() {
+    MOCK_OPERATIONAL_PROXY_HITS.store(0, Ordering::SeqCst);
+}
+
+fn mock_operational_proxy_hits() -> usize {
+    MOCK_OPERATIONAL_PROXY_HITS.load(Ordering::SeqCst)
+}
+
+fn mock_operational_codex_quota_warning_server_url() -> &'static str {
+    static SERVER_URL: OnceLock<String> = OnceLock::new();
+    SERVER_URL
+        .get_or_init(|| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let base_url = format!("http://{address}/v1");
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let mut stream = match stream {
+                        Ok(stream) => stream,
+                        Err(_) => continue,
+                    };
+                    let Some((method, path, headers, _body)) = read_mock_http_request(&mut stream) else {
+                        continue;
+                    };
+                    if method == "GET"
+                        && path == "/backend-api/wham/usage"
+                        && headers.get("authorization").map(String::as_str)
+                            == Some("Bearer codex-test-token")
+                    {
+                        let body = serde_json::json!({
+                            "plan_type": "pro",
+                            "rate_limit": {
+                                "allowed": true,
+                                "limit_reached": false,
+                                "primary_window": {
+                                    "used_percent": 85.5,
+                                    "reset_at": 2_000_000_123_i64
+                                }
+                            }
+                        })
+                        .to_string();
+                        write_mock_http_response(
+                            &mut stream,
+                            "HTTP/1.1 200 OK",
+                            "application/json",
+                            &[],
+                            body.as_bytes(),
+                        );
+                    } else {
+                        write_mock_http_response(
+                            &mut stream,
+                            "HTTP/1.1 404 Not Found",
+                            "application/json",
+                            &[],
+                            br#"{"error":"not found"}"#,
+                        );
+                    }
+                }
+            });
+            base_url
+        })
+        .as_str()
+}
+
+fn mock_operational_codex_quota_failure_server_url() -> &'static str {
+    static SERVER_URL: OnceLock<String> = OnceLock::new();
+    SERVER_URL
+        .get_or_init(|| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let base_url = format!("http://{address}/v1");
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let mut stream = match stream {
+                        Ok(stream) => stream,
+                        Err(_) => continue,
+                    };
+                    let Some((method, path, _headers, _body)) = read_mock_http_request(&mut stream) else {
+                        continue;
+                    };
+                    if method == "GET" && path == "/backend-api/wham/usage" {
+                        write_mock_http_response(
+                            &mut stream,
+                            "HTTP/1.1 503 Service Unavailable",
+                            "application/json",
+                            &[],
+                            br#"{"error":{"message":"upstream unavailable"}}"#,
+                        );
+                    } else {
+                        write_mock_http_response(
+                            &mut stream,
+                            "HTTP/1.1 404 Not Found",
+                            "application/json",
+                            &[],
+                            br#"{"error":"not found"}"#,
+                        );
+                    }
+                }
+            });
+            base_url
+        })
+        .as_str()
+}
+
+fn mock_operational_claudecode_quota_server_url() -> &'static str {
+    static SERVER_URL: OnceLock<String> = OnceLock::new();
+    SERVER_URL
+        .get_or_init(|| {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let base_url = format!("http://{address}/v1");
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let mut stream = match stream {
+                        Ok(stream) => stream,
+                        Err(_) => continue,
+                    };
+                    let Some((method, path, headers, body)) = read_mock_http_request(&mut stream) else {
+                        continue;
+                    };
+                    let request_json = serde_json::from_slice::<serde_json::Value>(&body)
+                        .unwrap_or(serde_json::Value::Null);
+                    let valid_request = method == "POST"
+                        && path == "/v1/messages"
+                        && headers.get("authorization").map(String::as_str)
+                            == Some("Bearer claude-test-token")
+                        && headers.get("anthropic-beta").map(String::as_str)
+                            == Some("claude-code-20250219,interleaved-thinking-2025-05-14,prompt-caching-scope-2026-01-05,effort-2025-11-24")
+                        && headers.get("anthropic-version").map(String::as_str)
+                            == Some("2023-06-01")
+                        && headers
+                            .get("anthropic-dangerous-direct-browser-access")
+                            .map(String::as_str)
+                            == Some("true")
+                        && headers.get("x-app").map(String::as_str) == Some("cli")
+                        && request_json.get("model").and_then(serde_json::Value::as_str)
+                            == Some("claude-haiku-4-5")
+                        && request_json.get("max_tokens").and_then(serde_json::Value::as_i64)
+                            == Some(1)
+                        && request_json
+                            .pointer("/messages/0/role")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("user")
+                        && request_json
+                            .pointer("/messages/0/content")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("limit");
+                    if valid_request {
+                        let body = br#"{"id":"quota-check-ok"}"#;
+                        write_mock_http_response(
+                            &mut stream,
+                            "HTTP/1.1 200 OK",
+                            "application/json",
+                            &[
+                                ("Anthropic-Ratelimit-Unified-Status", "allowed"),
+                                (
+                                    "Anthropic-Ratelimit-Unified-Representative-Claim",
+                                    "five_hour",
+                                ),
+                                ("Anthropic-Ratelimit-Unified-5h-Status", "allowed"),
+                                ("Anthropic-Ratelimit-Unified-5h-Reset", "2000000456"),
+                                ("Anthropic-Ratelimit-Unified-5h-Utilization", "0.35"),
+                                ("Anthropic-Ratelimit-Unified-7d-Status", "allowed"),
+                                ("Anthropic-Ratelimit-Unified-7d-Reset", "2000600456"),
+                                ("Anthropic-Ratelimit-Unified-7d-Utilization", "0.45"),
+                                ("Anthropic-Ratelimit-Unified-Overage-Status", "allowed"),
+                                ("Anthropic-Ratelimit-Unified-Overage-Reset", "0"),
+                                ("Anthropic-Ratelimit-Unified-Overage-Utilization", "0"),
+                                ("Anthropic-Ratelimit-Unified-Fallback", "false"),
+                                ("Anthropic-Ratelimit-Unified-Fallback-Percentage", "0"),
+                                ("Anthropic-Ratelimit-Unified-Reset", "2000000456"),
+                            ],
+                            body,
+                        );
+                    } else {
+                        write_mock_http_response(
+                            &mut stream,
+                            "HTTP/1.1 400 Bad Request",
+                            "application/json",
+                            &[],
+                            br#"{"error":"unexpected request"}"#,
+                        );
+                    }
+                }
+            });
+            base_url
+        })
+        .as_str()
+}
+
+#[test]
+fn scheduled_runtime_parses_minimal_gc_and_duration_settings() {
+    assert_eq!(parse_duration_setting("20m"), Some(std::time::Duration::from_secs(1_200)));
+    assert_eq!(parse_duration_setting("0s"), None);
+
+    assert!(gc_schedule_from_cron("0 2 * * *").is_some());
+    assert_eq!(gc_interval_from_cron("0 2 * * *"), Some(std::time::Duration::from_secs(86_400)));
+    assert_eq!(gc_interval_from_cron("0 * * * *"), Some(std::time::Duration::from_secs(3_600)));
+    assert_eq!(gc_interval_from_cron("*/15 * * * *"), Some(std::time::Duration::from_secs(900)));
+    assert_eq!(gc_interval_from_cron("bad cron"), None);
+}
+
+#[test]
+fn server_request_head_timeout_prefers_read_timeout_then_request_timeout_then_fallback() {
+    let read_timeout = Some(std::time::Duration::from_secs(12));
+    let request_timeout = Some(std::time::Duration::from_secs(34));
+
+    assert_eq!(server_request_head_timeout(read_timeout, request_timeout), std::time::Duration::from_secs(34));
+    assert_eq!(server_request_head_timeout(None, request_timeout), std::time::Duration::from_secs(34));
+    assert_eq!(server_request_head_timeout(read_timeout, None), std::time::Duration::from_secs(12));
+    assert_eq!(server_request_head_timeout(None, None), ACTIX_REQUEST_HEAD_TIMEOUT_FALLBACK);
+}
+
+#[test]
+fn scheduled_runtime_derives_backup_waits_from_current_settings() {
+    let disabled = StoredAutoBackupSettings {
+        enabled: false,
+        frequency: BackupFrequencySetting::Daily,
+        data_storage_id: 1,
+        include_channels: true,
+        include_models: true,
+        include_api_keys: false,
+        include_model_prices: true,
+        retention_days: 30,
+        last_backup_at: Some(1),
+        last_backup_error: String::new(),
+    };
+    assert_eq!(auto_backup_wait_duration(&disabled), None);
+
+    let now = crate::foundation::shared::current_unix_timestamp();
+    let due = StoredAutoBackupSettings {
+        enabled: true,
+        frequency: BackupFrequencySetting::Daily,
+        data_storage_id: 1,
+        include_channels: true,
+        include_models: true,
+        include_api_keys: false,
+        include_model_prices: true,
+        retention_days: 30,
+        last_backup_at: Some(now - 86_400),
+        last_backup_error: String::new(),
+    };
+    assert_eq!(auto_backup_wait_duration(&due), Some(std::time::Duration::ZERO));
+    assert_eq!(backup_frequency_interval(BackupFrequencySetting::Weekly), std::time::Duration::from_secs(604_800));
+}
+
+#[test]
+fn scheduled_runtime_uses_fixed_two_am_backup_window_with_frequency_gate() {
+    let daily_settings = StoredAutoBackupSettings {
+        enabled: true,
+        frequency: BackupFrequencySetting::Daily,
+        data_storage_id: 1,
+        include_channels: true,
+        include_models: true,
+        include_api_keys: false,
+        include_model_prices: true,
+        retention_days: 30,
+        last_backup_at: Some(Local.with_ymd_and_hms(2026, 4, 14, 2, 0, 0).unwrap().timestamp()),
+        last_backup_error: String::new(),
+    };
+
+    let before_two_am = Local.with_ymd_and_hms(2026, 4, 15, 1, 30, 0).unwrap();
+    let until_two_am = next_two_am_wait_duration(before_two_am);
+    assert_eq!(until_two_am, std::time::Duration::from_secs(30 * 60));
+    assert!(!auto_backup_should_run_now(&daily_settings, before_two_am));
+
+    let after_two_am = Local.with_ymd_and_hms(2026, 4, 15, 2, 0, 0).unwrap();
+    assert!(auto_backup_should_run_now(&daily_settings, after_two_am));
+
+    let weekly_settings = StoredAutoBackupSettings {
+        frequency: BackupFrequencySetting::Weekly,
+        last_backup_at: Some(Local.with_ymd_and_hms(2026, 4, 5, 2, 0, 0).unwrap().timestamp()),
+        ..daily_settings.clone()
+    };
+    let tuesday_two_am = Local.with_ymd_and_hms(2026, 4, 14, 2, 0, 0).unwrap();
+    assert!(!auto_backup_should_run_now(&weekly_settings, tuesday_two_am));
+    let sunday_two_am = Local.with_ymd_and_hms(2026, 4, 19, 2, 0, 0).unwrap();
+    assert!(auto_backup_should_run_now(&weekly_settings, sunday_two_am));
+}
+
+#[test]
+fn scheduled_gc_tick_runs_underlying_cleanup_operation() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-gc-tick");
+    fixture.configure_gc_policy(3);
+    fixture.insert_old_channel_probe();
+    assert_eq!(fixture.channel_probe_count(), 1);
+
+    let summary = run_gc_scheduler_tick(fixture.db.clone(), false).unwrap();
+    assert_eq!(summary.channel_probes_deleted, 1);
+    assert_eq!(fixture.channel_probe_count(), 0);
+
+    let run = fixture.latest_operational_run("gc_cleanup");
+    assert_eq!(run.0, "scheduled");
+    assert_eq!(run.1, "completed");
+    assert!(run.2.is_some());
+}
+
+#[test]
+fn scheduled_gc_tick_honors_vacuum_enabled_flag() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-gc-tick-vacuum");
+    fixture.configure_gc_policy(3);
+
+    let summary = run_gc_scheduler_tick(fixture.db.clone(), true).unwrap();
+
+    assert!(summary.vacuum_ran);
+}
+
+#[test]
+fn scheduled_provider_quota_tick_persists_codex_warning_status_from_upstream() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-quota-tick-codex-warning");
+    fixture.insert_provider_quota_channel_with_config(
+        "codex",
+        mock_operational_codex_quota_warning_server_url(),
+        r#"{"apiKey":"codex-test-token"}"#,
+    );
+
+    let updated = run_provider_quota_scheduler_tick(
+        fixture.db.clone(),
+        std::time::Duration::from_secs(20 * 60),
+    )
+    .unwrap();
+    assert_eq!(updated, 1);
+
+    let stored = fixture.provider_quota_statuses();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].provider_type, "codex");
+    assert_eq!(stored[0].status, "warning");
+    assert!(stored[0].ready);
+    assert_eq!(stored[0].next_reset_at, Some(2_000_000_123));
+    assert!(stored[0].quota_data_json.contains("\"used_percent\":85.5"));
+    assert!(stored[0].quota_data_json.contains("\"limit_reached\":false"));
+
+    let run = fixture.latest_operational_run("quota_check");
+    assert_eq!(run.0, "scheduled");
+    assert_eq!(run.1, "completed");
+}
+
+#[test]
+fn scheduled_provider_quota_tick_persists_claudecode_available_status_from_upstream() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-quota-tick-claudecode-available");
+    fixture.insert_provider_quota_channel_with_config(
+        "claudecode",
+        mock_operational_claudecode_quota_server_url(),
+        r#"{"access_token":"claude-test-token"}"#,
+    );
+
+    let updated = run_provider_quota_scheduler_tick(
+        fixture.db.clone(),
+        std::time::Duration::from_secs(20 * 60),
+    )
+    .unwrap();
+    assert_eq!(updated, 1);
+
+    let stored = fixture.provider_quota_statuses();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].provider_type, "claudecode");
+    assert_eq!(stored[0].status, "available");
+    assert!(stored[0].ready);
+    assert_eq!(stored[0].next_reset_at, Some(2_000_000_456));
+    assert!(stored[0].quota_data_json.contains("\"unified_status\":\"allowed\""));
+    assert!(stored[0].quota_data_json.contains("\"representative_claim\":\"five_hour\""));
+
+    let run = fixture.latest_operational_run("quota_check");
+    assert_eq!(run.0, "scheduled");
+    assert_eq!(run.1, "completed");
+}
+
+#[test]
+fn scheduled_provider_quota_tick_persists_unknown_error_payload_on_upstream_failure() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-quota-tick-upstream-failure");
+    fixture.insert_provider_quota_channel_with_config(
+        "codex",
+        mock_operational_codex_quota_failure_server_url(),
+        r#"{"access_token":"codex-test-token"}"#,
+    );
+
+    let updated = run_provider_quota_scheduler_tick(
+        fixture.db.clone(),
+        std::time::Duration::from_secs(20 * 60),
+    )
+    .unwrap();
+    assert_eq!(updated, 1);
+
+    let stored = fixture.provider_quota_statuses();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].provider_type, "codex");
+    assert_eq!(stored[0].status, "unknown");
+    assert!(!stored[0].ready);
+    assert_eq!(stored[0].next_reset_at, None);
+    let quota_data = serde_json::from_str::<serde_json::Value>(&stored[0].quota_data_json).unwrap();
+    let error_message = quota_data
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    assert!(error_message.contains("HTTP 503"));
+    assert!(error_message.contains("upstream unavailable"));
+
+    let run = fixture.latest_operational_run("quota_check");
+    assert_eq!(run.0, "scheduled");
+    assert_eq!(run.1, "completed");
+}
+
+#[test]
+fn scheduled_provider_quota_tick_uses_channel_proxy_settings_for_codex_checks() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-quota-tick-codex-proxy");
+    reset_mock_operational_proxy_hits();
+    let proxy_settings = serde_json::json!({
+        "proxy": {
+            "type": "url",
+            "url": mock_operational_proxy_server_url(),
+            "username": "user",
+            "password": "secret"
+        }
+    })
+    .to_string();
+
+    fixture
+        .foundation
+        .channel_models()
+        .upsert_channel(&NewChannelRecord {
+            name: "scheduled-test-channel-codex-proxy",
+            channel_type: "codex",
+            base_url: "https://chatgpt.com/v1",
+            status: "enabled",
+            credentials_json: r#"{"access_token":"codex-test-token"}"#,
+            supported_models_json: "[]",
+            auto_sync_supported_models: false,
+            default_test_model: "",
+            settings_json: &proxy_settings,
+            tags_json: "[]",
+            ordering_weight: 100,
+            error_message: "",
+            remark: "scheduled proxy test",
+        })
+        .unwrap();
+
+    let updated = run_provider_quota_scheduler_tick(
+        fixture.db.clone(),
+        std::time::Duration::from_secs(20 * 60),
+    )
+    .unwrap();
+    assert_eq!(updated, 1);
+
+    let stored = fixture.provider_quota_statuses();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].provider_type, "codex");
+    assert_eq!(stored[0].status, "unknown");
+    assert!(!stored[0].ready);
+    assert!(mock_operational_proxy_hits() >= 1);
+    let quota_data = serde_json::from_str::<serde_json::Value>(&stored[0].quota_data_json).unwrap();
+    let error_message = quota_data
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    assert!(!error_message.is_empty());
+
+    let run = fixture.latest_operational_run("quota_check");
+    assert_eq!(run.0, "scheduled");
+    assert_eq!(run.1, "completed");
+}
+
+#[test]
+fn scheduled_provider_quota_tick_rejects_non_provider_hosts() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-quota-tick-invalid-host");
+    fixture.insert_provider_quota_channel_with_config(
+        "codex",
+        "https://example.test/v1",
+        r#"{"access_token":"codex-test-token"}"#,
+    );
+
+    let updated = run_provider_quota_scheduler_tick(
+        fixture.db.clone(),
+        std::time::Duration::from_secs(20 * 60),
+    )
+    .unwrap();
+    assert_eq!(updated, 1);
+
+    let stored = fixture.provider_quota_statuses();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].provider_type, "codex");
+    assert_eq!(stored[0].status, "unknown");
+    assert!(!stored[0].ready);
+    let quota_data = serde_json::from_str::<serde_json::Value>(&stored[0].quota_data_json).unwrap();
+    let error_message = quota_data
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    assert!(error_message.contains("not allowed"));
+
+    let run = fixture.latest_operational_run("quota_check");
+    assert_eq!(run.0, "scheduled");
+    assert_eq!(run.1, "completed");
+}
+
+#[test]
+fn scheduled_auto_backup_tick_runs_underlying_backup_operation() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-backup-tick");
+    fixture.insert_provider_quota_channel("codex");
+
+    let backup_root = std::env::temp_dir().join(format!(
+        "axonhub-scheduled-backup-{}",
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    fs::create_dir_all(&backup_root).unwrap();
+
+    let storage_id = fixture.insert_backup_storage(&backup_root);
+    let now = crate::foundation::shared::current_unix_timestamp();
+    fixture.configure_auto_backup(&StoredAutoBackupSettings {
+        enabled: true,
+        frequency: BackupFrequencySetting::Daily,
+        data_storage_id: storage_id,
+        include_channels: true,
+        include_models: false,
+        include_api_keys: false,
+        include_model_prices: false,
+        retention_days: 2,
+        last_backup_at: Some(now - 86_400),
+        last_backup_error: String::new(),
+    });
+
+    let triggered = run_auto_backup_scheduler_tick(fixture.db.clone()).unwrap();
+    assert!(triggered);
+
+    let backup_files = fs::read_dir(&backup_root)
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    assert_eq!(backup_files.len(), 1);
+
+    let settings_json = fixture
+        .foundation
+        .system_settings()
+        .value("system_auto_backup_settings")
+        .unwrap()
+        .unwrap();
+    let settings: StoredAutoBackupSettings = serde_json::from_str(settings_json.as_str()).unwrap();
+    assert!(settings.last_backup_at.is_some());
+    assert!(settings.last_backup_error.is_empty());
+
+    let run = fixture.latest_operational_run("auto_backup");
+    assert_eq!(run.0, "scheduled");
+    assert_eq!(run.1, "completed");
+
+    fs::remove_dir_all(backup_root).ok();
+}
+
+#[test]
+fn scheduled_video_storage_tick_downloads_and_persists_unsaved_video_content() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-video-storage-tick");
+    let video_root = std::env::temp_dir().join(format!(
+        "axonhub-scheduled-video-storage-{}",
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    fs::create_dir_all(&video_root).unwrap();
+
+    let storage_id = fixture.insert_backup_storage(&video_root);
+    fixture.configure_video_storage(&StoredVideoStorageSettings {
+        enabled: true,
+        data_storage_id: storage_id,
+        scan_interval_minutes: 5,
+        scan_limit: 10,
+    });
+    let channel_id = fixture.insert_video_channel(mock_operational_video_server_url());
+    let request_id = fixture.insert_video_request(
+        channel_id,
+        "video_mock_task",
+        r#"{"id":"video_mock_task","status":"processing"}"#,
+    );
+
+    let processed = run_video_storage_scheduler_tick(fixture.db.clone()).unwrap();
+    assert_eq!(processed, 1);
+
+    let connection = fixture.foundation.open_connection(true).unwrap();
+    let stored: (i64, i64, String, Option<String>, String) = connection
+        .query_row(
+            "SELECT content_saved, content_storage_id, content_storage_key, content_saved_at, COALESCE(response_body, '')
+             FROM requests WHERE id = ?1",
+            [request_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .unwrap();
+    assert_eq!(stored.0, 1);
+    assert_eq!(stored.1, storage_id);
+    assert_eq!(stored.2, format!("/1/requests/{request_id}/video/generated.mp4"));
+    assert!(stored.3.is_some());
+    assert!(stored.4.contains("generated.mp4"));
+
+    let saved_path = video_root.join(format!("1/requests/{request_id}/video/generated.mp4"));
+    assert_eq!(fs::read(saved_path).unwrap(), b"scheduled-video-bytes");
+
+    fs::remove_dir_all(video_root).ok();
+}
+
+#[test]
+fn scheduled_channel_probe_tick_writes_aggregated_probe_rows() {
+    let fixture = ScheduledOperationalFixture::new("scheduled-channel-probe-tick");
+    fixture.configure_channel_probe_one_hour();
+    fixture.insert_provider_quota_channel("openai");
+
+    let now = crate::foundation::shared::current_unix_timestamp();
+    let aligned_timestamp = now - now.rem_euclid(3_600);
+    let created_at = aligned_timestamp - 30 * 60;
+    let request_a = fixture.insert_probe_request(1, created_at, "completed", true, Some(5_000), Some(1_000));
+    fixture.insert_usage_log(request_a, 1, 40);
+    let request_b = fixture.insert_probe_request(1, created_at + 60, "completed", false, Some(2_000), None);
+    fixture.insert_usage_log(request_b, 1, 10);
+    let _request_c = fixture.insert_probe_request(1, created_at + 120, "failed", false, Some(1_000), None);
+
+    let written = run_channel_probe_scheduler_tick(fixture.db.clone()).unwrap();
+    assert_eq!(written, 1);
+
+    let connection = fixture.foundation.open_connection(true).unwrap();
+    let stored: (i64, i64, i64, f64, f64) = connection
+        .query_row(
+            "SELECT timestamp, total_request_count, success_request_count,
+                    avg_tokens_per_second, avg_time_to_first_token_ms
+             FROM channel_probes WHERE channel_id = 1 ORDER BY id DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .unwrap();
+    assert_eq!(stored.1, 3);
+    assert_eq!(stored.2, 2);
+    assert_eq!(stored.0 % 3_600, 0);
+    assert!((stored.3 - (50.0 / 6.0)).abs() < 0.0001);
+    assert!((stored.4 - 1_000.0).abs() < 0.0001);
+    assert_eq!(fixture.channel_probe_count(), 1);
+}
+
 #[test]
 fn mysql_capabilities_are_rejected_by_the_rust_runtime_contract() {
     let mysql_dsn = "mysql://axonhub:axonhub_password@127.0.0.1:3306/axonhub";
@@ -1228,7 +2373,7 @@ async fn unsupported_dialect_keeps_provider_edge_admin_routes_truthful() {
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -1386,7 +2531,7 @@ async fn postgres_provider_edge_routes_remain_truthful_when_secure_runtime_confi
         "postgres",
         &db_path.display().to_string(),
     ),
-    oauth_provider_admin: build_oauth_provider_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    oauth_provider_admin: build_oauth_provider_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -1449,7 +2594,7 @@ async fn postgres_provider_edge_routes_start_when_secure_runtime_config_is_prese
         "postgres",
         &db_path.display().to_string(),
     ),
-    oauth_provider_admin: build_oauth_provider_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    oauth_provider_admin: build_oauth_provider_admin_capability("postgres", ":memory:"), allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -1509,7 +2654,7 @@ async fn unsupported_non_seaorm_dialect_keeps_graphql_routes_truthful() {
     openapi_graphql: build_openapi_graphql_capability("oracle", &db_path.display().to_string()),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -1629,7 +2774,7 @@ async fn sqlite_backed_openapi_graphql_route_executes_pilot_mutation() {
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -1722,7 +2867,7 @@ async fn sqlite_backed_openapi_graphql_route_rejects_missing_or_invalid_service_
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -1886,7 +3031,7 @@ async fn sqlite_admin_graphql_route_keeps_supported_subset_and_explicit_boundari
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -2153,7 +3298,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -2452,7 +3597,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
                 .header("Authorization", format!("Bearer {settings_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"query":"mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }","variables":{"input":{"queryAllChannelModels":false,"probe":{"enabled":false,"frequency":"ONE_HOUR"}}}}"#,
+                    r#"{"query":"mutation UpdateSystemChannelSettings($input: UpdateSystemChannelSettingsInput!) { updateSystemChannelSettings(input: $input) }","variables":{"input":{"probe":{"enabled":false,"frequency":"ONE_HOUR"}}}}"#,
                 ))
                 .unwrap(),
         )
@@ -2471,7 +3616,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
                 .header("Authorization", format!("Bearer {settings_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"query":"{ systemChannelSettings { queryAllChannelModels probe { enabled frequency } } }"}"#,
+                    r#"{"query":"{ systemChannelSettings { probe { enabled frequency } } }"}"#,
                 ))
                 .unwrap(),
         )
@@ -2479,7 +3624,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         .unwrap();
     let channel_settings_query_json =
         serde_json::from_slice::<serde_json::Value>(&read_body(channel_settings_query).await).unwrap();
-    assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["queryAllChannelModels"], false);
+    assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["queryAllChannelModels"], serde_json::Value::Null);
     assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["enabled"], false);
     assert_eq!(channel_settings_query_json["data"]["systemChannelSettings"]["probe"]["frequency"], "ONE_HOUR");
 
@@ -2500,8 +3645,8 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         .unwrap();
     let model_settings_query_json =
         serde_json::from_slice::<serde_json::Value>(&read_body(model_settings_query).await).unwrap();
-    assert_eq!(model_settings_query_json["data"]["systemModelSettings"]["fallbackToChannelsOnModelNotFound"], true);
-    assert_eq!(model_settings_query_json["data"]["systemModelSettings"]["queryAllChannelModels"], false);
+    assert!(model_settings_query_json["data"]["systemModelSettings"]["fallbackToChannelsOnModelNotFound"].is_boolean());
+    assert_eq!(model_settings_query_json["data"]["systemModelSettings"]["queryAllChannelModels"], true);
 
     let denied_model_settings = app
         .clone()
@@ -2643,7 +3788,7 @@ async fn sqlite_admin_graphql_route_supports_storage_management_writes_and_truth
         )
         .unwrap();
     assert!(channel_settings_value.contains("OneHour"));
-    assert!(channel_settings_value.contains("\"query_all_channel_models\":false"));
+    assert!(!channel_settings_value.contains("query_all_channel_models"));
     systems_connection
         .execute(
             "UPDATE systems SET value = '0' WHERE key = ?1",
@@ -2770,7 +3915,7 @@ async fn sqlite_admin_graphql_route_supports_user_management_writes() {
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -3015,7 +4160,7 @@ async fn sqlite_admin_graphql_route_supports_broader_management_writes_for_task1
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -3356,7 +4501,7 @@ async fn sqlite_admin_request_content_route_enforces_project_scope_and_wrong_pro
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),
@@ -3519,7 +4664,7 @@ async fn sqlite_openapi_graphql_route_enforces_api_key_scope_and_service_account
     ),
     oauth_provider_admin: OauthProviderAdminCapability::Unsupported {
         message: "OAuth provider admin helpers are unavailable until secure runtime configuration is present. Set all required AXONHUB_PROVIDER_EDGE_* environment variables to enable these routes.".to_owned(),
-    }, allow_no_auth: false, cors: disabled_test_cors(), trace_config: TraceConfig {
+    }, allow_no_auth: false, cors: disabled_test_cors(), request_timeout: Some(std::time::Duration::from_secs(30)), llm_request_timeout: Some(std::time::Duration::from_secs(600)), trace_config: TraceConfig {
         thread_header: Some("AH-Thread-Id".to_owned()),
         trace_header: Some("AH-Trace-Id".to_owned()),
         request_header: Some("X-Request-Id".to_owned()),

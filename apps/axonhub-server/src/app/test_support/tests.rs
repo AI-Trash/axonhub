@@ -361,6 +361,8 @@ fn sqlite_state(db_path: &Path) -> HttpState {
         oauth_provider_admin: build_oauth_provider_admin_capability("sqlite3", &dsn),
         allow_no_auth: false,
         cors: HttpCorsSettings::default(),
+        request_timeout: Some(std::time::Duration::from_secs(30)),
+        llm_request_timeout: Some(std::time::Duration::from_secs(600)),
         trace_config: TraceConfig {
             thread_header: Some("AH-Thread-Id".to_owned()),
             trace_header: Some("AH-Trace-Id".to_owned()),

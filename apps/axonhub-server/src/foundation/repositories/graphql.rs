@@ -1,5 +1,5 @@
 use axonhub_db_entity::{
-    api_keys, channels, data_storages, models, projects, provider_quota_statuses, requests, roles,
+    api_keys, channels, data_storages, models, projects, prompts, provider_quota_statuses, requests, roles,
     systems,
     user_projects, user_roles, users,
 };
@@ -13,7 +13,7 @@ use crate::foundation::seaorm::SeaOrmConnectionFactory;
 use crate::foundation::request_context::{parse_onboarding_record, OnboardingRecord};
 use crate::foundation::openai_v1::StoredRequestSummary;
 
-use super::openai_v1::{list_enabled_model_records_seaorm, query_system_channel_settings_seaorm};
+use super::openai_v1::{list_enabled_model_records_seaorm, query_system_model_settings_seaorm};
 
 #[derive(Debug, Clone)]
 pub(crate) struct GraphqlModelStatusRecord {
@@ -55,6 +55,11 @@ pub(crate) struct GraphqlVideoStorageSettingsRecord {
 
 #[derive(Debug, Clone)]
 pub(crate) struct GraphqlSystemGeneralSettingsRecord {
+    pub(crate) value: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlSystemModelSettingsRecord {
     pub(crate) value: String,
 }
 
@@ -170,12 +175,28 @@ pub(crate) struct GraphqlModelRecord {
     pub(crate) model_card_json: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct GraphqlPromptRecord {
+    pub(crate) id: i64,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) project_id: i64,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    pub(crate) role: String,
+    pub(crate) content: String,
+    pub(crate) status: String,
+    pub(crate) order: i32,
+    pub(crate) settings: String,
+}
+
 pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
     fn query_channels(&self) -> Result<Vec<GraphqlChannelRecord>, String>;
     fn query_projects(&self) -> Result<Vec<GraphqlProjectRecord>, String>;
     fn query_roles(&self) -> Result<Vec<GraphqlRoleRecord>, String>;
     fn query_api_keys(&self) -> Result<Vec<GraphqlApiKeyRecord>, String>;
     fn query_requests(&self, project_id: i64) -> Result<Vec<StoredRequestSummary>, String>;
+    fn query_prompts(&self, project_id: i64) -> Result<Vec<GraphqlPromptRecord>, String>;
     fn query_model_statuses(&self) -> Result<Vec<GraphqlModelStatusRecord>, String>;
     fn query_default_data_storage(&self) -> Result<Option<GraphqlDefaultDataStorageRecord>, String>;
     fn query_brand_name(&self) -> Result<Option<String>, String>;
@@ -197,12 +218,17 @@ pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
     fn query_system_general_settings(
         &self,
     ) -> Result<Option<GraphqlSystemGeneralSettingsRecord>, String>;
+    fn query_system_model_settings(
+        &self,
+    ) -> Result<Option<GraphqlSystemModelSettingsRecord>, String>;
     fn query_video_storage_settings(
         &self,
     ) -> Result<Option<GraphqlVideoStorageSettingsRecord>, String>;
     fn query_version(&self) -> Result<Option<String>, String>;
     fn query_onboarding_record(&self) -> Result<Option<OnboardingRecord>, String>;
+    fn upsert_onboarding_record(&self, value: &str) -> Result<(), String>;
     fn upsert_system_channel_settings(&self, value: &str) -> Result<(), String>;
+    fn upsert_system_model_settings(&self, value: &str) -> Result<(), String>;
     fn upsert_system_general_settings(&self, value: &str) -> Result<(), String>;
     fn query_is_initialized(&self) -> Result<bool, String>;
     fn query_user_profile(&self, user_id: i64) -> Result<Option<GraphqlUserProfileRecord>, String>;
@@ -216,6 +242,7 @@ pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
     fn query_user_roles(&self, user_id: i64) -> Result<Vec<GraphqlRoleSummaryRecord>, String>;
     fn query_role(&self, role_id: i64) -> Result<Option<GraphqlRoleRecord>, String>;
     fn query_api_key(&self, api_key_id: i64) -> Result<Option<GraphqlApiKeyRecord>, String>;
+    fn query_prompt(&self, prompt_id: i64) -> Result<Option<GraphqlPromptRecord>, String>;
     fn create_user(
         &self,
         email: &str,
@@ -291,6 +318,32 @@ pub(crate) trait AdminGraphqlSubsetRepository: Send + Sync {
         status: Option<&str>,
         scopes_json: Option<&str>,
     ) -> Result<GraphqlApiKeyRecord, String>;
+    fn create_prompt(
+        &self,
+        project_id: i64,
+        name: &str,
+        description: &str,
+        role: &str,
+        content: &str,
+        status: &str,
+        order: i32,
+        settings_json: &str,
+    ) -> Result<GraphqlPromptRecord, String>;
+    fn update_prompt(
+        &self,
+        prompt_id: i64,
+        name: Option<&str>,
+        description: Option<&str>,
+        role: Option<&str>,
+        content: Option<&str>,
+        status: Option<&str>,
+        order: Option<i32>,
+        settings_json: Option<&str>,
+    ) -> Result<GraphqlPromptRecord, String>;
+    fn delete_prompt(&self, prompt_id: i64) -> Result<bool, String>;
+    fn update_prompt_status(&self, prompt_id: i64, status: &str) -> Result<bool, String>;
+    fn bulk_delete_prompts(&self, ids: &[i64]) -> Result<(), String>;
+    fn bulk_update_prompts_status(&self, ids: &[i64], status: &str) -> Result<(), String>;
     fn create_channel(
         &self,
         channel_type: &str,
@@ -454,6 +507,14 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
             query_requests_seaorm(&connection, project_id).await
+        })
+    }
+
+    fn query_prompts(&self, project_id: i64) -> Result<Vec<GraphqlPromptRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_prompts_seaorm(&connection, project_id).await
         })
     }
 
@@ -654,6 +715,21 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         })
     }
 
+    fn query_system_model_settings(
+        &self,
+    ) -> Result<Option<GraphqlSystemModelSettingsRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            query_system_json_setting_seaorm(
+                &connection,
+                crate::foundation::shared::SYSTEM_KEY_MODEL_SETTINGS,
+            )
+            .await
+            .map(|value| value.map(|value| GraphqlSystemModelSettingsRecord { value }))
+        })
+    }
+
     fn query_version(&self) -> Result<Option<String>, String> {
         let db = self.db.clone();
         db.run_sync(move |db| async move {
@@ -683,6 +759,34 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
             upsert_system_json_setting_seaorm(&connection, "system_channel_settings", &value).await
+        })
+    }
+
+    fn upsert_system_model_settings(&self, value: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let value = value.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            upsert_system_json_setting_seaorm(
+                &connection,
+                crate::foundation::shared::SYSTEM_KEY_MODEL_SETTINGS,
+                &value,
+            )
+            .await
+        })
+    }
+
+    fn upsert_onboarding_record(&self, value: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let value = value.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            upsert_system_json_setting_seaorm(
+                &connection,
+                crate::foundation::shared::SYSTEM_KEY_ONBOARDED,
+                &value,
+            )
+            .await
         })
     }
 
@@ -763,6 +867,14 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
             load_api_key_record_seaorm(&connection, api_key_id).await
+        })
+    }
+
+    fn query_prompt(&self, prompt_id: i64) -> Result<Option<GraphqlPromptRecord>, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            load_prompt_record_seaorm(&connection, prompt_id).await
         })
     }
 
@@ -1017,6 +1129,112 @@ impl AdminGraphqlSubsetRepository for SeaOrmAdminGraphqlSubsetRepository {
                 scopes_json.as_deref(),
             )
             .await
+        })
+    }
+
+    fn create_prompt(
+        &self,
+        project_id: i64,
+        name: &str,
+        description: &str,
+        role: &str,
+        content: &str,
+        status: &str,
+        order: i32,
+        settings_json: &str,
+    ) -> Result<GraphqlPromptRecord, String> {
+        let db = self.db.clone();
+        let name = name.to_owned();
+        let description = description.to_owned();
+        let role = role.to_owned();
+        let content = content.to_owned();
+        let status = status.to_owned();
+        let settings_json = settings_json.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            create_prompt_seaorm(
+                &connection,
+                project_id,
+                &name,
+                &description,
+                &role,
+                &content,
+                &status,
+                order,
+                &settings_json,
+            )
+            .await
+        })
+    }
+
+    fn update_prompt(
+        &self,
+        prompt_id: i64,
+        name: Option<&str>,
+        description: Option<&str>,
+        role: Option<&str>,
+        content: Option<&str>,
+        status: Option<&str>,
+        order: Option<i32>,
+        settings_json: Option<&str>,
+    ) -> Result<GraphqlPromptRecord, String> {
+        let db = self.db.clone();
+        let name = name.map(ToOwned::to_owned);
+        let description = description.map(ToOwned::to_owned);
+        let role = role.map(ToOwned::to_owned);
+        let content = content.map(ToOwned::to_owned);
+        let status = status.map(ToOwned::to_owned);
+        let settings_json = settings_json.map(ToOwned::to_owned);
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            update_prompt_seaorm(
+                &connection,
+                prompt_id,
+                name.as_deref(),
+                description.as_deref(),
+                role.as_deref(),
+                content.as_deref(),
+                status.as_deref(),
+                order,
+                settings_json.as_deref(),
+            )
+            .await
+        })
+    }
+
+    fn delete_prompt(&self, prompt_id: i64) -> Result<bool, String> {
+        let db = self.db.clone();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            delete_prompt_seaorm(&connection, prompt_id).await
+        })
+    }
+
+    fn update_prompt_status(&self, prompt_id: i64, status: &str) -> Result<bool, String> {
+        let db = self.db.clone();
+        let status = status.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            update_prompt_status_seaorm(&connection, prompt_id, &status).await
+        })
+    }
+
+    fn bulk_delete_prompts(&self, ids: &[i64]) -> Result<(), String> {
+        let db = self.db.clone();
+        let ids = ids.to_vec();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            bulk_delete_prompts_seaorm(&connection, &ids).await.map(|_| ())
+        })
+    }
+
+    fn bulk_update_prompts_status(&self, ids: &[i64], status: &str) -> Result<(), String> {
+        let db = self.db.clone();
+        let ids = ids.to_vec();
+        let status = status.to_owned();
+        db.run_sync(move |db| async move {
+            let connection = db.connect_migrated().await.map_err(|error| error.to_string())?;
+            bulk_update_prompts_status_seaorm(&connection, &ids, &status).await.map(|_| ())
         })
     }
 
@@ -1380,7 +1598,7 @@ impl OpenApiGraphqlMutationRepository for SeaOrmOpenApiGraphqlMutationRepository
 async fn query_model_statuses_seaorm(
     db: &impl sea_orm::ConnectionTrait,
 ) -> Result<Vec<GraphqlModelStatusRecord>, String> {
-    let settings = query_system_channel_settings_seaorm(db)
+    let settings = query_system_model_settings_seaorm(db)
         .await
         .map_err(|error| match error {
             axonhub_http::OpenAiV1Error::InvalidRequest { message }
@@ -1487,6 +1705,21 @@ async fn query_requests_seaorm(
                 })
                 .collect()
         })
+}
+
+async fn query_prompts_seaorm(
+    db: &DatabaseConnection,
+    project_id: i64,
+) -> Result<Vec<GraphqlPromptRecord>, String> {
+    prompts::Entity::find()
+        .filter(prompts::Column::ProjectId.eq(project_id))
+        .filter(prompts::Column::DeletedAt.eq(0_i64))
+        .order_by_asc(prompts::Column::Order)
+        .order_by_asc(prompts::Column::Id)
+        .all(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|rows| rows.into_iter().map(graphql_prompt_record_from_model).collect())
 }
 
 async fn query_data_storage_status_seaorm(
@@ -2503,6 +2736,198 @@ async fn load_api_key_record_seaorm(
         .map(|row| row.map(graphql_api_key_record_from_model))
 }
 
+async fn load_prompt_record_seaorm(
+    db: &DatabaseConnection,
+    prompt_id: i64,
+) -> Result<Option<GraphqlPromptRecord>, String> {
+    prompts::Entity::find_by_id(prompt_id)
+        .filter(prompts::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())
+        .map(|row| row.map(graphql_prompt_record_from_model))
+}
+
+async fn create_prompt_seaorm(
+    db: &DatabaseConnection,
+    project_id: i64,
+    name: &str,
+    description: &str,
+    role: &str,
+    content: &str,
+    status: &str,
+    order: i32,
+    settings_json: &str,
+) -> Result<GraphqlPromptRecord, String> {
+    if projects::Entity::find_by_id(project_id)
+        .filter(projects::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_none()
+    {
+        return Err("project not found".to_owned());
+    }
+    if prompts::Entity::find()
+        .filter(prompts::Column::ProjectId.eq(project_id))
+        .filter(prompts::Column::Name.eq(name))
+        .filter(prompts::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("prompt already exists".to_owned());
+    }
+    let created = prompts::Entity::insert(prompts::ActiveModel {
+        project_id: Set(project_id),
+        name: Set(name.to_owned()),
+        description: Set(description.to_owned()),
+        role: Set(role.to_owned()),
+        content: Set(content.to_owned()),
+        status: Set(status.to_owned()),
+        order: Set(order),
+        settings: Set(settings_json.to_owned()),
+        deleted_at: Set(0_i64),
+        ..Default::default()
+    })
+    .exec(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    load_prompt_record_seaorm(db, created.last_insert_id)
+        .await?
+        .ok_or_else(|| "prompt not found".to_owned())
+}
+
+async fn update_prompt_seaorm(
+    db: &DatabaseConnection,
+    prompt_id: i64,
+    name: Option<&str>,
+    description: Option<&str>,
+    role: Option<&str>,
+    content: Option<&str>,
+    status: Option<&str>,
+    order: Option<i32>,
+    settings_json: Option<&str>,
+) -> Result<GraphqlPromptRecord, String> {
+    let existing = prompts::Entity::find_by_id(prompt_id)
+        .filter(prompts::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(existing) = existing else {
+        return Err("prompt not found".to_owned());
+    };
+
+    if let Some(name) = name {
+        if let Some(other) = prompts::Entity::find()
+            .filter(prompts::Column::ProjectId.eq(existing.project_id))
+            .filter(prompts::Column::Name.eq(name))
+            .filter(prompts::Column::DeletedAt.eq(0_i64))
+            .one(db)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            if other.id != prompt_id {
+                return Err("prompt already exists".to_owned());
+            }
+        }
+    }
+
+    let mut active: prompts::ActiveModel = existing.into();
+    if let Some(name) = name {
+        active.name = Set(name.to_owned());
+    }
+    if let Some(description) = description {
+        active.description = Set(description.to_owned());
+    }
+    if let Some(role) = role {
+        active.role = Set(role.to_owned());
+    }
+    if let Some(content) = content {
+        active.content = Set(content.to_owned());
+    }
+    if let Some(status) = status {
+        active.status = Set(status.to_owned());
+    }
+    if let Some(order) = order {
+        active.order = Set(order);
+    }
+    if let Some(settings_json) = settings_json {
+        active.settings = Set(settings_json.to_owned());
+    }
+    active.deleted_at = Set(0_i64);
+    active.update(db).await.map_err(|error| error.to_string())?;
+    load_prompt_record_seaorm(db, prompt_id)
+        .await?
+        .ok_or_else(|| "prompt not found".to_owned())
+}
+
+async fn delete_prompt_seaorm(
+    db: &DatabaseConnection,
+    prompt_id: i64,
+) -> Result<bool, String> {
+    let existing = prompts::Entity::find_by_id(prompt_id)
+        .filter(prompts::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(existing) = existing else {
+        return Ok(false);
+    };
+    let mut active: prompts::ActiveModel = existing.into();
+    active.deleted_at = Set(1_i64);
+    active.update(db).await.map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+async fn update_prompt_status_seaorm(
+    db: &DatabaseConnection,
+    prompt_id: i64,
+    status: &str,
+) -> Result<bool, String> {
+    let existing = prompts::Entity::find_by_id(prompt_id)
+        .filter(prompts::Column::DeletedAt.eq(0_i64))
+        .one(db)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(existing) = existing else {
+        return Ok(false);
+    };
+    let mut active: prompts::ActiveModel = existing.into();
+    active.status = Set(status.to_owned());
+    active.deleted_at = Set(0_i64);
+    active.update(db).await.map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+async fn bulk_delete_prompts_seaorm(
+    db: &DatabaseConnection,
+    ids: &[i64],
+) -> Result<usize, String> {
+    let mut changed = 0_usize;
+    for id in ids {
+        if delete_prompt_seaorm(db, *id).await? {
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+async fn bulk_update_prompts_status_seaorm(
+    db: &DatabaseConnection,
+    ids: &[i64],
+    status: &str,
+) -> Result<usize, String> {
+    let mut changed = 0_usize;
+    for id in ids {
+        if update_prompt_status_seaorm(db, *id, status).await? {
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
 async fn load_channel_record_seaorm(
     db: &DatabaseConnection,
     channel_id: i64,
@@ -2582,6 +3007,22 @@ fn graphql_model_record_from_model(value: models::Model) -> GraphqlModelRecord {
         icon: value.icon,
         remark: value.remark.unwrap_or_default(),
         model_card_json: value.model_card,
+    }
+}
+
+fn graphql_prompt_record_from_model(value: prompts::Model) -> GraphqlPromptRecord {
+    GraphqlPromptRecord {
+        id: value.id,
+        created_at: value.created_at,
+        updated_at: value.updated_at,
+        project_id: value.project_id,
+        name: value.name,
+        description: value.description,
+        role: value.role,
+        content: value.content,
+        status: value.status,
+        order: value.order,
+        settings: value.settings,
     }
 }
 

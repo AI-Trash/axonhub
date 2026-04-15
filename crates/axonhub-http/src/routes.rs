@@ -1,6 +1,7 @@
 use crate::handlers;
 use crate::middleware::{
-    admin_auth, api_key_auth, gemini_auth, http_metrics, request_context, service_api_key_auth,
+    RequestTimeoutScope, admin_auth, api_key_auth, gemini_auth, http_metrics,
+    request_context, request_timeout, service_api_key_auth,
 };
 use crate::state::{HttpCorsSettings, HttpMetricsCapability, HttpState};
 use actix_cors::Cors;
@@ -268,6 +269,7 @@ fn configure_doubao(cfg: &mut ServiceConfig) {
 fn configure_gemini(cfg: &mut ServiceConfig) {
     cfg.service(
         web::scope("/gemini/{gemini_api_version}")
+            .wrap(request_timeout(RequestTimeoutScope::Llm))
             .service(
                 web::resource("/debug/context")
                     .wrap(request_context())
@@ -300,9 +302,11 @@ fn configure_http_routes(cfg: &mut ServiceConfig) {
         .service(web::resource("/health").route(web::get().to(handlers::health)))
         .service(
             web::scope("/admin")
+                .wrap(request_timeout(RequestTimeoutScope::Request))
                 .configure(configure_admin_public)
                 .service(
                     web::scope("")
+                        .wrap(request_timeout(RequestTimeoutScope::Request))
                         .wrap(request_context())
                         .wrap(admin_auth())
                         .configure(configure_admin_protected),
@@ -310,18 +314,21 @@ fn configure_http_routes(cfg: &mut ServiceConfig) {
         )
         .service(
             web::scope("/v1")
+                .wrap(request_timeout(RequestTimeoutScope::Llm))
                 .wrap(request_context())
                 .wrap(api_key_auth())
                 .configure(configure_openai_v1),
         )
         .service(
             web::scope("/jina/v1")
+                .wrap(request_timeout(RequestTimeoutScope::Llm))
                 .wrap(request_context())
                 .wrap(api_key_auth())
                 .configure(configure_jina),
         )
         .service(
             web::scope("/anthropic/v1")
+                .wrap(request_timeout(RequestTimeoutScope::Llm))
                 .wrap(request_context())
                 .wrap(api_key_auth())
                 .configure(configure_anthropic),
@@ -330,12 +337,14 @@ fn configure_http_routes(cfg: &mut ServiceConfig) {
         .configure(configure_gemini)
         .service(
             web::scope("/v1beta")
+                .wrap(request_timeout(RequestTimeoutScope::Llm))
                 .wrap(request_context())
                 .wrap(gemini_auth())
                 .configure(configure_v1beta),
         )
         .service(
             web::scope("/openapi")
+                .wrap(request_timeout(RequestTimeoutScope::Request))
                 .wrap(request_context())
                 .wrap(service_api_key_auth())
                 .configure(configure_openapi),
