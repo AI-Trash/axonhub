@@ -41,8 +41,8 @@ opentelemetry_sdk = { version = "0.31", features = ["metrics"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "multipart", "rustls"] }
 regex = "1.12"
 rust-embed = "8.11"
-sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
-sea-orm-migration = { version = "2.0.0-rc.37", default-features = false, features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
+sea-orm = { version = "2.0.0-rc.37", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-postgres"] }
+sea-orm-migration = { version = "2.0.0-rc.37", default-features = false, features = ["runtime-tokio-rustls", "sqlx-postgres"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
@@ -53,7 +53,6 @@ tracing = "0.1"
 tracing-opentelemetry = "0.32"
 tracing-log = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
-rusqlite = "0.32.1"
 axonhub-db-entity = { path = "crates/axonhub-db-entity" }
 axonhub-db-migration = { path = "crates/axonhub-db-migration" }
 axonhub-config = { path = "crates/axonhub-config" }

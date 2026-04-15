@@ -145,7 +145,10 @@ server:
     assert_eq!(loaded.config_path(), Some(Path::new("./config.yml")));
     assert_eq!(loaded.config.server.name, "Root Config");
     assert_eq!(loaded.config.server.port, 8090);
-    assert_eq!(loaded.config.db.dialect, "sqlite3");
+    assert_eq!(
+        loaded.config.db.dsn,
+        "postgres://axonhub:secret@localhost/axonhub?sslmode=disable"
+    );
     assert_eq!(loaded.config.server.read_timeout, "30s");
     assert_eq!(loaded.config.cache.memory.expiration, "15m");
     assert_eq!(loaded.config.cache.memory.cleanup_interval, "45m");
@@ -173,7 +176,7 @@ fn load_uses_home_config_when_workspace_config_is_missing() {
 server:
   name: "Home Config"
 db:
-  dsn: "file:home.db"
+  dsn: "postgres://home:secret@localhost/home_axonhub?sslmode=disable"
 "#,
     )
     .unwrap();
@@ -185,7 +188,10 @@ db:
         Some(fixture.home.join(".config/axonhub/config.yml").as_path())
     );
     assert_eq!(loaded.config.server.name, "Home Config");
-    assert_eq!(loaded.config.db.dsn, "file:home.db");
+    assert_eq!(
+        loaded.config.db.dsn,
+        "postgres://home:secret@localhost/home_axonhub?sslmode=disable"
+    );
 }
 
 #[test]
@@ -205,8 +211,7 @@ server:
     extra_trace_headers: ["File-Trace"]
     codex_trace_enabled: false
 db:
-  dialect: "sqlite3"
-  dsn: "file:from-file.db"
+  dsn: "postgres://file:user@localhost/from_file?sslmode=disable"
   debug: false
 "#,
     );
@@ -218,8 +223,10 @@ db:
         "Trace-A, Trace-B",
     );
     fixture.set_env("AXONHUB_SERVER_TRACE_CODEX_TRACE_ENABLED", "true");
-    fixture.set_env("AXONHUB_DB_DIALECT", "postgresql");
-    fixture.set_env("AXONHUB_DB_DSN", "file:from-env.db");
+    fixture.set_env(
+        "AXONHUB_DB_DSN",
+        "postgres://env:user@localhost/from_env?sslmode=disable",
+    );
     fixture.set_env("AXONHUB_DB_DEBUG", "true");
     fixture.set_env("AXONHUB_CACHE_DEFAULT_EXPIRATION", "25m");
     fixture.set_env("AXONHUB_CACHE_CLEANUP_INTERVAL", "55m");
@@ -234,8 +241,10 @@ db:
         vec!["Trace-A".to_owned(), "Trace-B".to_owned()]
     );
     assert!(loaded.config.server.trace.codex_trace_enabled);
-    assert_eq!(loaded.config.db.dialect, "postgresql");
-    assert_eq!(loaded.config.db.dsn, "file:from-env.db");
+    assert_eq!(
+        loaded.config.db.dsn,
+        "postgres://env:user@localhost/from_env?sslmode=disable"
+    );
     assert!(loaded.config.db.debug);
     assert_eq!(loaded.config.cache.memory.expiration, "25m");
     assert_eq!(loaded.config.cache.memory.cleanup_interval, "55m");
@@ -419,7 +428,6 @@ fn preview_parse_get_and_validation_keep_current_contract() {
     let mut invalid = Config::default();
     invalid.server.port = 0;
     invalid.db.dsn = " ".to_owned();
-    invalid.db.dialect = "oracle".to_owned();
     invalid.log.name = " ".to_owned();
     invalid.log.encoding = "xml".to_owned();
     invalid.log.output = "stderr".to_owned();
@@ -439,7 +447,6 @@ fn preview_parse_get_and_validation_keep_current_contract() {
          vec![
              "server.port must be between 1 and 65535".to_owned(),
              "db.dsn cannot be empty".to_owned(),
-             "unsupported db.dialect 'oracle': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb".to_owned(),
              "log.name cannot be empty".to_owned(),
              "log.encoding must be one of: json, console".to_owned(),
              "log.output must be one of: stdio, file".to_owned(),
@@ -452,6 +459,23 @@ fn preview_parse_get_and_validation_keep_current_contract() {
             "server.cors.exposed_headers contains invalid header name 'Invalid Header'".to_owned(),
          ]
      );
+}
+
+#[test]
+fn load_rejects_sqlite_style_db_dsn() {
+    let _lock = test_guard();
+    let fixture = TestFixture::new("sqlite-style-dsn-rejected");
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+db:
+  dsn: "file:axonhub.db?cache=shared&_fk=1"
+"#,
+    );
+
+    let error = LoadedConfig::load().unwrap_err().to_string();
+    assert!(error
+        .contains("db.dsn must use a PostgreSQL DSN starting with postgres:// or postgresql://"));
 }
 
 #[test]
@@ -578,110 +602,33 @@ provider_edge:
 }
 
 #[test]
-fn load_rejects_non_target_rust_dialects_in_yaml() {
+fn load_accepts_postgres_dsn_from_yaml_and_env_override() {
     let _lock = test_guard();
-    let fixture = TestFixture::new("non-target-rust-dialects");
+    let fixture = TestFixture::new("postgres-dsn-surface");
     fixture.write_workspace_file(
         "config.yml",
         r#"
 db:
-  dialect: "mysql"
-  dsn: "mysql://root:root@127.0.0.1:3306/axonhub"
+  dsn: "postgres://file:user@localhost/file_axonhub?sslmode=disable"
 "#,
     );
 
-    let mysql_error = LoadedConfig::load().unwrap_err().to_string();
-    assert!(mysql_error.contains("unsupported db.dialect 'mysql'"));
-    assert!(mysql_error.contains("sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb"));
-
-    fixture.write_workspace_file(
-        "config.yml",
-        r#"
-db:
-  dialect: "tidb"
-  dsn: "mysql://root:root@127.0.0.1:4000/axonhub"
-"#,
+    let yaml_loaded = LoadedConfig::load().unwrap();
+    assert_eq!(
+        yaml_loaded.config.db.dsn,
+        "postgres://file:user@localhost/file_axonhub?sslmode=disable"
     );
 
-    let tidb_error = LoadedConfig::load().unwrap_err().to_string();
-    assert!(tidb_error.contains("unsupported db.dialect 'tidb'"));
-
-    fixture.write_workspace_file(
-        "config.yml",
-        r#"
-db:
-  dialect: "neon"
-  dsn: "postgres://axonhub:secret@localhost/axonhub?sslmode=require"
-"#,
-    );
-
-    let neon_error = LoadedConfig::load().unwrap_err().to_string();
-    assert!(neon_error.contains("unsupported db.dialect 'neon'"));
-
-    fixture.write_workspace_file(
-        "config.yml",
-        r#"
-db:
-  dialect: "oracle"
-  dsn: "oracle://unsupported"
-"#,
-    );
-
-    let unknown_error = LoadedConfig::load().unwrap_err().to_string();
-    assert!(unknown_error.contains("unsupported db.dialect 'oracle'"));
-    assert!(!unknown_error.contains("legacy-Go-only"));
-    assert!(!unknown_error.contains("migration-slice"));
-}
-
-#[test]
-fn load_rejects_non_target_rust_dialects_from_env_override() {
-    let _lock = test_guard();
-    let fixture = TestFixture::new("non-target-env-dialect");
-    fixture.set_env("AXONHUB_DB_DIALECT", "mysql");
     fixture.set_env(
         "AXONHUB_DB_DSN",
-        "mysql://axonhub:secret@localhost:3306/axonhub",
+        "postgres://env:user@localhost/env_axonhub?sslmode=disable",
     );
 
-    let mysql_error = LoadedConfig::load().unwrap_err().to_string();
-    assert!(mysql_error.contains("unsupported db.dialect 'mysql'"));
-
-    fixture.set_env("AXONHUB_DB_DIALECT", "tidb");
-    fixture.set_env("AXONHUB_DB_DSN", "mysql://root:root@127.0.0.1:4000/axonhub");
-
-    let tidb_error = LoadedConfig::load().unwrap_err().to_string();
-    assert!(tidb_error.contains("unsupported db.dialect 'tidb'"));
-
-    fixture.set_env("AXONHUB_DB_DIALECT", "neon");
-    fixture.set_env(
-        "AXONHUB_DB_DSN",
-        "postgres://axonhub:secret@localhost/axonhub?sslmode=disable",
+    let env_loaded = LoadedConfig::load().unwrap();
+    assert_eq!(
+        env_loaded.config.db.dsn,
+        "postgres://env:user@localhost/env_axonhub?sslmode=disable"
     );
-
-    let neon_error = LoadedConfig::load().unwrap_err().to_string();
-    assert!(neon_error.contains("unsupported db.dialect 'neon'"));
-}
-
-#[test]
-fn load_accepts_supported_sqlite_and_postgres_dialects() {
-    let _lock = test_guard();
-    let fixture = TestFixture::new("supported-dialects");
-
-    fixture.set_env("AXONHUB_DB_DIALECT", "sqlite");
-    fixture.set_env(
-        "AXONHUB_DB_DSN",
-        "file:axonhub.db?cache=shared&_fk=1&_pragma=journal_mode(WAL)",
-    );
-    let sqlite_loaded = LoadedConfig::load().unwrap();
-    assert_eq!(sqlite_loaded.config.db.dialect, "sqlite");
-
-    fixture.set_env("AXONHUB_DB_DIALECT", "postgres");
-    fixture.set_env(
-        "AXONHUB_DB_DSN",
-        "postgres://axonhub:secret@localhost/axonhub?sslmode=disable",
-    );
-    let postgres_loaded = LoadedConfig::load().unwrap();
-    assert_eq!(postgres_loaded.config.db.dialect, "postgres");
 }
 
 #[test]
@@ -915,11 +862,23 @@ log:
         "config.yml",
         r#"
 db:
-  dialect: "mysql"
-  dsn: "mysql://root:root@127.0.0.1:3306/axonhub"
+  dsn: " "
 "#,
     );
 
-    let dialect_error = load_for_cli().unwrap_err().to_string();
-    assert!(dialect_error.contains("unsupported db.dialect 'mysql'"));
+    let dsn_error = load_for_cli().unwrap_err().to_string();
+    assert_eq!(dsn_error, "db.dsn cannot be empty");
+
+    fixture.write_workspace_file(
+        "config.yml",
+        r#"
+db:
+  dsn: "file:axonhub.db?cache=shared&_fk=1"
+"#,
+    );
+
+    assert_eq!(
+        load_for_cli().unwrap_err().to_string(),
+        "db.dsn must use a PostgreSQL DSN starting with postgres:// or postgresql://"
+    );
 }

@@ -1,4 +1,3 @@
-use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -7,107 +6,14 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let backend = manager.get_database_backend();
-
-        let mut requests_created_at = ColumnDef::new(General::CreatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => requests_created_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => requests_created_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => requests_created_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        requests_created_at
-            .not_null()
-            .default(Expr::current_timestamp());
-
-        let mut requests_updated_at = ColumnDef::new(General::UpdatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => requests_updated_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => requests_updated_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => requests_updated_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        requests_updated_at
-            .not_null()
-            .default(Expr::current_timestamp());
-        if matches!(backend, DatabaseBackend::MySql) {
-            requests_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
-        }
-
-        let mut requests_source = ColumnDef::new(Requests::Source);
-        requests_source.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            requests_source.default("api");
-        }
-
-        let mut requests_format = ColumnDef::new(Requests::Format);
-        requests_format.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            requests_format.default("openai/chat_completions");
-        }
-
-        let mut requests_request_headers = ColumnDef::new(Requests::RequestHeaders);
-        if matches!(backend, DatabaseBackend::MySql) {
-            requests_request_headers.custom(Alias::new("LONGTEXT"));
-        } else {
-            requests_request_headers.text();
-        }
-        requests_request_headers.null();
-
-        let mut requests_request_body = ColumnDef::new(Requests::RequestBody);
-        if matches!(backend, DatabaseBackend::MySql) {
-            requests_request_body.custom(Alias::new("LONGTEXT"));
-        } else {
-            requests_request_body.text();
-            requests_request_body.default("{}");
-        }
-        requests_request_body.not_null();
-
-        let mut requests_response_body = ColumnDef::new(Requests::ResponseBody);
-        if matches!(backend, DatabaseBackend::MySql) {
-            requests_response_body.custom(Alias::new("LONGTEXT"));
-        } else {
-            requests_response_body.text();
-        }
-        requests_response_body.null();
-
-        let mut requests_response_chunks = ColumnDef::new(Requests::ResponseChunks);
-        if matches!(backend, DatabaseBackend::MySql) {
-            requests_response_chunks.custom(Alias::new("LONGTEXT"));
-        } else {
-            requests_response_chunks.text();
-        }
-        requests_response_chunks.null();
-
-        let mut requests_client_ip = ColumnDef::new(Requests::ClientIp);
-        requests_client_ip.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            requests_client_ip.default("");
-        }
-
-        let mut requests_content_saved_at = ColumnDef::new(Requests::ContentSavedAt);
-        match backend {
-            DatabaseBackend::Sqlite => requests_content_saved_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => requests_content_saved_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => requests_content_saved_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        requests_content_saved_at.null();
-
         manager
             .create_table(
                 Table::create()
                     .table(Requests::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(Requests::Id)
-                            .big_integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
-                    .col(requests_created_at)
-                    .col(requests_updated_at)
+                    .col(primary_id_column(Requests::Id))
+                    .col(timestamp_column(General::CreatedAt))
+                    .col(timestamp_column(General::UpdatedAt))
                     .col(ColumnDef::new(Requests::ApiKeyId).big_integer().null())
                     .col(
                         ColumnDef::new(Requests::ProjectId)
@@ -117,13 +23,28 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(Requests::TraceId).big_integer().null())
                     .col(ColumnDef::new(Requests::DataStorageId).big_integer().null())
-                    .col(requests_source)
+                    .col(
+                        ColumnDef::new(Requests::Source)
+                            .text()
+                            .not_null()
+                            .default("api"),
+                    )
                     .col(ColumnDef::new(Requests::ModelId).text().not_null())
-                    .col(requests_format)
-                    .col(requests_request_headers)
-                    .col(requests_request_body)
-                    .col(requests_response_body)
-                    .col(requests_response_chunks)
+                    .col(
+                        ColumnDef::new(Requests::Format)
+                            .text()
+                            .not_null()
+                            .default("openai/chat_completions"),
+                    )
+                    .col(ColumnDef::new(Requests::RequestHeaders).text().null())
+                    .col(
+                        ColumnDef::new(Requests::RequestBody)
+                            .text()
+                            .not_null()
+                            .default("{}"),
+                    )
+                    .col(ColumnDef::new(Requests::ResponseBody).text().null())
+                    .col(ColumnDef::new(Requests::ResponseChunks).text().null())
                     .col(ColumnDef::new(Requests::ChannelId).big_integer().null())
                     .col(ColumnDef::new(Requests::ExternalId).text().null())
                     .col(ColumnDef::new(Requests::Status).text().not_null())
@@ -133,12 +54,13 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(false),
                     )
-                    .col(requests_client_ip)
                     .col(
-                        ColumnDef::new(Requests::MetricsLatencyMs)
-                            .big_integer()
-                            .null(),
+                        ColumnDef::new(Requests::ClientIp)
+                            .text()
+                            .not_null()
+                            .default(""),
                     )
+                    .col(ColumnDef::new(Requests::MetricsLatencyMs).big_integer().null())
                     .col(
                         ColumnDef::new(Requests::MetricsFirstTokenLatencyMs)
                             .big_integer()
@@ -150,13 +72,9 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(false),
                     )
-                    .col(
-                        ColumnDef::new(Requests::ContentStorageId)
-                            .big_integer()
-                            .null(),
-                    )
+                    .col(ColumnDef::new(Requests::ContentStorageId).big_integer().null())
                     .col(ColumnDef::new(Requests::ContentStorageKey).text().null())
-                    .col(requests_content_saved_at)
+                    .col(nullable_text_timestamp_column(Requests::ContentSavedAt))
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_requests_api_key_id")
@@ -202,7 +120,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -214,7 +131,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -226,7 +142,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -238,7 +153,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -250,117 +164,40 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        let mut request_executions_created_at = ColumnDef::new(General::CreatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => request_executions_created_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => request_executions_created_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => request_executions_created_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        request_executions_created_at
-            .not_null()
-            .default(Expr::current_timestamp());
-
-        let mut request_executions_updated_at = ColumnDef::new(General::UpdatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => request_executions_updated_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => request_executions_updated_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => request_executions_updated_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        request_executions_updated_at
-            .not_null()
-            .default(Expr::current_timestamp());
-        if matches!(backend, DatabaseBackend::MySql) {
-            request_executions_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
-        }
-
-        let mut request_executions_format = ColumnDef::new(RequestExecutions::Format);
-        request_executions_format.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            request_executions_format.default("openai/chat_completions");
-        }
-
-        let mut request_executions_request_body = ColumnDef::new(RequestExecutions::RequestBody);
-        if matches!(backend, DatabaseBackend::MySql) {
-            request_executions_request_body.custom(Alias::new("LONGTEXT"));
-        } else {
-            request_executions_request_body.text();
-            request_executions_request_body.default("{}");
-        }
-        request_executions_request_body.not_null();
-
-        let mut request_executions_response_body = ColumnDef::new(RequestExecutions::ResponseBody);
-        if matches!(backend, DatabaseBackend::MySql) {
-            request_executions_response_body.custom(Alias::new("LONGTEXT"));
-        } else {
-            request_executions_response_body.text();
-        }
-        request_executions_response_body.null();
-
-        let mut request_executions_response_chunks =
-            ColumnDef::new(RequestExecutions::ResponseChunks);
-        if matches!(backend, DatabaseBackend::MySql) {
-            request_executions_response_chunks.custom(Alias::new("LONGTEXT"));
-        } else {
-            request_executions_response_chunks.text();
-        }
-        request_executions_response_chunks.null();
-
-        let mut request_executions_error_message = ColumnDef::new(RequestExecutions::ErrorMessage);
-        request_executions_error_message.text().null();
-
-        let mut request_executions_request_headers =
-            ColumnDef::new(RequestExecutions::RequestHeaders);
-        if matches!(backend, DatabaseBackend::MySql) {
-            request_executions_request_headers.custom(Alias::new("LONGTEXT"));
-        } else {
-            request_executions_request_headers.text();
-        }
-        request_executions_request_headers.null();
-
         manager
             .create_table(
                 Table::create()
                     .table(RequestExecutions::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(RequestExecutions::Id)
-                            .big_integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
-                    .col(request_executions_created_at)
-                    .col(request_executions_updated_at)
+                    .col(primary_id_column(RequestExecutions::Id))
+                    .col(timestamp_column(General::CreatedAt))
+                    .col(timestamp_column(General::UpdatedAt))
                     .col(
                         ColumnDef::new(RequestExecutions::ProjectId)
                             .big_integer()
                             .not_null()
                             .default(1),
                     )
-                    .col(
-                        ColumnDef::new(RequestExecutions::RequestId)
-                            .big_integer()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(RequestExecutions::ChannelId)
-                            .big_integer()
-                            .null(),
-                    )
-                    .col(
-                        ColumnDef::new(RequestExecutions::DataStorageId)
-                            .big_integer()
-                            .null(),
-                    )
+                    .col(ColumnDef::new(RequestExecutions::RequestId).big_integer().not_null())
+                    .col(ColumnDef::new(RequestExecutions::ChannelId).big_integer().null())
+                    .col(ColumnDef::new(RequestExecutions::DataStorageId).big_integer().null())
                     .col(ColumnDef::new(RequestExecutions::ExternalId).text().null())
                     .col(ColumnDef::new(RequestExecutions::ModelId).text().not_null())
-                    .col(request_executions_format)
-                    .col(request_executions_request_body)
-                    .col(request_executions_response_body)
-                    .col(request_executions_response_chunks)
-                    .col(request_executions_error_message)
+                    .col(
+                        ColumnDef::new(RequestExecutions::Format)
+                            .text()
+                            .not_null()
+                            .default("openai/chat_completions"),
+                    )
+                    .col(
+                        ColumnDef::new(RequestExecutions::RequestBody)
+                            .text()
+                            .not_null()
+                            .default("{}"),
+                    )
+                    .col(ColumnDef::new(RequestExecutions::ResponseBody).text().null())
+                    .col(ColumnDef::new(RequestExecutions::ResponseChunks).text().null())
+                    .col(ColumnDef::new(RequestExecutions::ErrorMessage).text().null())
                     .col(
                         ColumnDef::new(RequestExecutions::ResponseStatusCode)
                             .big_integer()
@@ -383,7 +220,7 @@ impl MigrationTrait for Migration {
                             .big_integer()
                             .null(),
                     )
-                    .col(request_executions_request_headers)
+                    .col(ColumnDef::new(RequestExecutions::RequestHeaders).text().null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_request_executions_request_id")
@@ -418,7 +255,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -430,75 +266,15 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        let mut usage_logs_created_at = ColumnDef::new(General::CreatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => usage_logs_created_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => usage_logs_created_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => usage_logs_created_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        usage_logs_created_at
-            .not_null()
-            .default(Expr::current_timestamp());
-
-        let mut usage_logs_updated_at = ColumnDef::new(General::UpdatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => usage_logs_updated_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => usage_logs_updated_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => usage_logs_updated_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        usage_logs_updated_at
-            .not_null()
-            .default(Expr::current_timestamp());
-        if matches!(backend, DatabaseBackend::MySql) {
-            usage_logs_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
-        }
-
-        let mut usage_logs_source = ColumnDef::new(UsageLogs::Source);
-        usage_logs_source.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            usage_logs_source.default("api");
-        }
-
-        let mut usage_logs_format = ColumnDef::new(UsageLogs::Format);
-        usage_logs_format.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            usage_logs_format.default("openai/chat_completions");
-        }
-
-        let mut usage_logs_cost_items = ColumnDef::new(UsageLogs::CostItems);
-        if matches!(backend, DatabaseBackend::MySql) {
-            usage_logs_cost_items.custom(Alias::new("LONGTEXT"));
-        } else {
-            usage_logs_cost_items.text();
-            usage_logs_cost_items.default("[]");
-        }
-        usage_logs_cost_items.not_null();
-
-        let mut usage_logs_cost_price_reference_id =
-            ColumnDef::new(UsageLogs::CostPriceReferenceId);
-        usage_logs_cost_price_reference_id.text().null();
-
         manager
             .create_table(
                 Table::create()
                     .table(UsageLogs::Table)
                     .if_not_exists()
-                    .col(
-                        ColumnDef::new(UsageLogs::Id)
-                            .big_integer()
-                            .not_null()
-                            .auto_increment()
-                            .primary_key(),
-                    )
-                    .col(usage_logs_created_at)
-                    .col(usage_logs_updated_at)
-                    .col(
-                        ColumnDef::new(UsageLogs::RequestId)
-                            .big_integer()
-                            .not_null(),
-                    )
+                    .col(primary_id_column(UsageLogs::Id))
+                    .col(timestamp_column(General::CreatedAt))
+                    .col(timestamp_column(General::UpdatedAt))
+                    .col(ColumnDef::new(UsageLogs::RequestId).big_integer().not_null())
                     .col(ColumnDef::new(UsageLogs::ApiKeyId).big_integer().null())
                     .col(
                         ColumnDef::new(UsageLogs::ProjectId)
@@ -580,11 +356,26 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(0),
                     )
-                    .col(usage_logs_source)
-                    .col(usage_logs_format)
+                    .col(
+                        ColumnDef::new(UsageLogs::Source)
+                            .text()
+                            .not_null()
+                            .default("api"),
+                    )
+                    .col(
+                        ColumnDef::new(UsageLogs::Format)
+                            .text()
+                            .not_null()
+                            .default("openai/chat_completions"),
+                    )
                     .col(ColumnDef::new(UsageLogs::TotalCost).double().null())
-                    .col(usage_logs_cost_items)
-                    .col(usage_logs_cost_price_reference_id)
+                    .col(
+                        ColumnDef::new(UsageLogs::CostItems)
+                            .text()
+                            .not_null()
+                            .default("[]"),
+                    )
+                    .col(ColumnDef::new(UsageLogs::CostPriceReferenceId).text().null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_usage_logs_request_id")
@@ -617,7 +408,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -628,7 +418,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -640,7 +429,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -652,7 +440,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -664,7 +451,6 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
-
         manager
             .create_index(
                 Index::create()
@@ -696,6 +482,27 @@ impl MigrationTrait for Migration {
             .drop_table(Table::drop().table(Requests::Table).if_exists().to_owned())
             .await
     }
+}
+
+fn primary_id_column(iden: impl IntoIden) -> ColumnDef {
+    let mut column = ColumnDef::new(iden);
+    column.big_integer().not_null().auto_increment().primary_key();
+    column
+}
+
+fn timestamp_column(iden: impl IntoIden) -> ColumnDef {
+    let mut column = ColumnDef::new(iden);
+    column
+        .custom(Alias::new("TEXT"))
+        .not_null()
+        .default(Expr::cust("CURRENT_TIMESTAMP::text"));
+    column
+}
+
+fn nullable_text_timestamp_column(iden: impl IntoIden) -> ColumnDef {
+    let mut column = ColumnDef::new(iden);
+    column.custom(Alias::new("TEXT")).null();
+    column
 }
 
 #[derive(DeriveIden)]

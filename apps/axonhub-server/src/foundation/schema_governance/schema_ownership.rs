@@ -19,10 +19,7 @@ use crate::foundation::{
 pub(crate) const SCHEMA_MIGRATION_CRATE_PATH: &str = "crates/axonhub-db-migration";
 pub(crate) const SCHEMA_ENTITY_CRATE_PATH: &str = "crates/axonhub-db-entity";
 pub(crate) const CURRENT_PERSISTENCE_ADAPTER_PATH: &str = "apps/axonhub-server/src/foundation";
-pub(crate) const SQLITE_LEGACY_DDL_SOURCE_PATH: &str =
-    "apps/axonhub-server/src/foundation/shared.rs";
-pub(crate) const POSTGRES_LEGACY_DDL_SOURCE_PATH: &str =
-    "apps/axonhub-server/src/foundation/system.rs";
+pub(crate) const LEGACY_DDL_REFERENCE_PATH: &str = "apps/axonhub-server/src/foundation/system.rs";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SchemaAuthority {
@@ -56,8 +53,7 @@ pub(crate) struct RepositoryStructure {
 pub(crate) struct TableGroupOwnership {
     pub(crate) group: &'static str,
     pub(crate) tables: &'static [&'static str],
-    pub(crate) sqlite_legacy_source_path: &'static str,
-    pub(crate) postgres_legacy_source_path: &'static str,
+    pub(crate) legacy_reference_path: &'static str,
     pub(crate) schema_authority: SchemaAuthority,
 }
 
@@ -104,9 +100,7 @@ pub(crate) struct SchemaOwnershipContract {
     pub(crate) entity_workflow: EntityWorkflow,
     pub(crate) production_schema_sync_policy: ProductionSchemaSyncPolicy,
     pub(crate) repository_structure: RepositoryStructure,
-    pub(crate) supported_runtime_dialects: &'static [&'static str],
-    pub(crate) verified_runtime_dialects: &'static [&'static str],
-    pub(crate) future_runtime_dialects: &'static [&'static str],
+    pub(crate) runtime_database: &'static str,
     pub(crate) table_groups: &'static [TableGroupOwnership],
     pub(crate) bootstrap: BootstrapSemanticsContract,
     pub(crate) raw_sql_boundaries: &'static [RawSqlBoundaryRule],
@@ -187,43 +181,37 @@ const CURRENT_TABLE_GROUPS: &[TableGroupOwnership] = &[
     TableGroupOwnership {
         group: "bootstrap_control",
         tables: BOOTSTRAP_CONTROL_TABLES,
-        sqlite_legacy_source_path: SQLITE_LEGACY_DDL_SOURCE_PATH,
-        postgres_legacy_source_path: POSTGRES_LEGACY_DDL_SOURCE_PATH,
+        legacy_reference_path: LEGACY_DDL_REFERENCE_PATH,
         schema_authority: SchemaAuthority::SeaOrmMigrations,
     },
     TableGroupOwnership {
         group: "request_context",
         tables: REQUEST_CONTEXT_TABLES,
-        sqlite_legacy_source_path: SQLITE_LEGACY_DDL_SOURCE_PATH,
-        postgres_legacy_source_path: POSTGRES_LEGACY_DDL_SOURCE_PATH,
+        legacy_reference_path: LEGACY_DDL_REFERENCE_PATH,
         schema_authority: SchemaAuthority::SeaOrmMigrations,
     },
     TableGroupOwnership {
         group: "catalog",
         tables: CATALOG_TABLES,
-        sqlite_legacy_source_path: SQLITE_LEGACY_DDL_SOURCE_PATH,
-        postgres_legacy_source_path: POSTGRES_LEGACY_DDL_SOURCE_PATH,
+        legacy_reference_path: LEGACY_DDL_REFERENCE_PATH,
         schema_authority: SchemaAuthority::SeaOrmMigrations,
     },
     TableGroupOwnership {
         group: "request_ledger",
         tables: REQUEST_LEDGER_TABLES,
-        sqlite_legacy_source_path: SQLITE_LEGACY_DDL_SOURCE_PATH,
-        postgres_legacy_source_path: POSTGRES_LEGACY_DDL_SOURCE_PATH,
+        legacy_reference_path: LEGACY_DDL_REFERENCE_PATH,
         schema_authority: SchemaAuthority::SeaOrmMigrations,
     },
     TableGroupOwnership {
         group: "operational",
         tables: OPERATIONAL_TABLES,
-        sqlite_legacy_source_path: SQLITE_LEGACY_DDL_SOURCE_PATH,
-        postgres_legacy_source_path: POSTGRES_LEGACY_DDL_SOURCE_PATH,
+        legacy_reference_path: LEGACY_DDL_REFERENCE_PATH,
         schema_authority: SchemaAuthority::SeaOrmMigrations,
     },
     TableGroupOwnership {
         group: "persistence_extension",
         tables: PERSISTENCE_EXTENSION_TABLES,
-        sqlite_legacy_source_path: SQLITE_LEGACY_DDL_SOURCE_PATH,
-        postgres_legacy_source_path: POSTGRES_LEGACY_DDL_SOURCE_PATH,
+        legacy_reference_path: LEGACY_DDL_REFERENCE_PATH,
         schema_authority: SchemaAuthority::SeaOrmMigrations,
     },
 ];
@@ -246,7 +234,7 @@ const RAW_SQL_BOUNDARY_RULES: &[RawSqlBoundaryRule] = &[
     RawSqlBoundaryRule {
         location: SCHEMA_MIGRATION_CRATE_PATH,
         usage: RawSqlUsage::MigrationDialectStep,
-        purpose: "Dialect-specific DDL or data backfill that SeaORM cannot express consistently across sqlite, postgres, and mysql.",
+        purpose: "PostgreSQL migration DDL or data backfill that SeaORM cannot express directly.",
         allowed: true,
     },
     RawSqlBoundaryRule {
@@ -266,9 +254,7 @@ const CURRENT_SCHEMA_OWNERSHIP_CONTRACT: SchemaOwnershipContract = SchemaOwnersh
         entity_crate_path: SCHEMA_ENTITY_CRATE_PATH,
         current_repository_adapter_path: CURRENT_PERSISTENCE_ADAPTER_PATH,
     },
-    supported_runtime_dialects: &["sqlite", "postgres"],
-    verified_runtime_dialects: &["sqlite", "postgres"],
-    future_runtime_dialects: &[],
+    runtime_database: "postgres",
     table_groups: CURRENT_TABLE_GROUPS,
     bootstrap: CURRENT_BOOTSTRAP_CONTRACT,
     raw_sql_boundaries: RAW_SQL_BOUNDARY_RULES,
@@ -291,27 +277,7 @@ mod tests {
         current_schema_ownership_contract, table_group, EntityWorkflow, ProductionSchemaSyncPolicy,
         RawSqlUsage, SchemaAuthority,
     };
-    use crate::foundation::{
-        authz::scope_strings,
-        seaorm::SeaOrmConnectionFactory,
-        shared::SYSTEM_KEY_INITIALIZED,
-        system::{SqliteBootstrapService, SqliteFoundation},
-    };
-    use axonhub_http::{InitializeSystemRequest, SystemBootstrapPort};
-    use axonhub_db_entity::{api_keys, data_storages, projects, roles, systems, user_projects};
-    use sea_orm::{ColumnTrait, DatabaseBackend, EntityTrait, PaginatorTrait, QueryFilter};
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temp_sqlite_path(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!("axonhub-{name}-{unique}.db"))
-    }
-
+    use crate::foundation::seaorm::SeaOrmConnectionFactory;
     #[test]
     fn schema_ownership_contract_is_migration_first() {
         let contract = current_schema_ownership_contract();
@@ -333,20 +299,15 @@ mod tests {
             contract.repository_structure.entity_crate_path,
             "crates/axonhub-db-entity"
         );
-        assert_eq!(contract.supported_runtime_dialects, ["sqlite", "postgres"]);
-        assert_eq!(contract.verified_runtime_dialects, ["sqlite", "postgres"]);
-        assert!(contract.future_runtime_dialects.is_empty());
+        assert_eq!(contract.runtime_database, "postgres");
     }
 
     #[test]
     fn schema_ownership_runtime_contract_matches_connection_factory_variants() {
         assert_eq!(
-            SeaOrmConnectionFactory::sqlite(":memory:".to_owned()).backend(),
-            DatabaseBackend::Sqlite
-        );
-        assert_eq!(
-            SeaOrmConnectionFactory::postgres("postgres://localhost/axonhub".to_owned()).backend(),
-            DatabaseBackend::Postgres
+            SeaOrmConnectionFactory::postgres("postgres://localhost/axonhub".to_owned())
+                .runtime_dsn(),
+            "postgres://localhost/axonhub"
         );
     }
 
@@ -408,11 +369,7 @@ mod tests {
             persistence_extension,
         ] {
             assert_eq!(
-                group.sqlite_legacy_source_path,
-                "apps/axonhub-server/src/foundation/shared.rs"
-            );
-            assert_eq!(
-                group.postgres_legacy_source_path,
+                group.legacy_reference_path,
                 "apps/axonhub-server/src/foundation/system.rs"
             );
             assert_eq!(group.schema_authority, SchemaAuthority::SeaOrmMigrations);
@@ -445,193 +402,6 @@ mod tests {
     #[test]
     fn schema_ownership_contract_limits_raw_sql_usage() {
         schema_ownership_contract_limits_raw_sql_usage_inner();
-    }
-
-    #[test]
-    fn sqlite_bootstrap_matches_preserved_schema_contract() {
-        let db_path = temp_sqlite_path("schema-ownership-bootstrap");
-        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
-        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
-        let contract = current_schema_ownership_contract();
-
-        bootstrap
-            .initialize(&InitializeSystemRequest {
-                owner_email: "owner@example.com".to_owned(),
-                owner_password: "password123".to_owned(),
-                owner_first_name: "System".to_owned(),
-                owner_last_name: "Owner".to_owned(),
-                brand_name: "AxonHub".to_owned(),
-            })
-            .unwrap();
-
-        foundation.seaorm().run_sync(move |db| async move {
-            let connection = db.connect_migrated().await.unwrap();
-
-            for key in contract.bootstrap.preserved_system_keys {
-                let value = systems::Entity::find()
-                    .filter(systems::Column::Key.eq(*key))
-                    .filter(systems::Column::DeletedAt.eq(0_i64))
-                    .into_partial_model::<systems::KeyValue>()
-                    .one(&connection)
-                    .await
-                    .unwrap();
-                assert!(value.is_some(), "missing system key {key}");
-            }
-
-            let initialized_value = systems::Entity::find()
-                .filter(systems::Column::Key.eq(SYSTEM_KEY_INITIALIZED))
-                .filter(systems::Column::DeletedAt.eq(0_i64))
-                .into_partial_model::<systems::KeyValue>()
-                .one(&connection)
-                .await
-                .unwrap()
-                .map(|row| row.value)
-                .expect("initialized system key exists");
-            assert_eq!(initialized_value, "true");
-
-            let storage_id = systems::Entity::find()
-                .filter(systems::Column::Key.eq(contract.bootstrap.preserved_system_keys[4]))
-                .filter(systems::Column::DeletedAt.eq(0_i64))
-                .into_partial_model::<systems::KeyValue>()
-                .one(&connection)
-                .await
-                .unwrap()
-                .map(|row| row.value)
-                .expect("default storage key exists")
-                .parse::<i64>()
-                .unwrap();
-            let primary_storage = data_storages::Entity::find_by_id(storage_id)
-                .filter(data_storages::Column::DeletedAt.eq(0_i64))
-                .one(&connection)
-                .await
-                .unwrap()
-                .expect("primary storage exists");
-            assert_eq!(primary_storage.name, contract.bootstrap.primary_data_storage_name);
-            assert_eq!(primary_storage.description, contract.bootstrap.primary_data_storage_description);
-            assert_eq!(primary_storage.type_field, contract.bootstrap.primary_data_storage_type);
-            assert_eq!(primary_storage.status, contract.bootstrap.primary_data_storage_status);
-            assert_eq!(primary_storage.settings, contract.bootstrap.primary_data_storage_settings_json);
-
-            let default_project = projects::Entity::find()
-                .filter(projects::Column::Name.eq(contract.bootstrap.default_project_name))
-                .filter(projects::Column::DeletedAt.eq(0_i64))
-                .one(&connection)
-                .await
-                .unwrap()
-                .expect("default project exists");
-            assert_eq!(default_project.name, contract.bootstrap.default_project_name);
-            assert_eq!(default_project.description, contract.bootstrap.default_project_description);
-            assert_eq!(default_project.status, contract.bootstrap.default_project_status);
-
-            for role in contract.bootstrap.default_project_roles {
-                let role_row = roles::Entity::find()
-                    .filter(roles::Column::Name.eq(role.name))
-                    .filter(roles::Column::ProjectId.eq(default_project.id))
-                    .filter(roles::Column::DeletedAt.eq(0_i64))
-                    .one(&connection)
-                    .await
-                    .unwrap()
-                    .expect("seeded role exists");
-                let stored_scopes: Vec<String> = serde_json::from_str(&role_row.scopes).unwrap();
-                assert_eq!(stored_scopes, scope_strings(role.scopes));
-            }
-
-            for api_key in contract.bootstrap.default_api_keys {
-                let row = api_keys::Entity::find()
-                    .filter(api_keys::Column::Key.eq(api_key.value))
-                    .filter(api_keys::Column::DeletedAt.eq(0_i64))
-                    .one(&connection)
-                    .await
-                    .unwrap()
-                    .expect("seeded api key exists");
-                let scopes: Vec<String> = serde_json::from_str(&row.scopes).unwrap();
-                assert_eq!(row.name, api_key.name);
-                assert_eq!(row.type_field, api_key.key_type);
-                assert_eq!(row.status, "enabled");
-                assert_eq!(scopes, scope_strings(api_key.scopes));
-            }
-
-            let owner_membership_count = user_projects::Entity::find()
-                .filter(user_projects::Column::UserId.eq(1_i64))
-                .filter(user_projects::Column::ProjectId.eq(default_project.id))
-                .filter(user_projects::Column::IsOwner.eq(true))
-                .count(&connection)
-                .await
-                .unwrap();
-            assert_eq!(owner_membership_count, 1);
-            Ok::<_, ()>(())
-        }).unwrap();
-
-        std::fs::remove_file(db_path).ok();
-    }
-
-    #[test]
-    fn sqlite_legacy_bootstrap_upgrades_to_persistence_extension_schema() {
-        let db_path = temp_sqlite_path("schema-ownership-upgrade");
-        let foundation = Arc::new(SqliteFoundation::new(db_path.display().to_string()));
-        let bootstrap = SqliteBootstrapService::new(foundation.clone(), "v0.9.20".to_owned());
-
-        bootstrap
-            .initialize(&InitializeSystemRequest {
-                owner_email: "owner@example.com".to_owned(),
-                owner_password: "password123".to_owned(),
-                owner_first_name: "System".to_owned(),
-                owner_last_name: "Owner".to_owned(),
-                brand_name: "AxonHub".to_owned(),
-            })
-            .unwrap();
-
-        foundation.seaorm().run_sync(|db| async move {
-            let connection = db.connect_migrated().await.unwrap();
-            let prompts_count = axonhub_db_entity::prompts::Entity::find()
-                .count(&connection)
-                .await
-                .unwrap();
-            assert_eq!(prompts_count, 0);
-            Ok::<_, ()>(())
-        }).unwrap();
-
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime
-            .block_on(
-                SeaOrmConnectionFactory::sqlite(db_path.display().to_string()).connect_migrated(),
-            )
-            .unwrap();
-
-        foundation.seaorm().run_sync(|db| async move {
-            let connection = db.connect_migrated().await.unwrap();
-            for table_count in [
-                axonhub_db_entity::prompts::Entity::find().count(&connection).await.unwrap(),
-                axonhub_db_entity::prompt_protection_rules::Entity::find().count(&connection).await.unwrap(),
-                axonhub_db_entity::channel_model_prices::Entity::find().count(&connection).await.unwrap(),
-                axonhub_db_entity::channel_model_price_versions::Entity::find().count(&connection).await.unwrap(),
-                axonhub_db_entity::channel_override_templates::Entity::find().count(&connection).await.unwrap(),
-            ] {
-                assert!(table_count >= 0);
-            }
-
-            let initialized_value = systems::Entity::find()
-                .filter(systems::Column::Key.eq(SYSTEM_KEY_INITIALIZED))
-                .filter(systems::Column::DeletedAt.eq(0_i64))
-                .into_partial_model::<systems::KeyValue>()
-                .one(&connection)
-                .await
-                .unwrap()
-                .map(|row| row.value)
-                .expect("initialized system key exists");
-            assert_eq!(initialized_value, "true");
-
-            let default_project_count = projects::Entity::find()
-                .filter(projects::Column::Name.eq("Default Project"))
-                .filter(projects::Column::DeletedAt.eq(0_i64))
-                .count(&connection)
-                .await
-                .unwrap();
-            assert_eq!(default_project_count, 1);
-            Ok::<_, ()>(())
-        }).unwrap();
-
-        std::fs::remove_file(db_path).ok();
     }
 }
 

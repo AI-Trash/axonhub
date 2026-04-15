@@ -1,13 +1,12 @@
 use anyhow::{anyhow, Context, Result};
 
-use crate::contract::validate_db_dialect;
 use crate::types::Config;
 use http::header::HeaderName;
 use http::method::Method;
 
 impl Config {
     pub(crate) fn ensure_cli_loadable(&self) -> Result<()> {
-        validate_db_dialect(&self.db.dialect)?;
+        ensure_postgres_dsn("db.dsn", &self.db.dsn)?;
         ensure_log_level(&self.log.level)?;
         self.ensure_duration_fields_parse()?;
 
@@ -21,11 +20,7 @@ impl Config {
             errors.push("server.port must be between 1 and 65535".to_owned());
         }
 
-        if self.db.dsn.trim().is_empty() {
-            errors.push("db.dsn cannot be empty".to_owned());
-        }
-
-        if let Err(error) = validate_db_dialect(&self.db.dialect) {
+        if let Err(error) = ensure_postgres_dsn("db.dsn", &self.db.dsn) {
             errors.push(error.to_string());
         }
 
@@ -202,6 +197,18 @@ impl Config {
             ("cache.redis.expiration", &self.cache.redis.expiration),
         ]
     }
+}
+
+fn ensure_postgres_dsn(field: &str, value: &str) -> Result<()> {
+    ensure_required_string(field, value)?;
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.starts_with("postgres://") || normalized.starts_with("postgresql://") {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "{field} must use a PostgreSQL DSN starting with postgres:// or postgresql://"
+    ))
 }
 
 fn validate_provider_edge(config: &crate::types::ProviderEdgeConfig, errors: &mut Vec<String>) {

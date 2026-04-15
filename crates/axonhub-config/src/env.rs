@@ -250,11 +250,6 @@ const ENV_OVERRIDES: &[EnvOverride] = &[
         kind: EnvValueKind::Bool,
     },
     EnvOverride {
-        env: "AXONHUB_DB_DIALECT",
-        path: &["db", "dialect"],
-        kind: EnvValueKind::String,
-    },
-    EnvOverride {
         env: "AXONHUB_DB_DSN",
         path: &["db", "dsn"],
         kind: EnvValueKind::String,

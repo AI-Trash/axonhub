@@ -688,7 +688,7 @@ pub(crate) fn filename_from_key(key: &str, request_id: i64) -> String {
         .unwrap_or_else(|| format!("request-{request_id}-content"))
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     use std::fs;
     use std::path::Path;

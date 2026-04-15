@@ -1,4 +1,3 @@
-use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -31,17 +30,14 @@ impl MigrationTrait for Migration {
             return Ok(());
         }
 
-        match manager.get_database_backend() {
-            DatabaseBackend::Sqlite => Ok(()),
-            _ => manager
-                .alter_table(
-                    Table::alter()
-                        .table(Users::Table)
-                        .drop_column(Users::TokenVersion)
-                        .to_owned(),
-                )
-                .await,
-        }
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(Users::Table)
+                    .drop_column(Users::TokenVersion)
+                    .to_owned(),
+            )
+            .await
     }
 }
 

@@ -44,6 +44,7 @@ pub(crate) const BACKUP_VERSION: &str = "1.1";
 pub(crate) const AUTO_BACKUP_PREFIX: &str = "axonhub-backup-";
 pub(crate) const AUTO_BACKUP_SUFFIX: &str = ".json";
 
+#[cfg(any())]
 pub(crate) const SYSTEMS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS systems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS systems (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const DATA_STORAGES_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS data_storages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,6 +72,7 @@ CREATE TABLE IF NOT EXISTS data_storages (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const USERS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,6 +92,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const PROJECTS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,6 +105,7 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const USER_PROJECTS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS user_projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,6 +119,7 @@ CREATE TABLE IF NOT EXISTS user_projects (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const ROLES_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS roles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -128,6 +134,7 @@ CREATE TABLE IF NOT EXISTS roles (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const USER_ROLES_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS user_roles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,6 +146,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const API_KEYS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,6 +164,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const THREADS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS threads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,6 +175,7 @@ CREATE TABLE IF NOT EXISTS threads (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const TRACES_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS traces (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -177,6 +187,7 @@ CREATE TABLE IF NOT EXISTS traces (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const CHANNELS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS channels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -203,6 +214,7 @@ CREATE TABLE IF NOT EXISTS channels (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const MODELS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS models (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,6 +235,7 @@ CREATE TABLE IF NOT EXISTS models (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const REQUESTS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -253,6 +266,7 @@ CREATE TABLE IF NOT EXISTS requests (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const REQUEST_EXECUTIONS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS request_executions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,6 +292,7 @@ CREATE TABLE IF NOT EXISTS request_executions (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const REALTIME_SESSIONS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS realtime_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -298,6 +313,7 @@ CREATE TABLE IF NOT EXISTS realtime_sessions (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const PROMPTS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS prompts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -316,6 +332,7 @@ CREATE TABLE IF NOT EXISTS prompts (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const PROMPT_PROTECTION_RULES_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS prompt_protection_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -331,6 +348,7 @@ CREATE TABLE IF NOT EXISTS prompt_protection_rules (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const USAGE_LOGS_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS usage_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -362,6 +380,7 @@ CREATE TABLE IF NOT EXISTS usage_logs (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const CHANNEL_PROBES_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS channel_probes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -377,6 +396,7 @@ CREATE TABLE IF NOT EXISTS channel_probes (
 );
 ";
 
+#[cfg(any())]
 pub(crate) const PROVIDER_QUOTA_STATUSES_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS provider_quota_statuses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -412,6 +432,7 @@ pub(crate) fn format_unix_timestamp(timestamp: i64) -> String {
     humantime::format_rfc3339_seconds(system_time).to_string()
 }
 
+#[cfg(any())]
 pub(crate) fn bool_to_sql(value: bool) -> i64 {
     if value {
         1

@@ -145,7 +145,6 @@ pub struct ApiAuthConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbConfig {
-    pub dialect: String,
     pub dsn: String,
     pub debug: bool,
 }
@@ -153,8 +152,7 @@ pub struct DbConfig {
 impl Default for DbConfig {
     fn default() -> Self {
         Self {
-            dialect: "sqlite3".to_owned(),
-            dsn: "file:axonhub.db?cache=shared&_fk=1&_pragma=journal_mode(WAL)".to_owned(),
+            dsn: "postgres://axonhub:secret@localhost/axonhub?sslmode=disable".to_owned(),
             debug: false,
         }
     }

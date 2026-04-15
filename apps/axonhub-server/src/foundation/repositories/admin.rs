@@ -48,7 +48,7 @@ impl AdminStorageRepository for SeaOrmAdminStorageRepository {
             let connection = db.connect_migrated().await.map_err(|error| AdminError::Internal {
                 message: format!("Failed to connect through SeaORM: {error}"),
             })?;
-            query_request_content_record_seaorm(&connection, db.backend(), request_id).await
+            query_request_content_record_seaorm(&connection, request_id).await
         })
     }
 
@@ -58,14 +58,13 @@ impl AdminStorageRepository for SeaOrmAdminStorageRepository {
             let connection = db.connect_migrated().await.map_err(|error| AdminError::Internal {
                 message: format!("Failed to connect through SeaORM: {error}"),
             })?;
-            query_data_storage_seaorm(&connection, db.backend(), storage_id).await
+            query_data_storage_seaorm(&connection, storage_id).await
         })
     }
 }
 
 async fn query_request_content_record_seaorm(
     db: &impl sea_orm::ConnectionTrait,
-    _backend: sea_orm::DatabaseBackend,
     request_id: i64,
 ) -> Result<Option<StoredRequestContentRecord>, AdminError> {
     requests::Entity::find_by_id(request_id)
@@ -88,7 +87,6 @@ async fn query_request_content_record_seaorm(
 
 async fn query_data_storage_seaorm(
     db: &impl sea_orm::ConnectionTrait,
-    _backend: sea_orm::DatabaseBackend,
     storage_id: i64,
 ) -> Result<Option<DataStorageRecord>, AdminError> {
     data_storages::Entity::find_by_id(storage_id)

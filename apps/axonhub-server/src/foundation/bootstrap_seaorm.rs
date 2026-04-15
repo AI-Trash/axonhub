@@ -1,8 +1,8 @@
 use axonhub_db_entity::{api_keys, data_storages, projects, roles, systems, user_projects, users};
 use axonhub_http::InitializeSystemRequest;
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseBackend, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, TransactionTrait,
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    TransactionTrait,
 };
 
 use super::{
@@ -39,7 +39,6 @@ pub(crate) async fn seaorm_initialize(
     request: &InitializeSystemRequest,
 ) -> Result<(), sea_orm::DbErr> {
     let db = dbf.connect_migrated().await?;
-    let engine = dbf.backend();
     let tx = db.begin().await?;
 
     if query_is_initialized_seaorm(&tx).await? {
@@ -49,9 +48,9 @@ pub(crate) async fn seaorm_initialize(
     let primary_data_storage_id = ensure_primary_data_storage_seaorm(&tx).await?;
     let owner_user_id = ensure_owner_user_seaorm(&tx, request).await?;
     let default_project_id = ensure_default_project_seaorm(&tx).await?;
-    ensure_default_project_roles_seaorm(&tx, engine, default_project_id).await?;
+    ensure_default_project_roles_seaorm(&tx, default_project_id).await?;
     ensure_owner_project_membership_seaorm(&tx, owner_user_id, default_project_id).await?;
-    ensure_default_api_keys_seaorm(&tx, engine, owner_user_id, default_project_id).await?;
+    ensure_default_api_keys_seaorm(&tx, owner_user_id, default_project_id).await?;
 
     let secret =
         generate_secret_key().map_err(|error| sea_orm::DbErr::Custom(error.to_string()))?;
@@ -96,8 +95,7 @@ where
 
 fn is_missing_systems_table_error(error: &sea_orm::DbErr) -> bool {
     let message = error.to_string().to_ascii_lowercase();
-    message.contains("no such table: systems")
-        || message.contains("relation \"systems\" does not exist")
+    message.contains("relation \"systems\" does not exist")
         || message.contains("table \"systems\" does not exist")
 }
 
@@ -313,13 +311,11 @@ where
 
 pub(crate) async fn ensure_default_project_roles_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
     project_id: i64,
 ) -> Result<(), sea_orm::DbErr>
 where
     C: ConnectionTrait,
 {
-    let _ = backend;
     ensure_role_with_scopes_seaorm(db, "Admin", ROLE_LEVEL_PROJECT, project_id, PROJECT_ADMIN_SCOPES)
         .await?;
     ensure_role_with_scopes_seaorm(
@@ -383,14 +379,12 @@ where
 
 pub(crate) async fn ensure_default_api_keys_seaorm<C>(
     db: &C,
-    backend: DatabaseBackend,
     user_id: i64,
     project_id: i64,
 ) -> Result<(), sea_orm::DbErr>
 where
     C: ConnectionTrait,
 {
-    let _ = backend;
     ensure_api_key_with_scopes_seaorm(
         db,
         user_id,

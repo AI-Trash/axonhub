@@ -1,4 +1,3 @@
-use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 use sea_query::TableCreateStatement;
 
@@ -8,10 +7,8 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let backend = manager.get_database_backend();
-
         manager
-            .create_table(realtime_sessions_table_statement(backend).to_owned())
+            .create_table(realtime_sessions_table_statement().to_owned())
             .await?;
 
         manager
@@ -50,7 +47,7 @@ impl MigrationTrait for Migration {
             .await?;
 
         manager
-            .create_table(operational_runs_table_statement(backend).to_owned())
+            .create_table(operational_runs_table_statement().to_owned())
             .await?;
 
         manager
@@ -111,21 +108,19 @@ impl MigrationTrait for Migration {
     }
 }
 
-pub(crate) fn realtime_sessions_table_statement(
-    backend: DatabaseBackend,
-) -> TableCreateStatement {
-    let mut opened_at = timestamp_column(backend, RealtimeSessions::OpenedAt, false);
+pub(crate) fn realtime_sessions_table_statement() -> TableCreateStatement {
+    let mut opened_at = timestamp_column(RealtimeSessions::OpenedAt);
     opened_at.not_null().default(Expr::current_timestamp());
 
-    let mut last_activity_at = timestamp_column(backend, RealtimeSessions::LastActivityAt, false);
+    let mut last_activity_at = timestamp_column(RealtimeSessions::LastActivityAt);
     last_activity_at
         .not_null()
         .default(Expr::current_timestamp());
 
-    let mut closed_at = timestamp_column(backend, RealtimeSessions::ClosedAt, false);
+    let mut closed_at = timestamp_column(RealtimeSessions::ClosedAt);
     closed_at.null();
 
-    let mut expires_at = timestamp_column(backend, RealtimeSessions::ExpiresAt, false);
+    let mut expires_at = timestamp_column(RealtimeSessions::ExpiresAt);
     expires_at.null();
 
     Table::create()
@@ -191,38 +186,15 @@ pub(crate) fn realtime_sessions_table_statement(
         .to_owned()
 }
 
-pub(crate) fn operational_runs_table_statement(
-    backend: DatabaseBackend,
-) -> TableCreateStatement {
+pub(crate) fn operational_runs_table_statement() -> TableCreateStatement {
     let mut started_at = ColumnDef::new(OperationalRuns::StartedAt);
-    match backend {
-        DatabaseBackend::Sqlite => {
-            started_at.custom(Alias::new("TEXT"));
-            started_at.not_null().default(Expr::current_timestamp());
-        }
-        DatabaseBackend::Postgres => {
-            started_at.custom(Alias::new("TEXT"));
-            started_at
-                .not_null()
-                .default(Expr::cust("CURRENT_TIMESTAMP::text"));
-        }
-        DatabaseBackend::MySql => {
-            started_at.timestamp();
-            started_at.not_null().default(Expr::current_timestamp());
-        }
-        _ => unreachable!("unsupported database backend: {:?}", backend),
-    };
+    started_at
+        .custom(Alias::new("TEXT"))
+        .not_null()
+        .default(Expr::cust("CURRENT_TIMESTAMP::text"));
 
     let mut finished_at = ColumnDef::new(OperationalRuns::FinishedAt);
-    match backend {
-        DatabaseBackend::Sqlite | DatabaseBackend::Postgres => {
-            finished_at.custom(Alias::new("TEXT"));
-        }
-        DatabaseBackend::MySql => {
-            finished_at.timestamp();
-        }
-        _ => unreachable!("unsupported database backend: {:?}", backend),
-    };
+    finished_at.custom(Alias::new("TEXT"));
     finished_at.null();
 
     Table::create()
@@ -273,23 +245,9 @@ pub(crate) fn operational_runs_table_statement(
         .to_owned()
 }
 
-fn timestamp_column(backend: DatabaseBackend, iden: impl IntoIden, on_update: bool) -> ColumnDef {
+fn timestamp_column(iden: impl IntoIden) -> ColumnDef {
     let mut column = ColumnDef::new(iden);
-    match backend {
-        DatabaseBackend::Sqlite => {
-            column.custom(Alias::new("TEXT"));
-        }
-        DatabaseBackend::Postgres => {
-            column.timestamp_with_time_zone();
-        }
-        DatabaseBackend::MySql => {
-            column.timestamp();
-            if on_update {
-                column.extra("ON UPDATE CURRENT_TIMESTAMP");
-            }
-        }
-        _ => unreachable!("unsupported database backend: {:?}", backend),
-    };
+    column.custom(Alias::new("TEXT"));
     column
 }
 

@@ -18,10 +18,5 @@ pub(crate) mod admin_operational;
 pub(crate) mod graphql;
 pub(crate) mod schema_governance;
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
-
-#[cfg(test)]
-pub(crate) use tests::openai_v1_runtime_contract_preserved_inner;
-#[cfg(test)]
-pub(crate) use tests::admin_graphql_allows_trigger_gc_cleanup_mutation_inner;

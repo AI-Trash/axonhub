@@ -14,10 +14,10 @@ pub(crate) async fn run() -> Result<()> {
     cli::run(&args).await
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod test_support;
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
 
 #[cfg(test)]

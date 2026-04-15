@@ -1,4 +1,3 @@
-use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -7,28 +6,26 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let backend = manager.get_database_backend();
-
-        let mut prompts_created_at = timestamp_column(backend, Prompts::CreatedAt, false);
+        let mut prompts_created_at = timestamp_column(Prompts::CreatedAt);
         prompts_created_at
             .not_null()
             .default(Expr::current_timestamp());
-        let mut prompts_updated_at = timestamp_column(backend, Prompts::UpdatedAt, true);
+        let mut prompts_updated_at = timestamp_column(Prompts::UpdatedAt);
         prompts_updated_at
             .not_null()
             .default(Expr::current_timestamp());
 
-        let mut prompts_description = ColumnDef::new(Prompts::Description);
-        prompts_description.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            prompts_description.default("");
-        }
+        let prompts_description = ColumnDef::new(Prompts::Description)
+            .text()
+            .not_null()
+            .default("")
+            .to_owned();
 
-        let mut prompts_status = ColumnDef::new(Prompts::Status);
-        prompts_status.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            prompts_status.default("disabled");
-        }
+        let prompts_status = ColumnDef::new(Prompts::Status)
+            .text()
+            .not_null()
+            .default("disabled")
+            .to_owned();
 
         manager
             .create_table(
@@ -79,16 +76,9 @@ impl MigrationTrait for Migration {
             .table(Prompts::Table)
             .unique()
             .if_not_exists()
-            .col(Prompts::ProjectId);
-        if matches!(backend, DatabaseBackend::MySql) {
-            prompts_project_name_index
-                .col((Prompts::Name, 255))
-                .col(Prompts::DeletedAt);
-        } else {
-            prompts_project_name_index
-                .col(Prompts::Name)
-                .col(Prompts::DeletedAt);
-        }
+            .col(Prompts::ProjectId)
+            .col(Prompts::Name)
+            .col(Prompts::DeletedAt);
         manager
             .create_index(prompts_project_name_index.to_owned())
             .await?;
@@ -104,29 +94,27 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        let mut prompt_protection_rules_created_at =
-            timestamp_column(backend, PromptProtectionRules::CreatedAt, false);
+        let mut prompt_protection_rules_created_at = timestamp_column(PromptProtectionRules::CreatedAt);
         prompt_protection_rules_created_at
             .not_null()
             .default(Expr::current_timestamp());
-        let mut prompt_protection_rules_updated_at =
-            timestamp_column(backend, PromptProtectionRules::UpdatedAt, true);
+        let mut prompt_protection_rules_updated_at = timestamp_column(PromptProtectionRules::UpdatedAt);
         prompt_protection_rules_updated_at
             .not_null()
             .default(Expr::current_timestamp());
 
-        let mut prompt_protection_rules_description =
-            ColumnDef::new(PromptProtectionRules::Description);
-        prompt_protection_rules_description.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            prompt_protection_rules_description.default("");
-        }
+        let prompt_protection_rules_description =
+            ColumnDef::new(PromptProtectionRules::Description)
+                .text()
+                .not_null()
+                .default("")
+                .to_owned();
 
-        let mut prompt_protection_rules_status = ColumnDef::new(PromptProtectionRules::Status);
-        prompt_protection_rules_status.text().not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            prompt_protection_rules_status.default("disabled");
-        }
+        let prompt_protection_rules_status = ColumnDef::new(PromptProtectionRules::Status)
+            .text()
+            .not_null()
+            .default("disabled")
+            .to_owned();
 
         manager
             .create_table(
@@ -174,27 +162,18 @@ impl MigrationTrait for Migration {
             .name("prompt_protection_rules_by_name")
             .table(PromptProtectionRules::Table)
             .unique()
-            .if_not_exists();
-        if matches!(backend, DatabaseBackend::MySql) {
-            prompt_protection_rules_name_index
-                .col((PromptProtectionRules::Name, 255))
-                .col(PromptProtectionRules::DeletedAt);
-        } else {
-            prompt_protection_rules_name_index
-                .col(PromptProtectionRules::Name)
-                .col(PromptProtectionRules::DeletedAt);
-        }
+            .if_not_exists()
+            .col(PromptProtectionRules::Name)
+            .col(PromptProtectionRules::DeletedAt);
         manager
             .create_index(prompt_protection_rules_name_index.to_owned())
             .await?;
 
-        let mut channel_model_prices_created_at =
-            timestamp_column(backend, ChannelModelPrices::CreatedAt, false);
+        let mut channel_model_prices_created_at = timestamp_column(ChannelModelPrices::CreatedAt);
         channel_model_prices_created_at
             .not_null()
             .default(Expr::current_timestamp());
-        let mut channel_model_prices_updated_at =
-            timestamp_column(backend, ChannelModelPrices::UpdatedAt, true);
+        let mut channel_model_prices_updated_at = timestamp_column(ChannelModelPrices::UpdatedAt);
         channel_model_prices_updated_at
             .not_null()
             .default(Expr::current_timestamp());
@@ -251,16 +230,9 @@ impl MigrationTrait for Migration {
             .table(ChannelModelPrices::Table)
             .unique()
             .if_not_exists()
-            .col(ChannelModelPrices::ChannelId);
-        if matches!(backend, DatabaseBackend::MySql) {
-            channel_model_prices_channel_model_index
-                .col((ChannelModelPrices::ModelId, 255))
-                .col(ChannelModelPrices::DeletedAt);
-        } else {
-            channel_model_prices_channel_model_index
-                .col(ChannelModelPrices::ModelId)
-                .col(ChannelModelPrices::DeletedAt);
-        }
+            .col(ChannelModelPrices::ChannelId)
+            .col(ChannelModelPrices::ModelId)
+            .col(ChannelModelPrices::DeletedAt);
         manager
             .create_index(channel_model_prices_channel_model_index.to_owned())
             .await?;
@@ -270,33 +242,29 @@ impl MigrationTrait for Migration {
             .name("uk_channel_model_prices_reference_id")
             .table(ChannelModelPrices::Table)
             .unique()
-            .if_not_exists();
-        if matches!(backend, DatabaseBackend::MySql) {
-            channel_model_prices_reference_id_index.col((ChannelModelPrices::ReferenceId, 255));
-        } else {
-            channel_model_prices_reference_id_index.col(ChannelModelPrices::ReferenceId);
-        }
+            .if_not_exists()
+            .col(ChannelModelPrices::ReferenceId);
         manager
             .create_index(channel_model_prices_reference_id_index.to_owned())
             .await?;
 
         let mut channel_model_price_versions_created_at =
-            timestamp_column(backend, ChannelModelPriceVersions::CreatedAt, false);
+            timestamp_column(ChannelModelPriceVersions::CreatedAt);
         channel_model_price_versions_created_at
             .not_null()
             .default(Expr::current_timestamp());
         let mut channel_model_price_versions_updated_at =
-            timestamp_column(backend, ChannelModelPriceVersions::UpdatedAt, true);
+            timestamp_column(ChannelModelPriceVersions::UpdatedAt);
         channel_model_price_versions_updated_at
             .not_null()
             .default(Expr::current_timestamp());
         let mut channel_model_price_versions_effective_start_at =
-            timestamp_column(backend, ChannelModelPriceVersions::EffectiveStartAt, false);
+            timestamp_column(ChannelModelPriceVersions::EffectiveStartAt);
         channel_model_price_versions_effective_start_at
             .not_null()
             .default(Expr::current_timestamp());
         let mut channel_model_price_versions_effective_end_at =
-            timestamp_column(backend, ChannelModelPriceVersions::EffectiveEndAt, false);
+            timestamp_column(ChannelModelPriceVersions::EffectiveEndAt);
         channel_model_price_versions_effective_end_at.null();
 
         manager
@@ -363,25 +331,19 @@ impl MigrationTrait for Migration {
             .name("uk_channel_model_price_versions_reference_id")
             .table(ChannelModelPriceVersions::Table)
             .unique()
-            .if_not_exists();
-        if matches!(backend, DatabaseBackend::MySql) {
-            channel_model_price_versions_reference_id_index
-                .col((ChannelModelPriceVersions::ReferenceId, 255));
-        } else {
-            channel_model_price_versions_reference_id_index
-                .col(ChannelModelPriceVersions::ReferenceId);
-        }
+            .if_not_exists()
+            .col(ChannelModelPriceVersions::ReferenceId);
         manager
             .create_index(channel_model_price_versions_reference_id_index.to_owned())
             .await?;
 
         let mut channel_override_templates_created_at =
-            timestamp_column(backend, ChannelOverrideTemplates::CreatedAt, false);
+            timestamp_column(ChannelOverrideTemplates::CreatedAt);
         channel_override_templates_created_at
             .not_null()
             .default(Expr::current_timestamp());
         let mut channel_override_templates_updated_at =
-            timestamp_column(backend, ChannelOverrideTemplates::UpdatedAt, true);
+            timestamp_column(ChannelOverrideTemplates::UpdatedAt);
         channel_override_templates_updated_at
             .not_null()
             .default(Expr::current_timestamp());
@@ -390,41 +352,33 @@ impl MigrationTrait for Migration {
             ColumnDef::new(ChannelOverrideTemplates::Description);
         channel_override_templates_description.text().null();
 
-        let mut channel_override_templates_override_parameters =
-            ColumnDef::new(ChannelOverrideTemplates::OverrideParameters);
-        channel_override_templates_override_parameters
-            .text()
-            .not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            channel_override_templates_override_parameters.default("{}");
-        }
+        let channel_override_templates_override_parameters =
+            ColumnDef::new(ChannelOverrideTemplates::OverrideParameters)
+                .text()
+                .not_null()
+                .default("{}")
+                .to_owned();
 
-        let mut channel_override_templates_override_headers =
-            ColumnDef::new(ChannelOverrideTemplates::OverrideHeaders);
-        channel_override_templates_override_headers
-            .text()
-            .not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            channel_override_templates_override_headers.default("[]");
-        }
+        let channel_override_templates_override_headers =
+            ColumnDef::new(ChannelOverrideTemplates::OverrideHeaders)
+                .text()
+                .not_null()
+                .default("[]")
+                .to_owned();
 
-        let mut channel_override_templates_header_override_operations =
-            ColumnDef::new(ChannelOverrideTemplates::HeaderOverrideOperations);
-        channel_override_templates_header_override_operations
-            .text()
-            .not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            channel_override_templates_header_override_operations.default("[]");
-        }
+        let channel_override_templates_header_override_operations =
+            ColumnDef::new(ChannelOverrideTemplates::HeaderOverrideOperations)
+                .text()
+                .not_null()
+                .default("[]")
+                .to_owned();
 
-        let mut channel_override_templates_body_override_operations =
-            ColumnDef::new(ChannelOverrideTemplates::BodyOverrideOperations);
-        channel_override_templates_body_override_operations
-            .text()
-            .not_null();
-        if !matches!(backend, DatabaseBackend::MySql) {
-            channel_override_templates_body_override_operations.default("[]");
-        }
+        let channel_override_templates_body_override_operations =
+            ColumnDef::new(ChannelOverrideTemplates::BodyOverrideOperations)
+                .text()
+                .not_null()
+                .default("[]")
+                .to_owned();
 
         manager
             .create_table(
@@ -480,16 +434,9 @@ impl MigrationTrait for Migration {
             .table(ChannelOverrideTemplates::Table)
             .unique()
             .if_not_exists()
-            .col(ChannelOverrideTemplates::UserId);
-        if matches!(backend, DatabaseBackend::MySql) {
-            channel_override_templates_user_name_index
-                .col((ChannelOverrideTemplates::Name, 255))
-                .col(ChannelOverrideTemplates::DeletedAt);
-        } else {
-            channel_override_templates_user_name_index
-                .col(ChannelOverrideTemplates::Name)
-                .col(ChannelOverrideTemplates::DeletedAt);
-        }
+            .col(ChannelOverrideTemplates::UserId)
+            .col(ChannelOverrideTemplates::Name)
+            .col(ChannelOverrideTemplates::DeletedAt);
         manager
             .create_index(channel_override_templates_user_name_index.to_owned())
             .await?;
@@ -536,23 +483,9 @@ impl MigrationTrait for Migration {
     }
 }
 
-fn timestamp_column(backend: DatabaseBackend, iden: impl IntoIden, on_update: bool) -> ColumnDef {
+fn timestamp_column(iden: impl IntoIden) -> ColumnDef {
     let mut column = ColumnDef::new(iden);
-    match backend {
-        DatabaseBackend::Sqlite => {
-            column.custom(Alias::new("TEXT"));
-        }
-        DatabaseBackend::Postgres => {
-            column.custom(Alias::new("TEXT"));
-        }
-        DatabaseBackend::MySql => {
-            column.timestamp();
-            if on_update {
-                column.extra("ON UPDATE CURRENT_TIMESTAMP");
-            }
-        }
-        _ => unreachable!("unsupported database backend: {:?}", backend),
-    };
+    column.custom(Alias::new("TEXT"));
     column
 }
 

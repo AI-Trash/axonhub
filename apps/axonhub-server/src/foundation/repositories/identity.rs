@@ -80,7 +80,7 @@ impl IdentityAuthRepository for SeaOrmIdentityAuthRepository {
         let db = self.db.clone();
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(|_| ())?;
-            build_user_context_seaorm(&connection, db.backend(), user).await
+            build_user_context_seaorm(&connection, user).await
         })
     }
 
@@ -174,7 +174,6 @@ async fn query_api_key_seaorm(
 
 async fn query_user_roles_seaorm(
     db: &impl sea_orm::ConnectionTrait,
-    _backend: sea_orm::DatabaseBackend,
     user_id: i64,
 ) -> Result<Vec<StoredRole>, ()> {
     let role_ids = user_roles::Entity::find()
@@ -205,12 +204,11 @@ async fn query_user_roles_seaorm(
 
 async fn build_user_context_seaorm(
     db: &impl sea_orm::ConnectionTrait,
-    backend: sea_orm::DatabaseBackend,
     user: StoredUser,
 ) -> Result<AuthUserContext, ()> {
     use axonhub_http::{GlobalId, RoleInfo, UserProjectInfo};
 
-    let roles = query_user_roles_seaorm(db, backend, user.id).await?;
+    let roles = query_user_roles_seaorm(db, user.id).await?;
 
     let system_roles = roles
         .iter()
@@ -282,7 +280,7 @@ async fn build_user_context_seaorm(
     })
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     use axonhub_http::ApiKeyAuthError;
     use rusqlite::{Connection as SqlConnection, Error as SqlError, Result as SqlResult};

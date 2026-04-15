@@ -81,7 +81,6 @@ pub(crate) fn init_tracing(
         service.name = %service_name,
         log.level = %normalize_level(log.level.as_str()),
         log.encoding = %log.encoding,
-        db.dialect = %db.dialect,
         db.debug = db.debug,
         "tracing initialized"
     );

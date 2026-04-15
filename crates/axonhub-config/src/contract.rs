@@ -14,16 +14,6 @@ pub struct SupportedConfigAlias {
     pub description: &'static str,
 }
 
-pub const SUPPORTED_DB_DIALECTS: &[&str] = &[
-    "sqlite3",
-    "sqlite",
-    "postgres",
-    "postgresql",
-    "pg",
-    "pgx",
-    "postgresdb",
-];
-
 const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
     SupportedConfigKey {
         key: "server.host",
@@ -132,10 +122,6 @@ const SUPPORTED_CONFIG_KEYS: &[SupportedConfigKey] = &[
     SupportedConfigKey {
         key: "server.api.auth.allow_no_auth",
         description: "Allow unauthenticated API access",
-    },
-    SupportedConfigKey {
-        key: "db.dialect",
-        description: "Database dialect (sqlite3/sqlite, postgres/postgresql/pg/pgx/postgresdb)",
     },
     SupportedConfigKey {
         key: "db.dsn",
@@ -459,22 +445,6 @@ pub(crate) fn validate_supported_config_shape(root: &Value) -> Result<()> {
     };
 
     validate_mapping(&[], root_map)
-}
-
-pub(crate) fn validate_db_dialect(dialect: &str) -> Result<()> {
-    let trimmed = dialect.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow!("db.dialect cannot be empty"));
-    }
-
-    let normalized = trimmed.to_ascii_lowercase();
-    if SUPPORTED_DB_DIALECTS.contains(&normalized.as_str()) {
-        return Ok(());
-    }
-
-    Err(anyhow!(
-        "unsupported db.dialect '{trimmed}': supported values are sqlite3, sqlite, postgres, postgresql, pg, pgx, postgresdb"
-    ))
 }
 
 fn validate_mapping(prefix: &[String], mapping: &Mapping) -> Result<()> {

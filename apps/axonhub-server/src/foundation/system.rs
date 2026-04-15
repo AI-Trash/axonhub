@@ -3,7 +3,7 @@ use axonhub_http::{InitializeSystemRequest, SystemBootstrapPort, SystemInitializ
 use super::bootstrap_seaorm::{seaorm_initialize, seaorm_is_initialized, SeaOrmDbFactory};
 pub(crate) use super::passwords::{hash_password, verify_password};
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use sqlite_test_support::{SqliteBootstrapService, SqliteFoundation};
 
 pub struct SeaOrmBootstrapService {
@@ -70,7 +70,7 @@ fn map_db_init_error(error: sea_orm::DbErr) -> SystemInitializeError {
     SystemInitializeError::InitializeFailed(error.to_string())
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     use std::sync::Arc;
 

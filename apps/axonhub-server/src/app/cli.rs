@@ -100,8 +100,6 @@ enum ConfigKey {
     ServerBasePath,
     #[value(name = "server.debug", help = "Server debug mode")]
     ServerDebug,
-    #[value(name = "db.dialect", help = "Database dialect")]
-    DbDialect,
     #[value(name = "db.dsn", help = "Database DSN")]
     DbDsn,
 }
@@ -224,7 +222,6 @@ fn cli_config_get_value(config: &axonhub_config::Config, key: ConfigKey) -> Valu
         ConfigKey::ServerName => Value::from(config.server.name.clone()),
         ConfigKey::ServerBasePath => Value::from(config.server.base_path.clone()),
         ConfigKey::ServerDebug => Value::from(config.server.debug),
-        ConfigKey::DbDialect => Value::from(config.db.dialect.clone()),
         ConfigKey::DbDsn => Value::from(config.db.dsn.clone()),
     }
 }

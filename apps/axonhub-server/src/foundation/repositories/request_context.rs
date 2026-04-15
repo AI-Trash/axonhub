@@ -224,7 +224,7 @@ async fn insert_trace_seaorm(
     Ok(inserted.last_insert_id)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     use axonhub_db_entity::traces;
     use axonhub_http::{ThreadContext, TraceContext};

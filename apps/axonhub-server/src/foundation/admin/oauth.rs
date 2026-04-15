@@ -20,7 +20,7 @@ use crate::foundation::shared::{
 use getrandom::fill as getrandom;
 use hex::encode as hex_encode;
 
-pub struct SqliteOauthProviderAdminService {
+pub struct OauthProviderAdminService {
     config: OAuthProviderAdminConfig,
     sessions: Arc<Mutex<HashMap<String, OAuthProviderSession>>>,
 }
@@ -177,7 +177,7 @@ impl OAuthProviderAdminConfig {
     }
 }
 
-impl SqliteOauthProviderAdminService {
+impl OauthProviderAdminService {
     pub fn new(config: OAuthProviderAdminConfig) -> Self {
         Self {
             config,
@@ -815,7 +815,7 @@ impl SqliteOauthProviderAdminService {
     }
 }
 
-impl OauthProviderAdminPort for SqliteOauthProviderAdminService {
+impl OauthProviderAdminPort for OauthProviderAdminService {
     fn start_codex_oauth(
         &self,
         _request: &StartPkceOAuthRequest,
@@ -1570,17 +1570,17 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_oauth_provider_service_is_env_gated() {
+    fn oauth_provider_service_is_env_gated() {
         let _lock = super::oauth_provider_env_test_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let fixture = OAuthProviderEnvFixture::new();
 
-        assert!(SqliteOauthProviderAdminService::from_env().is_none());
+        assert!(OauthProviderAdminService::from_env().is_none());
 
         fixture.set_all();
 
-        assert!(SqliteOauthProviderAdminService::from_env().is_some());
+        assert!(OauthProviderAdminService::from_env().is_some());
     }
 
     fn read_http_request(stream: &mut std::net::TcpStream) -> (String, Vec<u8>) {
@@ -1743,7 +1743,7 @@ mod tests {
 
     #[test]
     fn codex_exchange_consumes_session_after_state_mismatch() {
-        let service = SqliteOauthProviderAdminService::new(test_oauth_provider_config());
+        let service = OauthProviderAdminService::new(test_oauth_provider_config());
         let start = service
             .start_codex_oauth(&StartPkceOAuthRequest {})
             .expect("start codex oauth");
@@ -1808,7 +1808,7 @@ mod tests {
 
         let mut config = test_oauth_provider_config();
         config.codex_token_url = format!("{token_server_url}/token");
-        let service = SqliteOauthProviderAdminService::new(config);
+        let service = OauthProviderAdminService::new(config);
         let start = service
             .start_codex_oauth(&StartPkceOAuthRequest {})
             .expect("start codex oauth");
@@ -1864,7 +1864,7 @@ mod tests {
 
         let mut config = test_oauth_provider_config();
         config.codex_token_url = "http://codex-upstream.invalid/token".to_owned();
-        let service = SqliteOauthProviderAdminService::new(config);
+        let service = OauthProviderAdminService::new(config);
         let start = service
             .start_codex_oauth(&StartPkceOAuthRequest {})
             .expect("start codex oauth");
@@ -1925,7 +1925,7 @@ mod tests {
 
         let mut config = test_oauth_provider_config();
         config.claudecode_token_url = format!("{token_server_url}/token");
-        let service = SqliteOauthProviderAdminService::new(config);
+        let service = OauthProviderAdminService::new(config);
         let start = service
             .start_claudecode_oauth(&StartPkceOAuthRequest {})
             .expect("start claudecode oauth");
@@ -1981,7 +1981,7 @@ mod tests {
         let mut config = test_oauth_provider_config();
         config.antigravity_token_url = format!("{token_server_url}/token");
         config.antigravity_load_endpoints = Vec::new();
-        let service = SqliteOauthProviderAdminService::new(config.clone());
+        let service = OauthProviderAdminService::new(config.clone());
 
         let start_with_project = service
             .start_antigravity_oauth(&StartAntigravityOAuthRequest {
@@ -2009,7 +2009,7 @@ mod tests {
         });
         let mut config_without_project = config;
         config_without_project.antigravity_token_url = format!("{second_token_server_url}/token");
-        let service_without_project = SqliteOauthProviderAdminService::new(config_without_project);
+        let service_without_project = OauthProviderAdminService::new(config_without_project);
         let start_without_project = service_without_project
             .start_antigravity_oauth(&StartAntigravityOAuthRequest {
                 project_id: String::new(),
@@ -2073,7 +2073,7 @@ mod tests {
         let mut config = test_oauth_provider_config();
         config.copilot_device_code_url = format!("{device_server_url}/device");
         config.copilot_access_token_url = format!("{token_server_url}/token");
-        let service = SqliteOauthProviderAdminService::new(config);
+        let service = OauthProviderAdminService::new(config);
 
         let start = service
             .start_copilot_oauth(&StartCopilotOAuthRequest {})
@@ -2120,7 +2120,7 @@ mod tests {
         let mut config = test_oauth_provider_config();
         config.copilot_device_code_url = format!("{device_server_url}/device");
         config.copilot_access_token_url = format!("{pending_token_url}/token");
-        let pending_service = SqliteOauthProviderAdminService::new(config);
+        let pending_service = OauthProviderAdminService::new(config);
         let pending_start = pending_service
             .start_copilot_oauth(&StartCopilotOAuthRequest {})
             .expect("start pending copilot oauth");
@@ -2150,7 +2150,7 @@ mod tests {
         let mut config = test_oauth_provider_config();
         config.copilot_device_code_url = format!("{device_server_url}/device");
         config.copilot_access_token_url = format!("{denied_token_url}/token");
-        let denied_service = SqliteOauthProviderAdminService::new(config);
+        let denied_service = OauthProviderAdminService::new(config);
         let denied_start = denied_service
             .start_copilot_oauth(&StartCopilotOAuthRequest {})
             .expect("start denied copilot oauth");

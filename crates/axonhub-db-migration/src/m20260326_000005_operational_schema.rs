@@ -1,4 +1,3 @@
-use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -7,8 +6,6 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let backend = manager.get_database_backend();
-
         manager
             .create_table(
                 Table::create()
@@ -21,11 +18,7 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(ChannelProbes::ChannelId)
-                            .big_integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(ChannelProbes::ChannelId).big_integer().not_null())
                     .col(
                         ColumnDef::new(ChannelProbes::TotalRequestCount)
                             .integer()
@@ -36,21 +29,13 @@ impl MigrationTrait for Migration {
                             .integer()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(ChannelProbes::AvgTokensPerSecond)
-                            .double()
-                            .null(),
-                    )
+                    .col(ColumnDef::new(ChannelProbes::AvgTokensPerSecond).double().null())
                     .col(
                         ColumnDef::new(ChannelProbes::AvgTimeToFirstTokenMs)
                             .double()
                             .null(),
                     )
-                    .col(
-                        ColumnDef::new(ChannelProbes::Timestamp)
-                            .big_integer()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(ChannelProbes::Timestamp).big_integer().not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_channel_probes_channel_id")
@@ -73,67 +58,6 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        let mut provider_quota_statuses_created_at = ColumnDef::new(General::CreatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => {
-                provider_quota_statuses_created_at.custom(Alias::new("TEXT"))
-            }
-            DatabaseBackend::Postgres => {
-                provider_quota_statuses_created_at.timestamp_with_time_zone()
-            }
-            DatabaseBackend::MySql => provider_quota_statuses_created_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        provider_quota_statuses_created_at
-            .not_null()
-            .default(Expr::current_timestamp());
-
-        let mut provider_quota_statuses_updated_at = ColumnDef::new(General::UpdatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => {
-                provider_quota_statuses_updated_at.custom(Alias::new("TEXT"))
-            }
-            DatabaseBackend::Postgres => {
-                provider_quota_statuses_updated_at.timestamp_with_time_zone()
-            }
-            DatabaseBackend::MySql => provider_quota_statuses_updated_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        provider_quota_statuses_updated_at
-            .not_null()
-            .default(Expr::current_timestamp());
-        if matches!(backend, DatabaseBackend::MySql) {
-            provider_quota_statuses_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
-        }
-
-        let mut provider_quota_statuses_next_reset_at =
-            ColumnDef::new(ProviderQuotaStatuses::NextResetAt);
-        match backend {
-            DatabaseBackend::Sqlite => {
-                provider_quota_statuses_next_reset_at.custom(Alias::new("TEXT"))
-            }
-            DatabaseBackend::Postgres => {
-                provider_quota_statuses_next_reset_at.timestamp_with_time_zone()
-            }
-            DatabaseBackend::MySql => provider_quota_statuses_next_reset_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        provider_quota_statuses_next_reset_at.null();
-
-        let mut provider_quota_statuses_next_check_at =
-            ColumnDef::new(ProviderQuotaStatuses::NextCheckAt);
-        match backend {
-            DatabaseBackend::Sqlite => {
-                provider_quota_statuses_next_check_at.custom(Alias::new("TEXT"))
-            }
-            DatabaseBackend::Postgres => {
-                provider_quota_statuses_next_check_at.timestamp_with_time_zone()
-            }
-            DatabaseBackend::MySql => provider_quota_statuses_next_check_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        provider_quota_statuses_next_check_at.not_null();
-
         manager
             .create_table(
                 Table::create()
@@ -146,8 +70,8 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(provider_quota_statuses_created_at)
-                    .col(provider_quota_statuses_updated_at)
+                    .col(created_at_column(General::CreatedAt))
+                    .col(updated_at_column(General::UpdatedAt))
                     .col(
                         ColumnDef::new(ProviderQuotaStatuses::DeletedAt)
                             .big_integer()
@@ -164,24 +88,16 @@ impl MigrationTrait for Migration {
                             .text()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(ProviderQuotaStatuses::Status)
-                            .text()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(ProviderQuotaStatuses::QuotaData)
-                            .text()
-                            .not_null(),
-                    )
-                    .col(provider_quota_statuses_next_reset_at)
+                    .col(ColumnDef::new(ProviderQuotaStatuses::Status).text().not_null())
+                    .col(ColumnDef::new(ProviderQuotaStatuses::QuotaData).text().not_null())
+                    .col(timestamp_column(ProviderQuotaStatuses::NextResetAt).null())
                     .col(
                         ColumnDef::new(ProviderQuotaStatuses::Ready)
                             .boolean()
                             .not_null()
                             .default(true),
                     )
-                    .col(provider_quota_statuses_next_check_at)
+                    .col(timestamp_column(ProviderQuotaStatuses::NextCheckAt).not_null())
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_provider_quota_statuses_channel_id")
@@ -239,6 +155,30 @@ impl MigrationTrait for Migration {
             )
             .await
     }
+}
+
+fn created_at_column(iden: impl IntoIden) -> ColumnDef {
+    let mut column = ColumnDef::new(iden);
+    column
+        .custom(Alias::new("TEXT"))
+        .not_null()
+        .default(Expr::cust("CURRENT_TIMESTAMP::text"));
+    column
+}
+
+fn updated_at_column(iden: impl IntoIden) -> ColumnDef {
+    let mut column = ColumnDef::new(iden);
+    column
+        .custom(Alias::new("TEXT"))
+        .not_null()
+        .default(Expr::cust("CURRENT_TIMESTAMP::text"));
+    column
+}
+
+fn timestamp_column(iden: impl IntoIden) -> ColumnDef {
+    let mut column = ColumnDef::new(iden);
+    column.custom(Alias::new("TEXT"));
+    column
 }
 
 #[derive(DeriveIden)]

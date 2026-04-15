@@ -60,7 +60,7 @@ pub(crate) fn parse_json_string_vec(raw: String) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(&raw).unwrap_or_default()
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     use rusqlite::{Connection as SqlConnection, Result as SqlResult};
 

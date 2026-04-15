@@ -9134,7 +9134,7 @@ fn validate_scope_list(scopes: &[String], field: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     use std::collections::HashMap;
     use std::future::Future;

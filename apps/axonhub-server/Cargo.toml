@@ -45,4 +45,3 @@ axonhub-http.workspace = true
 [dev-dependencies]
 axum.workspace = true
 tower.workspace = true
-rusqlite.workspace = true

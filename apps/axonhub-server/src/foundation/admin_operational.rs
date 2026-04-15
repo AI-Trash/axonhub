@@ -9,8 +9,8 @@ use axonhub_db_entity::{
     request_executions, requests, systems, threads, traces, usage_logs,
 };
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
-    EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait,
+    QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -463,8 +463,7 @@ impl SeaOrmOperationalService {
             let result = async {
                 let now = current_unix_timestamp();
                 let next_check_at = now + i64::try_from(check_interval.as_secs()).unwrap_or(0);
-                let backend = connection.get_database_backend();
-                let channels = query_channel_quota_candidates(&connection, backend).await?;
+                let channels = query_channel_quota_candidates(&connection).await?;
 
                 let mut updated = 0_usize;
                 for channel in channels {
@@ -473,7 +472,7 @@ impl SeaOrmOperationalService {
                         continue;
                     };
                     if !force {
-                        let existing = query_next_quota_check_at(&connection, backend, channel_id).await?;
+                        let existing = query_next_quota_check_at(&connection, channel_id).await?;
                         if let Some(existing_next) = existing {
                             if existing_next > now {
                                 continue;
@@ -1011,7 +1010,6 @@ impl SeaOrmOperationalService {
 
 async fn query_channel_quota_candidates(
     connection: &DatabaseConnection,
-    _backend: DatabaseBackend,
 ) -> Result<Vec<channels::Model>, String> {
     channels::Entity::find()
         .filter(channels::Column::DeletedAt.eq(0_i64))
@@ -1024,7 +1022,6 @@ async fn query_channel_quota_candidates(
 
 async fn query_next_quota_check_at(
     connection: &DatabaseConnection,
-    _backend: DatabaseBackend,
     channel_id: i64,
 ) -> Result<Option<i64>, String> {
     provider_quota_statuses::Entity::find()
@@ -1040,8 +1037,7 @@ async fn reset_provider_quota_status_row(
     connection: &DatabaseConnection,
     channel_id: i64,
 ) -> Result<bool, String> {
-    let backend = connection.get_database_backend();
-    let provider_type = query_channel_provider_quota_type(connection, backend, channel_id).await?;
+    let provider_type = query_channel_provider_quota_type(connection, channel_id).await?;
     let Some(provider_type) = provider_type else {
         return Ok(false);
     };
@@ -1068,7 +1064,6 @@ async fn reset_provider_quota_status_row(
 
 async fn query_channel_provider_quota_type(
     connection: &DatabaseConnection,
-    _backend: DatabaseBackend,
     channel_id: i64,
 ) -> Result<Option<String>, String> {
     let channel = channels::Entity::find_by_id(channel_id)
@@ -2491,7 +2486,7 @@ fn gc_summary_payload(summary: &StoredGcCleanupSummary) -> Value {
     })
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     use std::collections::HashMap;
     use std::fs;

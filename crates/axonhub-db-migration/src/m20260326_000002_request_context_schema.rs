@@ -1,4 +1,3 @@
-use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -7,33 +6,6 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let backend = manager.get_database_backend();
-
-        let mut threads_created_at = ColumnDef::new(General::CreatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => threads_created_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => threads_created_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => threads_created_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        threads_created_at
-            .not_null()
-            .default(Expr::current_timestamp());
-
-        let mut threads_updated_at = ColumnDef::new(General::UpdatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => threads_updated_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => threads_updated_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => threads_updated_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        threads_updated_at
-            .not_null()
-            .default(Expr::current_timestamp());
-        if matches!(backend, DatabaseBackend::MySql) {
-            threads_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
-        }
-
         manager
             .create_table(
                 Table::create()
@@ -46,8 +18,8 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(threads_created_at)
-                    .col(threads_updated_at)
+                    .col(created_at_column(General::CreatedAt))
+                    .col(updated_at_column(General::UpdatedAt))
                     .col(ColumnDef::new(Threads::ProjectId).big_integer().not_null())
                     .col(ColumnDef::new(Threads::ThreadId).text().not_null())
                     .foreign_key(
@@ -60,19 +32,16 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        let mut threads_thread_id_index = Index::create();
-        threads_thread_id_index
-            .name("uk_threads_thread_id")
-            .table(Threads::Table)
-            .unique()
-            .if_not_exists();
-        if matches!(backend, DatabaseBackend::MySql) {
-            threads_thread_id_index.col((Threads::ThreadId, 255));
-        } else {
-            threads_thread_id_index.col(Threads::ThreadId);
-        }
         manager
-            .create_index(threads_thread_id_index.to_owned())
+            .create_index(
+                Index::create()
+                    .name("uk_threads_thread_id")
+                    .table(Threads::Table)
+                    .col(Threads::ThreadId)
+                    .unique()
+                    .if_not_exists()
+                    .to_owned(),
+            )
             .await?;
 
         manager
@@ -86,31 +55,6 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        let mut traces_created_at = ColumnDef::new(General::CreatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => traces_created_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => traces_created_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => traces_created_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        traces_created_at
-            .not_null()
-            .default(Expr::current_timestamp());
-
-        let mut traces_updated_at = ColumnDef::new(General::UpdatedAt);
-        match backend {
-            DatabaseBackend::Sqlite => traces_updated_at.custom(Alias::new("TEXT")),
-            DatabaseBackend::Postgres => traces_updated_at.timestamp_with_time_zone(),
-            DatabaseBackend::MySql => traces_updated_at.timestamp(),
-            _ => unreachable!("unsupported database backend: {:?}", backend),
-        };
-        traces_updated_at
-            .not_null()
-            .default(Expr::current_timestamp());
-        if matches!(backend, DatabaseBackend::MySql) {
-            traces_updated_at.extra("ON UPDATE CURRENT_TIMESTAMP");
-        }
-
         manager
             .create_table(
                 Table::create()
@@ -123,8 +67,8 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(traces_created_at)
-                    .col(traces_updated_at)
+                    .col(created_at_column(General::CreatedAt))
+                    .col(updated_at_column(General::UpdatedAt))
                     .col(ColumnDef::new(Traces::ProjectId).big_integer().not_null())
                     .col(ColumnDef::new(Traces::TraceId).text().not_null())
                     .col(ColumnDef::new(Traces::ThreadId).big_integer().null())
@@ -144,19 +88,16 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        let mut traces_trace_id_index = Index::create();
-        traces_trace_id_index
-            .name("uk_traces_trace_id")
-            .table(Traces::Table)
-            .unique()
-            .if_not_exists();
-        if matches!(backend, DatabaseBackend::MySql) {
-            traces_trace_id_index.col((Traces::TraceId, 255));
-        } else {
-            traces_trace_id_index.col(Traces::TraceId);
-        }
         manager
-            .create_index(traces_trace_id_index.to_owned())
+            .create_index(
+                Index::create()
+                    .name("uk_traces_trace_id")
+                    .table(Traces::Table)
+                    .col(Traces::TraceId)
+                    .unique()
+                    .if_not_exists()
+                    .to_owned(),
+            )
             .await?;
 
         manager
@@ -192,6 +133,24 @@ impl MigrationTrait for Migration {
             .drop_table(Table::drop().table(Threads::Table).if_exists().to_owned())
             .await
     }
+}
+
+fn created_at_column(iden: impl IntoIden) -> ColumnDef {
+    let mut column = ColumnDef::new(iden);
+    column
+        .custom(Alias::new("TEXT"))
+        .not_null()
+        .default(Expr::cust("CURRENT_TIMESTAMP::text"));
+    column
+}
+
+fn updated_at_column(iden: impl IntoIden) -> ColumnDef {
+    let mut column = ColumnDef::new(iden);
+    column
+        .custom(Alias::new("TEXT"))
+        .not_null()
+        .default(Expr::cust("CURRENT_TIMESTAMP::text"));
+    column
 }
 
 #[derive(DeriveIden)]

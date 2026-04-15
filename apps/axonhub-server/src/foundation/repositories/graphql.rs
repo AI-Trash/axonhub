@@ -1610,7 +1610,6 @@ async fn query_model_statuses_seaorm(
 
     list_enabled_model_records_seaorm(
         db,
-        db.get_database_backend(),
         settings.query_all_channel_models,
         None,
     )

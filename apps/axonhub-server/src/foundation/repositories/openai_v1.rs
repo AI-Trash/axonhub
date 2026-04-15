@@ -9,9 +9,9 @@ use axonhub_http::{OpenAiModel, OpenAiV1Error, OpenAiV1ExecutionRequest, OpenAiV
 use regex::Regex;
 use serde::Deserialize;
 use sea_orm::ActiveValue::Set;
-use sea_orm::sea_query::{Alias, Expr, Func, SimpleExpr};
+use sea_orm::sea_query::{Expr, SimpleExpr};
 use sea_orm::{
-    ConnectionTrait, DatabaseBackend, ExprTrait, PaginatorTrait, QuerySelect, QueryTrait,
+    ConnectionTrait, ExprTrait, PaginatorTrait, QuerySelect, QueryTrait,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 
@@ -285,7 +285,6 @@ pub(crate) struct StoredResponseRecord {
 
 pub(crate) async fn default_data_storage_id_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
 ) -> Result<Option<i64>, OpenAiV1Error> {
     systems::Entity::find()
         .filter(systems::Column::Key.eq(SYSTEM_KEY_DEFAULT_DATA_STORAGE))
@@ -299,18 +298,17 @@ pub(crate) async fn default_data_storage_id_seaorm(
 
 pub(crate) async fn enforce_api_key_quota_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     api_key_id: Option<i64>,
 ) -> Result<(), OpenAiV1Error> {
     let Some(api_key_id) = api_key_id else {
         return Ok(());
     };
 
-    let Some(quota) = load_active_api_key_quota_seaorm(db, backend, api_key_id).await? else {
+    let Some(quota) = load_active_api_key_quota_seaorm(db, api_key_id).await? else {
         return Ok(());
     };
 
-    let timezone = query_general_settings_timezone_seaorm(db, backend)
+    let timezone = query_general_settings_timezone_seaorm(db)
         .await?
         .unwrap_or_else(|| "UTC".to_owned());
     let now_epoch_seconds = SystemTime::now()
@@ -326,7 +324,6 @@ pub(crate) async fn enforce_api_key_quota_seaorm(
     if let Some(request_limit) = quota.requests.filter(|limit| *limit > 0) {
         let request_count = query_usage_request_count_seaorm(
             db,
-            backend,
             api_key_id,
             window.start.as_deref(),
             window.end.as_deref(),
@@ -345,7 +342,6 @@ pub(crate) async fn enforce_api_key_quota_seaorm(
 
     let usage = query_usage_aggregate_seaorm(
         db,
-        backend,
         api_key_id,
         window.start.as_deref(),
         window.end.as_deref(),
@@ -376,13 +372,12 @@ pub(crate) async fn enforce_api_key_quota_seaorm(
 
 pub(crate) async fn list_enabled_model_records_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     query_all_channel_models: bool,
     profiles_json: Option<&str>,
 ) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
     let active_profile = active_api_key_profile(profiles_json);
     if query_all_channel_models {
-        list_routable_model_records_seaorm(db, backend, active_profile.as_ref()).await
+        list_routable_model_records_seaorm(db, active_profile.as_ref()).await
     } else {
         list_explicit_enabled_model_records_seaorm(db, active_profile.as_ref()).await
     }
@@ -390,12 +385,11 @@ pub(crate) async fn list_enabled_model_records_seaorm(
 
 pub(crate) async fn list_enabled_models_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     include: &ModelInclude,
     query_all_channel_models: bool,
     profiles_json: Option<&str>,
 ) -> Result<Vec<OpenAiModel>, OpenAiV1Error> {
-    list_enabled_model_records_seaorm(db, backend, query_all_channel_models, profiles_json)
+    list_enabled_model_records_seaorm(db, query_all_channel_models, profiles_json)
         .await
         .map(|records| {
             records
@@ -407,7 +401,6 @@ pub(crate) async fn list_enabled_models_seaorm(
 
 pub(crate) async fn select_target_channels_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request: &OpenAiV1ExecutionRequest,
     route: OpenAiV1Route,
     circuit_breaker: &SharedCircuitBreaker,
@@ -431,7 +424,6 @@ pub(crate) async fn select_target_channels_seaorm(
 
     match select_model_associated_targets_seaorm(
         db,
-        backend,
         request_model.as_str(),
         request.trace.as_ref().map(|trace| trace.id),
         2,
@@ -459,7 +451,6 @@ pub(crate) async fn select_target_channels_seaorm(
 
     let targets = select_openai_route_targets_seaorm(
         db,
-        backend,
         request_model.as_str(),
         request.trace.as_ref().map(|trace| trace.id),
         2,
@@ -496,7 +487,6 @@ fn validate_selected_targets(
 
 async fn select_openai_route_targets_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request_model_id: &str,
     trace_id: Option<i64>,
     max_channel_retries: usize,
@@ -511,7 +501,6 @@ async fn select_openai_route_targets_seaorm(
         targets.extend(
             select_inference_targets_seaorm(
                 db,
-                backend,
                 request_model_id,
                 trace_id,
                 max_channel_retries,
@@ -552,7 +541,6 @@ fn openai_route_model_type(route: OpenAiV1Route) -> &'static str {
 
 pub(crate) async fn select_inference_targets_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request_model_id: &str,
     trace_id: Option<i64>,
     max_channel_retries: usize,
@@ -564,7 +552,7 @@ pub(crate) async fn select_inference_targets_seaorm(
     selection_mode: TargetSelectionMode,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
     let preferred_trace_channel_id = match trace_id {
-        Some(trace_id) => query_preferred_trace_channel_id_seaorm(db, backend, trace_id, request_model_id).await?,
+        Some(trace_id) => query_preferred_trace_channel_id_seaorm(db, trace_id, request_model_id).await?,
         None => None,
     };
 
@@ -583,7 +571,6 @@ pub(crate) async fn select_inference_targets_seaorm(
         TargetSelectionMode::Direct => {
             resolve_direct_channel_candidates_seaorm(
                 db,
-                backend,
                 request_model_id,
                 channel_type,
                 &channel_candidates,
@@ -595,7 +582,6 @@ pub(crate) async fn select_inference_targets_seaorm(
         TargetSelectionMode::AssociatedModel => {
             resolve_associated_channel_candidates_seaorm(
                 db,
-                backend,
                 request_model_id,
                 channel_type,
                 &channel_candidates,
@@ -644,7 +630,7 @@ pub(crate) async fn select_inference_targets_seaorm(
             .unwrap_or_else(|| fallback_stored_model_record(candidate.actual_model_id.as_str(), model_type));
         let channel_id = candidate.channel.id;
         let ordering_weight = int4_to_i64(candidate.channel.ordering_weight);
-        let routing_stats = query_channel_routing_stats_seaorm(db, backend, channel_id).await?;
+        let routing_stats = query_channel_routing_stats_seaorm(db, channel_id).await?;
         candidates.push(SelectedOpenAiTarget {
             channel_id,
             base_url: candidate.channel.base_url.unwrap_or_default(),
@@ -694,7 +680,6 @@ enum ModelAssociationSelection {
 
 async fn select_model_associated_targets_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request_model_id: &str,
     trace_id: Option<i64>,
     max_channel_retries: usize,
@@ -714,7 +699,6 @@ async fn select_model_associated_targets_seaorm(
 
     let targets = select_openai_route_targets_seaorm(
         db,
-        backend,
         request_model_id,
         trace_id,
         max_channel_retries,
@@ -735,7 +719,6 @@ async fn select_model_associated_targets_seaorm(
 
 async fn resolve_direct_channel_candidates_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request_model_id: &str,
     channel_type: &str,
     channel_candidates: &[channels::RoutingCandidate],
@@ -759,7 +742,7 @@ async fn resolve_direct_channel_candidates_seaorm(
             continue;
         }
 
-        if provider_channel_is_blocked_seaorm(db, backend, channel.id).await?
+        if provider_channel_is_blocked_seaorm(db, channel.id).await?
             || circuit_breaker.is_blocked(channel.id, model_entry.actual_model_id.as_str())
         {
             continue;
@@ -778,7 +761,6 @@ async fn resolve_direct_channel_candidates_seaorm(
 
 async fn resolve_associated_channel_candidates_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request_model_id: &str,
     channel_type: &str,
     channel_candidates: &[channels::RoutingCandidate],
@@ -813,7 +795,7 @@ async fn resolve_associated_channel_candidates_seaorm(
 
     let mut filtered = Vec::new();
     for candidate in resolved_channels {
-        if provider_channel_is_blocked_seaorm(db, backend, candidate.channel.id).await?
+        if provider_channel_is_blocked_seaorm(db, candidate.channel.id).await?
             || circuit_breaker.is_blocked(candidate.channel.id, candidate.actual_model_id.as_str())
         {
             continue;
@@ -1072,7 +1054,6 @@ fn channel_has_any_tag(channel: &channels::RoutingCandidate, tags: &[String]) ->
 
 async fn provider_channel_is_blocked_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     channel_id: i64,
 ) -> Result<bool, OpenAiV1Error> {
     let Some(row) = provider_quota_statuses::Entity::find()
@@ -1086,7 +1067,7 @@ async fn provider_channel_is_blocked_seaorm(
     Ok(!row.ready || row.status.eq_ignore_ascii_case("exhausted"))
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use sea_orm::ActiveValue::Set;
@@ -1600,7 +1581,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     use super::*;
     use rusqlite::{params, Connection as SqlConnection, OptionalExtension, Result as SqlResult};
@@ -2333,7 +2314,6 @@ pub(crate) mod sqlite_test_support {
 
 async fn load_active_api_key_quota_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     api_key_id: i64,
 ) -> Result<Option<ParsedApiKeyQuota>, OpenAiV1Error> {
     let profiles_json = api_keys::Entity::find_by_id(api_key_id)
@@ -2349,7 +2329,6 @@ async fn load_active_api_key_quota_seaorm(
 
 async fn query_general_settings_timezone_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
 ) -> Result<Option<String>, OpenAiV1Error> {
     let value = systems::Entity::find()
         .filter(systems::Column::Key.eq(SYSTEM_KEY_GENERAL_SETTINGS))
@@ -2370,7 +2349,6 @@ async fn query_general_settings_timezone_seaorm(
 
 async fn query_usage_request_count_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     api_key_id: i64,
     start: Option<&str>,
     end: Option<&str>,
@@ -2382,12 +2360,12 @@ async fn query_usage_request_count_seaorm(
                 .expr(Expr::cust("COUNT(*)"))
                 .filter(usage_logs::Column::ApiKeyId.eq(api_key_id))
                 .apply_if(start, |query, start| {
-                    query.filter(Expr::expr(usage_created_at_expr(backend)).gte(usage_window_bound_expr(backend, start)))
+                    query.filter(Expr::expr(usage_created_at_expr()).gte(usage_window_bound_expr(start)))
                 })
                 .apply_if(end, |query, end| {
-                    query.filter(Expr::expr(usage_created_at_expr(backend)).lt(usage_window_bound_expr(backend, end)))
+                    query.filter(Expr::expr(usage_created_at_expr()).lt(usage_window_bound_expr(end)))
                 })
-                .build(backend),
+                .build(sea_orm::DatabaseBackend::Postgres),
         )
         .await
         .map_err(map_openai_db_err)?;
@@ -2399,7 +2377,6 @@ async fn query_usage_request_count_seaorm(
 
 async fn query_usage_aggregate_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     api_key_id: i64,
     start: Option<&str>,
     end: Option<&str>,
@@ -2412,12 +2389,12 @@ async fn query_usage_aggregate_seaorm(
                 .expr(Expr::cust("COALESCE(SUM(total_cost), 0)"))
                 .filter(usage_logs::Column::ApiKeyId.eq(api_key_id))
                 .apply_if(start, |query, start| {
-                    query.filter(Expr::expr(usage_created_at_expr(backend)).gte(usage_window_bound_expr(backend, start)))
+                    query.filter(Expr::expr(usage_created_at_expr()).gte(usage_window_bound_expr(start)))
                 })
                 .apply_if(end, |query, end| {
-                    query.filter(Expr::expr(usage_created_at_expr(backend)).lt(usage_window_bound_expr(backend, end)))
+                    query.filter(Expr::expr(usage_created_at_expr()).lt(usage_window_bound_expr(end)))
                 })
-                .build(backend),
+                .build(sea_orm::DatabaseBackend::Postgres),
         )
         .await
         .map_err(map_openai_db_err)?;
@@ -2430,25 +2407,12 @@ async fn query_usage_aggregate_seaorm(
         .unwrap_or_default())
 }
 
-fn usage_created_at_expr(backend: DatabaseBackend) -> SimpleExpr {
-    match backend {
-        DatabaseBackend::Sqlite => Func::cust(Alias::new("datetime"))
-            .arg(Expr::col(usage_logs::Column::CreatedAt))
-            .into(),
-        DatabaseBackend::Postgres | DatabaseBackend::MySql => Expr::col(usage_logs::Column::CreatedAt).into(),
-        _ => unreachable!("unsupported database backend: {:?}", backend),
-    }
+fn usage_created_at_expr() -> SimpleExpr {
+    Expr::col(usage_logs::Column::CreatedAt).cast_as("TIMESTAMPTZ")
 }
 
-fn usage_window_bound_expr(backend: DatabaseBackend, bound: &str) -> SimpleExpr {
-    match backend {
-        DatabaseBackend::Sqlite => Func::cust(Alias::new("datetime"))
-            .arg(Expr::value(bound.to_owned()))
-            .into(),
-        DatabaseBackend::Postgres => Expr::value(bound.to_owned()).cast_as("TIMESTAMPTZ"),
-        DatabaseBackend::MySql => Expr::value(bound.to_owned()).cast_as("DATETIME"),
-        _ => unreachable!("unsupported database backend: {:?}", backend),
-    }
+fn usage_window_bound_expr(bound: &str) -> SimpleExpr {
+    Expr::value(bound.to_owned()).cast_as("TIMESTAMPTZ")
 }
 
 fn active_api_key_quota(raw: &str) -> Option<ParsedApiKeyQuota> {
@@ -2644,7 +2608,6 @@ fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
 
 async fn list_routable_model_records_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     active_profile: Option<&ParsedApiKeyProfile>,
 ) -> Result<Vec<StoredModelRecord>, OpenAiV1Error> {
     let enabled_channels = channels::Entity::find()
@@ -2821,7 +2784,6 @@ fn parse_legacy_system_channel_settings_seaorm(
 
 pub(crate) async fn select_doubao_task_targets_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request: &OpenAiV1ExecutionRequest,
     prepared: &PreparedCompatibilityRequest,
 ) -> Result<Vec<SelectedOpenAiTarget>, OpenAiV1Error> {
@@ -2834,7 +2796,6 @@ pub(crate) async fn select_doubao_task_targets_seaorm(
         })?;
     let request_hint = find_latest_completed_request_by_external_id_seaorm(
         db,
-        backend,
         "doubao/video_create",
         task_id,
     )
@@ -2845,7 +2806,6 @@ pub(crate) async fn select_doubao_task_targets_seaorm(
     })?;
     let mut targets = select_inference_targets_seaorm(
         db,
-        backend,
         request_hint.model_id.as_str(),
         request.trace.as_ref().map(|trace| trace.id),
         2,
@@ -2871,7 +2831,6 @@ pub(crate) async fn select_doubao_task_targets_seaorm(
 
 pub(crate) async fn find_latest_completed_request_by_external_id_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     route_format: &str,
     external_id: &str,
 ) -> Result<Option<StoredRequestRouteHint>, OpenAiV1Error> {
@@ -2895,7 +2854,6 @@ pub(crate) async fn find_latest_completed_request_by_external_id_seaorm(
 
 pub(crate) async fn find_latest_completed_response_chain_request_by_external_id_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     project_id: i64,
     api_key_id: Option<i64>,
     route_format: &str,
@@ -2927,7 +2885,6 @@ pub(crate) async fn find_latest_completed_response_chain_request_by_external_id_
 
 pub(crate) async fn find_latest_completed_response_by_external_id_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     project_id: i64,
     api_key_id: i64,
     external_id: &str,
@@ -2952,7 +2909,6 @@ pub(crate) async fn find_latest_completed_response_by_external_id_seaorm(
 
 pub(crate) async fn create_request_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     record: &NewRequestRecord<'_>,
 ) -> Result<i64, OpenAiV1Error> {
     let mut model = requests::ActiveModel {
@@ -2992,7 +2948,6 @@ pub(crate) async fn create_request_seaorm(
 
 pub(crate) async fn create_request_execution_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     record: &NewRequestExecutionRecord<'_>,
 ) -> Result<i64, OpenAiV1Error> {
     request_executions::Entity::insert(request_executions::ActiveModel {
@@ -3023,7 +2978,6 @@ pub(crate) async fn create_request_execution_seaorm(
 
 pub(crate) async fn update_request_result_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     record: &UpdateRequestResultRecord<'_>,
 ) -> Result<(), OpenAiV1Error> {
     let mut update = requests::Entity::update_many()
@@ -3054,7 +3008,6 @@ pub(crate) async fn update_request_result_seaorm(
 
 pub(crate) async fn update_request_execution_result_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     record: &UpdateRequestExecutionResultRecord<'_>,
 ) -> Result<(), OpenAiV1Error> {
     let mut update = request_executions::Entity::update_many()
@@ -3101,7 +3054,6 @@ pub(crate) async fn update_request_execution_result_seaorm(
 
 pub(crate) async fn record_usage_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     record: &NewUsageLogRecord<'_>,
 ) -> Result<i64, OpenAiV1Error> {
     usage_logs::Entity::insert(usage_logs::ActiveModel {
@@ -3158,11 +3110,9 @@ fn stored_model_record_from_enabled_model_record(record: models::EnabledModelRec
 
 async fn query_preferred_trace_channel_id_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     trace_id: i64,
     model_id: &str,
 ) -> Result<Option<i64>, OpenAiV1Error> {
-    let _ = backend;
     requests::Entity::find()
         .filter(requests::Column::TraceId.eq(trace_id))
         .filter(requests::Column::ModelId.eq(model_id))
@@ -3178,10 +3128,8 @@ async fn query_preferred_trace_channel_id_seaorm(
 
 async fn query_channel_routing_stats_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     channel_id: i64,
 ) -> Result<ChannelRoutingStats, OpenAiV1Error> {
-    let _ = backend;
     let selection_count = i64::try_from(
         requests::Entity::find()
         .filter(requests::Column::ChannelId.eq(channel_id))

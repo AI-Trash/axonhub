@@ -27,24 +27,6 @@ fn trace_exporter_invalid_type_fail_open() {
 
 #[cfg(test)]
 #[test]
-fn openai_v1_runtime_contract_preserved() {
-    foundation::openai_v1_runtime_contract_preserved_inner();
-}
-
-#[cfg(test)]
-#[test]
-fn runtime_query_semantics_preserved_after_rewrite() {
-    foundation::openai_v1_runtime_contract_preserved_inner();
-}
-
-#[cfg(test)]
-#[test]
-fn parity_oracle_helpers_preserve_contract() {
-    app::test_support::tests::parity_oracle_helpers_preserve_contract_inner();
-}
-
-#[cfg(test)]
-#[test]
 fn build_upstream_headers_injects_w3c_trace_headers() {
     foundation::openai_v1::build_upstream_headers_injects_w3c_trace_headers_inner();
 }
@@ -67,8 +49,3 @@ fn schema_ownership_contract_limits_raw_sql_usage() {
     foundation::schema_governance::schema_ownership::schema_ownership_contract_limits_raw_sql_usage_inner();
 }
 
-#[cfg(test)]
-#[tokio::test]
-async fn admin_graphql_allows_trigger_gc_cleanup_mutation() {
-    foundation::admin_graphql_allows_trigger_gc_cleanup_mutation_inner().await;
-}

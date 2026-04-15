@@ -66,7 +66,6 @@ pub(crate) async fn start_server() -> Result<()> {
     let read_timeout = parse_duration_setting(loaded.config.server.read_timeout.as_str());
     let llm_request_timeout = parse_duration_setting(loaded.config.server.llm_request_timeout.as_str());
     let capabilities = build_server_capabilities(
-        &loaded.config.db.dialect,
         &loaded.config.db.dsn,
         loaded.config.db.debug,
         loaded.config.server.api.auth.allow_no_auth,
@@ -128,8 +127,11 @@ pub(crate) async fn start_server() -> Result<()> {
 
     let listener_address = server.addrs().first().copied().context("No HTTP listener address bound")?;
     let service_name = loaded.config.server.name.clone();
-    let background_runtime = background_operational_db_factory(&loaded.config.db)
-        .map(|db| BackgroundOperationalRuntime::start(db, &loaded.config.gc, &loaded.config.provider_quota));
+    let background_runtime = Some(BackgroundOperationalRuntime::start(
+        background_operational_db_factory(&loaded.config.db),
+        &loaded.config.gc,
+        &loaded.config.provider_quota,
+    ));
 
     for line in startup_messages(
         &service_name,
@@ -397,16 +399,8 @@ fn wait_for_shutdown_or_timeout(
     shutdown.load(Ordering::Relaxed)
 }
 
-fn background_operational_db_factory(db: &axonhub_config::DbConfig) -> Option<SeaOrmConnectionFactory> {
-    if db.dialect.eq_ignore_ascii_case("postgres") || db.dialect.eq_ignore_ascii_case("postgresql") {
-        return Some(SeaOrmConnectionFactory::postgres_with_debug(db.dsn.clone(), db.debug));
-    }
-
-    if db.dialect.eq_ignore_ascii_case("sqlite3") {
-        return Some(SeaOrmConnectionFactory::sqlite_with_debug(db.dsn.clone(), db.debug));
-    }
-
-    None
+fn background_operational_db_factory(db: &axonhub_config::DbConfig) -> SeaOrmConnectionFactory {
+    SeaOrmConnectionFactory::postgres_with_debug(db.dsn.clone(), db.debug)
 }
 
 pub(crate) fn parse_duration_setting(value: &str) -> Option<Duration> {

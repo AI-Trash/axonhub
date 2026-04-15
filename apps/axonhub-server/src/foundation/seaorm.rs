@@ -3,22 +3,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use axonhub_db_migration::{Migrator, MigratorTrait};
-use sea_orm::{
-    ConnectOptions, Database, DatabaseBackend, DatabaseConnection, DbErr, TransactionTrait,
-};
+use sea_orm::{ConnectOptions, Database, DatabaseConnection, DbErr, TransactionTrait};
 
 #[derive(Debug, Clone)]
-pub(crate) enum SeaOrmConnectionFactory {
-    Sqlite {
-        dsn: String,
-        instance_id: u64,
-        sqlx_logging: bool,
-    },
-    Postgres {
-        dsn: String,
-        instance_id: u64,
-        sqlx_logging: bool,
-    },
+pub(crate) struct SeaOrmConnectionFactory {
+    dsn: String,
+    instance_id: u64,
+    sqlx_logging: bool,
 }
 
 static NEXT_FACTORY_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -29,74 +20,36 @@ fn next_factory_instance_id() -> u64 {
 
 impl SeaOrmConnectionFactory {
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn sqlite(dsn: String) -> Self {
-        Self::sqlite_with_debug(dsn, false)
-    }
-
-    pub(crate) fn sqlite_with_debug(dsn: String, sqlx_logging: bool) -> Self {
-        Self::Sqlite {
-            dsn,
-            instance_id: next_factory_instance_id(),
-            sqlx_logging,
-        }
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn postgres(dsn: String) -> Self {
         Self::postgres_with_debug(dsn, false)
     }
 
     pub(crate) fn postgres_with_debug(dsn: String, sqlx_logging: bool) -> Self {
-        Self::Postgres {
+        Self {
             dsn,
             instance_id: next_factory_instance_id(),
             sqlx_logging,
         }
     }
 
-    pub(crate) fn backend(&self) -> DatabaseBackend {
-        match self {
-            Self::Sqlite { .. } => DatabaseBackend::Sqlite,
-            Self::Postgres { .. } => DatabaseBackend::Postgres,
-        }
-    }
-
     pub(crate) fn instance_id(&self) -> u64 {
-        match self {
-            Self::Sqlite { instance_id, .. } | Self::Postgres { instance_id, .. } => *instance_id,
-        }
+        self.instance_id
     }
 
     fn sqlx_logging(&self) -> bool {
-        match self {
-            Self::Sqlite { sqlx_logging, .. } | Self::Postgres { sqlx_logging, .. } => *sqlx_logging,
-        }
+        self.sqlx_logging
     }
 
     pub(crate) fn runtime_dsn(&self) -> String {
-        match self {
-            Self::Sqlite { dsn, .. } => {
-                if dsn == ":memory:" {
-                    "sqlite::memory:".to_owned()
-                } else if dsn.starts_with("file:") {
-                    normalize_sqlite_file_dsn(dsn)
-                } else if dsn.starts_with("sqlite:") {
-                    dsn.clone()
-                } else {
-                    format!("sqlite://{}?mode=rwc", dsn)
-                }
-            }
-            Self::Postgres { dsn, .. } => dsn.clone(),
-        }
+        self.dsn.clone()
     }
 
     pub(crate) async fn connect(&self) -> Result<DatabaseConnection, DbErr> {
         let runtime_dsn = self.runtime_dsn();
-        let backend = self.backend();
         let instance_id = self.instance_id();
         tracing::debug!(
             seaorm.instance_id = instance_id,
-            db.backend = ?backend,
+            db.backend = "postgres",
             db.dsn = %sanitize_runtime_dsn(runtime_dsn.as_str()),
             "opening SeaORM connection"
         );
@@ -114,7 +67,7 @@ impl SeaOrmConnectionFactory {
         if let Err(error) = &connection {
             tracing::error!(
                 seaorm.instance_id = instance_id,
-                db.backend = ?backend,
+                db.backend = "postgres",
                 error = %error,
                 "failed to open SeaORM connection"
             );
@@ -126,7 +79,7 @@ impl SeaOrmConnectionFactory {
         let db = self.connect().await?;
         tracing::debug!(
             seaorm.instance_id = self.instance_id(),
-            db.backend = ?self.backend(),
+            db.backend = "postgres",
             "running SeaORM migrations"
         );
         Migrator::up(&db, None).await?;
@@ -143,7 +96,7 @@ impl SeaOrmConnectionFactory {
         let factory = self.clone();
         tracing::debug!(
             seaorm.instance_id = factory.instance_id(),
-            db.backend = ?factory.backend(),
+            db.backend = "postgres",
             "bridging SeaORM async work through sync runtime"
         );
 
@@ -173,37 +126,6 @@ fn sanitize_runtime_dsn(dsn: &str) -> String {
         return format!("{prefix}@***");
     }
     dsn.to_owned()
-}
-
-fn normalize_sqlite_file_dsn(dsn: &str) -> String {
-    let raw = dsn.strip_prefix("file:").unwrap_or(dsn);
-    let (path, query) = raw.split_once('?').unwrap_or((raw, ""));
-
-    let mut params = Vec::new();
-    let mut has_mode = false;
-
-    if !query.is_empty() {
-        for pair in query.split('&').filter(|pair| !pair.is_empty()) {
-            let key = pair.split('=').next().unwrap_or_default();
-            if key.starts_with('_') {
-                continue;
-            }
-            if key.eq_ignore_ascii_case("mode") {
-                has_mode = true;
-            }
-            params.push(pair.to_owned());
-        }
-    }
-
-    if !has_mode {
-        params.insert(0, "mode=rwc".to_owned());
-    }
-
-    if params.is_empty() {
-        format!("sqlite://{path}")
-    } else {
-        format!("sqlite://{path}?{}", params.join("&"))
-    }
 }
 
 #[allow(dead_code)]
@@ -249,7 +171,7 @@ mod tests {
                 .trace_id()
                 .to_string();
 
-            let factory = SeaOrmConnectionFactory::sqlite(":memory:".to_owned());
+            let factory = SeaOrmConnectionFactory::postgres("postgres://localhost/axonhub".to_owned());
             let bridged_trace_id = tokio::runtime::Runtime::new()
                 .expect("create runtime for SeaORM trace bridge test")
                 .block_on(async move {

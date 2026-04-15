@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axonhub_http::{OpenAiRequestBody, OpenAiV1Error};
 use regex::Regex;
-use sea_orm::{ConnectionTrait, DatabaseBackend};
+use sea_orm::ConnectionTrait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -60,7 +60,6 @@ struct CompiledPromptProtectionRule {
 
 pub(crate) async fn load_enabled_prompt_protection_rules_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
 ) -> Result<Vec<PromptProtectionRule>, OpenAiV1Error> {
     list_enabled_prompt_protection_rules_seaorm(db)
         .await

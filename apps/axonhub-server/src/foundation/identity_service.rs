@@ -3,7 +3,7 @@ use axonhub_http::{
     ContextResolveError, IdentityPort, ProjectContext, SignInError, SignInRequest, SignInSuccess,
 };
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-#[cfg(test)]
+#[cfg(any())]
 use std::sync::Arc;
 
 use super::{
@@ -15,15 +15,15 @@ use super::{
     shared::{NO_AUTH_API_KEY_VALUE, SYSTEM_KEY_SECRET_KEY},
 };
 
-#[cfg(test)]
+#[cfg(any())]
 use super::system::sqlite_test_support::SqliteFoundation;
 
-#[cfg(test)]
+#[cfg(any())]
 pub struct SqliteIdentityService {
     identity_auth: SeaOrmIdentityService,
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl SqliteIdentityService {
     pub fn new(foundation: Arc<SqliteFoundation>, allow_no_auth: bool) -> Self {
         Self {
@@ -32,7 +32,7 @@ impl SqliteIdentityService {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl IdentityPort for SqliteIdentityService {
     fn admin_signin(&self, request: &SignInRequest) -> Result<SignInSuccess, SignInError> {
         <SeaOrmIdentityService as IdentityPort>::admin_signin(&self.identity_auth, request)
@@ -67,7 +67,7 @@ impl IdentityPort for SqliteIdentityService {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl IdentityRepository for SqliteIdentityService {
     fn admin_signin(&self, request: &SignInRequest) -> Result<SignInSuccess, SignInError> {
         <Self as IdentityPort>::admin_signin(self, request)
@@ -309,7 +309,7 @@ pub(crate) fn project_context(project: StoredProject) -> ProjectContext {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     pub(crate) use super::SqliteIdentityService;
 

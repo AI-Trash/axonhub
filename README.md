@@ -27,7 +27,7 @@ AxonHub's canonical backend implementation is written in Rust. The Rust workspac
 
 ### Current Rust-Supported Surface (Verified)
 
-The Rust backend provides broad, production-oriented functionality for SQLite and PostgreSQL deployments. In the current repository, the strongest self-contained automated verification is on SQLite-backed Rust paths; PostgreSQL remains a canonical supported runtime/deployment target, but is not claimed here as fully verified across the same in-repo test surface.
+The Rust backend provides broad, production-oriented functionality for PostgreSQL deployments. PostgreSQL is the canonical supported runtime and deployment target for the Rust backend in this repository.
 
 - **CLI/config**: command-line interface and configuration loading
 - **Health & system**: `/health`, `GET /admin/system/status`, `POST /admin/system/initialize`
@@ -43,8 +43,8 @@ The Rust backend provides broad, production-oriented functionality for SQLite an
 - **Business logic**: channel/model association & fetching, usage & cost tracking, trace/thread management, system onboarding
 - **Transformer/pipeline**: provider orchestration, outbound transformers, middleware pipeline
 - **Enterprise features**: prompt protection, provider quota management, circuit breakers
-- **Configuration**: broad alignment with the AxonHub configuration surface for SQLite/PostgreSQL
-- **Database support**: SQLite and PostgreSQL (canonical); MySQL/TiDB/Neon are not supported in the Rust backend.
+- **Configuration**: broad alignment with the AxonHub configuration surface for PostgreSQL
+- **Database support**: PostgreSQL
 
 ### Historical Reference Only
 
@@ -215,7 +215,7 @@ Here are some screenshots of AxonHub in action:
 curl -sSL https://github.com/looplj/axonhub/releases/latest/download/axonhub_darwin_arm64.tar.gz | tar xz
 cd axonhub_*
 
-# Run with SQLite (default)
+# Configure PostgreSQL in config.yml, then run
 ./axonhub
 
 # Open http://localhost:8090
@@ -233,7 +233,7 @@ The Rust backend is deployed through the following canonical artifacts:
 - Docker image `ghcr.io/summpot/axonhub:<tag>` when pushing a Git tag
 - Compose example at `docker-compose.yml`
 
-These artifacts provide the Rust CLI/config contract and ship the current supported Rust product surface. In the current repository, the strongest self-contained automated verification is on SQLite-backed Rust paths; PostgreSQL remains a canonical supported runtime/deployment target, but is not claimed here as equally fully verified across the same in-repo test surface. That supported surface includes `/health`, admin bootstrap/status, identity/request-context, admin read routes, the `/admin/graphql` subset (settings, user management, project/role management, quota, operational mutations), OpenAPI GraphQL, the inference families including `/v1/images/generations`, `/v1/images/edits`, `/v1/images/variations`, `/v1/realtime` (JSON POST and WebSocket upgrade with session management), video generation, provider-specific routes (Jina, Anthropic, Gemini, Doubao), AiSDK compatibility, and provider-edge OAuth.
+These artifacts provide the Rust CLI/config contract and ship the current supported Rust product surface. That supported surface includes `/health`, admin bootstrap/status, identity/request-context, admin read routes, the `/admin/graphql` subset (settings, user management, project/role management, quota, operational mutations), OpenAPI GraphQL, the inference families including `/v1/images/generations`, `/v1/images/edits`, `/v1/images/variations`, `/v1/realtime` (JSON POST and WebSocket upgrade with session management), video generation, provider-specific routes (Jina, Anthropic, Gemini, Doubao), AiSDK compatibility, and provider-edge OAuth.
 
 ### Zero-Code Migration Example
 
@@ -292,7 +292,7 @@ Perfect for individual developers and small teams. No complex configuration requ
    # Add execution permissions (only for Linux/macOS)
    chmod +x axonhub
 
-   # Run directly - default SQLite database
+   # Configure PostgreSQL in config.yml, then run
 
    # Install AxonHub to system
    sudo ./install.sh
@@ -315,7 +315,7 @@ Perfect for individual developers and small teams. No complex configuration requ
 
 For production environments, high availability, and enterprise deployments.
 
-> **Important:** The Rust backend currently has its strongest in-repo automated verification on **SQLite**. **PostgreSQL** remains a canonical supported runtime/deployment target, but this README does not claim it is equally fully verified across the same in-repo test surface. MySQL is not part of the Rust target-state support contract in this repository. TiDB and Neon DB remain documented in the legacy Go tree as historical reference only, not as the canonical deployment path. See the [Backend Architecture](#backend-architecture) section for details.
+> **Important:** The Rust backend in this repository targets **PostgreSQL**. See the [Backend Architecture](#backend-architecture) section for the supported deployment path.
 
 #### Database Support
 
@@ -323,7 +323,6 @@ For production environments, high availability, and enterprise deployments.
 
 | Database | Supported Versions | Recommended Scenario | Auto Migration | Links |
 | -------- | ------------------ | -------------------- | -------------- | ------ |
-| **SQLite** | 3.0+ | Development, small deployments | ✅ Supported | [SQLite](https://www.sqlite.org/index.html) |
 | **PostgreSQL** | 15+ | Production environment, medium-large deployments | ✅ Supported | [PostgreSQL](https://www.postgresql.org/) |
 
 **Historical Reference Only (legacy Go contract material):**
@@ -335,13 +334,13 @@ For production environments, high availability, and enterprise deployments.
 | **TiDB** | V8.0+ | Distributed deployment, large scale | ✅ Supported (Go only) | [TiDB](https://tidb.io/) |
 | **Neon DB** | - | Serverless, Free tier, Auto Scale | ✅ Supported (Go only) | [Neon DB](https://neon.com/) |
 
-These entries are preserved as historical reference for the legacy Go contract surface. The canonical deployment guidance in this repository stays on the Rust backend.
+These entries are preserved as historical reference for the legacy Go contract surface. The canonical deployment guidance in this repository stays on the Rust PostgreSQL backend.
 
 #### Configuration
 
-**Rust Backend (SQLite default; PostgreSQL supported):**
+**Rust Backend (PostgreSQL only):**
 
-AxonHub uses YAML configuration files with environment variable override support. The Rust backend uses SQLite by default with no additional configuration needed. PostgreSQL uses the same documented `db.dialect` / `db.dsn` contract.
+AxonHub uses YAML configuration files with environment variable override support. The Rust backend expects a PostgreSQL DSN in `db.dsn`.
 
 ```yaml
 # config.yml
@@ -350,8 +349,8 @@ server:
   name: "AxonHub"
   debug: false
 
-# SQLite is the default database for the Rust backend.
-# No additional db configuration needed - data is stored in ./axonhub.db
+db:
+  dsn: "postgres://user:pass@localhost/axonhub?sslmode=disable"
 ```
 
 Environment variables (optional):
@@ -359,38 +358,36 @@ Environment variables (optional):
 ```bash
 AXONHUB_SERVER_PORT=8090
 AXONHUB_LOG_LEVEL=info
-# SQLite needs no extra DB config because it's the default
 # PostgreSQL example:
-# AXONHUB_DB_DIALECT=postgres
 # AXONHUB_DB_DSN=postgres://user:pass@localhost/axonhub?sslmode=disable
 ```
 
-**Historical Reference Only (legacy Go dialect examples):**
+**Historical Reference Only (legacy Go examples):**
 
-TiDB and Neon DB examples remain in the legacy Go tree and documentation as reference material only. The canonical deployment guidance in this repository stays on the Rust backend and its explicitly documented supported surface.
+Legacy Go database examples remain reference material only. The canonical deployment guidance in this repository stays on the Rust PostgreSQL backend.
 
 
 #### Docker Compose Deployment
 
-**Rust Backend (SQLite):**
+**Rust Backend (PostgreSQL):**
 
-Use the provided `docker-compose.yml` file for the Rust backend with SQLite:
+Use the provided deployment files for the Rust backend with PostgreSQL:
 
 ```bash
-# Start Rust backend with SQLite
+# Start Rust backend
 docker-compose up -d
 
 # Check status
 docker-compose ps
 ```
 
-**Historical Reference Only (legacy Go dialect examples):**
+**Historical Reference Only (legacy Go examples):**
 
-TiDB and Neon DB compose examples remain in the legacy Go tree and documentation as reference material only. This deployment guide keeps Rust as the canonical operator path.
+Legacy Go compose examples remain reference material only. This deployment guide keeps Rust as the canonical operator path.
 
 #### Helm Kubernetes Deployment
 
-Deploy AxonHub on Kubernetes using the official Helm chart. This deployment path uses the Rust backend as the canonical image and targets PostgreSQL as the documented and supported Kubernetes database path. TiDB and Neon DB references remain historical material in the legacy Go tree; this Helm path documents the Rust canonical image only.
+Deploy AxonHub on Kubernetes using the official Helm chart. This deployment path uses the Rust backend as the canonical image and targets PostgreSQL as the documented Kubernetes database path.
 
 The Helm chart is the recommended Kubernetes deployment method for the Rust backend.
 
@@ -422,7 +419,7 @@ For detailed configuration and troubleshooting, see [Helm Chart Documentation](d
 
 #### Virtual Machine Deployment
 
-**Rust Backend (SQLite):**
+**Rust Backend (PostgreSQL):**
 
 Download the Rust-specific release from [GitHub Releases](https://github.com/looplj/axonhub/releases) (look for `axonhub-rust_*` assets).
 

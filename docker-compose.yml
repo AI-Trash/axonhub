@@ -1,11 +1,30 @@
 services:
+  postgres:
+    image: postgres:16
+    container_name: axonhub-postgres
+    environment:
+      POSTGRES_DB: axonhub
+      POSTGRES_USER: axonhub
+      POSTGRES_PASSWORD: axonhub_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U axonhub -d axonhub"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   axonhub:
     image: ghcr.io/summpot/axonhub:latest
     container_name: axonhub-app
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8090:8090"
-    volumes:
-      - axonhub-data:/app
+    environment:
+      AXONHUB_DB_DSN: postgres://axonhub:axonhub_password@postgres:5432/axonhub?sslmode=disable
     restart: unless-stopped
     healthcheck:
       test:
@@ -23,4 +42,4 @@ services:
       start_period: 20s
 
 volumes:
-  axonhub-data:
+  postgres-data:

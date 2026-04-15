@@ -2,7 +2,7 @@ use axonhub_http::{
     ContextResolveError, ProjectContext, RequestContextPort, ThreadContext, TraceContext,
 };
 
-#[cfg(test)]
+#[cfg(any())]
 use std::sync::Arc;
 
 use super::{
@@ -14,21 +14,21 @@ use super::{
     seaorm::SeaOrmConnectionFactory,
 };
 
-#[cfg(test)]
+#[cfg(any())]
 use super::{
     identity_service::SeaOrmIdentityService,
     request_context::sqlite_test_support::TraceContextStore,
     system::sqlite_test_support::SqliteFoundation,
 };
 
-#[cfg(test)]
+#[cfg(any())]
 #[derive(Debug, Clone)]
 pub struct RequestContextService {
     identity_auth: SeaOrmIdentityService,
     trace_contexts: TraceContextStore,
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl RequestContextService {
     pub fn new(identity_auth: SeaOrmIdentityService, trace_contexts: TraceContextStore) -> Self {
         Self {
@@ -68,12 +68,12 @@ impl RequestContextService {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub struct SqliteRequestContextService {
     request_contexts: RequestContextService,
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl SqliteRequestContextService {
     pub fn new(foundation: Arc<SqliteFoundation>, allow_no_auth: bool) -> Self {
         Self {
@@ -82,7 +82,7 @@ impl SqliteRequestContextService {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl RequestContextPort for SqliteRequestContextService {
     fn resolve_project(
         &self,
@@ -110,7 +110,7 @@ impl RequestContextPort for SqliteRequestContextService {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl RequestContextRepository for SqliteRequestContextService {
     fn resolve_project(
         &self,
@@ -137,7 +137,7 @@ impl RequestContextRepository for SqliteRequestContextService {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     pub(crate) use super::SqliteRequestContextService;
 }

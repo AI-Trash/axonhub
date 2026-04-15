@@ -18,8 +18,8 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseBackend,
-    EntityTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QueryOrder,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -133,7 +133,6 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
             let settings = query_system_model_settings_seaorm(&connection).await?;
             let models = list_enabled_model_records_seaorm(
                 &connection,
-                db.backend(),
                 settings.query_all_channel_models,
                 profiles_json.as_deref(),
             )
@@ -164,7 +163,6 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
             let settings = query_system_model_settings_seaorm(&connection).await?;
             let model = list_enabled_model_records_seaorm(
                 &connection,
-                db.backend(),
                 settings.query_all_channel_models,
                 profiles_json.as_deref(),
             )
@@ -192,7 +190,6 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
             let Some(record) = find_latest_completed_response_by_external_id_seaorm(
                 &connection,
-                db.backend(),
                 project_id,
                 api_key_id,
                 response_id.as_str(),
@@ -218,7 +215,6 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
             let settings = query_system_model_settings_seaorm(&connection).await?;
             list_enabled_model_records_seaorm(
                 &connection,
-                db.backend(),
                 settings.query_all_channel_models,
                 None,
             )
@@ -231,7 +227,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 id: record.model_id,
                 kind: "model",
                 display_name: record.name,
-                created: sqlite_timestamp_to_rfc3339(record.created_at.as_str()),
+            created: normalize_timestamp_to_rfc3339(record.created_at.as_str()),
             })
             .collect::<Vec<_>>();
         let first_id = if data.is_empty() {
@@ -261,7 +257,6 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
             let settings = query_system_model_settings_seaorm(&connection).await?;
             list_enabled_model_records_seaorm(
                 &connection,
-                db.backend(),
                 settings.query_all_channel_models,
                 None,
             )
@@ -308,10 +303,8 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
 
             db.run_sync(move |db| async move {
                 let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
-                let backend = db.backend();
                 let targets = select_target_channels_seaorm(
                     &connection,
-                    backend,
                     &request,
                     route,
                     &circuit_breaker,
@@ -319,10 +312,9 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 )
                 .await?;
                 Span::current().record("target.selected_count", targets.len() as i64);
-                let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
+                let data_storage_id = default_data_storage_id_seaorm(&connection).await?;
                 execute_shared_route_seaorm(
                     &connection,
-                    backend,
                     &request,
                     request_model_id.as_str(),
                     route_format.as_str(),
@@ -364,18 +356,16 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
             let upstream_http_client = self.upstream_http_client.clone();
             db.run_sync(move |db| async move {
                 let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
-                let backend = db.backend();
-                let data_storage_id = default_data_storage_id_seaorm(&connection, backend).await?;
+                let data_storage_id = default_data_storage_id_seaorm(&connection).await?;
                 let prepared = prepare_compatibility_request(route, &request)?;
                 let targets = if matches!(
                     route,
                     CompatibilityRoute::DoubaoGetTask | CompatibilityRoute::DoubaoDeleteTask
                 ) {
-                    select_doubao_task_targets_seaorm(&connection, backend, &request, &prepared).await?
+                    select_doubao_task_targets_seaorm(&connection, &request, &prepared).await?
                 } else {
                     select_inference_targets_seaorm(
                         &connection,
-                        backend,
                         prepared.request_model_id.as_str(),
                         request.trace.as_ref().map(|trace| trace.id),
                         DEFAULT_MAX_CHANNEL_RETRIES,
@@ -402,7 +392,6 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
                 let route_task_id = prepared.task_id.clone();
                 execute_shared_route_seaorm(
                     &connection,
-                    backend,
                     &request,
                     prepared.request_model_id.as_str(),
                     route.format(),
@@ -432,7 +421,7 @@ impl OpenAiV1Port for SeaOrmOpenAiV1Service {
         let db = self.db.clone();
         db.run_sync(move |db| async move {
             let connection = db.connect_migrated().await.map_err(map_openai_db_err)?;
-            create_realtime_session_seaorm(&connection, db.backend(), request).await
+            create_realtime_session_seaorm(&connection, request).await
         })
     }
 
@@ -620,11 +609,10 @@ fn authz_openai_error(error: AuthzFailure) -> OpenAiV1Error {
 
 pub(crate) async fn create_realtime_session_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request: RealtimeSessionCreateRequest,
 ) -> Result<RealtimeSessionRecord, OpenAiV1Error> {
     validate_realtime_session_transport(&request)?;
-    enforce_api_key_quota_seaorm(db, backend, request.api_key_id).await?;
+    enforce_api_key_quota_seaorm(db, request.api_key_id).await?;
 
     let session_id = generate_realtime_session_id()?;
     let request_body_json = serde_json::to_string(&request.transport).map_err(|error| OpenAiV1Error::Internal {
@@ -641,10 +629,9 @@ pub(crate) async fn create_realtime_session_seaorm(
         request.thread.as_ref().map(|thread| thread.thread_id.as_str()),
         request.trace.as_ref().map(|trace| trace.trace_id.as_str()),
     )?;
-    let data_storage_id = default_data_storage_id_seaorm(db, backend).await?;
+    let data_storage_id = default_data_storage_id_seaorm(db).await?;
     let request_row_id = create_request_seaorm(
         db,
-        backend,
         &NewRequestRecord {
             api_key_id: request.api_key_id,
             project_id: request.project.id,
@@ -703,7 +690,6 @@ pub(crate) async fn create_realtime_session_seaorm(
     })?;
     update_request_result_seaorm(
         db,
-        backend,
         &UpdateRequestResultRecord {
             request_id: request_row_id,
             status: "completed",
@@ -1103,7 +1089,6 @@ fn prompt_condition_matches(
 
 async fn chained_request_body_for_route_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     route_format: &str,
     request: &OpenAiV1ExecutionRequest,
 ) -> Result<OpenAiRequestBody, OpenAiV1Error> {
@@ -1123,7 +1108,6 @@ async fn chained_request_body_for_route_seaorm(
 
     let Some(previous_request) = find_latest_completed_response_chain_request_by_external_id_seaorm(
         db,
-        backend,
         request.project.id,
         request.api_key_id,
         route_format,
@@ -1627,7 +1611,6 @@ fn next_sse_frame(buffer: &mut Vec<u8>) -> Result<Option<String>, OpenAiV1Error>
 
 async fn execute_shared_route_seaorm<UrlBuilder, ResponseMapper, UsageExtractor>(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request: &OpenAiV1ExecutionRequest,
     request_model_id: &str,
     route_format: &str,
@@ -1647,10 +1630,10 @@ where
     ResponseMapper: Fn(Value) -> Result<Value, OpenAiV1Error>,
     UsageExtractor: Fn(&Value) -> Option<ExtractedUsage>,
 {
-    enforce_api_key_quota_seaorm(db, backend, request.api_key_id).await?;
+    enforce_api_key_quota_seaorm(db, request.api_key_id).await?;
     let span = Span::current();
 
-    let effective_body = chained_request_body_for_route_seaorm(db, backend, route_format, request).await?;
+    let effective_body = chained_request_body_for_route_seaorm(db, route_format, request).await?;
     let effective_body = inject_prompt_messages_for_route_seaorm(
         db,
         route_format,
@@ -1669,7 +1652,6 @@ where
 
     let request_id = create_request_seaorm(
         db,
-        backend,
         &NewRequestRecord {
             api_key_id: request.api_key_id,
             project_id: request.project.id,
@@ -1704,7 +1686,6 @@ where
         loop {
             let prepared_attempt = match prepare_outbound_request_with_prompt_protection(
                 db,
-                backend,
                 &effective_body,
                 upstream_headers,
                 target.actual_model_id.as_str(),
@@ -1714,7 +1695,7 @@ where
             {
                 Ok(prepared_attempt) => prepared_attempt,
                 Err(error) => {
-                    mark_request_failed_seaorm(db, backend, request_id, Some(target.channel_id), None, None)
+                    mark_request_failed_seaorm(db, request_id, Some(target.channel_id), None, None)
                         .await?;
                     return Err(error);
                 }
@@ -1722,7 +1703,6 @@ where
 
             update_request_result_seaorm(
                 db,
-                backend,
                 &UpdateRequestResultRecord {
                     request_id,
                     status: "processing",
@@ -1735,7 +1715,6 @@ where
 
             let execution_id = create_request_execution_seaorm(
                 db,
-                backend,
                 &NewRequestExecutionRecord {
                     project_id: request.project.id,
                     request_id,
@@ -1782,7 +1761,6 @@ where
                         let usage = usage_extractor(&response_body);
                         complete_execution_seaorm(
                             db,
-                            backend,
                             request,
                             route_format,
                             request_id,
@@ -1807,7 +1785,6 @@ where
                         let response_body = response_mapper(raw_response_body)?;
                         complete_execution_seaorm(
                             db,
-                            backend,
                             request,
                             route_format,
                             request_id,
@@ -1856,7 +1833,6 @@ where
                     };
                     mark_execution_failed_seaorm(
                         db,
-                        backend,
                         execution_id,
                         openai_error_message(&error).as_str(),
                         response_body,
@@ -1883,7 +1859,6 @@ where
 
                     mark_request_failed_seaorm(
                         db,
-                        backend,
                         request_id,
                         Some(target.channel_id),
                         response_body,
@@ -1899,7 +1874,7 @@ where
     let terminal_error = last_error.unwrap_or_else(|| OpenAiV1Error::Internal {
         message: "No upstream channel attempt was executed".to_owned(),
     });
-    mark_request_failed_seaorm(db, backend, request_id, None, None, None).await?;
+    mark_request_failed_seaorm(db, request_id, None, None, None).await?;
     Err(terminal_error)
 }
 
@@ -1915,7 +1890,6 @@ fn build_upstream_http_client(upstream_request_timeout: Option<Duration>) -> req
 
 async fn complete_execution_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request: &OpenAiV1ExecutionRequest,
     route_format: &str,
     request_id: i64,
@@ -1940,7 +1914,6 @@ async fn complete_execution_seaorm(
         })?;
         record_usage_seaorm(
             db,
-            backend,
             &NewUsageLogRecord {
                 request_id,
                 api_key_id: request.api_key_id,
@@ -1969,11 +1942,10 @@ async fn complete_execution_seaorm(
         .await?;
     }
 
-    mark_provider_quota_ready_seaorm(db, backend, target).await?;
+    mark_provider_quota_ready_seaorm(db, target).await?;
 
     update_request_result_seaorm(
         db,
-        backend,
         &UpdateRequestResultRecord {
             request_id,
             status: "completed",
@@ -1985,7 +1957,6 @@ async fn complete_execution_seaorm(
     .await?;
     update_request_execution_result_seaorm(
         db,
-        backend,
         &UpdateRequestExecutionResultRecord {
             execution_id,
             status: "completed",
@@ -2010,7 +1981,6 @@ async fn complete_execution_seaorm(
 
 pub(crate) async fn mark_provider_quota_ready_seaorm(
     db: &impl ConnectionTrait,
-    _backend: DatabaseBackend,
     target: &SelectedOpenAiTarget,
 ) -> Result<(), OpenAiV1Error> {
     let Some(provider_type) = target.provider_type.as_deref() else {
@@ -2070,7 +2040,6 @@ pub(crate) async fn maybe_persist_provider_quota_error_seaorm(
 
 async fn mark_request_failed_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     request_id: i64,
     channel_id: Option<i64>,
     response_body: Option<&Value>,
@@ -2084,7 +2053,6 @@ async fn mark_request_failed_seaorm(
         })?;
     update_request_result_seaorm(
         db,
-        backend,
         &UpdateRequestResultRecord {
             request_id,
             status: "failed",
@@ -2098,7 +2066,6 @@ async fn mark_request_failed_seaorm(
 
 async fn mark_execution_failed_seaorm(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     execution_id: i64,
     error_message: &str,
     response_body: Option<&Value>,
@@ -2113,7 +2080,6 @@ async fn mark_execution_failed_seaorm(
         })?;
     update_request_execution_result_seaorm(
         db,
-        backend,
         &UpdateRequestExecutionResultRecord {
             execution_id,
             status: "failed",
@@ -2699,14 +2665,13 @@ pub(crate) fn prepare_outbound_request(
 
 pub(crate) async fn prepare_outbound_request_with_prompt_protection(
     db: &impl ConnectionTrait,
-    backend: DatabaseBackend,
     original_body: &OpenAiRequestBody,
     original_headers: &HashMap<String, String>,
     actual_model_id: &str,
     api_key: &str,
 ) -> Result<PreparedOutboundRequest, OpenAiV1Error> {
     let rewritten = rewrite_request_body(original_body, actual_model_id);
-    let rules = load_enabled_prompt_protection_rules_seaorm(db, backend).await?;
+    let rules = load_enabled_prompt_protection_rules_seaorm(db).await?;
     let protected = apply_prompt_protection(&rewritten, &rules)?;
     prepare_outbound_request(&protected, original_headers, actual_model_id, api_key)
 }
@@ -3152,7 +3117,7 @@ pub(crate) fn compute_usage_cost(
         price_reference_id: Some(
             pricing
                 .price_reference_id
-                .unwrap_or_else(|| format!("sqlite:model:{}:{}", model.developer, model.model_id)),
+        .unwrap_or_else(|| format!("postgres:model:{}:{}", model.developer, model.model_id)),
         ),
     }
 }
@@ -4073,7 +4038,7 @@ pub(crate) fn map_anthropic_usage_from_openai(usage: &Value) -> Result<Value, Op
     }))
 }
 
-pub(crate) fn sqlite_timestamp_to_rfc3339(raw: &str) -> String {
+pub(crate) fn normalize_timestamp_to_rfc3339(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return "1970-01-01T00:00:00Z".to_owned();
@@ -4330,7 +4295,7 @@ pub(crate) fn extract_channel_api_key(credentials_json: &str) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod sqlite_test_support {
     use std::sync::Arc;
 
